@@ -13,7 +13,7 @@ export default defineConfig(({ mode }) => {
     // Configuration pour le build de production
     base: process.env.NODE_ENV === 'production' ? '/' : '/',
     build: {
-      outDir: '../dist',
+      outDir: 'dist',
       assetsDir: 'assets',
       emptyOutDir: true,
       sourcemap: false
