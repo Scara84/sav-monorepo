@@ -4,9 +4,14 @@
     {
       "src": "client/package.json",
       "use": "@vercel/static-build"
+    },
+    {
+      "src": "server/server.js",
+      "use": "@vercel/node"
     }
   ],
   "rewrites": [
-    { "source": "/(.*)", "destination": "/index.html" }
+    { "source": "/api/(.*)", "destination": "/server/server.js" },
+    { "source": "/((?!api/|assets/).*)", "destination": "/index.html" }
   ]
 }
