@@ -8,7 +8,6 @@
   "scripts": {
     "start": "NODE_ENV=production node server.js",
     "dev": "NODE_ENV=development nodemon server.js",
-    "build": "echo 'Build du serveur - pas de compilation nécessaire pour Node.js'",
     "test": "vitest",
     "lint": "eslint src server.js",
     "format": "prettier --write \"**/*.{js,json,md}\""
