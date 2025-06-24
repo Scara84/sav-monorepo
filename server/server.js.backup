@@ -1,0 +1,354 @@
+require('dotenv').config();
+const express = require('express');
+const axios = require('axios');
+const qs = require('qs');
+const cors = require('cors');
+const path = require('path');
+const multer = require('multer');
+const { ConfidentialClientApplication } = require('@azure/msal-node');
+const { Client } = require('@microsoft/microsoft-graph-client');
+require('isomorphic-fetch');
+
+// Configuration de multer pour gérer les fichiers en mémoire
+const upload = multer({
+  storage: multer.memoryStorage(),
+  limits: {
+    fileSize: 10 * 1024 * 1024 // 10MB max file size
+  }
+});
+
+const app = express();
+const PORT = process.env.PORT || 3001;
+
+// Configuration CORS
+const corsOptions = {
+  origin: process.env.CLIENT_URL || 'http://localhost:5173',
+  optionsSuccessStatus: 200
+};
+
+app.use(cors(corsOptions));
+app.use(express.json({ limit: '10mb' }));
+app.use(express.urlencoded({ extended: true, limit: '10mb' }));
+
+// Configuration MSAL avec des valeurs par défaut pour le développement
+const msalConfig = {
+  auth: {
+    clientId: process.env.MICROSOFT_CLIENT_ID || 'votre-client-id',
+    authority: `https://login.microsoftonline.com/${process.env.MICROSOFT_TENANT_ID || 'votre-tenant-id'}`,
+    clientSecret: process.env.MICROSOFT_CLIENT_SECRET || 'votre-client-secret',
+    knownAuthorities: ['login.microsoftonline.com']
+  },
+  system: {
+    loggerOptions: {
+      loggerCallback(loglevel, message, containsPii) {
+        console.log(message);
+      },
+      piiLoggingEnabled: false,
+      logLevel: 'Info',
+    }
+  }
+};
+
+// Vérifier que les variables d'environnement sont définies
+const requiredEnvVars = ['MICROSOFT_CLIENT_ID', 'MICROSOFT_TENANT_ID', 'MICROSOFT_CLIENT_SECRET'];
+for (const envVar of requiredEnvVars) {
+  if (!process.env[envVar]) {
+    console.error(`ERREUR: La variable d'environnement ${envVar} n'est pas définie`);
+  } else {
+    console.log(`${envVar} est défini`);
+  }
+}
+
+const scopes = ['https://graph.microsoft.com/.default'];
+const msalClient = new ConfidentialClientApplication(msalConfig);
+
+// Utilisation du site SharePoint racine
+const DRIVE_PATH = '/sites/root/drive';
+console.log('Configuration pour utiliser le site SharePoint racine');
+
+// Fonction pour obtenir un token d'accès
+async function getAccessToken() {
+  console.log('Début de la fonction getAccessToken');
+  console.log('Configuration MSAL:', {
+    clientId: msalConfig.auth.clientId ? '***' : 'non défini',
+    authority: msalConfig.auth.authority,
+    hasClientSecret: !!msalConfig.auth.clientSecret
+  });
+
+  try {
+    const clientCredentialRequest = {
+      scopes: ['https://graph.microsoft.com/.default'],
+      skipCache: false
+    };
+    
+    console.log('Tentative d\'acquisition du token avec les identifiants client...');
+    const response = await msalClient.acquireTokenByClientCredential(clientCredentialRequest);
+    
+    if (!response) {
+      throw new Error('Aucune réponse de acquireTokenByClientCredential');
+    }
+    
+    if (!response.accessToken) {
+      console.error('Réponse inattendue de acquireTokenByClientCredential:', response);
+      throw new Error('Le token d\'accès est manquant dans la réponse');
+    }
+    
+    console.log('Token d\'accès obtenu avec succès');
+    return response.accessToken;
+  } catch (error) {
+    console.error('ERREUR - Échec de l\'obtention du token:');
+    console.error('Message d\'erreur:', error.message);
+    
+    if (error.errorMessage) {
+      console.error('Message d\'erreur détaillé:', error.errorMessage);
+    }
+    
+    if (error.stack) {
+      console.error('Stack trace:', error.stack);
+    }
+    
+    // Vérifier les erreurs spécifiques à MSAL
+    if (error.errorCode) {
+      console.error('Code d\'erreur MSAL:', error.errorCode);
+      console.error('Description de l\'erreur MSAL:', error.errorDescription);
+      
+      if (error.errorCode === 'invalid_client' && error.errorDescription.includes('AADSTS7000215')) {
+        console.error('ERREUR: Le secret client fourni est invalide ou a expiré.');
+      } else if (error.errorCode === 'unauthorized_client') {
+        console.error('ERREUR: L\'application n\'a pas les autorisations nécessaires.');
+      }
+    }
+    
+    throw error;
+  }
+}
+
+// Initialiser le client Graph
+function getGraphClient(accessToken) {
+  return Client.init({
+    authProvider: (done) => {
+      done(null, accessToken);
+    }
+  });
+}
+
+// Dossier de destination sur OneDrive
+const ONEDRIVE_FOLDER = process.env.ONEDRIVE_FOLDER || 'SAV_Images';
+
+// Middleware pour logger les requêtes
+app.use((req, res, next) => {
+  console.log(`${new Date().toISOString()} - ${req.method} ${req.url}`);
+  next();
+});
+
+// Endpoint de test
+app.get('/test', (req, res) => {
+  res.json({ status: 'ok', message: 'Le serveur fonctionne correctement' });
+});
+
+// Fonction utilitaire pour créer un dossier s'il n'existe pas
+async function ensureFolderExists(graphClient, folderName) {
+  try {
+    console.log(`Vérification de l'existence du dossier: ${folderName}`);
+    
+    // Vérifier si le dossier existe déjà
+    const existingFolders = await graphClient
+      .api(`${DRIVE_PATH}/root/children?$filter=name eq '${folderName}'`)
+      .get();
+    
+    if (existingFolders.value && existingFolders.value.length > 0) {
+      console.log('Dossier trouvé');
+      return true;
+    }
+    
+    // Si on arrive ici, le dossier n'existe pas, on le crée
+    console.log('Dossier non trouvé, création en cours...');
+    
+    const folderPayload = {
+      name: folderName,
+      folder: {},
+      '@microsoft.graph.conflictBehavior': 'rename'
+    };
+    
+    await graphClient
+      .api(`${DRIVE_PATH}/root/children`)
+      .post(folderPayload);
+      
+    console.log('Dossier créé avec succès');
+    return true;
+    
+  } catch (error) {
+    console.error('Erreur lors de la vérification/création du dossier:');
+    console.error('Code d\'erreur:', error.code);
+    console.error('Message:', error.message);
+    if (error.statusCode) console.error('Status Code:', error.statusCode);
+    if (error.body) {
+      try {
+        const errorBody = typeof error.body === 'string' ? JSON.parse(error.body) : error.body;
+        console.error('Détails de l\'erreur:', errorBody);
+      } catch (e) {
+        console.error('Corps de l\'erreur:', error.body);
+      }
+    }
+    throw error;
+  }
+}
+
+// Endpoint pour uploader un fichier directement sur OneDrive
+app.post('/upload-onedrive', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) {
+      return res.status(400).json({ error: 'Aucun fichier fourni' });
+    }
+
+    console.log('Tentative d\'obtention du token d\'accès...');
+    const accessToken = await getAccessToken();
+    console.log('Token d\'accès obtenu, initialisation du client Graph...');
+    
+    const graphClient = Client.init({
+      authProvider: (done) => {
+        done(null, accessToken);
+      }
+    });
+
+    const fileName = req.file.originalname;
+    console.log(`Tentative d'upload du fichier: ${fileName}`);
+    
+    // S'assurer que le dossier existe
+    await ensureFolderExists(graphClient, ONEDRIVE_FOLDER);
+    
+    // Chemin complet du fichier sur OneDrive
+    const filePath = `${ONEDRIVE_FOLDER}/${fileName}`;
+    console.log(`Tentative d'upload vers: ${filePath}`);
+    
+    try {
+      // Vérifier la taille du fichier (limite de 4 Mo pour l'upload simple)
+      if (req.file.size > 4 * 1024 * 1024) {
+        throw new Error('La taille du fichier dépasse la limite de 4 Mo pour l\'upload simple');
+      }
+
+      console.log(`Tentative d'upload du fichier vers: ${filePath}`);
+      
+      // Uploader le fichier sur OneDrive/SharePoint
+      const uploadResponse = await graphClient
+        .api(`${DRIVE_PATH}/root:/${filePath}:/content`)
+        .header('Content-Type', req.file.mimetype || 'application/octet-stream')
+        .put(req.file.buffer);
+      
+      console.log('Fichier uploadé avec succès, création du lien de partage...');
+      
+      try {
+        // Créer un lien de partage
+        const shareResponse = await graphClient
+          .api(`${DRIVE_PATH}/items/${uploadResponse.id}/createLink`)
+          .post({
+            type: 'view',
+            scope: 'anonymous'
+          });
+
+        console.log('Lien de partage créé avec succès');
+
+        res.json({
+          success: true,
+          fileInfo: {
+            name: uploadResponse.name,
+            webUrl: shareResponse.link?.webUrl || uploadResponse.webUrl,
+            downloadUrl: uploadResponse['@microsoft.graph.downloadUrl'] || shareResponse.link?.webUrl,
+            id: uploadResponse.id,
+            size: uploadResponse.size,
+            lastModified: uploadResponse.lastModifiedDateTime
+          }
+        });
+      } catch (shareError) {
+        console.error('Erreur lors de la création du lien de partage:');
+        console.error(shareError);
+        
+        // Même en cas d'échec du partage, on renvoie les infos du fichier
+        res.json({
+          success: true,
+          fileInfo: {
+            name: uploadResponse.name,
+            webUrl: uploadResponse.webUrl,
+            downloadUrl: uploadResponse['@microsoft.graph.downloadUrl'],
+            id: uploadResponse.id,
+            size: uploadResponse.size,
+            lastModified: uploadResponse.lastModifiedDateTime,
+            warning: 'Le fichier a été uploadé mais la création du lien de partage a échoué'
+          }
+        });
+      }
+    } catch (uploadError) {
+      console.error('Erreur lors de l\'upload du fichier:');
+      console.error(uploadError);
+      
+      // Si l'erreur est liée à l'authentification, essayer de rafraîchir le token
+      if (uploadError.statusCode === 401) {
+        console.log('Tentative de rafraîchissement du token...');
+        const newToken = await getAccessToken();
+        graphClient.authProvider = (done) => done(null, newToken);
+        
+        // Réessayer l'upload avec le nouveau token
+        const retryResponse = await graphClient
+          .api(`${DRIVE_PATH}:/${filePath}:/content`)
+          .put(req.file.buffer);
+          
+        const shareResponse = await graphClient
+          .api(`${DRIVE_PATH}/items/${retryResponse.id}/createLink`)
+          .post({
+            type: 'view',
+            scope: 'anonymous'
+          });
+          
+        return res.json({
+          success: true,
+          fileInfo: {
+            name: retryResponse.name,
+            webUrl: shareResponse.link.webUrl,
+            downloadUrl: shareResponse.link.webUrl,
+            id: retryResponse.id
+          }
+        });
+      }
+      
+      throw uploadError;
+    }
+  } catch (error) {
+    console.error('Erreur lors de l\'upload sur OneDrive:');
+    console.error(error);
+    
+    let errorDetails = error.message;
+    if (error.statusCode) {
+      errorDetails = `Code d'erreur: ${error.statusCode} - ${error.code || 'Inconnu'}`;
+      if (error.body) {
+        try {
+          const errorBody = typeof error.body === 'string' ? JSON.parse(error.body) : error.body;
+          errorDetails += `\nMessage: ${errorBody.error?.message || 'Aucun détail supplémentaire'}`;
+          
+          // Afficher plus de détails sur l'erreur d'authentification
+          if (error.statusCode === 401) {
+            console.error('ERREUR D\'AUTHENTIFICATION - Vérifiez:');
+            console.error('1. Que les autorisations sont correctement configurées dans Azure AD');
+            console.error('2. Que le secret client est valide et n\'a pas expiré');
+            console.error('3. Que l\'application a bien le consentement administrateur');
+          }
+        } catch (e) {
+          errorDetails += `\nCorps de l'erreur: ${JSON.stringify(error.body)}`;
+        }
+      }
+    }
+    
+    res.status(500).json({ 
+      error: 'Erreur lors de l\'upload du fichier',
+      details: errorDetails,
+      stack: process.env.NODE_ENV === 'development' ? error.stack : undefined
+    });
+  }
+});
+
+// Démarrer le serveur
+app.listen(PORT, () => {
+  console.log(`Backend API listening on port ${PORT}`);
+  console.log(`URL: http://localhost:${PORT}`);
+  console.log(`Test endpoint: http://localhost:${PORT}/test`);
+  console.log(`Dossier OneDrive: ${ONEDRIVE_FOLDER}`);
+});
