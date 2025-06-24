@@ -11,7 +11,7 @@ export default defineConfig(({ mode }) => {
   return {
     plugins: [vue()],
     // Configuration pour le build de production
-    base: process.env.NODE_ENV === 'production' ? '/' : '/',
+    base: '',
     build: {
       outDir: 'dist',
       assetsDir: 'assets',
