@@ -6,7 +6,7 @@ export default {
   // Configuration CORS
   cors: {
     origin: process.env.NODE_ENV === 'production'
-      ? ['https://sav.fruitstock.eu', 'https://www.sav.fruitstock.eu']
+      ? ['https://sav.fruitstock.eu', 'https://www.sav.fruitstock.eu', 'https://sav-monorepo-38hq.vercel.app']
       : ['http://localhost:3000', 'http://localhost:5173'],
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
