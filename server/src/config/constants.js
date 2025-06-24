@@ -14,7 +14,7 @@ export const ONEDRIVE_FOLDER = process.env.ONEDRIVE_FOLDER || 'SAV_Images';
 
 // Configuration du serveur
 export const SERVER = {
-  PORT: process.env.PORT || 3001,
+  PORT: process.env.PORT || 3000,
   NODE_ENV: process.env.NODE_ENV || 'development',
   uploadLimit: '10mb',
   corsOptions: {

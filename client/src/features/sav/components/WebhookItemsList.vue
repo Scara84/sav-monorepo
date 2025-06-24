@@ -442,7 +442,8 @@ export default {
       }
       
       try {
-        const response = await axios.post('http://localhost:3001/upload-onedrive', formData, {
+        const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+        const response = await axios.post(`${apiUrl}/api/upload-onedrive`, formData, {
           headers: {
             'Content-Type': 'multipart/form-data'
           }
