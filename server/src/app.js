@@ -53,6 +53,7 @@ app.get('/health', (req, res) => {
 });
 
 // Gestion des erreurs 404
+/*
 app.use((req, res, next) => {
   res.status(404).json({
     success: false,
@@ -62,6 +63,7 @@ app.use((req, res, next) => {
     timestamp: new Date().toISOString()
   });
 });
+*/
 
 // Gestion des erreurs globales
 app.use((err, req, res, next) => {
