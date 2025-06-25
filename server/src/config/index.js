@@ -4,8 +4,9 @@ import { ENV_VARS, SERVER, MS_GRAPH, ERROR_MESSAGES } from './constants.js';
 // Vérifier les variables d'environnement requises
 const missingVars = ENV_VARS.filter(envVar => !process.env[envVar]);
 if (missingVars.length > 0) {
-  console.error('ERREUR: Variables d\'environnement manquantes:', missingVars.join(', '));
-  process.exit(1);
+  console.warn('ATTENTION: Variables d\'environnement manquantes:', missingVars.join(', '));
+  console.warn('Les fonctionnalités liées à OneDrive pourraient ne pas fonctionner.');
+  // Ne pas utiliser process.exit(1) dans un environnement serverless car cela fait planter l'instance.
 }
 
 // Configuration Microsoft

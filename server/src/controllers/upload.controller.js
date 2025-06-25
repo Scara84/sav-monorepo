@@ -1,6 +1,16 @@
 import multer from 'multer';
 import OneDriveService from '../services/oneDrive.service.js';
-const oneDriveService = new OneDriveService();
+// Instanciation paresseuse (lazy instantiation) du service OneDrive
+// pour éviter les erreurs au démarrage si les variables d'environnement sont manquantes.
+const getOneDriveService = (() => {
+  let instance;
+  return () => {
+    if (!instance) {
+      instance = new OneDriveService();
+    }
+    return instance;
+  };
+})();
 import { ERROR_MESSAGES } from '../config/constants.js';
 
 // Configuration de multer pour le stockage en mémoire
@@ -81,6 +91,7 @@ const handleFileUpload = (req, res, next) => {
  */
 const uploadToOneDrive = async (req, res) => {
   try {
+        const oneDriveService = getOneDriveService();
     const { file } = req;
     const folderName = process.env.ONEDRIVE_FOLDER || 'SAV_Images';
     
