@@ -635,7 +635,7 @@ export default {
         filledForms.forEach(({ form }) => {
           form.showForm = false;
         });
-        emit('sav-submitted', payload);
+        emit('sav-submitted');
       } catch (error) {
         console.error('Erreur lors de l\'envoi des données:', error);
         throw error;

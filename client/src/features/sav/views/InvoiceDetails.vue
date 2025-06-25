@@ -72,10 +72,9 @@ export default {
     }
   },
   methods: {
-    handleSavSubmission(savRequests) {
-      console.log('Demandes SAV reçues:', savRequests);
-      // TODO: Envoyer les demandes SAV au backend
-      // Cette fonction recevra maintenant un tableau de demandes SAV
+    handleSavSubmission() {
+      console.log('Demande SAV soumise avec succès.');
+      this.$router.push({ name: 'SavConfirmation' });
     }
   },
   created() {
