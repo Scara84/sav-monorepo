@@ -103,7 +103,9 @@ export default {
           // Filter out specific items based on label
           const filteredItems = invoiceData.line_items.filter(item => 
             !item.label.includes('Participation préparation commande') && 
-            !item.label.includes('Remise commande précédente')
+            !item.label.includes('Remise commande précédente') &&
+            !item.label.includes('Remise responsable') &&
+            !item.label.includes('Remise préparation commande')
           );
           this.invoiceItems = filteredItems; // Assign filtered items
           console.log('InvoiceDetails.vue:57 Assigned filtered invoiceItems:', this.invoiceItems);
