@@ -5,16 +5,9 @@ export default {
   
   // Configuration CORS
   cors: {
-    origin: [
-      // Regex for all Vercel deployments (production and preview)
-      /^https://sav-monorepo-.*\.vercel\.app$/,
-      // Production domains
-      'https://sav.fruitstock.eu',
-      'https://www.sav.fruitstock.eu',
-      // Local development
-      'http://localhost:3000',
-      'http://localhost:5173'
-    ],
+    origin: process.env.NODE_ENV === 'production'
+      ? [/^https:\/\/sav-monorepo-.*\.vercel\.app$/, 'https://sav.fruitstock.eu', 'https://www.sav.fruitstock.eu']
+      : ['http://localhost:3000', 'http://localhost:5173'],
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization'],
     credentials: true
