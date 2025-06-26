@@ -9,6 +9,7 @@ export default {
       // Regex for all Vercel deployments (production and preview)
       /^https:\/\/sav-monorepo-.*\.vercel\.app$/,
       // Production domains
+      'https://sav-fruitstock.vercel.app',
       'https://sav.fruitstock.eu',
       'https://www.sav.fruitstock.eu',
       // Local development
