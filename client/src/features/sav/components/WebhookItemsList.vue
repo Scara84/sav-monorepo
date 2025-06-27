@@ -1,9 +1,9 @@
 <template>
   <div class="webhook-items">
     <ul class="space-y-6">
-      <li v-for="(item, index) in items" :key="index" class="bg-white p-4 rounded-lg shadow">
+      <li v-for="(item, index) in items" :key="index" class="bg-white p-4 rounded-lg shadow" style="font-family:var(--font-main);margin-bottom:1.5em;">
         <!-- Nom du produit sur toute la largeur -->
-        <h3 class="text-lg font-medium text-gray-900 mb-4">{{ item.label }}</h3>
+        <h3 style="font-size:1.2em;font-family:var(--font-main);color:var(--main-orange);font-weight:700;margin-bottom:1em;">{{ item.label }}</h3>
         
         <!-- Autres propriétés alignées sur une ligne -->
         <div class="grid grid-cols-5 gap-4">
@@ -33,19 +33,20 @@
         <div class="mt-4">
           <button 
             @click="toggleSavForm(index)"
-            class="px-4 py-2 text-sm font-medium text-white rounded-md focus:outline-none focus:ring-2 focus:ring-offset-2"
-            :class="getSavForm(index).showForm ? 'bg-red-600 hover:bg-red-700 focus:ring-red-500' : 'bg-blue-600 hover:bg-blue-700 focus:ring-blue-500'"
-          >
+            class="btn-main"
+            :style="getSavForm(index).showForm ? 'background:#e23a3a;' : ''"
+            style="margin-top:1em;font-size:1em;min-width:200px;">
+
             {{ getSavForm(index).showForm ? 'Annuler la demande' : 'Faire une demande SAV' }}
           </button>
         </div>
 
         <!-- Formulaire SAV -->
-        <div v-if="getSavForm(index).showForm" class="mt-4 p-4 bg-gray-50 rounded-md">
+        <div v-if="getSavForm(index).showForm" class="mt-4 p-4" style="background:#f6f6f6;border-radius:16px;">
           <form class="space-y-4" :class="{ 'opacity-75': getSavForm(index).filled }" @submit.prevent="validateItemForm(index)">
             <div class="grid grid-cols-3 gap-4">
               <div>
-                <label class="block text-sm font-medium text-gray-700">Quantité</label>
+                <label style="font-family:var(--font-main);color:var(--text-dark);font-weight:600;font-size:1em;">Quantité</label>
                 <input
                   type="number"
                   step="0.01"
@@ -60,7 +61,7 @@
                 </p>
               </div>
               <div>
-                <label class="block text-sm font-medium text-gray-700">Unité</label>
+                <label style="font-family:var(--font-main);color:var(--text-dark);font-weight:600;font-size:1em;">Unité</label>
                 <select
                   v-model="getSavForm(index).unit"
                   :disabled="getSavForm(index).filled"
@@ -78,7 +79,7 @@
                 </p>
               </div>
               <div>
-                <label class="block text-sm font-medium text-gray-700">Motif</label>
+                <label style="font-family:var(--font-main);color:var(--text-dark);font-weight:600;font-size:1em;">Motif</label>
                 <select
                   v-model="getSavForm(index).reason"
                   :disabled="getSavForm(index).filled"
@@ -99,7 +100,7 @@
 
             <!-- Champ commentaire optionnel -->
             <div class="mt-4">
-              <label class="block text-sm font-medium text-gray-700">
+              <label style="font-family:var(--font-main);color:var(--text-dark);font-weight:600;font-size:1em;">
                 Commentaire
                 <span class="text-xs text-gray-500">(optionnel)</span>
               </label>
@@ -114,7 +115,7 @@
 
             <!-- Champ d'upload d'images pour le motif "abimé" -->
             <div v-if="getSavForm(index).reason === 'abime'" class="mt-4">
-              <label class="block text-sm font-medium text-gray-700 mb-2">
+              <label style="font-family:var(--font-main);color:var(--text-dark);font-weight:600;font-size:1em;margin-bottom:0.5em;">
                 Photos du produit abimé
                 <span class="text-xs text-gray-500">(formats acceptés: jpg, png - max 5Mo par image)</span>
               </label>
@@ -155,7 +156,7 @@
                 <button
                   type="button"
                   @click="validateItemForm(index)"
-                  class="px-4 py-2 text-sm font-medium text-white bg-green-600 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+                  class="px-4 py-2 text-sm font-medium text-white bg-orange-600 rounded-md hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500"
                 >
                   Valider
                 </button>

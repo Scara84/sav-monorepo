@@ -9,5 +9,5 @@ export default {
 </script>
 
 <style>
-/* Add your styles here */
+@import "./styles/fruitstock-theme.css";
 </style>

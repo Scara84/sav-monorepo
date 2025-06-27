@@ -1,32 +1,39 @@
 <template>
-  <div class="min-h-screen flex items-center justify-center bg-gray-100">
-    <div class="bg-white p-8 rounded-lg shadow-md w-full max-w-md">
-      <h1 class="text-2xl font-bold mb-6 text-center">Demande de Service Après-Vente</h1>
-      <form @submit.prevent="submitForm">
+  <div>
+    <HeroSection />
+    <div class="sav-form-wrapper min-h-screen flex items-center justify-center" style="background: var(--bg-white);">
+      <div class="sav-form bg-white p-8 rounded-lg shadow-md w-full max-w-md">
+        <h2 class="text-2xl font-bold mb-6 text-center" style="color: var(--main-orange); font-family: var(--font-main);">Demande de Service Après-Vente</h2>
+        <form @submit.prevent="submitForm">
         <div class="mb-4">
-          <label for="invoiceReference" class="block text-gray-700">Référence de la facture (14 caractères):</label>
+          <label for="invoiceReference" style="font-family: var(--font-main); color: var(--text-dark);">Référence de la facture (14 caractères):</label>
           <input
             type="text"
             id="invoiceReference"
             v-model="invoiceReference"
             required
             maxlength="14"
-            class="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            style="width:100%;padding:0.75em 1em;border:2px solid var(--main-orange);border-radius:var(--border-radius);font-family:var(--font-main);color:var(--text-dark);font-size:1em;outline:none;transition:border-color 0.2s;"
+            @focus="e => e.target.style.borderColor = '#c6711d'"
+            @blur="e => e.target.style.borderColor = 'var(--main-orange)'"
           />
         </div>
         <div class="mb-4">
-          <label for="email" class="block text-gray-700">Adresse e-mail:</label>
+          <label for="email" style="font-family: var(--font-main); color: var(--text-dark);">Adresse e-mail:</label>
           <input
             type="email"
             id="email"
             v-model="email"
             required
-            class="w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            style="width:100%;padding:0.75em 1em;border:2px solid var(--main-orange);border-radius:var(--border-radius);font-family:var(--font-main);color:var(--text-dark);font-size:1em;outline:none;transition:border-color 0.2s;"
+            @focus="e => e.target.style.borderColor = '#c6711d'"
+            @blur="e => e.target.style.borderColor = 'var(--main-orange)'"
           />
         </div>
-        <button type="submit" class="w-full bg-blue-500 text-white py-2 rounded-lg hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500">Faire une demande de SAV</button>
+        <button type="submit" class="btn-main" style="width:100%;font-size:1.1em;">Faire une demande de SAV</button>
       </form>
     </div>
+  </div>
   </div>
 </template>
 

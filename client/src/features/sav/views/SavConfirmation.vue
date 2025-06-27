@@ -1,11 +1,9 @@
 <template>
-  <div class="min-h-screen flex items-center justify-center bg-gray-100">
-    <div class="bg-white p-8 rounded-lg shadow-md w-full max-w-md text-center">
-      <h1 class="text-2xl font-bold text-green-600 mb-4">Demande SAV envoyée avec succès !</h1>
-      <p class="text-gray-700 mb-6">Votre demande a bien été prise en compte et sera traitée dans les plus brefs délais.</p>
-      <router-link to="/" class="mt-8 block w-full bg-blue-500 text-white py-2 rounded-lg hover:bg-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 text-center">
-        Retour à l'accueil
-      </router-link>
+  <div class="min-h-screen flex items-center justify-center" style="background: var(--bg-white);">
+    <div class="bg-white p-8 rounded-lg shadow-md w-full max-w-md text-center" style="font-family: var(--font-main);">
+      <h1 style="font-size:2em;font-family:var(--font-main);color:var(--main-orange);font-weight:800;margin-bottom:1em;">Demande SAV envoyée avec succès !</h1>
+      <p style="color:var(--text-dark);margin-bottom:2em;font-size:1.1em;">Votre demande a bien été prise en compte et sera traitée dans les plus brefs délais.</p>
+      <router-link to="/" class="btn-main" style="width:100%;display:block;text-align:center;font-size:1.1em;">Retour à l'accueil</router-link>
     </div>
   </div>
 </template>

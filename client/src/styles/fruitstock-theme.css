@@ -1,0 +1,43 @@
+:root {
+  --main-orange: #e88a23;
+  --text-dark: #222222;
+  --bg-white: #ffffff;
+  --border-radius: 24px;
+  --font-main: 'Montserrat', Arial, sans-serif;
+}
+
+body {
+  background: var(--bg-white);
+  color: var(--text-dark);
+  font-family: var(--font-main);
+}
+
+h1, h2, h3, h4, h5, h6 {
+  font-family: var(--font-main);
+  font-weight: 800;
+  color: var(--main-orange);
+  margin-bottom: 0.5em;
+}
+
+.hero h1 {
+  font-size: 4vw;
+  line-height: 1.1;
+  margin: 1em 0 0.5em 0;
+}
+
+.btn-main {
+  background: var(--main-orange);
+  color: #fff;
+  border-radius: var(--border-radius);
+  padding: 0.7em 2em;
+  font-weight: 700;
+  text-transform: uppercase;
+  border: none;
+  transition: background 0.2s;
+  display: inline-block;
+  margin-top: 1em;
+}
+
+.btn-main:hover {
+  background: #c6711d;
+}
