@@ -29,7 +29,9 @@ export default {
   background: var(--bg-white);
   box-shadow: 0 2px 8px rgba(232, 138, 35, 0.07);
   padding: 0.5em 0;
-  margin-bottom: 2em;
+  position: sticky;
+  top: 0;
+  z-index: 100;
 }
 .nav-wrapper {
   max-width: 1100px;
