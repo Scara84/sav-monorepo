@@ -58,51 +58,51 @@ class OneDriveService {
   /**
    * Vérifie si un dossier existe et le crée si nécessaire
    */
-  async ensureFolderExists(folderName = MS_GRAPH.DEFAULT_FOLDER) {
+  async ensureFolderExists(path) {
     if (!this.initialized) await this.initialize();
+    if (!path || path.trim() === '') {
+      console.log('Chemin de dossier vide ou invalide, utilisation du dossier racine.');
+      return 'root';
+    }
 
-    try {
-      console.log(`Vérification de l'existence du dossier: ${folderName}`);
-      
-      // Vérifier si le dossier existe déjà
-      await this.graphClient
-        .api(`${MS_GRAPH.BASE_URL}/${MS_GRAPH.DRIVE_ID}/root:/${encodeURIComponent(folderName)}`)
-        .get();
-      
-      console.log('Dossier trouvé');
-      return true;
-      
-    } catch (error) {
-      if (error.statusCode === 404) {
-        try {
-          // Le dossier n'existe pas, on le crée
-          console.log('Dossier non trouvé, création en cours...');
-          
-          await this.graphClient
-            .api(`${MS_GRAPH.BASE_URL}/${MS_GRAPH.DRIVE_ID}/root/children`)
-            .post({
-              name: folderName,
-              folder: {},
-              '@microsoft.graph.conflictBehavior': 'rename'
-            });
-            
-          console.log('Dossier créé avec succès');
-          return true;
-        } catch (createError) {
-          console.error('Erreur lors de la création du dossier:');
-          console.error('Code:', createError.code);
-          console.error('Message:', createError.message);
-          if (createError.statusCode) console.error('Status:', createError.statusCode);
-          throw createError;
+    const parts = path.split('/').filter(p => p.length > 0);
+    let parentItemId = 'root';
+    let currentPathForLog = '';
+
+    for (const part of parts) {
+      currentPathForLog += `/${part}`;
+      try {
+        // Essayer de récupérer le dossier enfant par son nom dans le dossier parent
+        const folder = await this.graphClient
+          .api(`${MS_GRAPH.BASE_URL}/${MS_GRAPH.DRIVE_ID}/items/${parentItemId}:/${encodeURIComponent(part)}`)
+          .get();
+        parentItemId = folder.id;
+        console.log(`Dossier '${currentPathForLog}' trouvé, ID: ${parentItemId}`);
+      } catch (error) {
+        if (error.statusCode === 404) {
+          // Le dossier n'existe pas, le créer dans le dossier parent
+          console.log(`Dossier '${currentPathForLog}' non trouvé, création...`);
+          try {
+            const newFolder = await this.graphClient
+              .api(`${MS_GRAPH.BASE_URL}/${MS_GRAPH.DRIVE_ID}/items/${parentItemId}/children`)
+              .post({
+                name: part,
+                folder: {},
+                '@microsoft.graph.conflictBehavior': 'fail',
+              });
+            parentItemId = newFolder.id;
+            console.log(`Dossier '${currentPathForLog}' créé, ID: ${parentItemId}`);
+          } catch (createError) {
+            console.error(`Erreur lors de la création du dossier '${part}' dans le parent ${parentItemId}:`, createError);
+            throw createError;
+          }
+        } else {
+          console.error(`Erreur lors de la vérification du dossier '${part}' dans le parent ${parentItemId}:`, error);
+          throw error;
         }
       }
-      
-      console.error('Erreur lors de la vérification du dossier:');
-      console.error('Code:', error.code);
-      console.error('Message:', error.message);
-      if (error.statusCode) console.error('Status:', error.statusCode);
-      throw error;
     }
+    return parentItemId;
   }
 
   /**

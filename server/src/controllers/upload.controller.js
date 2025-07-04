@@ -91,20 +91,32 @@ const handleFileUpload = (req, res, next) => {
  */
 const uploadToOneDrive = async (req, res) => {
   try {
-        const oneDriveService = getOneDriveService();
+    const oneDriveService = getOneDriveService();
     const { file } = req;
-    const folderName = process.env.ONEDRIVE_FOLDER || 'SAV_Images';
-    
-    console.log(`Tentative d'upload du fichier: ${file.originalname} (${file.size} octets)`);
-    
+    const { savDossier } = req.body; // Nom du dossier unique pour la demande de SAV
+
+    // Valider la présence du nom de dossier
+    if (!savDossier) {
+      return res.status(400).json({
+        success: false,
+        error: "Le nom du dossier de SAV ('savDossier') est requis.",
+      });
+    }
+
+    const rootFolderName = process.env.ONEDRIVE_FOLDER || 'SAV_Images';
+    // Construire le chemin complet du dossier de destination
+    const destinationPath = `${rootFolderName}/${savDossier}`;
+
+    console.log(`Tentative d'upload du fichier: ${file.originalname} (${file.size} octets) vers ${destinationPath}`);
+
     // Uploader le fichier vers OneDrive et obtenir le lien de partage
     const result = await oneDriveService.uploadFile(
       file.buffer,
       file.originalname,
-      folderName,
+      destinationPath, // Utiliser le chemin de destination complet
       file.mimetype
     );
-    
+
     // Formater la réponse pour le client
     const response = {
       success: result.success,
@@ -116,18 +128,18 @@ const uploadToOneDrive = async (req, res) => {
         id: result.fileInfo.id,
         size: result.fileInfo.size,
         lastModified: result.fileInfo.lastModified,
-        mimeType: file.mimetype
-      }
+        mimeType: file.mimetype,
+      },
     };
-    
+
     res.json(response);
-    
+
   } catch (error) {
     console.error('Erreur lors de l\'upload vers OneDrive:', error);
-    
+
     let statusCode = 500;
     let errorMessage = ERROR_MESSAGES.UPLOAD_FAILED;
-    
+
     // Gestion des erreurs spécifiques
     if (error.message.includes('invalid_grant') || error.message.includes('AADSTS7000215')) {
       statusCode = 401;
@@ -139,11 +151,11 @@ const uploadToOneDrive = async (req, res) => {
       statusCode = 400;
       errorMessage = 'Requête invalide. Vérifiez les données envoyées.';
     }
-    
+
     res.status(statusCode).json({
       success: false,
       error: errorMessage,
-      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined,
     });
   }
 };

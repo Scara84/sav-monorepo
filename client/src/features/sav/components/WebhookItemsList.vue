@@ -453,7 +453,7 @@ export default {
     };
 
     // Fonction pour uploader des fichiers sur le backend et obtenir un lien de partage
-    async function uploadToBackend(file, isBase64 = false) {
+    async function uploadToBackend(file, savDossier, isBase64 = false) {
       const formData = new FormData();
       if (isBase64) {
         // Convertir le base64 en Blob pour les fichiers Excel
@@ -468,6 +468,11 @@ export default {
       } else {
         // Pour les images et autres fichiers
         formData.append('file', file);
+      }
+
+      // Ajouter le nom du dossier SAV au formulaire
+      if (savDossier) {
+        formData.append('savDossier', savDossier);
       }
       
       try {
@@ -589,6 +594,7 @@ export default {
         // Vérifier s'il existe des demandes en cours non validées
         if (hasUnfinishedForms.value) {
           showToast('Veuillez finaliser ou annuler toutes les demandes en cours avant de valider', 'error');
+          globalLoading.value = false;
           return;
         }
 
@@ -598,8 +604,15 @@ export default {
         
         if (filledForms.length === 0) {
           showToast('Aucune réclamation validée à soumettre', 'error');
+          globalLoading.value = false;
           return;
         }
+
+        // Créer un nom de dossier unique pour cette demande de SAV
+        const specialMention = (props.facture.specialMention || 'SAV').replace(/[\/\\?%*:|"<>]/g, '-');
+        const now = new Date();
+        const timestamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}-${String(now.getSeconds()).padStart(2, '0')}`;
+        const savDossier = `${specialMention}_${timestamp}`;
 
         // Étape 1 : Upload des images sur le backend
         for (const { form } of filledForms) {
@@ -607,7 +620,7 @@ export default {
             for (let imgObj of form.images) {
               if (imgObj.file && !imgObj.uploadedUrl) {
                 try {
-                  const uploadedUrl = await uploadToBackend(imgObj.file);
+                  const uploadedUrl = await uploadToBackend(imgObj.file, savDossier);
                   imgObj.uploadedUrl = uploadedUrl;
                 } catch (e) {
                   imgObj.uploadError = true;
@@ -654,7 +667,7 @@ export default {
         };
 
         // Upload du fichier Excel sur OneDrive
-        const excelUrl = await uploadToBackend(excelFile, true);
+        const excelUrl = await uploadToBackend(excelFile, savDossier, true);
 
         // Envoi au webhook avec le lien du fichier Excel
         await axios.post(import.meta.env.VITE_WEBHOOK_URL_DATA_SAV, {
