@@ -510,40 +510,60 @@ export default {
 
     // Générer le fichier Excel
     function generateExcelFile(forms, items) {
-      const data = forms.map(({ form, index }) => {
+      const wb = XLSX.utils.book_new();
+
+      const formatAddress = (addr) => {
+        if (!addr || (!addr.address && !addr.city)) return 'N/A';
+        const parts = [addr.address, addr.postal_code, addr.city, addr.country_alpha2].filter(Boolean);
+        return parts.join(', ');
+      };
+
+      // --- Onglet 1: Réclamations SAV ---
+      const savData = forms.map(({ form, index }) => {
         const item = items[index] || {};
         const { code, name } = splitProductLabel(item.label);
         return {
-          'PRENOM NOM': props.facture.customerName || '',
+          'PRENOM NOM': props.facture.customer?.name || '',
           'CODE ARTICLE': code,
           'DESIGNATION': name,
           'QTE': form.quantity || '',
           'UNITE': form.unit || '',
           'CAUSE': form.reason === 'abime' ? 'ABIME' :
-                  form.reason === 'manquant' ? 'MANQUANT' :
-                  form.reason === 'autre' ? 'AUTRE' : '',
-          'AVOIR %': '', // Colonne à remplir manuellement
+                   form.reason === 'casse' ? 'CASSE' :
+                   form.reason === 'manquant' ? 'MANQUANT' :
+                   form.reason === 'erreur' ? 'ERREUR DE PREPARATION' : '',
+          'AVOIR %': form.creditPercentage || '',
           'COMMENTAIRE': form.comment || ''
         };
       });
-
-      const wb = XLSX.utils.book_new();
-      const ws = XLSX.utils.json_to_sheet(data);
-
-      // Ajuster la largeur des colonnes
-      const colWidths = [
-        { wch: 20 }, // PRENOM NOM
+      const wsSav = XLSX.utils.json_to_sheet(savData);
+      wsSav['!cols'] = [
+        { wch: 25 }, // PRENOM NOM
         { wch: 15 }, // CODE ARTICLE
         { wch: 50 }, // DESIGNATION
         { wch: 10 }, // QTE
         { wch: 10 }, // UNITE
-        { wch: 15 }, // CAUSE
+        { wch: 20 }, // CAUSE
         { wch: 10 }, // AVOIR %
-        { wch: 40 }  // COMMENTAIRE
+        { wch: 50 }  // COMMENTAIRE
       ];
-      ws['!cols'] = colWidths;
+      XLSX.utils.book_append_sheet(wb, wsSav, 'Réclamations SAV');
 
-      XLSX.utils.book_append_sheet(wb, ws, 'SAV');
+      // --- Onglet 2: Informations Client ---
+      const customerInfo = {
+        'Nom du client': props.facture.customer?.name,
+        'Email du client': props.facture.customer?.emails?.[0],
+        'Téléphone du client': props.facture.customer?.phone,
+        'Adresse de livraison': formatAddress(props.facture.customer?.delivery_address),
+        'Adresse de facturation': formatAddress(props.facture.customer?.billing_address),
+        'Numéro de facture': props.facture.invoice_number,
+        'Date de facture': props.facture.date,
+        'Mention spéciale': props.facture.special_mention,
+      };
+      const customerData = Object.entries(customerInfo).map(([key, value]) => ({ 'Propriété': key, 'Valeur': value || 'N/A' }));
+      const wsCustomer = XLSX.utils.json_to_sheet(customerData, { skipHeader: true });
+      wsCustomer['!cols'] = [{ wch: 30 }, { wch: 50 }];
+      XLSX.utils.book_append_sheet(wb, wsCustomer, 'Infos Client');
       
       // Convertir en base64
       const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'base64' });
@@ -609,10 +629,12 @@ export default {
         }
 
         // Créer un nom de dossier unique pour cette demande de SAV
-        const specialMention = (props.facture.specialMention || 'SAV').replace(/[\/\\?%*:|"<>]/g, '-');
+        const specialMention = props.facture?.special_mention || '';
+        const sanitizedSpecialMention = specialMention.replace(/[^a-zA-Z0-9_]/g, '_') || 'SANS_MENTION';
+
         const now = new Date();
         const timestamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}-${String(now.getSeconds()).padStart(2, '0')}`;
-        const savDossier = `${specialMention}_${timestamp}`;
+        const savDossier = `SAV_${sanitizedSpecialMention}_${timestamp}`;
 
         // Étape 1 : Upload des images sur le backend
         for (const { form } of filledForms) {
@@ -661,9 +683,10 @@ export default {
 
         // Générer le fichier Excel en base64
         const excelBase64 = generateExcelFile(filledForms, props.items);
+        // Utiliser le même nom de base que le dossier pour le fichier Excel
         const excelFile = {
           content: excelBase64,
-          filename: `SAV_${props.facture.specialMention || 'export'}_${new Date().toISOString().split('T')[0]}.xlsx`
+          filename: `${sanitizedSpecialMention}_${timestamp}.xlsx`
         };
 
         // Upload du fichier Excel sur OneDrive (le lien retourné n'est plus utilisé ici)

@@ -38,6 +38,7 @@ export default {
   },
   data() {
     return {
+      // Data for display in this component
       transformedReference: '',
       email: '',
       invoiceItems: [],
@@ -47,28 +48,8 @@ export default {
       paidStatus: false,
       customerName: '',
       specialMention: '',
+      // Full invoice data object to pass to child component
       facture: {}
-    }
-  },
-  computed: {
-    invoiceInfo() {
-      return {
-        invoiceNumber: this.invoiceNumber,
-        customerId: this.customerId,
-        customerName: this.customerName,
-        email: this.email,
-        paidStatus: this.paidStatus,
-        specialMention: this.specialMention
-      };
-    }
-  },
-  watch: {
-    invoiceInfo: {
-      handler(newVal) {
-        this.facture = newVal;
-      },
-      immediate: true,
-      deep: true
     }
   },
   methods: {
@@ -78,65 +59,46 @@ export default {
     }
   },
   created() {
-    // Retrieve the response string from the query parameters
     const webhookResponseString = this.$route.query.webhookResponse;
-    console.log('Webhook Response String:', webhookResponseString);
 
     if (webhookResponseString) {
       try {
-        // Directly parse the response string as it contains the invoice object
         const invoiceData = JSON.parse(webhookResponseString);
-        console.log('Parsed Response:', invoiceData);
 
-        // --- Assign invoice details ---
-        this.invoiceNumber = invoiceData.invoice_number || 'N/A'; 
-        this.customerId = invoiceData.customer?.source_id || 'N/A'; 
+        // Pass the full invoice object to the child component
+        this.facture = invoiceData;
+
+        // Assign details for display in this component's template
+        this.invoiceNumber = invoiceData.invoice_number || 'N/A';
+        this.customerId = invoiceData.customer?.source_id || 'N/A';
         this.paidStatus = invoiceData.paid || false;
         this.customerName = invoiceData.customer?.name || 'N/A';
-        this.specialMention = invoiceData.special_mention || ''; // Empty if not present
-        console.log('InvoiceDetails.vue:56 Assigned Details - Invoice:', this.invoiceNumber, 'Customer ID:', this.customerId, 'Paid:', this.paidStatus, 'Name:', this.customerName);
-        // --- End Assign invoice details ---
+        this.specialMention = invoiceData.special_mention || '';
+        this.email = this.$route.query.email || invoiceData.customer?.emails?.[0] || '';
 
-        // Check if line_items exist in the parsed data
         if (invoiceData && invoiceData.line_items) {
-          // Filter out specific items based on label
-          const filteredItems = invoiceData.line_items.filter(item => 
-            !item.label.includes('Participation préparation commande') && 
+          const filteredItems = invoiceData.line_items.filter(item =>
+            !item.label.includes('Participation préparation commande') &&
             !item.label.includes('Remise commande précédente') &&
             !item.label.includes('Remise responsable') &&
             !item.label.includes('Remise préparation commande')
           );
-          this.invoiceItems = filteredItems; // Assign filtered items
-          console.log('InvoiceDetails.vue:57 Assigned filtered invoiceItems:', this.invoiceItems);
+          this.invoiceItems = filteredItems;
         } else {
-          console.error('InvoiceDetails.vue:59 line_items not found in the parsed response:', invoiceData);
-          this.invoiceItems = []; // Assign empty array if not found
+          console.error('line_items not found in the parsed response:', invoiceData);
+          this.invoiceItems = [];
           this.parsingError = 'Les articles de la facture n\'ont pas pu être chargés.';
         }
       } catch (error) {
         console.error('Error parsing webhook response:', error, 'Raw response:', webhookResponseString);
-        this.invoiceItems = []; // Assign empty array on error
-        // Optionally: display an error message to the user
         this.parsingError = 'Erreur lors de la récupération des détails de la facture.';
-        this.invoiceNumber = 'Erreur'; 
-        this.customerId = 'Erreur';    
-        this.paidStatus = false;
-        this.customerName = 'Erreur';
-        this.specialMention = '';
       }
     } else {
       console.warn('No webhook response found in query parameters.');
-      this.invoiceItems = [];
       this.parsingError = 'Aucune donnée de facture reçue.';
-      this.invoiceNumber = 'N/A';
-      this.customerId = 'N/A';
-      this.paidStatus = false;
-      this.customerName = 'N/A';
-      this.specialMention = '';
     }
 
     this.transformedReference = this.$route.query.transformedReference || ''
-    this.email = this.$route.query.email || ''
   }
 }
 </script>
