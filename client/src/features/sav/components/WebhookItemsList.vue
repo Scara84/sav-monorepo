@@ -1,5 +1,14 @@
 <template>
   <div class="webhook-items">
+    <!-- Snackbar notification bottom-right -->
+    <transition name="fade">
+      <div v-if="toastMessage" :class="['fixed right-6 bottom-6 z-50 flex items-center gap-3 px-5 py-3 rounded shadow-lg min-w-[240px]',
+        toastType === 'success' ? 'bg-green-600 text-white' : 'bg-red-600 text-white']">
+        <span v-if="toastType === 'success'" class="inline-block"><svg xmlns='http://www.w3.org/2000/svg' class='h-6 w-6' fill='none' viewBox='0 0 24 24' stroke='currentColor'><path stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M5 13l4 4L19 7' /></svg></span>
+        <span v-else class="inline-block"><svg xmlns='http://www.w3.org/2000/svg' class='h-6 w-6' fill='none' viewBox='0 0 24 24' stroke='currentColor'><path stroke-linecap='round' stroke-linejoin='round' stroke-width='2' d='M12 8v4m0 4h.01M21 12A9 9 0 11 3 12a9 9 0 0118 0z' /></svg></span>
+        <span>{{ toastMessage }}</span>
+      </div>
+    </transition>
     <ul class="space-y-6">
       <li v-for="(item, index) in items" :key="index" class="bg-white p-4 rounded-lg shadow" style="font-family:var(--font-main);margin-bottom:1.5em;">
         <!-- Nom du produit sur toute la largeur -->
@@ -14,10 +23,6 @@
           <div class="flex flex-col">
             <span class="text-sm font-medium text-gray-500">Unité</span>
             <span class="text-gray-900">{{ formatValue('unit', item.unit) }}</span>
-          </div>
-          <div class="flex flex-col">
-            <span class="text-sm font-medium text-gray-500">TVA</span>
-            <span class="text-gray-900">{{ formatValue('vat_rate', item.vat_rate) }}</span>
           </div>
           <div class="flex flex-col">
             <span class="text-sm font-medium text-gray-500">Prix Unitaire</span>
@@ -36,8 +41,7 @@
             class="btn-main"
             :style="getSavForm(index).showForm ? 'background:#e23a3a;' : ''"
             style="margin-top:1em;font-size:1em;min-width:200px;">
-
-            {{ getSavForm(index).showForm ? 'Annuler la demande' : 'Faire une demande SAV' }}
+            {{ getSavForm(index).showForm ? 'Annuler la réclamation' : 'Signaler un problème' }}
           </button>
         </div>
 
@@ -157,8 +161,10 @@
                   type="button"
                   @click="validateItemForm(index)"
                   class="px-4 py-2 text-sm font-medium text-white bg-orange-600 rounded-md hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500"
+                  :disabled="getSavForm(index).loading"
                 >
-                  Valider
+                  <span v-if="getSavForm(index).loading">Envoi...</span>
+                  <span v-else>Valider la réclamation</span>
                 </button>
               </template>
               <template v-else>
@@ -167,7 +173,7 @@
                   @click="editItemForm(index)"
                   class="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
                 >
-                  Modifier
+                  Modifier la réclamation
                 </button>
               </template>
             </div>
@@ -189,8 +195,10 @@
       <button
         @click="submitAllForms"
         class="px-6 py-3 text-base font-medium text-white bg-green-600 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
+        :disabled="globalLoading"
       >
-        Valider toutes les demandes SAV
+        <span v-if="globalLoading">Envoi...</span>
+        <span v-else>Valider toutes les réclamations</span>
       </button>
     </div>
   </div>
@@ -217,6 +225,17 @@ export default {
   },
   setup(props, { emit }) {
     const savForms = ref({});
+    const toastMessage = ref('');
+    const toastType = ref('success');
+    const globalLoading = ref(false);
+
+    const showToast = (msg, type = 'success') => {
+      toastMessage.value = msg;
+      toastType.value = type;
+      setTimeout(() => {
+        toastMessage.value = '';
+      }, 2500);
+    };
 
     const hasFilledForms = computed(() => {
       return Object.values(savForms.value).some(form => form.filled && form.showForm);
@@ -333,29 +352,33 @@ export default {
       }
     };
 
-    const validateItemForm = (index) => {
+    const validateItemForm = async (index) => {
       const form = savForms.value[index];
-      
-      // Vérification des champs requis
-      if (!form.quantity || !form.reason) {
-        console.error('Veuillez remplir tous les champs requis');
-        return;
+      if (form.loading) return;
+      form.loading = true;
+      try {
+        // Vérification des champs requis
+        if (!form.quantity || !form.reason) {
+          showToast('Veuillez remplir tous les champs requis', 'error');
+          return;
+        }
+        if (form.reason === 'abime' && (!form.images || form.images.length === 0)) {
+          showToast('Veuillez ajouter au moins une photo du produit abîmé', 'error');
+          return;
+        }
+        // Marquer le formulaire comme rempli et le griser
+        form.filled = true;
+        form.showForm = true;  // Garder le formulaire visible mais grisé
+        showToast('Réclamation enregistrée pour cette ligne', 'success');
+      } finally {
+        form.loading = false;
       }
-
-      // Si la raison est "abime", vérifier qu'au moins une image est uploadée
-      if (form.reason === 'abime' && (!form.images || form.images.length === 0)) {
-        console.error('Veuillez ajouter au moins une photo du produit abîmé');
-        return;
-      }
-
-      // Marquer le formulaire comme rempli et le griser
-      form.filled = true;
-      form.showForm = true;  // Garder le formulaire visible mais grisé
     };
 
     const editItemForm = (index) => {
       const savForm = getSavForm(index);
       savForm.filled = false;
+      showToast('Réclamation modifiable à nouveau', 'success');
     };
 
     const deleteItemForm = (index) => {
@@ -555,10 +578,12 @@ export default {
     }
 
     const submitAllForms = async () => {
+      if (globalLoading.value) return;
+      globalLoading.value = true;
       try {
         // Vérifier s'il existe des demandes en cours non validées
         if (hasUnfinishedForms.value) {
-          console.error('Veuillez finaliser ou annuler toutes les demandes en cours avant de valider');
+          showToast('Veuillez finaliser ou annuler toutes les demandes en cours avant de valider', 'error');
           return;
         }
 
@@ -567,7 +592,7 @@ export default {
           .map(([index, form]) => ({ form, index: parseInt(index) }));
         
         if (filledForms.length === 0) {
-          console.error('Aucune demande SAV validée à soumettre');
+          showToast('Aucune réclamation validée à soumettre', 'error');
           return;
         }
 
@@ -580,8 +605,8 @@ export default {
                   const uploadedUrl = await uploadToBackend(imgObj.file);
                   imgObj.uploadedUrl = uploadedUrl;
                 } catch (e) {
-                  console.error('Erreur upload backend:', e);
                   imgObj.uploadError = true;
+                  showToast('Erreur lors de l\'upload d\'une image', 'error');
                 }
               }
             }
@@ -637,9 +662,11 @@ export default {
           form.showForm = false;
         });
         emit('sav-submitted');
+        showToast('Toutes les réclamations ont été envoyées', 'success');
       } catch (error) {
-        console.error('Erreur lors de l\'envoi des données:', error);
-        throw error;
+        showToast("Erreur lors de l'envoi des réclamations", 'error');
+      } finally {
+        globalLoading.value = false;
       }
     };
 
@@ -657,7 +684,11 @@ export default {
       deleteItemForm,
       handleImageUpload,
       removeImage,
-      submitAllForms
+      submitAllForms,
+      toastMessage,
+      toastType,
+      globalLoading,
+      showToast
     };
   }
 }
