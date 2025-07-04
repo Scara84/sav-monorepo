@@ -9,6 +9,11 @@
         <span>{{ toastMessage }}</span>
       </div>
     </transition>
+    <!-- Encart d'aide process SAV -->
+    <div class="mb-4 p-4 bg-blue-50 border-l-4 border-blue-400 text-blue-900 rounded">
+      <strong>Comment faire une réclamation&nbsp;?</strong><br>
+      Pour chaque produit concerné, cliquez sur <b>«&nbsp;Signaler un problème&nbsp;»</b>, remplissez le formulaire puis cliquez sur le bouton <b>«&nbsp;Valider la réclamation&nbsp;»</b> pour enregistrer votre demande. Une fois toutes vos réclamations saisies et validées, cliquez sur le bouton <b>«&nbsp;Valider toutes les réclamations&nbsp;»</b> en bas de la page pour envoyer votre demande SAV.
+    </div>
     <ul class="space-y-6">
       <li v-for="(item, index) in items" :key="index" class="bg-white p-4 rounded-lg shadow" style="font-family:var(--font-main);margin-bottom:1.5em;">
         <!-- Nom du produit sur toute la largeur -->
