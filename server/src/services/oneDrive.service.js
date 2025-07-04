@@ -106,12 +106,12 @@ class OneDriveService {
   }
 
   /**
-   * Upload un fichier vers OneDrive
+   * Upload un fichier vers OneDrive sans générer de lien de partage.
    * @param {Buffer} fileBuffer - Contenu du fichier à uploader
    * @param {string} fileName - Nom du fichier
-   * @param {string} folderName - Nom du dossier de destination (par défaut: MS_GRAPH.DEFAULT_FOLDER)
-   * @param {string} contentType - Type MIME du fichier (par défaut: 'application/octet-stream')
-   * @returns {Promise<Object>} - Réponse contenant les informations du fichier uploadé et son lien de partage
+   * @param {string} folderName - Nom du dossier de destination
+   * @param {string} contentType - Type MIME du fichier
+   * @returns {Promise<Object>} - Réponse contenant les informations du fichier uploadé
    */
   async uploadFile(fileBuffer, fileName, folderName = MS_GRAPH.DEFAULT_FOLDER, contentType = 'application/octet-stream') {
     if (!this.initialized) await this.initialize();
@@ -133,20 +133,15 @@ class OneDriveService {
       
       console.log('Fichier uploadé avec succès:', response.webUrl);
       
-      // Créer un lien de partage
-      const shareLink = await this.createShareLink(response.id);
-      
       return {
         success: true,
         message: 'Fichier uploadé avec succès',
         file: response,
         webUrl: response.webUrl,
-        shareLink: shareLink.link.webUrl,
-        shareId: shareLink.id,
         fileInfo: {
           name: response.name,
-          webUrl: shareLink.link.webUrl || response.webUrl,
-          downloadUrl: response['@microsoft.graph.downloadUrl'] || shareLink.link.webUrl,
+          webUrl: response.webUrl,
+          downloadUrl: response['@microsoft.graph.downloadUrl'],
           id: response.id,
           size: response.size,
           lastModified: response.lastModifiedDateTime
@@ -165,6 +160,38 @@ class OneDriveService {
         } catch (e) {
           console.error('Corps de l\'erreur:', error.body);
         }
+      }
+      throw error;
+    }
+  }
+
+  /**
+   * Crée un lien de partage pour un dossier spécifié par son chemin.
+   * @param {string} path - Chemin complet du dossier depuis la racine (ex: 'SAV_Images/dossier_specifique')
+   * @returns {Promise<Object>} - L'objet du lien de partage créé.
+   */
+  async getShareLinkForFolderPath(path) {
+    if (!this.initialized) await this.initialize();
+    if (!path || path.trim() === '') {
+      throw new Error('Le chemin du dossier ne peut pas être vide.');
+    }
+
+    try {
+      // 1. Get the folder item by its path from the root.
+      const folder = await this.graphClient
+        .api(`${MS_GRAPH.BASE_URL}/${MS_GRAPH.DRIVE_ID}/root:/${encodeURIComponent(path)}`)
+        .get();
+
+      if (!folder || !folder.id) {
+        throw new Error(`Dossier non trouvé au chemin : ${path}`);
+      }
+
+      // 2. Create a share link for the folder item.
+      return this.createShareLink(folder.id);
+    } catch (error) {
+      console.error(`Erreur lors de la création du lien de partage pour le dossier '${path}':`, error);
+      if (error.statusCode === 404) {
+        throw new Error(`Dossier non trouvé au chemin : ${path}`);
       }
       throw error;
     }

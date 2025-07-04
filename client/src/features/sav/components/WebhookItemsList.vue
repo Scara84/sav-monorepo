@@ -452,7 +452,7 @@ export default {
       form.images.splice(imageIndex, 1);
     };
 
-    // Fonction pour uploader des fichiers sur le backend et obtenir un lien de partage
+    // Fonction pour uploader des fichiers sur le backend
     async function uploadToBackend(file, savDossier, isBase64 = false) {
       const formData = new FormData();
       if (isBase64) {
@@ -478,17 +478,17 @@ export default {
       try {
         const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000';
         const response = await axios.post(`${apiUrl}/api/upload-onedrive`, formData, {
-          headers: {
-            'Content-Type': 'multipart/form-data'
-          }
+          headers: { 'Content-Type': 'multipart/form-data' }
         });
         
-        // Retourner l'URL de partage si disponible, sinon l'URL directe
-        return response.data.file.shareLink || response.data.file.url;
-        
+        if (response.data && response.data.success) {
+          return response.data.file.url; // Retourne l'URL directe du fichier
+        } else {
+          throw new Error(response.data.error || 'Upload failed');
+        }
       } catch (error) {
-        console.error('Erreur lors de l\'upload du fichier:', error);
-        throw new Error(`Échec de l'upload du fichier: ${error.response?.data?.error || error.message}`);
+        console.error(`Erreur lors de l'upload du fichier ${isBase64 ? file.filename : file.name}:`, error);
+        throw error;
       }
     }
 
@@ -666,15 +666,24 @@ export default {
           filename: `SAV_${props.facture.specialMention || 'export'}_${new Date().toISOString().split('T')[0]}.xlsx`
         };
 
-        // Upload du fichier Excel sur OneDrive
-        const excelUrl = await uploadToBackend(excelFile, savDossier, true);
+        // Upload du fichier Excel sur OneDrive (le lien retourné n'est plus utilisé ici)
+        await uploadToBackend(excelFile, savDossier, true);
 
-        // Envoi au webhook avec le lien du fichier Excel
+        // Étape 3 : Obtenir le lien de partage pour le dossier global
+        const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+        const response = await axios.post(`${apiUrl}/api/folder-share-link`, { savDossier });
+
+        if (!response.data || !response.data.success) {
+          throw new Error(response.data.error || 'Impossible de récupérer le lien de partage du dossier.');
+        }
+        const folderShareLink = response.data.shareLink;
+
+        // Étape 4 : Envoi au webhook avec le lien du dossier
         await axios.post(import.meta.env.VITE_WEBHOOK_URL_DATA_SAV, {
           htmlTable,
           forms: payload,
           facture: props.facture,
-          excelFileUrl: excelUrl
+          dossier_sav_url: folderShareLink
         });
         filledForms.forEach(({ form }) => {
           form.showForm = false;

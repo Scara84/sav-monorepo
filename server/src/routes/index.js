@@ -1,6 +1,6 @@
 import { Router } from 'express';
 import uploadController from '../controllers/upload.controller.js';
-const { testEndpoint, handleFileUpload, uploadToOneDrive } = uploadController;
+const { testEndpoint, handleFileUpload, uploadToOneDrive, getSavFolderShareLink } = uploadController;
 
 const router = Router();
 
@@ -17,6 +17,9 @@ router.get('/test', testEndpoint);
 router.post('/upload', handleFileUpload, uploadToOneDrive);
 // Alias pour la compatibilité avec le client existant
 router.post('/upload-onedrive', handleFileUpload, uploadToOneDrive);
+
+// Route pour obtenir le lien de partage d'un dossier
+router.post('/folder-share-link', getSavFolderShareLink);
 
 // Gestion des erreurs 404
 router.use((req, res) => {

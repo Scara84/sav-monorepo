@@ -124,7 +124,6 @@ const uploadToOneDrive = async (req, res) => {
       file: {
         name: result.fileInfo.name,
         url: result.webUrl,
-        shareLink: result.shareLink,
         id: result.fileInfo.id,
         size: result.fileInfo.size,
         lastModified: result.fileInfo.lastModified,
@@ -161,6 +160,46 @@ const uploadToOneDrive = async (req, res) => {
 };
 
 /**
+ * Crée et retourne un lien de partage pour un dossier de SAV spécifique.
+ */
+const getSavFolderShareLink = async (req, res) => {
+  try {
+    const oneDriveService = getOneDriveService();
+    const { savDossier } = req.body;
+
+    if (!savDossier) {
+      return res.status(400).json({
+        success: false,
+        error: "Le nom du dossier de SAV ('savDossier') est requis.",
+      });
+    }
+
+    const rootFolderName = process.env.ONEDRIVE_FOLDER || 'SAV_Images';
+    const folderPath = `${rootFolderName}/${savDossier}`;
+
+    const shareLinkData = await oneDriveService.getShareLinkForFolderPath(folderPath);
+
+    if (!shareLinkData || !shareLinkData.link || !shareLinkData.link.webUrl) {
+      throw new Error('La réponse de l\'API ne contient pas de lien de partage valide.');
+    }
+
+    res.json({
+      success: true,
+      shareLink: shareLinkData.link.webUrl,
+      id: shareLinkData.id,
+    });
+
+  } catch (error) {
+    console.error(`Erreur lors de la récupération du lien de partage pour le dossier ${req.body.savDossier}:`, error);
+    res.status(500).json({
+      success: false,
+      error: 'Erreur lors de la création du lien de partage pour le dossier.',
+      details: error.message,
+    });
+  }
+};
+
+/**
  * Endpoint de test
  */
 const testEndpoint = (req, res) => {
@@ -171,10 +210,11 @@ const testEndpoint = (req, res) => {
   });
 };
 
-export { handleFileUpload, uploadToOneDrive, testEndpoint };
+export { handleFileUpload, uploadToOneDrive, testEndpoint, getSavFolderShareLink };
 
 export default {
   handleFileUpload,
   uploadToOneDrive,
-  testEndpoint
+  testEndpoint,
+  getSavFolderShareLink
 };
