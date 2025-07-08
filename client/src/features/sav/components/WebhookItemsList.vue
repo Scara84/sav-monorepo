@@ -551,6 +551,7 @@ export default {
 
       // --- Onglet 2: Informations Client ---
       const customerInfo = {
+        'ID Client': props.facture.customer?.source_id,
         'Nom du client': props.facture.customer?.name,
         'Email du client': props.facture.customer?.emails?.[0],
         'Téléphone du client': props.facture.customer?.phone,
