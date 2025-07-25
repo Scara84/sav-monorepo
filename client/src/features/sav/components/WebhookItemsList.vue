@@ -566,18 +566,29 @@ export default {
       XLSX.utils.book_append_sheet(wb, wsSav, 'Réclamations SAV');
 
       // --- Onglet 2: Informations Client ---
-      const customerInfo = {
-        'ID Client': props.facture.customer?.source_id,
-        'Nom du client': props.facture.customer?.name,
-        'Email du client': props.facture.customer?.emails?.[0],
-        'Téléphone du client': props.facture.customer?.phone,
-        'Adresse de livraison': formatAddress(props.facture.customer?.delivery_address),
-        'Adresse de facturation': formatAddress(props.facture.customer?.billing_address),
-        'Numéro de facture': props.facture.invoice_number,
-        'Date de facture': props.facture.date,
-        'Mention spéciale': props.facture.special_mention,
-      };
-      const customerData = Object.entries(customerInfo).map(([key, value]) => ({ 'Propriété': key, 'Valeur': value || 'N/A' }));
+      const specialMention = props.facture.special_mention || '';
+      let orderNumber = '';
+      if (specialMention) {
+        const lastIndex = specialMention.lastIndexOf('_');
+        if (lastIndex !== -1) {
+          orderNumber = specialMention.substring(0, lastIndex);
+        } else {
+          orderNumber = specialMention;
+        }
+      }
+
+      const customerData = [
+        { 'Propriété': 'ID Client', 'Valeur': props.facture.customer?.source_id || 'N/A' },
+        { 'Propriété': 'Nom du client', 'Valeur': props.facture.customer?.name || 'N/A' },
+        { 'Propriété': 'Email du client', 'Valeur': props.facture.customer?.emails?.[0] || 'N/A' },
+        { 'Propriété': 'Téléphone du client', 'Valeur': props.facture.customer?.phone || 'N/A' },
+        { 'Propriété': 'Adresse de livraison', 'Valeur': formatAddress(props.facture.customer?.delivery_address) },
+        { 'Propriété': 'Adresse de facturation', 'Valeur': formatAddress(props.facture.customer?.billing_address) },
+        { 'Propriété': 'Numéro de facture', 'Valeur': props.facture.invoice_number || 'N/A' },
+        { 'Propriété': 'Date de facture', 'Valeur': props.facture.date || 'N/A' },
+        { 'Propriété': 'Mention spéciale', 'Valeur': specialMention },
+        { 'Propriété': 'Numéro de commande', 'Valeur': orderNumber },
+      ];
       const wsCustomer = XLSX.utils.json_to_sheet(customerData, { skipHeader: true });
       wsCustomer['!cols'] = [{ wch: 30 }, { wch: 50 }];
       XLSX.utils.book_append_sheet(wb, wsCustomer, 'Infos Client');
