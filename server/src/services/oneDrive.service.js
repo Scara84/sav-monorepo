@@ -6,33 +6,21 @@ import { MS_GRAPH, ERROR_MESSAGES } from '../config/constants.js';
 class OneDriveService {
   constructor() {
     this.msalClient = new ConfidentialClientApplication(config.msal);
-    this.graphClient = null;
     this.drivePath = config.microsoft.drivePath;
-    this.initialized = false;
-  }
 
-  /**
-   * Initialise le client Graph avec un token d'accès
-   */
-  async initialize() {
-    if (this.initialized) return true;
-
-    try {
-      const token = await this.getAccessToken();
-      
-      this.graphClient = Client.init({
-        authProvider: (done) => {
-          done(null, token);
+    // Initialiser le client Graph avec un authProvider dynamique.
+    // Cela garantit qu'un token valide est récupéré pour chaque requête.
+    this.graphClient = Client.init({
+      authProvider: async (done) => {
+        try {
+          const accessToken = await this.getAccessToken();
+          done(null, accessToken);
+        } catch (error) {
+          console.error('Erreur lors de la récupération du token pour le GraphClient :', error);
+          done(error, null);
         }
-      });
-
-      this.initialized = true;
-      console.log('OneDriveService initialisé avec succès');
-      return true;
-    } catch (error) {
-      console.error('Erreur lors de l\'initialisation de OneDriveService:', error);
-      throw new Error(ERROR_MESSAGES.AUTH_FAILED);
-    }
+      },
+    });
   }
 
   /**
@@ -59,7 +47,6 @@ class OneDriveService {
    * Vérifie si un dossier existe et le crée si nécessaire
    */
   async ensureFolderExists(path) {
-    if (!this.initialized) await this.initialize();
     if (!path || path.trim() === '') {
       console.log('Chemin de dossier vide ou invalide, utilisation du dossier racine.');
       return 'root';
@@ -114,7 +101,6 @@ class OneDriveService {
    * @returns {Promise<Object>} - Réponse contenant les informations du fichier uploadé
    */
   async uploadFile(fileBuffer, fileName, folderName = MS_GRAPH.DEFAULT_FOLDER, contentType = 'application/octet-stream') {
-    if (!this.initialized) await this.initialize();
     
     try {
       console.log(`Tentative d'upload du fichier: ${fileName} vers le dossier: ${folderName}`);
@@ -171,7 +157,6 @@ class OneDriveService {
    * @returns {Promise<Object>} - L'objet du lien de partage créé.
    */
   async getShareLinkForFolderPath(path) {
-    if (!this.initialized) await this.initialize();
     if (!path || path.trim() === '') {
       throw new Error('Le chemin du dossier ne peut pas être vide.');
     }
@@ -207,7 +192,6 @@ class OneDriveService {
    * @returns {Promise<Object>} - Réponse contenant le lien de partage
    */
   async createShareLink(itemId, type = 'view', scope = 'anonymous', password = null, expirationDateTime = null) {
-    if (!this.initialized) await this.initialize();
     
     try {
       const payload = {

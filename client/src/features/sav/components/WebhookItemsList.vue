@@ -519,12 +519,24 @@ export default {
       };
 
       // --- Onglet 1: Réclamations SAV ---
+      const headers = [
+        'PRENOM NOM',
+        'DESIGNATION',
+        'QTE',
+        'UNITE',
+        'CAUSE',
+        'AVOIR %',
+        'COMMENTAIRE',
+        'CODE ARTICLE',
+        'PRIX UNIT'
+      ];
+
       const savData = forms.map(({ form, index }) => {
         const item = items[index] || {};
         const { code, name } = splitProductLabel(item.label);
+        const unitPrice = (item.amount && item.quantity) ? (item.amount / item.quantity) : undefined;
         return {
           'PRENOM NOM': props.facture.customer?.name || '',
-          'CODE ARTICLE': code,
           'DESIGNATION': name,
           'QTE': form.quantity || '',
           'UNITE': form.unit || '',
@@ -533,19 +545,23 @@ export default {
                    form.reason === 'manquant' ? 'MANQUANT' :
                    form.reason === 'erreur' ? 'ERREUR DE PREPARATION' : '',
           'AVOIR %': form.creditPercentage || '',
-          'COMMENTAIRE': form.comment || ''
+          'COMMENTAIRE': form.comment || '',
+          'CODE ARTICLE': code,
+          'PRIX UNIT': unitPrice
         };
       });
-      const wsSav = XLSX.utils.json_to_sheet(savData);
+
+      const wsSav = XLSX.utils.json_to_sheet(savData, { header: headers });
       wsSav['!cols'] = [
         { wch: 25 }, // PRENOM NOM
-        { wch: 15 }, // CODE ARTICLE
         { wch: 50 }, // DESIGNATION
         { wch: 10 }, // QTE
         { wch: 10 }, // UNITE
         { wch: 20 }, // CAUSE
         { wch: 10 }, // AVOIR %
-        { wch: 50 }  // COMMENTAIRE
+        { wch: 50 }, // COMMENTAIRE
+        { wch: 15 }, // CODE ARTICLE
+        { wch: 15 }  // PRIX UNIT
       ];
       XLSX.utils.book_append_sheet(wb, wsSav, 'Réclamations SAV');
 
