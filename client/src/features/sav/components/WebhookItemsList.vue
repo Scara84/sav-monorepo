@@ -735,7 +735,8 @@ export default {
         totalFiles.value = allFiles.length + 1; // +1 pour le fichier Excel
         uploadedFiles.value = 0;
         
-        // Upload en parallèle avec progress
+        // Upload en parallèle avec progress et gestion d'erreur
+        let uploadErrors = [];
         const uploadPromises = allFiles.map(async (file) => {
           const imgObj = fileMapping.get(file);
           try {
@@ -747,17 +748,27 @@ export default {
             uploadedFiles.value++;
           } catch (e) {
             imgObj.uploadError = true;
-            showToast(`Erreur lors de l'upload de ${file.name}`, 'error');
+            uploadErrors.push({ fileName: file.name, error: e.message || 'Erreur inconnue' });
+            console.error(`Erreur upload ${file.name}:`, e);
           }
         });
         
         await Promise.all(uploadPromises);
         
-        // Délai minimum de 1 seconde pour que l'utilisateur voie la progress bar
+        // Délai minimum de 1.5 secondes pour que l'utilisateur voie la progress bar
         const uploadDuration = Date.now() - uploadStartTime;
-        const minDisplayTime = 1500; // 1.5 secondes minimum
+        const minDisplayTime = 1500;
         if (uploadDuration < minDisplayTime) {
           await new Promise(resolve => setTimeout(resolve, minDisplayTime - uploadDuration));
+        }
+        
+        // Vérifier si des uploads ont échoué
+        if (uploadErrors.length > 0) {
+          isUploading.value = false;
+          globalLoading.value = false;
+          const errorDetails = uploadErrors.map(e => e.fileName).join(', ');
+          showToast(`❌ Échec upload de ${uploadErrors.length} fichier(s): ${errorDetails}. Veuillez réessayer.`, 'error');
+          return; // ARRÊTER le processus
         }
 
         // Générer le tableau HTML pour Make.com
