@@ -1,5 +1,9 @@
 import { Router } from 'express';
 import uploadController from '../controllers/upload.controller.js';
+import { uploadLimiter, strictLimiter } from '../middlewares/rateLimiter.js';
+import { authenticateApiKey } from '../middlewares/auth.js';
+import { validateUpload, validateShareLink, handleValidationErrors } from '../middlewares/validator.js';
+
 const { testEndpoint, handleFileUpload, uploadToOneDrive, getSavFolderShareLink } = uploadController;
 
 const router = Router();
@@ -10,16 +14,37 @@ router.use((req, res, next) => {
   next();
 });
 
-// Route de test
+// Route de test (pas de rate limiting ni d'auth)
 router.get('/test', testEndpoint);
 
-// Routes d'upload de fichiers
-router.post('/upload', handleFileUpload, uploadToOneDrive);
-// Alias pour la compatibilité avec le client existant
-router.post('/upload-onedrive', handleFileUpload, uploadToOneDrive);
+// Routes d'upload de fichiers (avec auth, rate limiting et validation)
+router.post('/upload', 
+  authenticateApiKey,
+  uploadLimiter,
+  handleFileUpload,
+  validateUpload,
+  handleValidationErrors,
+  uploadToOneDrive
+);
 
-// Route pour obtenir le lien de partage d'un dossier
-router.post('/folder-share-link', getSavFolderShareLink);
+// Alias pour la compatibilité avec le client existant
+router.post('/upload-onedrive',
+  authenticateApiKey,
+  uploadLimiter,
+  handleFileUpload,
+  validateUpload,
+  handleValidationErrors,
+  uploadToOneDrive
+);
+
+// Route pour obtenir le lien de partage d'un dossier (avec auth, strict rate limiting et validation)
+router.post('/folder-share-link',
+  authenticateApiKey,
+  strictLimiter,
+  validateShareLink,
+  handleValidationErrors,
+  getSavFolderShareLink
+);
 
 // Gestion des erreurs 404
 router.use((req, res) => {

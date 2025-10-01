@@ -1,5 +1,8 @@
 import multer from 'multer';
 import OneDriveService from '../services/oneDrive.service.js';
+import { sanitizeFolderName } from '../middlewares/validator.js';
+import { ERROR_MESSAGES } from '../config/constants.js';
+
 // Instanciation paresseuse (lazy instantiation) du service OneDrive
 // pour éviter les erreurs au démarrage si les variables d'environnement sont manquantes.
 const getOneDriveService = (() => {
@@ -11,7 +14,6 @@ const getOneDriveService = (() => {
     return instance;
   };
 })();
-import { ERROR_MESSAGES } from '../config/constants.js';
 
 // Configuration de multer pour le stockage en mémoire
 const storage = multer.memoryStorage();
@@ -95,17 +97,19 @@ const uploadToOneDrive = async (req, res) => {
     const { file } = req;
     const { savDossier } = req.body; // Nom du dossier unique pour la demande de SAV
 
-    // Valider la présence du nom de dossier
-    if (!savDossier) {
+    // Sanitize le nom du dossier pour éviter les path traversal attacks
+    const sanitizedFolder = sanitizeFolderName(savDossier);
+    
+    if (!sanitizedFolder) {
       return res.status(400).json({
         success: false,
-        error: "Le nom du dossier de SAV ('savDossier') est requis.",
+        error: "Le nom du dossier de SAV contient des caractères invalides.",
       });
     }
 
     const rootFolderName = process.env.ONEDRIVE_FOLDER || 'SAV_Images';
     // Construire le chemin complet du dossier de destination
-    const destinationPath = `${rootFolderName}/${savDossier}`;
+    const destinationPath = `${rootFolderName}/${sanitizedFolder}`;
 
     console.log(`Tentative d'upload du fichier: ${file.originalname} (${file.size} octets) vers ${destinationPath}`);
 
@@ -167,15 +171,18 @@ const getSavFolderShareLink = async (req, res) => {
     const oneDriveService = getOneDriveService();
     const { savDossier } = req.body;
 
-    if (!savDossier) {
+    // Sanitize le nom du dossier pour éviter les path traversal attacks
+    const sanitizedFolder = sanitizeFolderName(savDossier);
+    
+    if (!sanitizedFolder) {
       return res.status(400).json({
         success: false,
-        error: "Le nom du dossier de SAV ('savDossier') est requis.",
+        error: "Le nom du dossier de SAV contient des caractères invalides.",
       });
     }
 
     const rootFolderName = process.env.ONEDRIVE_FOLDER || 'SAV_Images';
-    const folderPath = `${rootFolderName}/${savDossier}`;
+    const folderPath = `${rootFolderName}/${sanitizedFolder}`;
 
     const shareLinkData = await oneDriveService.getShareLinkForFolderPath(folderPath);
 
