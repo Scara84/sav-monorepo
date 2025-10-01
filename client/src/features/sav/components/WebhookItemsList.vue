@@ -9,18 +9,29 @@
         <span>{{ toastMessage }}</span>
       </div>
     </transition>
-    <!-- Progress bar pour les uploads -->
+    <!-- Progress bar pour les uploads (AMÉLIORÉ - Plus visible) -->
     <transition name="fade">
-      <div v-if="isUploading" class="mb-4 p-4 bg-white border border-blue-200 rounded-lg shadow-sm">
-        <div class="flex items-center justify-between mb-2">
-          <span class="text-sm font-medium text-gray-700">Upload en cours...</span>
-          <span class="text-sm text-gray-600">{{ uploadedFiles }}/{{ totalFiles }} fichiers</span>
+      <div v-if="isUploading" class="mb-6 p-6 bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-300 rounded-xl shadow-lg">
+        <div class="flex items-center justify-between mb-3">
+          <div class="flex items-center gap-2">
+            <svg class="animate-spin h-5 w-5 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+            </svg>
+            <span class="text-base font-bold text-blue-800">📤 Upload en cours...</span>
+          </div>
+          <span class="text-base font-bold text-blue-700 bg-white px-3 py-1 rounded-full">{{ uploadedFiles }}/{{ totalFiles }} fichiers</span>
         </div>
-        <div class="w-full bg-gray-200 rounded-full h-2.5 mb-2">
-          <div class="bg-blue-600 h-2.5 rounded-full transition-all duration-300" 
-               :style="{ width: (uploadedFiles / totalFiles * 100) + '%' }"></div>
+        <div class="w-full bg-gray-300 rounded-full h-4 mb-3 overflow-hidden shadow-inner">
+          <div class="bg-gradient-to-r from-blue-500 to-indigo-600 h-4 rounded-full transition-all duration-500 ease-out flex items-center justify-end pr-2" 
+               :style="{ width: (uploadedFiles / totalFiles * 100) + '%' }">
+            <span v-if="uploadedFiles > 0" class="text-xs font-bold text-white">{{ Math.round(uploadedFiles / totalFiles * 100) }}%</span>
+          </div>
         </div>
-        <p class="text-xs text-gray-500 truncate">{{ currentUploadFile }}</p>
+        <div class="flex items-center gap-2">
+          <span class="text-sm font-medium text-gray-700">📁 Fichier actuel:</span>
+          <p class="text-sm text-gray-900 font-semibold truncate flex-1">{{ currentUploadFile }}</p>
+        </div>
       </div>
     </transition>
     
@@ -704,6 +715,7 @@ export default {
 
         // Étape 1 : Upload des images sur le backend (en parallèle)
         isUploading.value = true;
+        const uploadStartTime = Date.now(); // Pour délai minimum
         
         // Collecter tous les fichiers à uploader
         const allFiles = [];
@@ -740,6 +752,13 @@ export default {
         });
         
         await Promise.all(uploadPromises);
+        
+        // Délai minimum de 1 seconde pour que l'utilisateur voie la progress bar
+        const uploadDuration = Date.now() - uploadStartTime;
+        const minDisplayTime = 1500; // 1.5 secondes minimum
+        if (uploadDuration < minDisplayTime) {
+          await new Promise(resolve => setTimeout(resolve, minDisplayTime - uploadDuration));
+        }
 
         // Générer le tableau HTML pour Make.com
         const htmlTable = buildSavHtmlTable(filledForms, props.items);
