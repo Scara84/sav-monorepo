@@ -477,9 +477,14 @@ export default {
       
       try {
         const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000';
-        const response = await axios.post(`${apiUrl}/api/upload-onedrive`, formData, {
-          headers: { 'Content-Type': 'multipart/form-data' }
-        });
+        const apiKey = import.meta.env.VITE_API_KEY;
+        
+        const headers = { 'Content-Type': 'multipart/form-data' };
+        if (apiKey) {
+          headers['X-API-Key'] = apiKey;
+        }
+        
+        const response = await axios.post(`${apiUrl}/api/upload-onedrive`, formData, { headers });
         
         if (response.data && response.data.success) {
           return response.data.file.url; // Retourne l'URL directe du fichier
@@ -722,7 +727,14 @@ export default {
 
         // Étape 3 : Obtenir le lien de partage pour le dossier global
         const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000';
-        const response = await axios.post(`${apiUrl}/api/folder-share-link`, { savDossier });
+        const apiKey = import.meta.env.VITE_API_KEY;
+        
+        const headers = {};
+        if (apiKey) {
+          headers['X-API-Key'] = apiKey;
+        }
+        
+        const response = await axios.post(`${apiUrl}/api/folder-share-link`, { savDossier }, { headers });
 
         if (!response.data || !response.data.success) {
           throw new Error(response.data.error || 'Impossible de récupérer le lien de partage du dossier.');
