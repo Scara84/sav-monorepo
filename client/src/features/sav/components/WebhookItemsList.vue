@@ -9,6 +9,21 @@
         <span>{{ toastMessage }}</span>
       </div>
     </transition>
+    <!-- Progress bar pour les uploads -->
+    <transition name="fade">
+      <div v-if="isUploading" class="mb-4 p-4 bg-white border border-blue-200 rounded-lg shadow-sm">
+        <div class="flex items-center justify-between mb-2">
+          <span class="text-sm font-medium text-gray-700">Upload en cours...</span>
+          <span class="text-sm text-gray-600">{{ uploadedFiles }}/{{ totalFiles }} fichiers</span>
+        </div>
+        <div class="w-full bg-gray-200 rounded-full h-2.5 mb-2">
+          <div class="bg-blue-600 h-2.5 rounded-full transition-all duration-300" 
+               :style="{ width: (uploadedFiles / totalFiles * 100) + '%' }"></div>
+        </div>
+        <p class="text-xs text-gray-500 truncate">{{ currentUploadFile }}</p>
+      </div>
+    </transition>
+    
     <!-- Encart d'aide process SAV -->
     <div class="mb-4 p-4 bg-blue-50 border-l-4 border-blue-400 text-blue-900 rounded">
       <strong>Comment faire une réclamation&nbsp;?</strong><br>
@@ -143,6 +158,7 @@
                      :key="imageIndex" 
                      class="relative">
                   <img :src="image.preview" 
+                       loading="lazy"
                        class="h-24 w-24 object-cover rounded-lg" 
                        alt="Aperçu" />
                   <button
@@ -231,6 +247,13 @@ export default {
   setup(props, { emit }) {
     const savForms = ref({});
     const toastMessage = ref('');
+    
+    // États pour les progress bars
+    const uploadProgress = ref({});
+    const currentUploadFile = ref('');
+    const totalFiles = ref(0);
+    const uploadedFiles = ref(0);
+    const isUploading = ref(false);
     const toastType = ref('success');
     const globalLoading = ref(false);
 
@@ -452,8 +475,8 @@ export default {
       form.images.splice(imageIndex, 1);
     };
 
-    // Fonction pour uploader des fichiers sur le backend
-    async function uploadToBackend(file, savDossier, isBase64 = false) {
+    // Fonction pour uploader des fichiers sur le backend avec progress
+    async function uploadToBackend(file, savDossier, isBase64 = false, onProgress = null) {
       const formData = new FormData();
       if (isBase64) {
         // Convertir le base64 en Blob pour les fichiers Excel
@@ -484,7 +507,17 @@ export default {
           headers['X-API-Key'] = apiKey;
         }
         
-        const response = await axios.post(`${apiUrl}/api/upload-onedrive`, formData, { headers });
+        const config = { 
+          headers,
+          onUploadProgress: (progressEvent) => {
+            if (onProgress && progressEvent.total) {
+              const percentCompleted = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+              onProgress(percentCompleted);
+            }
+          }
+        };
+        
+        const response = await axios.post(`${apiUrl}/api/upload-onedrive`, formData, config);
         
         if (response.data && response.data.success) {
           return response.data.file.url; // Retourne l'URL directe du fichier
@@ -669,22 +702,44 @@ export default {
         const timestamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}-${String(now.getSeconds()).padStart(2, '0')}`;
         const savDossier = `SAV_${sanitizedSpecialMention}_${timestamp}`;
 
-        // Étape 1 : Upload des images sur le backend
+        // Étape 1 : Upload des images sur le backend (en parallèle)
+        isUploading.value = true;
+        
+        // Collecter tous les fichiers à uploader
+        const allFiles = [];
+        const fileMapping = new Map(); // Pour retrouver quel imgObj correspond à quel fichier
+        
         for (const { form } of filledForms) {
           if (form.images && form.images.length > 0) {
             for (let imgObj of form.images) {
               if (imgObj.file && !imgObj.uploadedUrl) {
-                try {
-                  const uploadedUrl = await uploadToBackend(imgObj.file, savDossier);
-                  imgObj.uploadedUrl = uploadedUrl;
-                } catch (e) {
-                  imgObj.uploadError = true;
-                  showToast('Erreur lors de l\'upload d\'une image', 'error');
-                }
+                allFiles.push(imgObj.file);
+                fileMapping.set(imgObj.file, imgObj);
               }
             }
           }
         }
+        
+        totalFiles.value = allFiles.length + 1; // +1 pour le fichier Excel
+        uploadedFiles.value = 0;
+        
+        // Upload en parallèle avec progress
+        const uploadPromises = allFiles.map(async (file) => {
+          const imgObj = fileMapping.get(file);
+          try {
+            currentUploadFile.value = file.name;
+            const uploadedUrl = await uploadToBackend(file, savDossier, false, (progress) => {
+              uploadProgress.value[file.name] = progress;
+            });
+            imgObj.uploadedUrl = uploadedUrl;
+            uploadedFiles.value++;
+          } catch (e) {
+            imgObj.uploadError = true;
+            showToast(`Erreur lors de l'upload de ${file.name}`, 'error');
+          }
+        });
+        
+        await Promise.all(uploadPromises);
 
         // Générer le tableau HTML pour Make.com
         const htmlTable = buildSavHtmlTable(filledForms, props.items);
@@ -723,7 +778,11 @@ export default {
         };
 
         // Upload du fichier Excel sur OneDrive (le lien retourné n'est plus utilisé ici)
-        await uploadToBackend(excelFile, savDossier, true);
+        currentUploadFile.value = excelFile.filename;
+        await uploadToBackend(excelFile, savDossier, true, (progress) => {
+          uploadProgress.value[excelFile.filename] = progress;
+        });
+        uploadedFiles.value++;
 
         // Étape 3 : Obtenir le lien de partage pour le dossier global
         const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000';
@@ -757,6 +816,11 @@ export default {
         showToast("Erreur lors de l'envoi des réclamations", 'error');
       } finally {
         globalLoading.value = false;
+        isUploading.value = false;
+        uploadProgress.value = {};
+        currentUploadFile.value = '';
+        totalFiles.value = 0;
+        uploadedFiles.value = 0;
       }
     };
 
@@ -767,6 +831,11 @@ export default {
       getSavForm,
       formatKey,
       formatValue,
+      isUploading,
+      uploadProgress,
+      currentUploadFile,
+      totalFiles,
+      uploadedFiles,
       filteredItemProperties,
       toggleSavForm,
       validateItemForm,
