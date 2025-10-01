@@ -135,6 +135,46 @@ class OneDriveService {
       };
       
     } catch (error) {
+      // Gérer le cas où le fichier existe déjà (erreur 409)
+      if (error.statusCode === 409 || error.code === 'nameAlreadyExists') {
+        console.log(`Fichier ${fileName} existe déjà, remplacement en cours...`);
+        
+        try {
+          // Supprimer l'ancien fichier et re-uploader
+          const filePath = `${folderName}/${fileName}`;
+          await this.graphClient
+            .api(`${MS_GRAPH.BASE_URL}/${MS_GRAPH.DRIVE_ID}/root:/${encodeURIComponent(filePath)}`)
+            .delete();
+          
+          // Réessayer l'upload
+          const response = await this.graphClient
+            .api(`${MS_GRAPH.BASE_URL}/${MS_GRAPH.DRIVE_ID}/root:/${encodeURIComponent(filePath)}:/content`)
+            .header('Content-Type', contentType)
+            .put(fileBuffer);
+          
+          console.log('Fichier remplacé avec succès:', response.webUrl);
+          
+          return {
+            success: true,
+            message: 'Fichier remplacé avec succès',
+            file: response,
+            webUrl: response.webUrl,
+            fileInfo: {
+              name: response.name,
+              webUrl: response.webUrl,
+              downloadUrl: response['@microsoft.graph.downloadUrl'],
+              id: response.id,
+              size: response.size,
+              lastModified: response.lastModifiedDateTime
+            }
+          };
+        } catch (retryError) {
+          console.error('Erreur lors du remplacement du fichier:', retryError);
+          throw retryError;
+        }
+      }
+      
+      // Pour toutes les autres erreurs
       console.error('Erreur lors de l\'upload du fichier:');
       console.error('Code:', error.code);
       console.error('Message:', error.message);
