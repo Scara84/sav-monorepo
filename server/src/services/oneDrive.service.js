@@ -80,8 +80,18 @@ class OneDriveService {
             parentItemId = newFolder.id;
             console.log(`Dossier '${currentPathForLog}' créé, ID: ${parentItemId}`);
           } catch (createError) {
-            console.error(`Erreur lors de la création du dossier '${part}' dans le parent ${parentItemId}:`, createError);
-            throw createError;
+            // Si création échoue avec nameAlreadyExists, récupérer le dossier existant
+            if (createError.statusCode === 409 || createError.code === 'nameAlreadyExists') {
+              const existingFolder = await this.graphClient
+                .api(`${MS_GRAPH.BASE_URL}/${MS_GRAPH.DRIVE_ID}/items/${parentItemId}:/${encodeURIComponent(part)}`)
+                .get();
+
+              parentItemId = existingFolder.id;
+              console.log(`Dossier '${currentPathForLog}' trouvé après conflit, ID: ${parentItemId}`);
+            } else {
+              console.error(`Erreur lors de la création du dossier '${part}' dans le parent ${parentItemId}:`, createError);
+              throw createError;
+            }
           }
         } else {
           console.error(`Erreur lors de la vérification du dossier '${part}' dans le parent ${parentItemId}:`, error);
@@ -100,26 +110,22 @@ class OneDriveService {
    * @param {string} contentType - Type MIME du fichier
    * @returns {Promise<Object>} - Réponse contenant les informations du fichier uploadé
    */
-  async uploadFile(fileBuffer, fileName, folderName = MS_GRAPH.DEFAULT_FOLDER, contentType = 'application/octet-stream') {
-    
+  async uploadFile(fileBuffer, fileName, folderName, contentType) {
     try {
       console.log(`Tentative d'upload du fichier: ${fileName} vers le dossier: ${folderName}`);
-      
+
       // S'assurer que le dossier existe
-      await this.ensureFolderExists(folderName);
-      
-      // Construire le chemin complet du fichier
-      const filePath = `${folderName}/${fileName}`;
-      
+      const folderId = await this.ensureFolderExists(folderName);
+
       // Upload du fichier avec remplacement automatique si existe déjà
       const response = await this.graphClient
-        .api(`${MS_GRAPH.BASE_URL}/${MS_GRAPH.DRIVE_ID}/root:/${encodeURIComponent(filePath)}:/content`)
+        .api(`${MS_GRAPH.BASE_URL}/${MS_GRAPH.DRIVE_ID}/items/${folderId}:/${encodeURIComponent(fileName)}/content`)
         .header('Content-Type', contentType)
         .query({ '@microsoft.graph.conflictBehavior': 'replace' }) // Remplace si existe
         .put(fileBuffer);
-      
+
       console.log('Fichier uploadé avec succès:', response.webUrl);
-      
+
       return {
         success: true,
         message: 'Fichier uploadé avec succès',
@@ -134,7 +140,7 @@ class OneDriveService {
           lastModified: response.lastModifiedDateTime
         }
       };
-      
+
     } catch (error) {
       console.error('Erreur lors de l\'upload du fichier:');
       console.error('Code:', error.code);
