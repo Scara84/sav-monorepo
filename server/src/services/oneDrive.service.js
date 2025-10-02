@@ -117,14 +117,24 @@ class OneDriveService {
       // S'assurer que le dossier existe
       const folderId = await this.ensureFolderExists(folderName);
 
-      // Upload du fichier avec remplacement automatique si existe déjà
+      // Créer d'abord le fichier avec métadonnées
+      const fileMetadata = {
+        name: fileName,
+        file: {}
+      };
+
+      // Créer le fichier vide avec métadonnées
+      const fileItem = await this.graphClient
+        .api(`${MS_GRAPH.BASE_URL}/${MS_GRAPH.DRIVE_ID}/items/${folderId}/children`)
+        .post(fileMetadata);
+
+      // Puis uploader le contenu du fichier
       const response = await this.graphClient
-        .api(`${MS_GRAPH.BASE_URL}/${MS_GRAPH.DRIVE_ID}/items/${folderId}:/${encodeURIComponent(fileName)}/content`)
+        .api(`${MS_GRAPH.BASE_URL}/${MS_GRAPH.DRIVE_ID}/items/${fileItem.id}/content`)
         .header('Content-Type', contentType)
-        .query({ '@microsoft.graph.conflictBehavior': 'replace' }) // Remplace si existe
         .put(fileBuffer);
 
-      console.log('Fichier uploadé avec succès:', response.webUrl);
+      console.log('Fichier uploadé avec succès:', response.webUrl || response.id);
 
       return {
         success: true,
