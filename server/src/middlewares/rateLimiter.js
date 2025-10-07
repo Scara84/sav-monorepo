@@ -14,10 +14,6 @@ export const uploadLimiter = rateLimit({
   },
   standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
   legacyHeaders: false, // Disable the `X-RateLimit-*` headers
-  // Fonction pour identifier l'utilisateur (par IP)
-  keyGenerator: (req) => {
-    return req.ip || req.connection.remoteAddress;
-  },
   // Handler personnalisé pour les requêtes dépassant la limite
   handler: (req, res) => {
     console.warn(`Rate limit dépassé pour IP: ${req.ip}`);
@@ -43,9 +39,6 @@ export const strictLimiter = rateLimit({
   },
   standardHeaders: true,
   legacyHeaders: false,
-  keyGenerator: (req) => {
-    return req.ip || req.connection.remoteAddress;
-  },
   handler: (req, res) => {
     console.warn(`Rate limit strict dépassé pour IP: ${req.ip}`);
     res.status(429).json({
