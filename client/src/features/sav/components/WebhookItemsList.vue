@@ -152,12 +152,12 @@
             <div v-if="getSavForm(index).reason === 'abime'" class="mt-4">
               <label style="font-family:var(--font-main);color:var(--text-dark);font-weight:600;font-size:1em;margin-bottom:0.5em;">
                 Photos du produit abimé
-                <span class="text-xs text-gray-500">(formats acceptés: jpg, png - max 5Mo par image)</span>
+                <span class="text-xs text-gray-500">(formats acceptés: JPEG, PNG, GIF, WebP, SVG - max 10Mo par image)</span>
               </label>
               <input
                 type="file"
                 multiple
-                accept="image/jpeg,image/png"
+                accept="image/jpeg,image/png,image/gif,image/webp,image/svg+xml"
                 @change="handleImageUpload($event, index)"
                 :disabled="getSavForm(index).filled"
                 class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
@@ -455,13 +455,13 @@ export default {
 
       // Vérification des fichiers
       const invalidFiles = files.filter(file => {
-        const isValidType = ['image/jpeg', 'image/png'].includes(file.type);
-        const isValidSize = file.size <= 5 * 1024 * 1024; // 5Mo
+        const isValidType = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml'].includes(file.type);
+        const isValidSize = file.size <= 10 * 1024 * 1024; // 10Mo
         return !isValidType || !isValidSize;
       });
 
       if (invalidFiles.length > 0) {
-        form.errors.images = 'Certains fichiers ne sont pas valides (format jpg/png et taille max 5Mo)';
+        form.errors.images = 'Certains fichiers ne sont pas valides (formats acceptés: JPEG, PNG, GIF, WebP, SVG - taille max 10Mo)';
         return;
       }
 
