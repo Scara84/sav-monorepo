@@ -687,11 +687,14 @@ export default {
     const submitAllForms = async () => {
       if (globalLoading.value) return;
       globalLoading.value = true;
+      isUploading.value = true; // ✅ Afficher la barre de progression immédiatement
+      
       try {
         // Vérifier s'il existe des demandes en cours non validées
         if (hasUnfinishedForms.value) {
           showToast('Veuillez finaliser ou annuler toutes les demandes en cours avant de valider', 'error');
           globalLoading.value = false;
+          isUploading.value = false;
           return;
         }
 
@@ -702,6 +705,7 @@ export default {
         if (filledForms.length === 0) {
           showToast('Aucune réclamation validée à soumettre', 'error');
           globalLoading.value = false;
+          isUploading.value = false;
           return;
         }
 
@@ -714,7 +718,6 @@ export default {
         const savDossier = `SAV_${sanitizedSpecialMention}_${timestamp}`;
 
         // Étape 1 : Upload des images sur le backend (en parallèle)
-        isUploading.value = true;
         const uploadStartTime = Date.now(); // Pour délai minimum
         
         // Collecter tous les fichiers à uploader
