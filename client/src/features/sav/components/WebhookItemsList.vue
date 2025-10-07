@@ -152,7 +152,7 @@
             <div v-if="getSavForm(index).reason === 'abime'" class="mt-4">
               <label style="font-family:var(--font-main);color:var(--text-dark);font-weight:600;font-size:1em;margin-bottom:0.5em;">
                 Photos du produit abimé
-                <span class="text-xs text-gray-500">(formats acceptés: JPEG, PNG, GIF, WebP, SVG - max 10Mo par image)</span>
+                <span class="text-xs text-gray-500">(formats acceptés: JPEG, PNG, GIF, WebP, SVG - max 4Mo par image)</span>
               </label>
               <input
                 type="file"
@@ -456,12 +456,12 @@ export default {
       // Vérification des fichiers
       const invalidFiles = files.filter(file => {
         const isValidType = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml'].includes(file.type);
-        const isValidSize = file.size <= 10 * 1024 * 1024; // 10Mo
+        const isValidSize = file.size <= 4 * 1024 * 1024; // 4Mo (limite Vercel)
         return !isValidType || !isValidSize;
       });
 
       if (invalidFiles.length > 0) {
-        form.errors.images = 'Certains fichiers ne sont pas valides (formats acceptés: JPEG, PNG, GIF, WebP, SVG - taille max 10Mo)';
+        form.errors.images = 'Certains fichiers ne sont pas valides (formats acceptés: JPEG, PNG, GIF, WebP, SVG - taille max 4Mo)';
         return;
       }
 
