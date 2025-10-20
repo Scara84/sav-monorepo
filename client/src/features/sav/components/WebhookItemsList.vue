@@ -9,28 +9,82 @@
         <span>{{ toastMessage }}</span>
       </div>
     </transition>
-    <!-- Progress bar pour les uploads (AMÉLIORÉ - Plus visible) -->
-    <transition name="fade">
-      <div v-if="isUploading" class="mb-6 p-6 bg-gradient-to-r from-blue-50 to-indigo-50 border-2 border-blue-300 rounded-xl shadow-lg">
-        <div class="flex items-center justify-between mb-3">
-          <div class="flex items-center gap-2">
-            <svg class="animate-spin h-5 w-5 text-blue-600" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
-              <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
-              <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
-            </svg>
-            <span class="text-base font-bold text-blue-800">📤 Upload en cours...</span>
+    <!-- Modal d'upload avec overlay -->
+    <transition name="modal-fade">
+      <div v-if="uploadModalVisible" class="fixed inset-0 z-[9999] flex items-center justify-center p-4" style="background: rgba(0, 0, 0, 0.75);">
+        <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-8 transform transition-all" @click.stop>
+          
+          <!-- État: Upload en cours -->
+          <div v-if="uploadStatus === 'uploading'" class="text-center">
+            <div class="mb-6">
+              <svg class="animate-spin h-16 w-16 text-blue-600 mx-auto" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
+                <circle class="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" stroke-width="4"></circle>
+                <path class="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
+              </svg>
+            </div>
+            <h3 class="text-2xl font-bold text-gray-900 mb-2">Envoi en cours...</h3>
+            <p class="text-gray-600 mb-6">Veuillez patienter pendant l'envoi de vos réclamations</p>
+            
+            <!-- Barre de progression -->
+            <div class="mb-4">
+              <div class="flex items-center justify-between mb-2">
+                <span class="text-sm font-medium text-gray-700">Progression</span>
+                <span class="text-sm font-bold text-blue-600">{{ uploadedFiles }}/{{ totalFiles }} fichiers</span>
+              </div>
+              <div class="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
+                <div class="bg-gradient-to-r from-blue-500 to-indigo-600 h-3 rounded-full transition-all duration-500 ease-out flex items-center justify-end pr-2" 
+                     :style="{ width: totalFiles > 0 ? (uploadedFiles / totalFiles * 100) + '%' : '0%' }">
+                  <span v-if="uploadedFiles > 0 && totalFiles > 0" class="text-[10px] font-bold text-white">{{ Math.round(uploadedFiles / totalFiles * 100) }}%</span>
+                </div>
+              </div>
+            </div>
+            
+            <!-- Fichier actuel -->
+            <div class="bg-blue-50 rounded-lg p-3 mt-4">
+              <p class="text-xs text-gray-500 mb-1">Fichier en cours</p>
+              <p class="text-sm text-gray-900 font-semibold truncate">{{ currentUploadFile || 'Préparation...' }}</p>
+            </div>
           </div>
-          <span class="text-base font-bold text-blue-700 bg-white px-3 py-1 rounded-full">{{ uploadedFiles }}/{{ totalFiles }} fichiers</span>
-        </div>
-        <div class="w-full bg-gray-300 rounded-full h-4 mb-3 overflow-hidden shadow-inner">
-          <div class="bg-gradient-to-r from-blue-500 to-indigo-600 h-4 rounded-full transition-all duration-500 ease-out flex items-center justify-end pr-2" 
-               :style="{ width: (uploadedFiles / totalFiles * 100) + '%' }">
-            <span v-if="uploadedFiles > 0" class="text-xs font-bold text-white">{{ Math.round(uploadedFiles / totalFiles * 100) }}%</span>
+          
+          <!-- État: Succès -->
+          <div v-else-if="uploadStatus === 'success'" class="text-center">
+            <div class="mb-6">
+              <div class="mx-auto w-16 h-16 bg-green-100 rounded-full flex items-center justify-center">
+                <svg class="w-10 h-10 text-green-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7"></path>
+                </svg>
+              </div>
+            </div>
+            <h3 class="text-2xl font-bold text-gray-900 mb-2">Envoi réussi !</h3>
+            <p class="text-gray-600 mb-6">Toutes vos réclamations ont été envoyées avec succès.</p>
+            <button
+              @click="closeUploadModal"
+              class="w-full px-6 py-3 text-base font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors"
+            >
+              Fermer
+            </button>
           </div>
-        </div>
-        <div class="flex items-center gap-2">
-          <span class="text-sm font-medium text-gray-700">📁 Fichier actuel:</span>
-          <p class="text-sm text-gray-900 font-semibold truncate flex-1">{{ currentUploadFile }}</p>
+          
+          <!-- État: Erreur -->
+          <div v-else-if="uploadStatus === 'error'" class="text-center">
+            <div class="mb-6">
+              <div class="mx-auto w-16 h-16 bg-red-100 rounded-full flex items-center justify-center">
+                <svg class="w-10 h-10 text-red-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"></path>
+                </svg>
+              </div>
+            </div>
+            <h3 class="text-2xl font-bold text-gray-900 mb-2">Erreur d'envoi</h3>
+            <p class="text-gray-600 mb-2">Une erreur est survenue lors de l'envoi de vos réclamations.</p>
+            <p v-if="uploadErrorMessage" class="text-sm text-red-600 mb-6 bg-red-50 p-3 rounded-lg">{{ uploadErrorMessage }}</p>
+            <button
+              @click="closeUploadModal"
+              class="w-full px-6 py-3 text-base font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 transition-colors"
+            >
+              Fermer
+            </button>
+          </div>
+          
         </div>
       </div>
     </transition>
@@ -267,6 +321,11 @@ export default {
     const isUploading = ref(false);
     const toastType = ref('success');
     const globalLoading = ref(false);
+    
+    // États pour le modal d'upload
+    const uploadModalVisible = ref(false);
+    const uploadStatus = ref('uploading'); // 'uploading' | 'success' | 'error'
+    const uploadErrorMessage = ref('');
 
     const showToast = (msg, type = 'success') => {
       toastMessage.value = msg;
@@ -274,6 +333,12 @@ export default {
       setTimeout(() => {
         toastMessage.value = '';
       }, 2500);
+    };
+    
+    const closeUploadModal = () => {
+      uploadModalVisible.value = false;
+      uploadStatus.value = 'uploading';
+      uploadErrorMessage.value = '';
     };
 
     const hasFilledForms = computed(() => {
@@ -690,12 +755,18 @@ export default {
     const submitAllForms = async () => {
       if (globalLoading.value) return;
       globalLoading.value = true;
-      isUploading.value = true; // ✅ Afficher la barre de progression immédiatement
+      isUploading.value = true;
+      
+      // Ouvrir le modal immédiatement
+      uploadModalVisible.value = true;
+      uploadStatus.value = 'uploading';
+      uploadErrorMessage.value = '';
       
       try {
         // Vérifier s'il existe des demandes en cours non validées
         if (hasUnfinishedForms.value) {
-          showToast('Veuillez finaliser ou annuler toutes les demandes en cours avant de valider', 'error');
+          uploadStatus.value = 'error';
+          uploadErrorMessage.value = 'Veuillez finaliser ou annuler toutes les demandes en cours avant de valider';
           globalLoading.value = false;
           isUploading.value = false;
           return;
@@ -706,7 +777,8 @@ export default {
           .map(([index, form]) => ({ form, index: parseInt(index) }));
         
         if (filledForms.length === 0) {
-          showToast('Aucune réclamation validée à soumettre', 'error');
+          uploadStatus.value = 'error';
+          uploadErrorMessage.value = 'Aucune réclamation validée à soumettre';
           globalLoading.value = false;
           isUploading.value = false;
           return;
@@ -770,10 +842,11 @@ export default {
         
         // Vérifier si des uploads ont échoué
         if (uploadErrors.length > 0) {
+          uploadStatus.value = 'error';
+          const errorDetails = uploadErrors.map(e => e.fileName).join(', ');
+          uploadErrorMessage.value = `Échec de l'upload de ${uploadErrors.length} fichier(s): ${errorDetails}`;
           isUploading.value = false;
           globalLoading.value = false;
-          const errorDetails = uploadErrors.map(e => e.fileName).join(', ');
-          showToast(`❌ Échec upload de ${uploadErrors.length} fichier(s): ${errorDetails}. Veuillez réessayer.`, 'error');
           return; // ARRÊTER le processus
         }
 
@@ -846,10 +919,14 @@ export default {
         filledForms.forEach(({ form }) => {
           form.showForm = false;
         });
+        
+        // Succès : afficher le modal de succès
+        uploadStatus.value = 'success';
         emit('sav-submitted');
-        showToast('Toutes les réclamations ont été envoyées', 'success');
       } catch (error) {
-        showToast("Erreur lors de l'envoi des réclamations", 'error');
+        uploadStatus.value = 'error';
+        uploadErrorMessage.value = error.message || "Erreur lors de l'envoi des réclamations";
+        console.error('Erreur lors de l\'envoi:', error);
       } finally {
         globalLoading.value = false;
         isUploading.value = false;
@@ -883,7 +960,11 @@ export default {
       toastMessage,
       toastType,
       globalLoading,
-      showToast
+      showToast,
+      uploadModalVisible,
+      uploadStatus,
+      uploadErrorMessage,
+      closeUploadModal
     };
   }
 }
@@ -892,5 +973,45 @@ export default {
 <style scoped>
 .webhook-items {
   @apply w-full;
+}
+
+/* Animations pour le modal */
+.modal-fade-enter-active,
+.modal-fade-leave-active {
+  transition: opacity 0.3s ease;
+}
+
+.modal-fade-enter-active .bg-white,
+.modal-fade-leave-active .bg-white {
+  transition: all 0.3s ease;
+}
+
+.modal-fade-enter-from,
+.modal-fade-leave-to {
+  opacity: 0;
+}
+
+.modal-fade-enter-from .bg-white {
+  transform: scale(0.9) translateY(-20px);
+}
+
+.modal-fade-leave-to .bg-white {
+  transform: scale(0.95) translateY(10px);
+}
+
+.modal-fade-enter-to .bg-white,
+.modal-fade-leave-from .bg-white {
+  transform: scale(1) translateY(0);
+}
+
+/* Animation pour le toast (existante) */
+.fade-enter-active,
+.fade-leave-active {
+  transition: opacity 0.3s ease;
+}
+
+.fade-enter-from,
+.fade-leave-to {
+  opacity: 0;
 }
 </style>
