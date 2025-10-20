@@ -9,10 +9,11 @@
         <span>{{ toastMessage }}</span>
       </div>
     </transition>
-    <!-- Modal d'upload avec overlay -->
-    <transition name="modal-fade">
-      <div v-if="uploadModalVisible" class="fixed inset-0 z-[9999] flex items-center justify-center p-4" style="background: rgba(0, 0, 0, 0.75);">
-        <div class="bg-white rounded-2xl shadow-2xl max-w-md w-full p-8 transform transition-all" @click.stop>
+    <!-- Modal d'upload avec overlay (Teleport vers body pour garantir le positionnement) -->
+    <Teleport to="body">
+      <transition name="modal-fade">
+        <div v-if="uploadModalVisible" class="upload-modal-overlay">
+          <div class="upload-modal-content" @click.stop>
           
           <!-- État: Upload en cours -->
           <div v-if="uploadStatus === 'uploading'" class="text-center">
@@ -85,9 +86,10 @@
             </button>
           </div>
           
+          </div>
         </div>
-      </div>
-    </transition>
+      </transition>
+    </Teleport>
     
     <!-- Encart d'aide process SAV -->
     <div class="mb-4 p-4 bg-blue-50 border-l-4 border-blue-400 text-blue-900 rounded">
@@ -291,7 +293,7 @@
 </template>
 
 <script>
-import { ref, reactive, computed, onMounted } from 'vue';
+import { ref, reactive, computed, onMounted, watch } from 'vue';
 import axios from 'axios';
 import { supabase } from '../lib/supabase';
 import * as XLSX from 'xlsx';
@@ -340,6 +342,25 @@ export default {
       uploadStatus.value = 'uploading';
       uploadErrorMessage.value = '';
     };
+    
+    // Bloquer le scroll du body quand le modal est ouvert
+    watch(uploadModalVisible, (isVisible) => {
+      if (isVisible) {
+        // Scroll en haut de la page pour que le modal soit visible
+        window.scrollTo({ top: 0, behavior: 'smooth' });
+        // Bloquer le scroll
+        document.body.style.overflow = 'hidden';
+        document.body.style.position = 'fixed';
+        document.body.style.width = '100%';
+        document.body.style.top = '0';
+      } else {
+        // Débloquer le scroll
+        document.body.style.overflow = '';
+        document.body.style.position = '';
+        document.body.style.width = '';
+        document.body.style.top = '';
+      }
+    });
 
     const hasFilledForms = computed(() => {
       return Object.values(savForms.value).some(form => form.filled && form.showForm);
@@ -975,35 +996,6 @@ export default {
   @apply w-full;
 }
 
-/* Animations pour le modal */
-.modal-fade-enter-active,
-.modal-fade-leave-active {
-  transition: opacity 0.3s ease;
-}
-
-.modal-fade-enter-active .bg-white,
-.modal-fade-leave-active .bg-white {
-  transition: all 0.3s ease;
-}
-
-.modal-fade-enter-from,
-.modal-fade-leave-to {
-  opacity: 0;
-}
-
-.modal-fade-enter-from .bg-white {
-  transform: scale(0.9) translateY(-20px);
-}
-
-.modal-fade-leave-to .bg-white {
-  transform: scale(0.95) translateY(10px);
-}
-
-.modal-fade-enter-to .bg-white,
-.modal-fade-leave-from .bg-white {
-  transform: scale(1) translateY(0);
-}
-
 /* Animation pour le toast (existante) */
 .fade-enter-active,
 .fade-leave-active {
@@ -1013,5 +1005,79 @@ export default {
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
+}
+</style>
+
+<style>
+/* Styles globaux pour le modal (non scopés car téléporté dans body) */
+.upload-modal-overlay {
+  position: fixed;
+  top: 0;
+  left: 0;
+  right: 0;
+  bottom: 0;
+  width: 100vw;
+  height: 100vh;
+  background: rgba(0, 0, 0, 0.75);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 1rem;
+  z-index: 99999;
+  overflow: auto;
+}
+
+.upload-modal-content {
+  background: white;
+  border-radius: 1rem;
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+  max-width: 28rem;
+  width: 100%;
+  padding: 2rem;
+  transform: translateZ(0);
+  position: relative;
+  margin: auto;
+}
+
+/* Animations pour le modal */
+.modal-fade-enter-active,
+.modal-fade-leave-active {
+  transition: opacity 0.3s ease;
+}
+
+.modal-fade-enter-active .upload-modal-content,
+.modal-fade-leave-active .upload-modal-content {
+  transition: all 0.3s ease;
+}
+
+.modal-fade-enter-from,
+.modal-fade-leave-to {
+  opacity: 0;
+}
+
+.modal-fade-enter-from .upload-modal-content {
+  transform: scale(0.9) translateY(-20px);
+}
+
+.modal-fade-leave-to .upload-modal-content {
+  transform: scale(0.95) translateY(10px);
+}
+
+.modal-fade-enter-to .upload-modal-content,
+.modal-fade-leave-from .upload-modal-content {
+  transform: scale(1) translateY(0);
+}
+
+/* Fix pour mobile - garantir que le modal reste au-dessus */
+@media (max-width: 640px) {
+  .upload-modal-overlay {
+    position: fixed !important;
+    padding: 0.75rem;
+  }
+  
+  .upload-modal-content {
+    max-height: 90vh;
+    overflow-y: auto;
+  }
 }
 </style>
