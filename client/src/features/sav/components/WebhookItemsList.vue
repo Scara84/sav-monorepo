@@ -148,11 +148,11 @@
               ></textarea>
             </div>
 
-            <!-- Champ d'upload d'images pour le motif "abimé" -->
-            <div v-if="getSavForm(index).reason === 'abime'" class="mt-4">
+            <!-- Champ d'upload d'images pour les motifs "abimé" et "manquant" -->
+            <div v-if="getSavForm(index).reason === 'abime' || getSavForm(index).reason === 'manquant'" class="mt-4">
               <label style="font-family:var(--font-main);color:var(--text-dark);font-weight:600;font-size:1em;margin-bottom:0.5em;">
-                Photos du produit abimé
-                <span class="text-xs text-gray-500">(formats acceptés: JPEG, PNG, GIF, WebP, SVG - max 4Mo par image)</span>
+                Photos du produit {{ getSavForm(index).reason === 'abime' ? 'abimé' : 'manquant' }}
+                <span class="text-xs text-gray-500">({{ getSavForm(index).reason === 'abime' ? 'obligatoire' : 'optionnel' }} - formats acceptés: JPEG, PNG, GIF, WebP, SVG - max 4Mo par image)</span>
               </label>
               <input
                 type="file"
@@ -369,11 +369,12 @@ export default {
         isValid = false;
       }
       
-      // Validation des images pour le motif "abimé"
+      // Validation des images pour le motif "abimé" (obligatoire uniquement pour abime)
       if (form.reason === 'abime' && (!form.images || form.images.length === 0)) {
         form.errors.images = 'Veuillez ajouter au moins une photo du produit abimé';
         isValid = false;
       }
+      // Pour "manquant", les images sont optionnelles, donc pas de validation
       
       return isValid;
     };
@@ -401,10 +402,12 @@ export default {
           showToast('Veuillez remplir tous les champs requis', 'error');
           return;
         }
+        // Validation des images uniquement pour "abime" (obligatoire)
         if (form.reason === 'abime' && (!form.images || form.images.length === 0)) {
           showToast('Veuillez ajouter au moins une photo du produit abîmé', 'error');
           return;
         }
+        // Pour "manquant", les images sont optionnelles
         // Marquer le formulaire comme rempli et le griser
         form.filled = true;
         form.showForm = true;  // Garder le formulaire visible mais grisé
