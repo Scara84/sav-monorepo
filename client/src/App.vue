@@ -18,3 +18,4 @@ export default {
 <style>
 @import "./styles/fruitstock-theme.css";
 </style>
+// test 2
