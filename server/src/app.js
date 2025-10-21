@@ -14,6 +14,9 @@ const __dirname = dirname(__filename);
 // Initialisation de l'application Express
 const app = express();
 
+// Trust proxy - nécessaire pour Vercel et express-rate-limit
+app.set('trust proxy', 1);
+
 // Configuration Helmet pour les headers de sécurité
 app.use(helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" }, // Permet les ressources cross-origin pour OneDrive
