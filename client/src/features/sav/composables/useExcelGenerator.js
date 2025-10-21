@@ -113,6 +113,60 @@ export function useExcelGenerator() {
     const wsCustomer = XLSX.utils.json_to_sheet(customerData, { skipHeader: true });
     wsCustomer['!cols'] = [{ wch: 30 }, { wch: 50 }];
     XLSX.utils.book_append_sheet(wb, wsCustomer, 'Infos Client');
+
+    // --- Onglet 3: SAV (tableau identique au mail) ---
+    const savTableHeaders = [
+      'Désignation',
+      'Quantité demandée',
+      'Quantité facturée',
+      'Unité demandée',
+      'Unité facturée',
+      'Motif',
+      'Commentaire',
+      'Prix Unitaire',
+      'Prix Total',
+      'Images'
+    ];
+
+    const savTableData = forms.map(({ form, index }) => {
+      const item = items[index] || {};
+      const unitPrice = (item.amount && item.quantity) ? (item.amount / item.quantity) : '';
+      const totalPrice = item.amount || '';
+      
+      // Formater les liens des images
+      const imagesLinks = (form.images || [])
+        .map(img => img.uploadedUrl || '')
+        .filter(url => url)
+        .join('\n');
+
+      return {
+        'Désignation': item.label || '',
+        'Quantité demandée': form.quantity || '',
+        'Quantité facturée': item.quantity || '',
+        'Unité demandée': form.unit || '',
+        'Unité facturée': item.unit || '',
+        'Motif': form.reason || '',
+        'Commentaire': form.comment || '',
+        'Prix Unitaire': unitPrice,
+        'Prix Total': totalPrice,
+        'Images': imagesLinks
+      };
+    });
+
+    const wsSavTable = XLSX.utils.json_to_sheet(savTableData, { header: savTableHeaders });
+    wsSavTable['!cols'] = [
+      { wch: 50 }, // Désignation
+      { wch: 18 }, // Quantité demandée
+      { wch: 18 }, // Quantité facturée
+      { wch: 15 }, // Unité demandée
+      { wch: 15 }, // Unité facturée
+      { wch: 20 }, // Motif
+      { wch: 50 }, // Commentaire
+      { wch: 15 }, // Prix Unitaire
+      { wch: 15 }, // Prix Total
+      { wch: 60 }  // Images
+    ];
+    XLSX.utils.book_append_sheet(wb, wsSavTable, 'SAV');
     
     // Convertir en base64
     const excelBuffer = XLSX.write(wb, { bookType: 'xlsx', type: 'base64' });
