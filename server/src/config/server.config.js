@@ -46,3 +46,4 @@ export default {
   isProd: process.env.NODE_ENV === 'production'
 };
 
+// test automatic deployment
