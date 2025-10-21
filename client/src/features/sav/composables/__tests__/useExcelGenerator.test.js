@@ -159,5 +159,53 @@ describe('useExcelGenerator', () => {
       const result = excelGen.generateExcelFile(forms, items, facture);
       expect(typeof result).toBe('string');
     });
+
+    it('should generate SAV tab with images links', () => {
+      const forms = [
+        {
+          form: {
+            quantity: 5,
+            unit: 'kg',
+            reason: 'abime',
+            comment: 'Produit endommagé',
+            creditPercentage: '',
+            images: [
+              { uploadedUrl: 'https://example.com/image1.jpg', file: { name: 'image1.jpg' } },
+              { uploadedUrl: 'https://example.com/image2.jpg', file: { name: 'image2.jpg' } }
+            ]
+          },
+          index: 0
+        }
+      ];
+
+      const items = [
+        {
+          label: '5211-3060-100K Avocat Lamb Hass',
+          quantity: 10,
+          unit: 'kg',
+          amount: 100
+        }
+      ];
+
+      const facture = {
+        customer: {
+          name: 'Test Client',
+          source_id: '123',
+          emails: ['test@example.com'],
+          phone: '0123456789',
+          delivery_address: { city: 'Paris', country_alpha2: 'FR' },
+          billing_address: { city: 'Paris', country_alpha2: 'FR' }
+        },
+        invoice_number: 'F-2024-001',
+        date: '2024-10-01',
+        special_mention: '585_25S30_94_1'
+      };
+
+      const result = excelGen.generateExcelFile(forms, items, facture);
+      
+      // Le résultat devrait être une chaîne base64 valide
+      expect(typeof result).toBe('string');
+      expect(result.length).toBeGreaterThan(0);
+    });
   });
 });
