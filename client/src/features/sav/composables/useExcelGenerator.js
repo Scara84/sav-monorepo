@@ -114,12 +114,13 @@ export function useExcelGenerator() {
     wsCustomer['!cols'] = [{ wch: 30 }, { wch: 50 }];
     XLSX.utils.book_append_sheet(wb, wsCustomer, 'Infos Client');
 
-    // --- Onglet 3: SAV (tableau identique au mail) ---
+    // --- Onglet 3: SAV (tableau mix réclamations + mail) ---
     const savTableHeaders = [
-      'Désignation',
+      'PRENOM NOM',
+      'DESIGNATION',
       'Quantité demandée',
-      'Quantité facturée',
       'Unité demandée',
+      'Quantité facturée',
       'Unité facturée',
       'Motif',
       'Commentaire',
@@ -128,8 +129,15 @@ export function useExcelGenerator() {
       'Images'
     ];
 
+    // Fonction pour formater les nombres avec virgule (format FR)
+    const formatNumberFR = (num) => {
+      if (num === '' || num === null || num === undefined) return '';
+      return String(num).replace('.', ',');
+    };
+
     const savTableData = forms.map(({ form, index }) => {
       const item = items[index] || {};
+      const { code, name } = splitProductLabel(item.label);
       const unitPrice = (item.amount && item.quantity) ? (item.amount / item.quantity) : '';
       const totalPrice = item.amount || '';
       
@@ -140,25 +148,27 @@ export function useExcelGenerator() {
         .join('\n');
 
       return {
-        'Désignation': item.label || '',
-        'Quantité demandée': form.quantity || '',
-        'Quantité facturée': item.quantity || '',
+        'PRENOM NOM': facture.customer?.name || '',
+        'DESIGNATION': name,
+        'Quantité demandée': formatNumberFR(form.quantity || ''),
         'Unité demandée': form.unit || '',
+        'Quantité facturée': formatNumberFR(item.quantity || ''),
         'Unité facturée': item.unit || '',
         'Motif': form.reason || '',
         'Commentaire': form.comment || '',
-        'Prix Unitaire': unitPrice,
-        'Prix Total': totalPrice,
+        'Prix Unitaire': formatNumberFR(unitPrice),
+        'Prix Total': formatNumberFR(totalPrice),
         'Images': imagesLinks
       };
     });
 
     const wsSavTable = XLSX.utils.json_to_sheet(savTableData, { header: savTableHeaders });
     wsSavTable['!cols'] = [
-      { wch: 50 }, // Désignation
+      { wch: 25 }, // PRENOM NOM
+      { wch: 50 }, // DESIGNATION
       { wch: 18 }, // Quantité demandée
-      { wch: 18 }, // Quantité facturée
       { wch: 15 }, // Unité demandée
+      { wch: 18 }, // Quantité facturée
       { wch: 15 }, // Unité facturée
       { wch: 20 }, // Motif
       { wch: 50 }, // Commentaire
