@@ -2,21 +2,21 @@
   "version": 2,
   "builds": [
     {
-      "src": "src/app.js",
+      "src": "server.js",
       "use": "@vercel/node",
       "config": {
         "maxLambdaSize": "50mb"
       }
     }
   ],
-  "rewrites": [
+  "routes": [
     {
-      "source": "/(.*)",
-      "destination": "/src/app.js"
+      "src": "/(.*)",
+      "dest": "/server.js"
     }
   ],
   "functions": {
-    "src/app.js": {
+    "server.js": {
       "maxDuration": 60,
       "memory": 3008
     }
