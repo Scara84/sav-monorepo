@@ -734,6 +734,7 @@ export default {
       // --- Onglet 3: SAV (tableau mix réclamations + mail) ---
       const savTableHeaders = [
         'PRENOM NOM',
+        'CODE ARTICLE',
         'DESIGNATION',
         'Quantité demandée',
         'Unité demandée',
@@ -766,6 +767,7 @@ export default {
 
         return {
           'PRENOM NOM': props.facture.customer?.name || '',
+          'CODE ARTICLE': code,
           'DESIGNATION': name,
           'Quantité demandée': formatNumberFR(form.quantity || ''),
           'Unité demandée': form.unit || '',
@@ -782,6 +784,7 @@ export default {
       const wsSavTable = XLSX.utils.json_to_sheet(savTableData, { header: savTableHeaders });
       wsSavTable['!cols'] = [
         { wch: 25 }, // PRENOM NOM
+        { wch: 15 }, // CODE ARTICLE
         { wch: 50 }, // DESIGNATION
         { wch: 18 }, // Quantité demandée
         { wch: 15 }, // Unité demandée
