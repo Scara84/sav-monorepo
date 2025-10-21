@@ -36,7 +36,7 @@ const setupLogs = async () => {
       originalError(...args);
     };
   } catch (error) {
-    originalError('Erreur lors de la configuration des logs:', error);
+    console.error('Erreur lors de la configuration des logs:', error);
   }
 };
 
