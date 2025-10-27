@@ -544,13 +544,13 @@ export default {
 
       // Vérification des fichiers
       const invalidFiles = files.filter(file => {
-        const isValidType = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml'].includes(file.type);
+        const isValidType = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml', 'image/heic', 'image/heif'].includes(file.type);
         const isValidSize = file.size <= 4 * 1024 * 1024; // 4Mo (limite Vercel)
         return !isValidType || !isValidSize;
       });
 
       if (invalidFiles.length > 0) {
-        form.errors.images = 'Certains fichiers ne sont pas valides (formats acceptés: JPEG, PNG, GIF, WebP, SVG - taille max 4Mo)';
+        form.errors.images = 'Certains fichiers ne sont pas valides (formats acceptés: JPEG, PNG, GIF, WebP, SVG, HEIC - taille max 4Mo)';
         return;
       }
 
