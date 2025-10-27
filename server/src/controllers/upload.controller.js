@@ -1,6 +1,6 @@
 import multer from 'multer';
 import OneDriveService from '../services/oneDrive.service.js';
-import { sanitizeFolderName } from '../middlewares/validator.js';
+import { sanitizeFolderName, sanitizeFileName } from '../middlewares/validator.js';
 import { ERROR_MESSAGES } from '../config/constants.js';
 
 // Instanciation paresseuse (lazy instantiation) du service OneDrive
@@ -111,12 +111,25 @@ const uploadToOneDrive = async (req, res) => {
     // Construire le chemin complet du dossier de destination
     const destinationPath = `${rootFolderName}/${sanitizedFolder}`;
 
+    // Sanitize le nom du fichier pour éviter les caractères interdits par SharePoint/OneDrive
+    const sanitizedFileName = sanitizeFileName(file.originalname);
+    
+    if (!sanitizedFileName) {
+      return res.status(400).json({
+        success: false,
+        error: "Le nom du fichier contient des caractères invalides.",
+      });
+    }
+
     console.log(`Tentative d'upload du fichier: ${file.originalname} (${file.size} octets) vers ${destinationPath}`);
+    if (file.originalname !== sanitizedFileName) {
+      console.log(`Nom du fichier nettoyé: ${file.originalname} -> ${sanitizedFileName}`);
+    }
 
     // Uploader le fichier vers OneDrive et obtenir le lien de partage
     const result = await oneDriveService.uploadFile(
       file.buffer,
-      file.originalname,
+      sanitizedFileName, // Utiliser le nom nettoyé
       destinationPath, // Utiliser le chemin de destination complet
       file.mimetype
     );
