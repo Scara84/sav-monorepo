@@ -206,18 +206,50 @@
 
             <!-- Champ d'upload d'images pour les motifs "abimé" et "manquant" -->
             <div v-if="getSavForm(index).reason === 'abime' || getSavForm(index).reason === 'manquant'" class="mt-4">
-              <label style="font-family:var(--font-main);color:var(--text-dark);font-weight:600;font-size:1em;margin-bottom:0.5em;">
+              <label style="font-family:var(--font-main);color:var(--text-dark);font-weight:600;font-size:1em;margin-bottom:0.5em;display:block;">
                 Photos du produit {{ getSavForm(index).reason === 'abime' ? 'abimé' : 'manquant' }}
                 <span class="text-xs text-gray-500">({{ getSavForm(index).reason === 'abime' ? 'obligatoire' : 'optionnel' }} - formats acceptés: JPEG, PNG, GIF, WebP, SVG, HEIC - max 4Mo par image)</span>
               </label>
-              <input
-                type="file"
-                multiple
-                accept="image/jpeg,image/png,image/gif,image/webp,image/svg+xml,image/heic,image/heif"
-                @change="handleImageUpload($event, index)"
-                :disabled="getSavForm(index).filled"
-                class="block w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-md file:border-0 file:text-sm file:font-medium file:bg-blue-50 file:text-blue-700 hover:file:bg-blue-100"
-              />
+              
+              <!-- Zone de drag & drop visuellement améliorée -->
+              <div
+                :class="[
+                  'upload-drop-zone',
+                  { 'upload-drop-zone-active': getSavForm(index).isDragging },
+                  { 'upload-drop-zone-disabled': getSavForm(index).filled }
+                ]"
+                @click="!getSavForm(index).filled && $refs['fileInput' + index][0].click()"
+                @dragover.prevent="!getSavForm(index).filled && (getSavForm(index).isDragging = true)"
+                @dragleave.prevent="getSavForm(index).isDragging = false"
+                @drop.prevent="handleDrop($event, index)"
+              >
+                <input
+                  :ref="'fileInput' + index"
+                  type="file"
+                  multiple
+                  accept="image/jpeg,image/png,image/gif,image/webp,image/svg+xml,image/heic,image/heif"
+                  @change="handleImageUpload($event, index)"
+                  :disabled="getSavForm(index).filled"
+                  class="hidden"
+                />
+                
+                <div class="flex flex-col items-center justify-center py-8 px-4">
+                  <!-- Icône d'upload -->
+                  <svg class="w-12 h-12 mb-3 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"></path>
+                  </svg>
+                  
+                  <!-- Texte principal -->
+                  <p class="mb-2 text-sm text-gray-700">
+                    <span class="font-semibold">Cliquez pour sélectionner</span> ou glissez-déposez
+                  </p>
+                  
+                  <!-- Texte secondaire -->
+                  <p class="text-xs text-gray-500">
+                    JPEG, PNG, GIF, WebP, SVG, HEIC (max 4Mo)
+                  </p>
+                </div>
+              </div>
               <!-- Prévisualisation des images -->
               <div v-if="getSavForm(index).images && getSavForm(index).images.length > 0" 
                    class="mt-4 grid grid-cols-3 gap-4">
@@ -391,6 +423,7 @@ export default {
           reason: '',
           comment: '',
           images: [],
+          isDragging: false,
           errors: {
             quantity: '',
             unit: '',
@@ -529,6 +562,7 @@ export default {
       savForm.reason = '';
       savForm.comment = '';
       savForm.images = [];
+      savForm.isDragging = false;
       savForm.errors = {
         quantity: '',
         unit: '',
@@ -549,6 +583,7 @@ export default {
       const files = Array.from(event.target.files);
       const form = getSavForm(index);
       form.errors.images = '';
+      form.isDragging = false;
 
       // Récupérer la mention spéciale depuis la prop facture
       const specialMention = props.facture?.specialMention || '';
@@ -562,6 +597,7 @@ export default {
 
       if (invalidFiles.length > 0) {
         form.errors.images = 'Certains fichiers ne sont pas valides (formats acceptés: JPEG, PNG, GIF, WebP, SVG, HEIC - taille max 4Mo)';
+        showToast('Certains fichiers ne sont pas valides', 'error');
         return;
       }
 
@@ -581,6 +617,22 @@ export default {
         };
         reader.readAsDataURL(renamedFile);
       });
+    };
+
+    const handleDrop = (event, index) => {
+      const form = getSavForm(index);
+      if (form.filled) return;
+      
+      form.isDragging = false;
+      const files = event.dataTransfer.files;
+      
+      if (files.length > 0) {
+        // Créer un événement synthétique pour réutiliser handleImageUpload
+        const syntheticEvent = {
+          target: { files: files }
+        };
+        handleImageUpload(syntheticEvent, index);
+      }
     };
 
     const removeImage = (formIndex, imageIndex) => {
@@ -1056,6 +1108,7 @@ export default {
       editItemForm,
       deleteItemForm,
       handleImageUpload,
+      handleDrop,
       removeImage,
       submitAllForms,
       toastMessage,
@@ -1085,6 +1138,26 @@ export default {
 .fade-enter-from,
 .fade-leave-to {
   opacity: 0;
+}
+
+/* Styles pour la zone de drag & drop */
+.upload-drop-zone {
+  @apply border-2 border-dashed border-gray-300 rounded-lg cursor-pointer transition-all duration-200;
+  background-color: #fafafa;
+}
+
+.upload-drop-zone:hover:not(.upload-drop-zone-disabled) {
+  @apply border-blue-400 bg-blue-50;
+}
+
+.upload-drop-zone-active {
+  @apply border-blue-500 bg-blue-100 scale-105;
+  box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.1);
+}
+
+.upload-drop-zone-disabled {
+  @apply opacity-50 cursor-not-allowed;
+  background-color: #f3f4f6;
 }
 </style>
 
