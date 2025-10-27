@@ -31,6 +31,8 @@ const upload = multer({
       'image/gif',
       'image/webp',
       'image/svg+xml',
+      'image/heic',
+      'image/heif',
       // Documents
       'application/pdf',
       'application/msword',
