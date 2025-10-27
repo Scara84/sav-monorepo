@@ -97,6 +97,43 @@ describe('sanitizeFileName', () => {
     expect(result).toBeTruthy();
     expect(result).toMatch(/\.PNG$/);
   });
+
+  it('devrait supprimer les emojis', () => {
+    const testCases = [
+      { input: 'Fichier 💾 important.txt', expected: 'Fichier  important.txt' },
+      { input: '🚀 Projet.pdf', expected: 'Projet.pdf' },
+      { input: 'Test 😀 emoji.docx', expected: 'Test  emoji.docx' },
+      { input: '⚠️ Attention.png', expected: 'Attention.png' },
+    ];
+
+    testCases.forEach(({ input, expected }) => {
+      const result = sanitizeFileName(input);
+      // Normaliser les espaces multiples si nécessaire
+      const normalized = result.replace(/\s+/g, ' ').trim();
+      expect(normalized).toBe(expected.replace(/\s+/g, ' ').trim());
+    });
+  });
+
+  it('devrait supprimer le tilde en début de nom', () => {
+    const result = sanitizeFileName('~temp_file.txt');
+    expect(result).toBe('temp_file.txt');
+    expect(result).not.toMatch(/^~/);
+  });
+
+  it('devrait supprimer les tildes multiples en début', () => {
+    const result = sanitizeFileName('~~~important.pdf');
+    expect(result).toBe('important.pdf');
+  });
+
+  it('devrait gérer tilde au milieu du nom (remplacé par underscore)', () => {
+    const result = sanitizeFileName('fichier~temp.txt');
+    expect(result).toBe('fichier_temp.txt');
+  });
+
+  it('devrait supprimer tilde à la fin du nom', () => {
+    const result = sanitizeFileName('fichier~.txt');
+    expect(result).toBe('fichier.txt');
+  });
 });
 
 describe('sanitizeFolderName', () => {

@@ -72,29 +72,43 @@ Tests créés pour vérifier :
 ## Caractères interdits par SharePoint/OneDrive
 
 La fonction bloque/remplace les caractères suivants :
+
+### Caractères spéciaux remplacés par `_`
 - `"` (guillemets)
 - `*` (astérisque)
 - `:` (deux-points)
 - `<` (inférieur)
 - `>` (supérieur)
 - `?` (point d'interrogation)
-- `/` (slash)
-- `\` (backslash)
-- `|` (pipe)
-- `#` (dièse)
+- `/` (slash - séparateur de dossiers)
+- `\` (backslash - séparateur Windows)
+- `|` (pipe/barre verticale)
+- `#` (dièse/hashtag)
 - `%` (pourcent)
 - `&` (esperluette)
-- `~` (tilde)
-- Caractères de contrôle (0x00-0x1F, 0x7F-0x9F)
+- `~` (tilde - au milieu du nom)
 
-## Exemple de transformation
+### Caractères supprimés
+- Caractères de contrôle ASCII (0x00-0x1F, 0x7F-0x9F)
+- Emojis et symboles Unicode spéciaux (💾, 🚀, 😀, ⚠️, etc.)
+- Points (`.`) en début et fin de nom
+- Tilde (`~`) en début et fin de nom
+- Espaces en début et fin de nom
 
-| Nom original | Nom nettoyé |
-|--------------|-------------|
-| `Image 27-10-2025 aÌ 11.31.PNG` | `Image 27-10-2025 a_ 11.31.PNG` |
-| `Fichier à tester.pdf` | `Fichier à tester.pdf` |
-| `test:file*.txt` | `test_file_.txt` |
-| `mon fichier?.pdf` | `mon fichier_.pdf` |
+## Exemples de transformation
+
+| Nom original | Nom nettoyé | Type de problème |
+|--------------|-------------|------------------|
+| `Image 27-10-2025 aÌ 11.31.PNG` | `Image 27-10-2025 a_ 11.31.PNG` | Caractère de contrôle \x80 |
+| `Fichier à tester.pdf` | `Fichier à tester.pdf` | Préservation des accents |
+| `test:file*.txt` | `test_file_.txt` | Caractères interdits |
+| `mon fichier?.pdf` | `mon fichier_.pdf` | Point d'interrogation |
+| `🚀 Projet.docx` | `Projet.docx` | Emoji |
+| `Fichier 💾 important.txt` | `Fichier important.txt` | Emoji avec espaces |
+| `~temp_file.txt` | `temp_file.txt` | Tilde au début |
+| `fichier~temp.pdf` | `fichier_temp.pdf` | Tilde au milieu |
+| `.hidden_file.txt` | `hidden_file.txt` | Point au début |
+| `document .pdf` | `document.pdf` | Espace à la fin |
 
 ## Tests à effectuer
 
