@@ -917,8 +917,6 @@ export default {
       uploadErrorMessage.value = '';
       
       try {
-        const { submitUploadedFileUrls } = useApiClient();
-
         // Vérifier s'il existe des demandes en cours non validées
         if (hasUnfinishedForms.value) {
           uploadStatus.value = 'error';
