@@ -25,13 +25,13 @@ export function useImageUpload() {
 
     // Vérification des fichiers
     const invalidFiles = files.filter(file => {
-      const isValidType = ['image/jpeg', 'image/png'].includes(file.type);
-      const isValidSize = file.size <= 5 * 1024 * 1024; // 5Mo
+      const isValidType = ['image/jpeg', 'image/png', 'image/gif', 'image/webp', 'image/svg+xml', 'image/heic', 'image/heif'].includes(file.type);
+      const isValidSize = file.size <= 10 * 1024 * 1024; // 10Mo
       return !isValidType || !isValidSize;
     });
 
     if (invalidFiles.length > 0) {
-      form.errors.images = 'Certains fichiers ne sont pas valides (format jpg/png et taille max 5Mo)';
+      form.errors.images = 'Certains fichiers ne sont pas valides (formats acceptés: JPEG, PNG, GIF, WebP, SVG, HEIC - taille max 10Mo)';
       return;
     }
 
