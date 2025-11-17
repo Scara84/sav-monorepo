@@ -161,10 +161,48 @@ export function useApiClient() {
     });
   };
 
+  /**
+   * Envoie les URLs des fichiers uploadés au backend pour validation et traitement
+   * @param {Array} fileUrls - Tableau des URLs OneDrive des fichiers uploadés
+   * @param {string} savDossier - Nom du dossier SAV
+   * @param {Object} payload - Données SAV à envoyer
+   */
+  const submitUploadedFileUrls = async (fileUrls, savDossier, payload) => {
+    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+    const apiKey = getApiKey();
+    
+    const submitFn = async () => {
+      const headers = {
+        'Content-Type': 'application/json'
+      };
+      
+      // Ajouter l'API key si elle existe
+      if (apiKey) {
+        headers['X-API-Key'] = apiKey;
+      }
+      
+      const response = await axios.post(`${apiUrl}/api/submit-sav-urls`, {
+        savDossier,
+        fileUrls,
+        payload
+      }, { headers });
+      
+      if (!response.data || !response.data.success) {
+        throw new Error(response.data.error || 'Impossible de soumettre les URLs');
+      }
+      
+      return response.data;
+    };
+
+    // Exécuter avec retry logic
+    return await withRetry(submitFn, 3, 1000);
+  };
+
   return {
     uploadToBackend,
     getFolderShareLink,
     uploadFilesParallel,
+    submitUploadedFileUrls,
     withRetry
   };
 }

@@ -222,6 +222,92 @@ const getSavFolderShareLink = async (req, res) => {
 };
 
 /**
+ * Valide que les URLs proviennent bien d'OneDrive
+ */
+const isValidOneDriveUrl = (url) => {
+  if (!url || typeof url !== 'string') return false;
+  // Vérifier que l'URL provient d'OneDrive (graph.microsoft.com ou sharepoint)
+  return url.includes('graph.microsoft.com') || 
+         url.includes('sharepoint.com') || 
+         url.includes('onedrive.live.com') ||
+         url.includes('1drv.ms');
+};
+
+/**
+ * Reçoit les URLs des fichiers uploadés directement sur OneDrive depuis le frontend
+ * et les valide avant traitement
+ */
+const submitDirectUploadUrls = async (req, res) => {
+  try {
+    const { savDossier, fileUrls, payload } = req.body;
+
+    // Valider les paramètres
+    if (!savDossier || typeof savDossier !== 'string') {
+      return res.status(400).json({
+        success: false,
+        error: 'Le nom du dossier SAV est requis et doit être une chaîne de caractères'
+      });
+    }
+
+    if (!Array.isArray(fileUrls)) {
+      return res.status(400).json({
+        success: false,
+        error: 'fileUrls doit être un tableau d\'URLs'
+      });
+    }
+
+    if (fileUrls.length === 0) {
+      return res.status(400).json({
+        success: false,
+        error: 'Au moins une URL de fichier est requise'
+      });
+    }
+
+    // Sanitize le nom du dossier
+    const sanitizedFolder = sanitizeFolderName(savDossier);
+    if (!sanitizedFolder) {
+      return res.status(400).json({
+        success: false,
+        error: 'Le nom du dossier de SAV contient des caractères invalides'
+      });
+    }
+
+    // Valider que toutes les URLs proviennent d'OneDrive
+    const invalidUrls = fileUrls.filter(url => !isValidOneDriveUrl(url));
+    if (invalidUrls.length > 0) {
+      console.warn('URLs invalides détectées:', invalidUrls);
+      return res.status(400).json({
+        success: false,
+        error: 'Certaines URLs ne proviennent pas d\'OneDrive. Seules les URLs OneDrive sont acceptées.',
+        invalidCount: invalidUrls.length
+      });
+    }
+
+    console.log(`Réception de ${fileUrls.length} URL(s) OneDrive pour le dossier ${sanitizedFolder}`);
+    
+    // Formater la réponse
+    const response = {
+      success: true,
+      message: 'URLs reçues et validées avec succès',
+      savDossier: sanitizedFolder,
+      fileCount: fileUrls.length,
+      fileUrls: fileUrls,
+      payload: payload || {}
+    };
+
+    res.json(response);
+
+  } catch (error) {
+    console.error('Erreur lors de la réception des URLs:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Erreur lors du traitement des URLs',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+/**
  * Endpoint de test
  */
 const testEndpoint = (req, res) => {
@@ -232,11 +318,12 @@ const testEndpoint = (req, res) => {
   });
 };
 
-export { handleFileUpload, uploadToOneDrive, testEndpoint, getSavFolderShareLink };
+export { handleFileUpload, uploadToOneDrive, testEndpoint, getSavFolderShareLink, submitDirectUploadUrls };
 
 export default {
   handleFileUpload,
   uploadToOneDrive,
   testEndpoint,
-  getSavFolderShareLink
+  getSavFolderShareLink,
+  submitDirectUploadUrls
 };

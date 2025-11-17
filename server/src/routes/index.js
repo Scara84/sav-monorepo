@@ -4,7 +4,7 @@ import { uploadLimiter, strictLimiter } from '../middlewares/rateLimiter.js';
 import { authenticateApiKey } from '../middlewares/auth.js';
 import { validateUpload, validateShareLink, handleValidationErrors } from '../middlewares/validator.js';
 
-const { testEndpoint, handleFileUpload, uploadToOneDrive, getSavFolderShareLink } = uploadController;
+const { testEndpoint, handleFileUpload, uploadToOneDrive, getSavFolderShareLink, submitDirectUploadUrls } = uploadController;
 
 const router = Router();
 
@@ -44,6 +44,13 @@ router.post('/folder-share-link',
   validateShareLink,
   handleValidationErrors,
   getSavFolderShareLink
+);
+
+// Route pour recevoir les URLs des fichiers uploadés directement sur OneDrive (avec auth et rate limiting)
+router.post('/submit-sav-urls',
+  authenticateApiKey,
+  uploadLimiter,
+  submitDirectUploadUrls
 );
 
 // Gestion des erreurs 404

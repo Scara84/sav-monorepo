@@ -340,6 +340,8 @@ import { ref, reactive, computed, onMounted, watch } from 'vue';
 import axios from 'axios';
 import { supabase } from '../lib/supabase';
 import * as XLSX from 'xlsx';
+import oneDriveService from '../services/oneDriveService.js';
+import { useApiClient } from '../composables/useApiClient.js';
 
 export default {
   name: 'WebhookItemsList',
@@ -916,6 +918,8 @@ export default {
       uploadErrorMessage.value = '';
       
       try {
+        const { submitUploadedFileUrls } = useApiClient();
+
         // Vérifier s'il existe des demandes en cours non validées
         if (hasUnfinishedForms.value) {
           uploadStatus.value = 'error';
@@ -945,12 +949,18 @@ export default {
         const timestamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}-${String(now.getSeconds()).padStart(2, '0')}`;
         const savDossier = `SAV_${sanitizedSpecialMention}_${timestamp}`;
 
-        // Étape 1 : Upload des images sur le backend (en parallèle)
-        const uploadStartTime = Date.now(); // Pour délai minimum
+        // ÉTAPE 1 : Upload DIRECT des images sur OneDrive depuis le frontend
+        const uploadStartTime = Date.now();
         
+        // Initialiser le service OneDrive
+        const initialized = await oneDriveService.initialize();
+        if (!initialized) {
+          throw new Error('Impossible de se connecter à OneDrive. Veuillez vérifier votre authentification Microsoft.');
+        }
+
         // Collecter tous les fichiers à uploader
         const allFiles = [];
-        const fileMapping = new Map(); // Pour retrouver quel imgObj correspond à quel fichier
+        const fileMapping = new Map();
         
         for (const { form } of filledForms) {
           if (form.images && form.images.length > 0) {
@@ -966,16 +976,14 @@ export default {
         totalFiles.value = allFiles.length + 1; // +1 pour le fichier Excel
         uploadedFiles.value = 0;
         
-        // Upload en parallèle avec progress et gestion d'erreur
+        // Upload en parallèle directement vers OneDrive
         let uploadErrors = [];
         const uploadPromises = allFiles.map(async (file) => {
           const imgObj = fileMapping.get(file);
           try {
             currentUploadFile.value = file.name;
-            const uploadedUrl = await uploadToBackend(file, savDossier, false, (progress) => {
-              uploadProgress.value[file.name] = progress;
-            });
-            imgObj.uploadedUrl = uploadedUrl;
+            const result = await oneDriveService.uploadFile(file, `SAV_Images/${savDossier}`);
+            imgObj.uploadedUrl = result.webUrl;
             uploadedFiles.value++;
           } catch (e) {
             imgObj.uploadError = true;
@@ -1000,13 +1008,13 @@ export default {
           uploadErrorMessage.value = `Échec de l'upload de ${uploadErrors.length} fichier(s): ${errorDetails}`;
           isUploading.value = false;
           globalLoading.value = false;
-          return; // ARRÊTER le processus
+          return;
         }
 
         // Générer le tableau HTML pour Make.com
         const htmlTable = buildSavHtmlTable(filledForms, props.items);
 
-        // Étape 2 : Préparer les payloads pour le webhook (ajouter les liens OneDrive)
+        // ÉTAPE 2 : Préparer les payloads pour le webhook
         const payload = filledForms.map(({ form, index }) => {
           const images = form.images && form.images.length > 0
             ? form.images.map(img => ({
@@ -1014,7 +1022,6 @@ export default {
                 fileName: img.file ? img.file.name : ''
               }))
             : [];
-          // Récupérer l'item de facturation lié à la ligne SAV
           const factureItem = props.items[index] || {};
           return {
             ...form,
@@ -1031,49 +1038,49 @@ export default {
           };
         });
 
-        // Générer le fichier Excel en base64
+        // ÉTAPE 3 : Upload du fichier Excel directement sur OneDrive
         const excelBase64 = generateExcelFile(filledForms, props.items);
-        // Utiliser le même nom de base que le dossier pour le fichier Excel
         const excelFile = {
           content: excelBase64,
           filename: `${sanitizedSpecialMention}_${timestamp}.xlsx`
         };
 
-        // Upload du fichier Excel sur OneDrive (le lien retourné n'est plus utilisé ici)
         currentUploadFile.value = excelFile.filename;
-        await uploadToBackend(excelFile, savDossier, true, (progress) => {
-          uploadProgress.value[excelFile.filename] = progress;
-        });
+        const byteCharacters = atob(excelBase64);
+        const byteNumbers = new Array(byteCharacters.length);
+        for (let i = 0; i < byteCharacters.length; i++) {
+          byteNumbers[i] = byteCharacters.charCodeAt(i);
+        }
+        const byteArray = new Uint8Array(byteNumbers);
+        const excelBlob = new Blob([byteArray], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        const excelFileObj = new File([excelBlob], excelFile.filename, { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
+        
+        const excelResult = await oneDriveService.uploadFile(excelFileObj, `SAV_Images/${savDossier}`);
         uploadedFiles.value++;
 
-        // Étape 3 : Obtenir le lien de partage pour le dossier global
-        const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000';
-        const apiKey = import.meta.env.VITE_API_KEY;
-        
-        const headers = {};
-        if (apiKey) {
-          headers['X-API-Key'] = apiKey;
-        }
-        
-        const response = await axios.post(`${apiUrl}/api/folder-share-link`, { savDossier }, { headers });
+        // ÉTAPE 4 : Créer le lien de partage du dossier
+        const folderShareLink = await oneDriveService.createFolderShareLink(`SAV_Images/${savDossier}`);
 
-        if (!response.data || !response.data.success) {
-          throw new Error(response.data.error || 'Impossible de récupérer le lien de partage du dossier.');
-        }
-        const folderShareLink = response.data.shareLink;
+        // ÉTAPE 5 : Envoyer les URLs au backend pour validation
+        await submitUploadedFileUrls(
+          allFiles.map(f => fileMapping.get(f).uploadedUrl).filter(Boolean),
+          savDossier,
+          payload
+        );
 
-        // Étape 4 : Envoi au webhook avec le lien du dossier
+        // ÉTAPE 6 : Envoi au webhook avec le lien du dossier
         await axios.post(import.meta.env.VITE_WEBHOOK_URL_DATA_SAV, {
           htmlTable,
           forms: payload,
           facture: props.facture,
-          dossier_sav_url: folderShareLink
+          dossier_sav_url: folderShareLink.webUrl
         });
+
         filledForms.forEach(({ form }) => {
           form.showForm = false;
         });
         
-        // Succès : afficher le modal de succès
+        // Succès
         uploadStatus.value = 'success';
         emit('sav-submitted');
       } catch (error) {

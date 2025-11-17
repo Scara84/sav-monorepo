@@ -198,6 +198,46 @@ class OneDriveService {
       throw error;
     }
   }
+
+  // Créer un lien de partage pour un dossier
+  async createFolderShareLink(folderPath) {
+    // Assurer l'initialisation du client Graph
+    if (!this.graphClient) {
+      const initialized = await this.initialize();
+      if (!initialized || !this.graphClient) {
+        console.error("Impossible d'initialiser le client Graph");
+        throw new Error("Client Graph non initialisé");
+      }
+    }
+
+    try {
+      // Récupérer le dossier par son chemin
+      const folderResponse = await this.graphClient
+        .api(`/me/drive/root:/${folderPath}`)
+        .get();
+
+      if (!folderResponse || !folderResponse.id) {
+        throw new Error(`Dossier non trouvé au chemin : ${folderPath}`);
+      }
+
+      // Créer un lien de partage pour le dossier
+      const sharingResponse = await this.graphClient
+        .api(`/me/drive/items/${folderResponse.id}/createLink`)
+        .post({
+          type: "view",
+          scope: "anonymous"
+        });
+
+      return {
+        itemId: folderResponse.id,
+        folderPath: folderPath,
+        webUrl: sharingResponse.link.webUrl
+      };
+    } catch (error) {
+      console.error("Erreur lors de la création du lien de partage du dossier:", error);
+      throw error;
+    }
+  }
 }
 
 export default new OneDriveService();
