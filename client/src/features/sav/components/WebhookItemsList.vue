@@ -340,7 +340,6 @@ import { ref, reactive, computed, onMounted, watch } from 'vue';
 import axios from 'axios';
 import { supabase } from '../lib/supabase';
 import * as XLSX from 'xlsx';
-import oneDriveService from '../services/oneDriveService.js';
 
 export default {
   name: 'WebhookItemsList',
@@ -946,15 +945,9 @@ export default {
         const timestamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}-${String(now.getSeconds()).padStart(2, '0')}`;
         const savDossier = `SAV_${sanitizedSpecialMention}_${timestamp}`;
 
-        // ÉTAPE 1 : Upload DIRECT des images vers OneDrive (token du backend)
+        // ÉTAPE 1 : Upload des images via le backend (authentification silencieuse)
         const uploadStartTime = Date.now();
         
-        // Initialiser le service OneDrive avec le token du backend
-        const initialized = await oneDriveService.initialize();
-        if (!initialized) {
-          throw new Error('Impossible de se connecter à OneDrive. Veuillez vérifier votre configuration.');
-        }
-
         // Collecter tous les fichiers à uploader
         const allFiles = [];
         const fileMapping = new Map();
@@ -973,14 +966,16 @@ export default {
         totalFiles.value = allFiles.length + 1; // +1 pour le fichier Excel
         uploadedFiles.value = 0;
         
-        // Upload en parallèle directement vers OneDrive
+        // Upload en parallèle via le backend
         let uploadErrors = [];
         const uploadPromises = allFiles.map(async (file) => {
           const imgObj = fileMapping.get(file);
           try {
             currentUploadFile.value = file.name;
-            const result = await oneDriveService.uploadFile(file, `SAV_Images/${savDossier}`);
-            imgObj.uploadedUrl = result.webUrl;
+            const uploadedUrl = await uploadToBackend(file, savDossier, false, (progress) => {
+              uploadProgress.value[file.name] = progress;
+            });
+            imgObj.uploadedUrl = uploadedUrl;
             uploadedFiles.value++;
           } catch (e) {
             imgObj.uploadError = true;
@@ -1035,7 +1030,7 @@ export default {
           };
         });
 
-        // ÉTAPE 3 : Upload du fichier Excel directement vers OneDrive
+        // ÉTAPE 3 : Upload du fichier Excel via le backend
         const excelBase64 = generateExcelFile(filledForms, props.items);
         const excelFile = {
           content: excelBase64,
@@ -1043,18 +1038,9 @@ export default {
         };
 
         currentUploadFile.value = excelFile.filename;
-        
-        // Convertir base64 en File
-        const byteCharacters = atob(excelBase64);
-        const byteNumbers = new Array(byteCharacters.length);
-        for (let i = 0; i < byteCharacters.length; i++) {
-          byteNumbers[i] = byteCharacters.charCodeAt(i);
-        }
-        const byteArray = new Uint8Array(byteNumbers);
-        const excelBlob = new Blob([byteArray], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-        const excelFileObj = new File([excelBlob], excelFile.filename, { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-        
-        await oneDriveService.uploadFile(excelFileObj, `SAV_Images/${savDossier}`);
+        await uploadToBackend(excelFile, savDossier, true, (progress) => {
+          uploadProgress.value[excelFile.filename] = progress;
+        });
         uploadedFiles.value++;
 
         // ÉTAPE 4 : Obtenir le lien de partage pour le dossier global
