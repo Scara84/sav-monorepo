@@ -20,7 +20,7 @@ const storage = multer.memoryStorage();
 const upload = multer({
   storage,
   limits: {
-    fileSize: 25 * 1024 * 1024, // Augmentation à 25MB pour les fichiers plus volumineux
+    fileSize: 10 * 1024 * 1024, // Limite à 10MB par fichier
   },
   fileFilter: (req, file, cb) => {
     // Types MIME acceptés

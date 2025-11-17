@@ -208,7 +208,7 @@
             <div v-if="getSavForm(index).reason === 'abime' || getSavForm(index).reason === 'manquant' || getSavForm(index).reason === 'autre'" class="mt-4">
               <label style="font-family:var(--font-main);color:var(--text-dark);font-weight:600;font-size:1em;margin-bottom:0.5em;display:block;">
                 Photos
-                <span class="text-xs text-gray-500">({{ getSavForm(index).reason === 'abime' ? 'obligatoire' : 'optionnel' }} - formats acceptés: JPEG, PNG, GIF, WebP, SVG, HEIC - max 4Mo par image)</span>
+                <span class="text-xs text-gray-500">({{ getSavForm(index).reason === 'abime' ? 'obligatoire' : 'optionnel' }} - formats acceptés: JPEG, PNG, GIF, WebP, SVG, HEIC - max 10Mo par image)</span>
               </label>
               
               <!-- Zone de drag & drop visuellement améliorée -->
@@ -246,7 +246,7 @@
                   
                   <!-- Texte secondaire -->
                   <p class="text-xs text-gray-500">
-                    JPEG, PNG, GIF, WebP, SVG, HEIC (max 4Mo)
+                    JPEG, PNG, GIF, WebP, SVG, HEIC (max 10Mo)
                   </p>
                 </div>
               </div>
