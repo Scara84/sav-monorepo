@@ -324,7 +324,8 @@ const testEndpoint = (req, res) => {
  */
 const getUploadToken = async (req, res) => {
   try {
-    const accessToken = await oneDriveServiceInstance.getAccessToken();
+    const oneDriveService = getOneDriveService();
+    const accessToken = await oneDriveService.getAccessToken();
     
     if (!accessToken) {
       return res.status(500).json({
