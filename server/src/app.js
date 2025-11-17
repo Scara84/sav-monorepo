@@ -26,6 +26,15 @@ app.use(helmet({
 // Configuration CORS
 app.use(cors(serverConfig.cors));
 
+// Middleware pour logger les requêtes CORS
+app.use((req, res, next) => {
+  const origin = req.get('origin');
+  if (origin) {
+    console.log(`[CORS] Request from origin: ${origin}`);
+  }
+  next();
+});
+
 // Rate limiting général
 app.use('/api', generalLimiter);
 
