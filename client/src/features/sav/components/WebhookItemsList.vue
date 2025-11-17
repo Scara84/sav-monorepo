@@ -341,7 +341,6 @@ import axios from 'axios';
 import { supabase } from '../lib/supabase';
 import * as XLSX from 'xlsx';
 import oneDriveService from '../services/oneDriveService.js';
-import { useApiClient } from '../composables/useApiClient.js';
 
 export default {
   name: 'WebhookItemsList',
@@ -949,13 +948,13 @@ export default {
         const timestamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}-${String(now.getSeconds()).padStart(2, '0')}`;
         const savDossier = `SAV_${sanitizedSpecialMention}_${timestamp}`;
 
-        // ÉTAPE 1 : Upload DIRECT des images sur OneDrive depuis le frontend
+        // ÉTAPE 1 : Upload DIRECT des images vers OneDrive (token du backend)
         const uploadStartTime = Date.now();
         
-        // Initialiser le service OneDrive
+        // Initialiser le service OneDrive avec le token du backend
         const initialized = await oneDriveService.initialize();
         if (!initialized) {
-          throw new Error('Impossible de se connecter à OneDrive. Veuillez vérifier votre authentification Microsoft.');
+          throw new Error('Impossible de se connecter à OneDrive. Veuillez vérifier votre configuration.');
         }
 
         // Collecter tous les fichiers à uploader
@@ -1038,7 +1037,7 @@ export default {
           };
         });
 
-        // ÉTAPE 3 : Upload du fichier Excel directement sur OneDrive
+        // ÉTAPE 3 : Upload du fichier Excel directement vers OneDrive
         const excelBase64 = generateExcelFile(filledForms, props.items);
         const excelFile = {
           content: excelBase64,
@@ -1046,6 +1045,8 @@ export default {
         };
 
         currentUploadFile.value = excelFile.filename;
+        
+        // Convertir base64 en File
         const byteCharacters = atob(excelBase64);
         const byteNumbers = new Array(byteCharacters.length);
         for (let i = 0; i < byteCharacters.length; i++) {
@@ -1055,25 +1056,31 @@ export default {
         const excelBlob = new Blob([byteArray], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
         const excelFileObj = new File([excelBlob], excelFile.filename, { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
         
-        const excelResult = await oneDriveService.uploadFile(excelFileObj, `SAV_Images/${savDossier}`);
+        await oneDriveService.uploadFile(excelFileObj, `SAV_Images/${savDossier}`);
         uploadedFiles.value++;
 
-        // ÉTAPE 4 : Créer le lien de partage du dossier
-        const folderShareLink = await oneDriveService.createFolderShareLink(`SAV_Images/${savDossier}`);
+        // ÉTAPE 4 : Obtenir le lien de partage pour le dossier global
+        const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000';
+        const apiKey = import.meta.env.VITE_API_KEY;
+        
+        const headers = {};
+        if (apiKey) {
+          headers['X-API-Key'] = apiKey;
+        }
+        
+        const response = await axios.post(`${apiUrl}/api/folder-share-link`, { savDossier }, { headers });
 
-        // ÉTAPE 5 : Envoyer les URLs au backend pour validation
-        await submitUploadedFileUrls(
-          allFiles.map(f => fileMapping.get(f).uploadedUrl).filter(Boolean),
-          savDossier,
-          payload
-        );
+        if (!response.data || !response.data.success) {
+          throw new Error(response.data.error || 'Impossible de récupérer le lien de partage du dossier.');
+        }
+        const folderShareLink = response.data.shareLink;
 
-        // ÉTAPE 6 : Envoi au webhook avec le lien du dossier
+        // ÉTAPE 5 : Envoi au webhook avec le lien du dossier
         await axios.post(import.meta.env.VITE_WEBHOOK_URL_DATA_SAV, {
           htmlTable,
           forms: payload,
           facture: props.facture,
-          dossier_sav_url: folderShareLink.webUrl
+          dossier_sav_url: folderShareLink
         });
 
         filledForms.forEach(({ form }) => {

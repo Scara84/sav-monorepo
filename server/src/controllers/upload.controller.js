@@ -318,12 +318,44 @@ const testEndpoint = (req, res) => {
   });
 };
 
-export { handleFileUpload, uploadToOneDrive, testEndpoint, getSavFolderShareLink, submitDirectUploadUrls };
+/**
+ * Génère un token d'accès temporaire pour l'upload direct OneDrive depuis le frontend
+ * Le token est valide pendant 1 heure
+ */
+const getUploadToken = async (req, res) => {
+  try {
+    const accessToken = await oneDriveServiceInstance.getAccessToken();
+    
+    if (!accessToken) {
+      return res.status(500).json({
+        success: false,
+        error: 'Impossible de générer un token d\'accès'
+      });
+    }
+
+    res.json({
+      success: true,
+      accessToken,
+      expiresIn: 3600, // 1 heure
+      graphApiEndpoint: 'https://graph.microsoft.com/v1.0'
+    });
+  } catch (error) {
+    console.error('Erreur lors de la génération du token:', error);
+    res.status(500).json({
+      success: false,
+      error: 'Erreur lors de la génération du token d\'accès',
+      details: process.env.NODE_ENV === 'development' ? error.message : undefined
+    });
+  }
+};
+
+export { handleFileUpload, uploadToOneDrive, testEndpoint, getSavFolderShareLink, submitDirectUploadUrls, getUploadToken };
 
 export default {
   handleFileUpload,
   uploadToOneDrive,
   testEndpoint,
   getSavFolderShareLink,
-  submitDirectUploadUrls
+  submitDirectUploadUrls,
+  getUploadToken
 };

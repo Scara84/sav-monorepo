@@ -4,7 +4,7 @@ import { uploadLimiter, strictLimiter } from '../middlewares/rateLimiter.js';
 import { authenticateApiKey } from '../middlewares/auth.js';
 import { validateUpload, validateShareLink, handleValidationErrors } from '../middlewares/validator.js';
 
-const { testEndpoint, handleFileUpload, uploadToOneDrive, getSavFolderShareLink, submitDirectUploadUrls } = uploadController;
+const { testEndpoint, handleFileUpload, uploadToOneDrive, getSavFolderShareLink, submitDirectUploadUrls, getUploadToken } = uploadController;
 
 const router = Router();
 
@@ -16,6 +16,13 @@ router.use((req, res, next) => {
 
 // Route de test (pas de rate limiting ni d'auth)
 router.get('/test', testEndpoint);
+
+// Route pour obtenir un token d'accès OneDrive temporaire (avec auth et rate limiting)
+router.post('/get-upload-token',
+  authenticateApiKey,
+  uploadLimiter,
+  getUploadToken
+);
 
 // Routes d'upload de fichiers (avec auth, rate limiting et validation)
 router.post('/upload', 
