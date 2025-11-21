@@ -33,6 +33,7 @@ coverage
 # Build directories
 /dist
 /build
+deploy-infomaniak/
 
 # IDE specific files
 .idea/
