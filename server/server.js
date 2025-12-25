@@ -12,6 +12,12 @@ const __filename = fileURLToPath(import.meta.url);
 const __dirname = dirname(__filename);
 
 const setupLogs = async () => {
+  // Désactiver les logs fichier en environnement serverless (Vercel)
+  if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+    console.log('Environnement serverless détecté - logs fichier désactivés');
+    return;
+  }
+
   try {
     const logsDir = path.join(__dirname, serverConfig.logs.dir);
     await access(logsDir).catch(async () => {
@@ -44,10 +50,13 @@ const startServer = async () => {
   try {
     await setupLogs();
 
-    const uploadsDir = path.join(__dirname, serverConfig.static.uploads);
-    await access(uploadsDir).catch(async () => {
-      await mkdir(uploadsDir, { recursive: true });
-    });
+    // Désactiver la création du dossier uploads en environnement serverless
+    if (!(process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME)) {
+      const uploadsDir = path.join(__dirname, serverConfig.static.uploads);
+      await access(uploadsDir).catch(async () => {
+        await mkdir(uploadsDir, { recursive: true });
+      });
+    }
 
     const server = app.listen(serverConfig.port, '0.0.0.0', () => {
       console.log(`\n=== Serveur démarré sur le port ${serverConfig.port} ===`);
