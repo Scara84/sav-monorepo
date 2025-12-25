@@ -95,9 +95,29 @@ const handleFileUpload = (req, res, next) => {
  */
 const uploadToOneDrive = async (req, res) => {
   try {
+    console.log('=== DÉBUT UPLOAD ONEDRIVE ===');
+    console.log('Headers reçus:', req.headers);
+    console.log('Body reçu:', req.body);
+    console.log('File reçu:', req.file ? { name: req.file.originalname, size: req.file.size, mimetype: req.file.mimetype } : 'Aucun fichier');
+
+    // Vérifier les variables d'environnement critiques
+    const requiredEnvVars = ['MICROSOFT_CLIENT_ID', 'MICROSOFT_CLIENT_SECRET', 'MICROSOFT_TENANT_ID'];
+    const missingVars = requiredEnvVars.filter(varName => !process.env[varName]);
+    
+    if (missingVars.length > 0) {
+      console.error('Variables d\'environnement manquantes:', missingVars);
+      return res.status(500).json({
+        success: false,
+        error: 'Configuration serveur incomplète',
+        details: process.env.NODE_ENV === 'development' ? `Variables manquantes: ${missingVars.join(', ')}` : undefined
+      });
+    }
+
     const oneDriveService = getOneDriveService();
     const { file } = req;
-    const { savDossier } = req.body; // Nom du dossier unique pour la demande de SAV
+    const { savDossier } = req.body;
+
+    console.log('Service OneDrive initialisé');
 
     // Sanitize le nom du dossier pour éviter les path traversal attacks
     const sanitizedFolder = sanitizeFolderName(savDossier);
@@ -110,7 +130,6 @@ const uploadToOneDrive = async (req, res) => {
     }
 
     const rootFolderName = process.env.ONEDRIVE_FOLDER || 'SAV_Images';
-    // Construire le chemin complet du dossier de destination
     const destinationPath = `${rootFolderName}/${sanitizedFolder}`;
 
     // Sanitize le nom du fichier pour éviter les caractères interdits par SharePoint/OneDrive
@@ -128,13 +147,21 @@ const uploadToOneDrive = async (req, res) => {
       console.log(`Nom du fichier nettoyé: ${file.originalname} -> ${sanitizedFileName}`);
     }
 
-    // Uploader le fichier vers OneDrive et obtenir le lien de partage
+    // Test de l'authentification avant l'upload
+    console.log('Test de l\'authentification Microsoft...');
+    const accessToken = await oneDriveService.getAccessToken();
+    console.log('Token d\'accès obtenu:', accessToken ? 'OK' : 'ÉCHEC');
+
+    // Uploader le fichier vers OneDrive
+    console.log('Début de l\'upload vers OneDrive...');
     const result = await oneDriveService.uploadFile(
       file.buffer,
-      sanitizedFileName, // Utiliser le nom nettoyé
-      destinationPath, // Utiliser le chemin de destination complet
+      sanitizedFileName,
+      destinationPath,
       file.mimetype
     );
+
+    console.log('Upload terminé avec succès');
 
     // Formater la réponse pour le client
     const response = {
@@ -150,10 +177,25 @@ const uploadToOneDrive = async (req, res) => {
       },
     };
 
+    console.log('=== FIN UPLOAD ONEDRIVE (SUCCÈS) ===');
     res.json(response);
 
   } catch (error) {
-    console.error('Erreur lors de l\'upload vers OneDrive:', error);
+    console.error('=== ERREUR UPLOAD ONEDRIVE ===');
+    console.error('Type d\'erreur:', error.constructor.name);
+    console.error('Message:', error.message);
+    console.error('Stack:', error.stack);
+    console.error('Code:', error.code);
+    console.error('Status Code:', error.statusCode);
+    
+    if (error.response) {
+      console.error('Response status:', error.response.status);
+      console.error('Response data:', error.response.data);
+    }
+    
+    if (error.body) {
+      console.error('Error body:', error.body);
+    }
 
     let statusCode = 500;
     let errorMessage = ERROR_MESSAGES.UPLOAD_FAILED;
@@ -168,7 +210,12 @@ const uploadToOneDrive = async (req, res) => {
     } else if (error.statusCode === 400) {
       statusCode = 400;
       errorMessage = 'Requête invalide. Vérifiez les données envoyées.';
+    } else if (error.message.includes('Variables d\'environnement manquantes')) {
+      statusCode = 500;
+      errorMessage = 'Configuration serveur incomplète';
     }
+
+    console.error('=== FIN ERREUR UPLOAD ONEDRIVE ===');
 
     res.status(statusCode).json({
       success: false,
