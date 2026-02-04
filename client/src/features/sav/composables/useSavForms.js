@@ -20,6 +20,7 @@ export function useSavForms() {
         reason: '',
         comment: '',
         images: [],
+        isDragging: false,
         loading: false,
         errors: {
           quantity: '',
@@ -114,13 +115,13 @@ export function useSavForms() {
     
     form.loading = true;
     try {
-      // Vérification des champs requis
-      if (!form.quantity || !form.reason) {
-        showToast('Veuillez remplir tous les champs requis', 'error');
-        return;
-      }
-      if (form.reason === 'abime' && (!form.images || form.images.length === 0)) {
-        showToast('Veuillez ajouter au moins une photo du produit abîmé', 'error');
+      const isValid = validateForm(form);
+      if (!isValid) {
+        if (form.errors.images) {
+          showToast('Veuillez ajouter au moins une photo du produit abîmé', 'error');
+        } else {
+          showToast('Veuillez remplir tous les champs requis', 'error');
+        }
         return;
       }
       // Marquer le formulaire comme rempli et le griser
@@ -153,6 +154,7 @@ export function useSavForms() {
     savForm.reason = '';
     savForm.comment = '';
     savForm.images = [];
+    savForm.isDragging = false;
     savForm.errors = {
       quantity: '',
       unit: '',

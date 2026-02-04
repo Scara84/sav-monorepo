@@ -336,10 +336,10 @@
 </template>
 
 <script>
-import { ref, reactive, computed, onMounted, watch } from 'vue';
+import { ref, watch } from 'vue';
 import axios from 'axios';
-import { supabase } from '../lib/supabase';
 import * as XLSX from 'xlsx';
+import { useSavForms } from '../composables/useSavForms.js';
 
 export default {
   name: 'WebhookItemsList',
@@ -355,7 +355,17 @@ export default {
     }
   },
   setup(props, { emit }) {
-    const savForms = ref({});
+    const {
+      savForms,
+      getSavForm,
+      hasFilledForms,
+      hasUnfinishedForms,
+      toggleSavForm,
+      validateItemForm: validateSavItemForm,
+      editItemForm: editSavItemForm,
+      deleteItemForm,
+      getFilledForms
+    } = useSavForms();
     const toastMessage = ref('');
     
     // États pour les progress bars
@@ -405,35 +415,8 @@ export default {
       }
     });
 
-    const hasFilledForms = computed(() => {
-      return Object.values(savForms.value).some(form => form.filled && form.showForm);
-    });
-
-    const hasUnfinishedForms = computed(() => {
-      return Object.values(savForms.value).some(form => form.showForm && !form.filled);
-    });
-
-    const getSavForm = (index) => {
-      if (!savForms.value[index]) {
-        savForms.value[index] = {
-          showForm: false,
-          filled: false,
-          quantity: '',
-          unit: '',
-          reason: '',
-          comment: '',
-          images: [],
-          isDragging: false,
-          errors: {
-            quantity: '',
-            unit: '',
-            reason: '',
-            images: ''
-          }
-        };
-      }
-      return savForms.value[index];
-    };
+    const validateItemForm = (index) => validateSavItemForm(index, showToast);
+    const editItemForm = (index) => editSavItemForm(index, showToast);
 
     const formatKey = (key) => {
       const keyMap = {
@@ -468,108 +451,6 @@ export default {
       return value;
     };
 
-    const validateForm = (form) => {
-      form.errors = {
-        quantity: '',
-        unit: '',
-        reason: '',
-        images: ''
-      };
-      
-      let isValid = true;
-      
-      // Validation de la quantité
-      if (!form.quantity) {
-        form.errors.quantity = 'La quantité est requise';
-        isValid = false;
-      } else if (form.quantity <= 0) {
-        form.errors.quantity = 'La quantité doit être supérieure à 0';
-        isValid = false;
-      }
-      
-      // Validation de l'unité
-      if (!form.unit) {
-        form.errors.unit = 'Veuillez sélectionner une unité';
-        isValid = false;
-      }
-      
-      // Validation du motif
-      if (!form.reason) {
-        form.errors.reason = 'Veuillez sélectionner un motif';
-        isValid = false;
-      }
-      
-      // Validation des images pour le motif "abimé" (obligatoire uniquement pour abime)
-      if (form.reason === 'abime' && (!form.images || form.images.length === 0)) {
-        form.errors.images = 'Veuillez ajouter au moins une photo du produit abimé';
-        isValid = false;
-      }
-      // Pour "manquant", les images sont optionnelles, donc pas de validation
-      
-      return isValid;
-    };
-
-    const toggleSavForm = (index) => {
-      const savForm = getSavForm(index);
-      if (!savForm.submitted) {
-        if (savForm.showForm) {
-          // Si on ferme le formulaire, on le réinitialise
-          deleteItemForm(index);
-        } else {
-          // Si on ouvre le formulaire
-          savForm.showForm = true;
-        }
-      }
-    };
-
-    const validateItemForm = async (index) => {
-      const form = savForms.value[index];
-      if (form.loading) return;
-      form.loading = true;
-      try {
-        // Vérification des champs requis
-        if (!form.quantity || !form.reason) {
-          showToast('Veuillez remplir tous les champs requis', 'error');
-          return;
-        }
-        // Validation des images uniquement pour "abime" (obligatoire)
-        if (form.reason === 'abime' && (!form.images || form.images.length === 0)) {
-          showToast('Veuillez ajouter au moins une photo du produit abîmé', 'error');
-          return;
-        }
-        // Pour "manquant", les images sont optionnelles
-        // Marquer le formulaire comme rempli et le griser
-        form.filled = true;
-        form.showForm = true;  // Garder le formulaire visible mais grisé
-        showToast('Réclamation enregistrée pour cette ligne', 'success');
-      } finally {
-        form.loading = false;
-      }
-    };
-
-    const editItemForm = (index) => {
-      const savForm = getSavForm(index);
-      savForm.filled = false;
-      showToast('Réclamation modifiable à nouveau', 'success');
-    };
-
-    const deleteItemForm = (index) => {
-      const savForm = getSavForm(index);
-      savForm.showForm = false;
-      savForm.filled = false;
-      savForm.quantity = '';
-      savForm.unit = '';
-      savForm.reason = '';
-      savForm.comment = '';
-      savForm.images = [];
-      savForm.isDragging = false;
-      savForm.errors = {
-        quantity: '',
-        unit: '',
-        reason: '',
-        images: ''
-      };
-    };
 
     // Fonction utilitaire pour renommer le fichier avec la mention spéciale
     function renameFileWithSpecialMention(file, specialMention) {
@@ -925,9 +806,7 @@ export default {
           return;
         }
 
-        const filledForms = Object.entries(savForms.value)
-          .filter(([_, form]) => form.filled && form.showForm)
-          .map(([index, form]) => ({ form, index: parseInt(index) }));
+        const filledForms = getFilledForms();
         
         if (filledForms.length === 0) {
           uploadStatus.value = 'error';
