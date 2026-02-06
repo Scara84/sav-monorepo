@@ -13,8 +13,8 @@ pour refactoriser le composant cle et stabiliser le flux SAV.
 ## Avancement
 | ID | Statut | Notes |
 | --- | --- | --- |
-| SAV-001 | En cours | Branche `useSavForms` dans `WebhookItemsList.vue`, validation centralisee, tests a ajuster |
-| SAV-004 | A faire | --- |
+| SAV-001 | Fait | Branche `useSavForms` dans `WebhookItemsList.vue`, validation centralisee, tests a ajuster |
+| SAV-004 | Fait | Branche `useImageUpload` dans `WebhookItemsList.vue`, tests a ajuster |
 | SAV-002 | A faire | --- |
 | SAV-003 | A faire | --- |
 | SAV-005 | A faire | --- |
