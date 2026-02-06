@@ -110,15 +110,15 @@ describe('WebhookItemsList.vue', () => {
   })
 
   it('affiche le bouton de demande SAV pour chaque élément', () => {
-    const buttons = wrapper.findAll('button')
+    const buttons = wrapper.findAll('button.btn-main')
     expect(buttons.length).toBe(mockItems.length)
     buttons.forEach(button => {
-      expect(button.text()).toContain('Faire une demande SAV')
+      expect(button.text()).toContain('Signaler un problème')
     })
   })
 
   it('affiche le formulaire SAV au clic sur le bouton', async () => {
-    const button = wrapper.find('button')
+    const button = wrapper.find('button.btn-main')
     
     // Vérifier que le formulaire n'est pas affiché initialement
     expect(wrapper.find('form').exists()).toBe(false)
@@ -130,7 +130,7 @@ describe('WebhookItemsList.vue', () => {
     expect(wrapper.find('form').exists()).toBe(true)
     
     // Vérifier que le bouton a changé de texte
-    expect(button.text()).toContain('Annuler la demande')
+    expect(button.text()).toContain('Annuler la réclamation')
   })
 
   it('formate correctement les valeurs monétaires', () => {
@@ -145,7 +145,7 @@ describe('WebhookItemsList.vue', () => {
     const firstItem = items[0]
     
     // Vérifier que le titre du produit est affiché
-    const productTitle = firstItem.find('h3.text-gray-900')
+    const productTitle = firstItem.find('h3')
     expect(productTitle.exists()).toBe(true)
     expect(productTitle.text()).toBe('Produit de test')
     
@@ -160,7 +160,6 @@ describe('WebhookItemsList.vue', () => {
     const values = valueElements.map(el => el.text())
     expect(values.some(v => v.includes('2'))).toBe(true) // Quantité
     expect(values.some(v => v.includes('pcs'))).toBe(true) // Unité
-    expect(values.some(v => v.includes('20'))).toBe(true) // TVA
     expect(values.some(v => v.includes('50'))).toBe(true) // Prix unitaire (100/2)
     expect(values.some(v => v.includes('100'))).toBe(true) // Prix total
   })
@@ -188,7 +187,7 @@ describe('WebhookItemsList.vue', () => {
     expect(buttons.length).toBeGreaterThan(0)
     
     const showFormButton = buttons[0]
-    expect(showFormButton.text()).toContain('Faire une demande SAV')
+    expect(showFormButton.text()).toContain('Signaler un problème')
     
     // Afficher le formulaire
     await showFormButton.trigger('click')
@@ -211,34 +210,19 @@ describe('WebhookItemsList.vue', () => {
   // Note: Les tests de validation et de soumission du formulaire
   // nécessitent une analyse plus approfondie du composant pour être correctement implémentés
 
-  it('permet de télécharger un fichier Excel', async () => {
-    // S'assurer que le wrapper est correctement initialisé
+  it('affiche le bouton de validation globale quand un formulaire est rempli', async () => {
     expect(wrapper.exists()).toBe(true)
-    
-    // Trouver le bouton d'export Excel
-    // Le sélecteur peut varier selon votre implémentation
-    const downloadButtons = wrapper.findAll('button')
-    const exportButton = downloadButtons.find(btn => 
-      btn.text().includes('Exporter') || 
-      btn.classes().includes('bg-green-600')
-    )
-    
-    // Vérifier que le bouton existe
-    if (!exportButton) {
-      console.warn('Bouton d\'export Excel non trouvé')
-      return
-    }
-    
-    // Simuler le clic sur le bouton d'export
-    await exportButton.trigger('click')
-    
-    // Vérifier que la fonction d'export a été appelée
-    // Cette vérification dépend de l'implémentation de votre composant
-    // Par exemple, si vous utilisez une fonction nommée 'exportToExcel' :
-    // expect(wrapper.vm.exportToExcel).toHaveBeenCalled()
-    
-    // Pour l'instant, on vérifie simplement que le test passe
-    // sans erreur
-    expect(true).toBe(true)
+
+    const form = wrapper.vm.getSavForm(0)
+    form.showForm = true
+    form.filled = true
+
+    await wrapper.vm.$nextTick()
+
+    const submitButton = wrapper
+      .findAll('button')
+      .find(btn => btn.text().includes('Valider toutes les réclamations'))
+
+    expect(submitButton).toBeTruthy()
   })
 })

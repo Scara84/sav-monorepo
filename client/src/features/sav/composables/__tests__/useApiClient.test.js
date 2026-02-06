@@ -15,6 +15,9 @@ describe('useApiClient', () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    if (vi.unstubAllEnvs) {
+      vi.unstubAllEnvs();
+    }
   });
 
   describe('withRetry', () => {
@@ -135,10 +138,33 @@ describe('useApiClient', () => {
       
       axios.post.mockResolvedValue(mockResponse);
       
-      const result = await apiClient.uploadToBackend(mockFile, 'SAV_TEST_123', true);
+      const result = await apiClient.uploadToBackend(mockFile, 'SAV_TEST_123', {
+        isBase64: true
+      });
       
       expect(result).toBe('https://example.com/file.xlsx');
       expect(axios.post).toHaveBeenCalledTimes(1);
+    });
+
+    it('should call progress callback when provided', async () => {
+      const mockFile = new File(['content'], 'test.jpg', { type: 'image/jpeg' });
+      const mockResponse = {
+        data: {
+          success: true,
+          file: { url: 'https://example.com/file.jpg' }
+        }
+      };
+      const onProgress = vi.fn();
+
+      axios.post.mockResolvedValue(mockResponse);
+
+      await apiClient.uploadToBackend(mockFile, 'SAV_TEST_123', { onProgress });
+
+      const callArgs = axios.post.mock.calls[0];
+      const config = callArgs[2];
+      config.onUploadProgress({ loaded: 5, total: 10 });
+
+      expect(onProgress).toHaveBeenCalledWith(50);
     });
   });
 
@@ -214,6 +240,27 @@ describe('useApiClient', () => {
       axios.post.mockResolvedValue(mockResponse);
       
       await expect(apiClient.getFolderShareLink('SAV_TEST_123')).rejects.toThrow();
+    });
+  });
+
+  describe('submitSavWebhook', () => {
+    it('should submit webhook payload', async () => {
+      vi.stubEnv('VITE_WEBHOOK_URL_DATA_SAV', 'https://example.com/webhook');
+      const payload = { foo: 'bar' };
+      axios.post.mockResolvedValue({ data: { ok: true } });
+
+      const result = await apiClient.submitSavWebhook(payload);
+
+      expect(axios.post).toHaveBeenCalledWith('https://example.com/webhook', payload);
+      expect(result).toEqual({ ok: true });
+    });
+
+    it('should throw when webhook env is missing', async () => {
+      vi.stubEnv('VITE_WEBHOOK_URL_DATA_SAV', '');
+
+      await expect(apiClient.submitSavWebhook({})).rejects.toThrow(
+        'VITE_WEBHOOK_URL_DATA_SAV is not configured'
+      );
     });
   });
 });
