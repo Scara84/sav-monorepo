@@ -17,7 +17,7 @@ pour refactoriser le composant cle et stabiliser le flux SAV.
 | SAV-004 | Fait | Branche `useImageUpload` dans `WebhookItemsList.vue`, tests a ajuster |
 | SAV-002 | Fait | Branche `useApiClient` pour upload + share link + webhook, progress via callback |
 | SAV-003 | Fait | Branche `useExcelGenerator` et retire la logique XLSX du composant |
-| SAV-005 | A faire | --- |
+| SAV-005 | Fait | Nettoyage `WebhookItemsList.vue`, suppression et extraction utilitaire |
 | SAV-006 | A faire | --- |
 | SAV-007 | A faire | --- |
 | SAV-008 | A faire | --- |

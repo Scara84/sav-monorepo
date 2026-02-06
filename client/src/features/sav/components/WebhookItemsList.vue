@@ -547,6 +547,7 @@ import { useSavForms } from '../composables/useSavForms.js'
 import { useImageUpload } from '../composables/useImageUpload.js'
 import { useApiClient } from '../composables/useApiClient.js'
 import { useExcelGenerator } from '../composables/useExcelGenerator.js'
+import { buildSavHtmlTable } from '../lib/buildSavHtmlTable.js'
 
 export default {
   name: 'WebhookItemsList',
@@ -563,14 +564,12 @@ export default {
   },
   setup(props, { emit }) {
     const {
-      savForms,
       getSavForm,
       hasFilledForms,
       hasUnfinishedForms,
       toggleSavForm,
       validateItemForm: validateSavItemForm,
       editItemForm: editSavItemForm,
-      deleteItemForm,
       getFilledForms,
     } = useSavForms()
     const {
@@ -584,11 +583,9 @@ export default {
     const toastMessage = ref('')
 
     // États pour les progress bars
-    const uploadProgress = ref({})
     const currentUploadFile = ref('')
     const totalFiles = ref(0)
     const uploadedFiles = ref(0)
-    const isUploading = ref(false)
     const toastType = ref('success')
     const globalLoading = ref(false)
 
@@ -634,23 +631,6 @@ export default {
     const editItemForm = (index) => editSavItemForm(index, showToast)
     const getSpecialMention = () =>
       props.facture?.special_mention || props.facture?.specialMention || ''
-
-    const formatKey = (key) => {
-      const keyMap = {
-        quantity: 'Quantité',
-        unit: 'Unité',
-        vat_rate: 'TVA',
-        amount: 'Montant',
-      }
-      return keyMap[key] || key
-    }
-
-    const filteredItemProperties = (item) => {
-      const { label, ...properties } = item
-      return Object.entries(properties).filter(([key]) =>
-        ['quantity', 'unit', 'vat_rate', 'amount'].includes(key)
-      )
-    }
 
     const formatValue = (key, value) => {
       if (key === 'amount') {
@@ -705,51 +685,9 @@ export default {
       }
     }
 
-    // Générer le tableau HTML pour Make.com
-    function buildSavHtmlTable(forms, items) {
-      let html = `<table border="1" cellpadding="5" cellspacing="0" style="border-collapse:collapse;">
-        <tr>
-          <th>Désignation</th>
-          <th>Quantité demandée</th>
-          <th>Quantité facturée</th>
-          <th>Unité demandée</th>
-          <th>Unité facturée</th>
-          <th>Motif</th>
-          <th>Commentaire</th>
-          <th>Prix Unitaire</th>
-          <th>Prix Total</th>
-          <th>Images</th>
-        </tr>`
-      forms.forEach(({ form, index }) => {
-        const item = items[index] || {}
-        const images = (form.images || [])
-          .map((img) =>
-            img.uploadedUrl
-              ? `<a href="${img.uploadedUrl}">${img.file ? img.file.name : ''}</a>`
-              : ''
-          )
-          .join('<br>')
-        html += `<tr>
-          <td>${item.label || ''}</td>
-          <td>${form.quantity || ''}</td>
-          <td>${item.quantity || ''}</td>
-          <td>${form.unit || ''}</td>
-          <td>${item.unit || ''}</td>
-          <td>${form.reason || ''}</td>
-          <td>${form.comment || ''}</td>
-          <td>${item.amount && item.quantity ? (item.amount / item.quantity).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' }) : ''}</td>
-          <td>${item.amount ? item.amount.toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' }) : ''}</td>
-          <td>${images}</td>
-        </tr>`
-      })
-      html += `</table>`
-      return html
-    }
-
     const submitAllForms = async () => {
       if (globalLoading.value) return
       globalLoading.value = true
-      isUploading.value = true
 
       // Ouvrir le modal immédiatement
       uploadModalVisible.value = true
@@ -763,7 +701,6 @@ export default {
           uploadErrorMessage.value =
             'Veuillez finaliser ou annuler toutes les demandes en cours avant de valider'
           globalLoading.value = false
-          isUploading.value = false
           return
         }
 
@@ -773,7 +710,6 @@ export default {
           uploadStatus.value = 'error'
           uploadErrorMessage.value = 'Aucune réclamation validée à soumettre'
           globalLoading.value = false
-          isUploading.value = false
           return
         }
 
@@ -813,9 +749,7 @@ export default {
           const imgObj = fileMapping.get(file)
           try {
             currentUploadFile.value = file.name
-            const uploadedUrl = await uploadToBackend(file, savDossier, false, (progress) => {
-              uploadProgress.value[file.name] = progress
-            })
+            const uploadedUrl = await uploadToBackend(file, savDossier)
             imgObj.uploadedUrl = uploadedUrl
             uploadedFiles.value++
           } catch (e) {
@@ -839,7 +773,6 @@ export default {
           uploadStatus.value = 'error'
           const errorDetails = uploadErrors.map((e) => e.fileName).join(', ')
           uploadErrorMessage.value = `Échec de l'upload de ${uploadErrors.length} fichier(s): ${errorDetails}`
-          isUploading.value = false
           globalLoading.value = false
           return
         }
@@ -883,9 +816,7 @@ export default {
         }
 
         currentUploadFile.value = excelFile.filename
-        await uploadToBackend(excelFile, savDossier, true, (progress) => {
-          uploadProgress.value[excelFile.filename] = progress
-        })
+        await uploadToBackend(excelFile, savDossier, true)
         uploadedFiles.value++
 
         // ÉTAPE 4 : Obtenir le lien de partage pour le dossier global
@@ -912,8 +843,6 @@ export default {
         console.error("Erreur lors de l'envoi:", error)
       } finally {
         globalLoading.value = false
-        isUploading.value = false
-        uploadProgress.value = {}
         currentUploadFile.value = ''
         totalFiles.value = 0
         uploadedFiles.value = 0
@@ -921,22 +850,16 @@ export default {
     }
 
     return {
-      savForms,
       hasFilledForms,
       hasUnfinishedForms,
       getSavForm,
-      formatKey,
       formatValue,
-      isUploading,
-      uploadProgress,
       currentUploadFile,
       totalFiles,
       uploadedFiles,
-      filteredItemProperties,
       toggleSavForm,
       validateItemForm,
       editItemForm,
-      deleteItemForm,
       handleImageUpload,
       handleDrop,
       removeImage,
