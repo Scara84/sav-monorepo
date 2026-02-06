@@ -543,10 +543,10 @@
 
 <script>
 import { ref, watch } from 'vue'
-import axios from 'axios'
 import * as XLSX from 'xlsx'
 import { useSavForms } from '../composables/useSavForms.js'
 import { useImageUpload } from '../composables/useImageUpload.js'
+import { useApiClient } from '../composables/useApiClient.js'
 
 export default {
   name: 'WebhookItemsList',
@@ -578,6 +578,8 @@ export default {
       handleDrop: handleDropBase,
       removeImage: removeImageBase,
     } = useImageUpload()
+    const { uploadToBackend: uploadToBackendApi, getFolderShareLink, submitSavWebhook } =
+      useApiClient()
     const toastMessage = ref('')
 
     // États pour les progress bars
@@ -688,57 +690,11 @@ export default {
 
     // Fonction pour uploader des fichiers sur le backend avec progress
     async function uploadToBackend(file, savDossier, isBase64 = false, onProgress = null) {
-      const formData = new FormData()
-      if (isBase64) {
-        // Convertir le base64 en Blob pour les fichiers Excel
-        const byteCharacters = atob(file.content)
-        const byteNumbers = new Array(byteCharacters.length)
-        for (let i = 0; i < byteCharacters.length; i++) {
-          byteNumbers[i] = byteCharacters.charCodeAt(i)
-        }
-        const byteArray = new Uint8Array(byteNumbers)
-        const blob = new Blob([byteArray], {
-          type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-        })
-        formData.append('file', blob, file.filename)
-      } else {
-        // Pour les images et autres fichiers
-        formData.append('file', file)
-      }
-
-      // Ajouter le nom du dossier SAV au formulaire
-      if (savDossier) {
-        formData.append('savDossier', savDossier)
-      }
-
       try {
-        const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000'
-        const apiKey = import.meta.env.VITE_API_KEY
-
-        const headers = { 'Content-Type': 'multipart/form-data' }
-        if (apiKey) {
-          headers['X-API-Key'] = apiKey
-        }
-
-        const config = {
-          headers,
-          onUploadProgress: (progressEvent) => {
-            if (onProgress && progressEvent.total) {
-              const percentCompleted = Math.round(
-                (progressEvent.loaded * 100) / progressEvent.total
-              )
-              onProgress(percentCompleted)
-            }
-          },
-        }
-
-        const response = await axios.post(`${apiUrl}/api/upload-onedrive`, formData, config)
-
-        if (response.data && response.data.success) {
-          return response.data.file.url // Retourne l'URL directe du fichier
-        } else {
-          throw new Error(response.data.error || 'Upload failed')
-        }
+        return await uploadToBackendApi(file, savDossier, {
+          isBase64,
+          onProgress,
+        })
       } catch (error) {
         console.error(
           `Erreur lors de l'upload du fichier ${isBase64 ? file.filename : file.name}:`,
@@ -1119,29 +1075,10 @@ export default {
         uploadedFiles.value++
 
         // ÉTAPE 4 : Obtenir le lien de partage pour le dossier global
-        const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000'
-        const apiKey = import.meta.env.VITE_API_KEY
-
-        const headers = {}
-        if (apiKey) {
-          headers['X-API-Key'] = apiKey
-        }
-
-        const response = await axios.post(
-          `${apiUrl}/api/folder-share-link`,
-          { savDossier },
-          { headers }
-        )
-
-        if (!response.data || !response.data.success) {
-          throw new Error(
-            response.data.error || 'Impossible de récupérer le lien de partage du dossier.'
-          )
-        }
-        const folderShareLink = response.data.shareLink
+        const folderShareLink = await getFolderShareLink(savDossier)
 
         // ÉTAPE 5 : Envoi au webhook avec le lien du dossier
-        await axios.post(import.meta.env.VITE_WEBHOOK_URL_DATA_SAV, {
+        await submitSavWebhook({
           htmlTable,
           forms: payload,
           facture: props.facture,

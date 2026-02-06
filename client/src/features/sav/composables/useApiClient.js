@@ -55,7 +55,8 @@ export function useApiClient() {
    * @param {string} savDossier - Nom du dossier SAV
    * @param {boolean} isBase64 - true si le fichier est en base64
    */
-  const uploadToBackend = async (file, savDossier, isBase64 = false) => {
+  const uploadToBackend = async (file, savDossier, options = {}) => {
+    const { isBase64 = false, onProgress } = options;
     const formData = new FormData();
     
     if (isBase64) {
@@ -91,7 +92,17 @@ export function useApiClient() {
         headers['X-API-Key'] = apiKey;
       }
       
-      const response = await axios.post(`${apiUrl}/api/upload-onedrive`, formData, { headers });
+      const response = await axios.post(`${apiUrl}/api/upload-onedrive`, formData, {
+        headers,
+        onUploadProgress: (progressEvent) => {
+          if (onProgress && progressEvent.total) {
+            const percentCompleted = Math.round(
+              (progressEvent.loaded * 100) / progressEvent.total
+            );
+            onProgress(percentCompleted);
+          }
+        }
+      });
       
       if (response.data && response.data.success) {
         return response.data.file.url; // Retourne l'URL directe du fichier
@@ -141,7 +152,9 @@ export function useApiClient() {
   const uploadFilesParallel = async (files, savDossier) => {
     const uploadPromises = files.map(async (fileObj) => {
       try {
-        const url = await uploadToBackend(fileObj.file, savDossier, fileObj.isBase64);
+        const url = await uploadToBackend(fileObj.file, savDossier, {
+          isBase64: fileObj.isBase64
+        });
         return { success: true, url, fileName: fileObj.file.name || fileObj.filename };
       } catch (error) {
         console.error(`Erreur lors de l'upload de ${fileObj.file.name || fileObj.filename}:`, error);
@@ -198,11 +211,30 @@ export function useApiClient() {
     return await withRetry(submitFn, 3, 1000);
   };
 
+  /**
+   * Envoie le payload SAV au webhook (Make.com)
+   * @param {Object} payload - Donnees SAV a envoyer
+   */
+  const submitSavWebhook = async (payload) => {
+    const webhookUrl = import.meta.env.VITE_WEBHOOK_URL_DATA_SAV;
+    if (!webhookUrl) {
+      throw new Error('VITE_WEBHOOK_URL_DATA_SAV is not configured');
+    }
+
+    const submitFn = async () => {
+      const response = await axios.post(webhookUrl, payload);
+      return response.data;
+    };
+
+    return await withRetry(submitFn, 3, 1000);
+  };
+
   return {
     uploadToBackend,
     getFolderShareLink,
     uploadFilesParallel,
     submitUploadedFileUrls,
+    submitSavWebhook,
     withRetry
   };
 }
