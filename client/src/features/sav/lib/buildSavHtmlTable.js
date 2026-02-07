@@ -12,15 +12,15 @@ export function buildSavHtmlTable(forms, items) {
     `<th>Prix Unitaire</th>` +
     `<th>Prix Total</th>` +
     `<th>Images</th>` +
-    `</tr>`;
+    `</tr>`
 
   forms.forEach(({ form, index }) => {
-    const item = items[index] || {};
+    const item = items[index] || {}
     const images = (form.images || [])
       .map((img) =>
         img.uploadedUrl ? `<a href="${img.uploadedUrl}">${img.file ? img.file.name : ''}</a>` : ''
       )
-      .join('<br>');
+      .join('<br>')
 
     html +=
       `<tr>` +
@@ -48,9 +48,9 @@ export function buildSavHtmlTable(forms, items) {
           : ''
       }</td>` +
       `<td>${images}</td>` +
-      `</tr>`;
-  });
+      `</tr>`
+  })
 
-  html += `</table>`;
-  return html;
+  html += `</table>`
+  return html
 }

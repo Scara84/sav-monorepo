@@ -19,7 +19,7 @@ pour refactoriser le composant cle et stabiliser le flux SAV.
 | SAV-003 | Fait | Branche `useExcelGenerator` et retire la logique XLSX du composant |
 | SAV-005 | Fait | Nettoyage `WebhookItemsList.vue`, suppression et extraction utilitaire |
 | SAV-006 | Fait | Tests existants mis a jour (ApiClient + WebhookItemsList) |
-| SAV-007 | A faire | --- |
+| SAV-007 | Fait | E2E happy path Playwright ajoute et execute OK |
 | SAV-008 | A faire | --- |
 | SAV-009 | A faire | --- |
 | SAV-010 | A faire | --- |
