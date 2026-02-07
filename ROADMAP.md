@@ -20,7 +20,7 @@ pour refactoriser le composant cle et stabiliser le flux SAV.
 | SAV-005 | Fait | Nettoyage `WebhookItemsList.vue`, suppression et extraction utilitaire |
 | SAV-006 | Fait | Tests existants mis a jour (ApiClient + WebhookItemsList) |
 | SAV-007 | Fait | E2E happy path Playwright ajoute et execute OK |
-| SAV-008 | A faire | --- |
+| SAV-008 | Fait | E2E erreurs Playwright ajoute et execute OK |
 | SAV-009 | A faire | --- |
 | SAV-010 | A faire | --- |
 
