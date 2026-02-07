@@ -263,4 +263,25 @@ describe('useApiClient', () => {
       );
     });
   });
+
+  describe('submitInvoiceLookupWebhook', () => {
+    it('should submit invoice lookup payload', async () => {
+      vi.stubEnv('VITE_WEBHOOK_URL', 'https://example.com/invoice-webhook');
+      const payload = { transformedReference: '123', email: 'test@example.com' };
+      axios.post.mockResolvedValue({ data: { invoice_number: 'F-2024-001' } });
+
+      const result = await apiClient.submitInvoiceLookupWebhook(payload);
+
+      expect(axios.post).toHaveBeenCalledWith('https://example.com/invoice-webhook', payload);
+      expect(result).toEqual({ invoice_number: 'F-2024-001' });
+    });
+
+    it('should throw when invoice webhook env is missing', async () => {
+      vi.stubEnv('VITE_WEBHOOK_URL', '');
+
+      await expect(
+        apiClient.submitInvoiceLookupWebhook({ transformedReference: '123', email: 'a@b.c' })
+      ).rejects.toThrow('VITE_WEBHOOK_URL is not configured');
+    });
+  });
 });

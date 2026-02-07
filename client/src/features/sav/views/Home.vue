@@ -46,7 +46,9 @@
 </template>
 
 <script>
-import axios from 'axios';
+import { useApiClient } from '../composables/useApiClient.js';
+
+const apiClient = useApiClient();
 
 export default {
   data() {
@@ -60,23 +62,21 @@ export default {
       if (this.invoiceReference.length === 14) {
         const transformedReference = this.invoiceReference.slice(2, -2);
         try {
-          const response = await axios.post(import.meta.env.VITE_WEBHOOK_URL, {
+          const invoiceData = await apiClient.submitInvoiceLookupWebhook({
             transformedReference,
             email: this.email
           });
 
-          console.log('Webhook Response:', response.data);
+          console.log('Webhook Response:', invoiceData);
 
-          if (response.status === 200) {
-            this.$router.push({
-              name: 'InvoiceDetails',
-              query: {
-                transformedReference,
-                email: this.email,
-                webhookResponse: JSON.stringify(response.data)
-              }
-            });
-          }
+          this.$router.push({
+            name: 'InvoiceDetails',
+            query: {
+              transformedReference,
+              email: this.email,
+              webhookResponse: JSON.stringify(invoiceData)
+            }
+          });
         } catch (error) {
           console.error('Error details:', error.response || error);
           if (error.response && error.response.status === 400) {

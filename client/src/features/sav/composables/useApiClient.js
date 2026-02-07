@@ -229,12 +229,33 @@ export function useApiClient() {
     return await withRetry(submitFn, 3, 1000);
   };
 
+  /**
+   * Lookup invoice details via Make.com webhook
+   * @param {Object} payload - Donnees lookup facture
+   * @param {string} payload.transformedReference
+   * @param {string} payload.email
+   */
+  const submitInvoiceLookupWebhook = async (payload) => {
+    const webhookUrl = import.meta.env.VITE_WEBHOOK_URL;
+    if (!webhookUrl) {
+      throw new Error('VITE_WEBHOOK_URL is not configured');
+    }
+
+    const submitFn = async () => {
+      const response = await axios.post(webhookUrl, payload);
+      return response.data;
+    };
+
+    return await withRetry(submitFn, 3, 1000);
+  };
+
   return {
     uploadToBackend,
     getFolderShareLink,
     uploadFilesParallel,
     submitUploadedFileUrls,
     submitSavWebhook,
+    submitInvoiceLookupWebhook,
     withRetry
   };
 }
