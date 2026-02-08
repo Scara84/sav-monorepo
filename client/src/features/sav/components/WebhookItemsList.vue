@@ -200,23 +200,14 @@
         v-for="(item, index) in items"
         :key="index"
         class="bg-white p-4 rounded-lg shadow"
-        style="font-family: var(--font-main); margin-bottom: 1.5em"
       >
         <!-- Nom du produit sur toute la largeur -->
-        <h3
-          style="
-            font-size: 1.2em;
-            font-family: var(--font-main);
-            color: var(--main-orange);
-            font-weight: 700;
-            margin-bottom: 1em;
-          "
-        >
+        <h3 class="text-xl mb-4">
           {{ item.label }}
         </h3>
 
         <!-- Autres propriétés alignées sur une ligne -->
-        <div class="grid grid-cols-5 gap-4">
+        <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
           <div class="flex flex-col">
             <span class="text-sm font-medium text-gray-500">Quantité</span>
             <span class="text-gray-900">{{ formatValue('quantity', item.quantity) }}</span>
@@ -241,9 +232,8 @@
         <div class="mt-4">
           <button
             @click="toggleSavForm(index)"
-            class="btn-main"
-            :style="getSavForm(index).showForm ? 'background:#e23a3a;' : ''"
-            style="margin-top: 1em; font-size: 1em; min-width: 200px"
+            class="btn-main min-w-[200px] text-base"
+            :class="{ 'btn-main--danger': getSavForm(index).showForm }"
           >
             {{ getSavForm(index).showForm ? 'Annuler la réclamation' : 'Signaler un problème' }}
           </button>
@@ -252,8 +242,7 @@
         <!-- Formulaire SAV -->
         <div
           v-if="getSavForm(index).showForm"
-          class="mt-4 p-4"
-          style="background: #f6f6f6; border-radius: 16px"
+          class="mt-4 p-4 bg-gray-50 rounded-2xl"
         >
           <form
             class="space-y-4"
@@ -262,15 +251,9 @@
           >
             <div class="grid grid-cols-3 gap-4">
               <div>
-                <label
-                  style="
-                    font-family: var(--font-main);
-                    color: var(--text-dark);
-                    font-weight: 600;
-                    font-size: 1em;
-                  "
-                  >Quantité</label
-                >
+                <label class="block text-[color:var(--text-dark)] font-semibold text-base">
+                  Quantité
+                </label>
                 <input
                   type="number"
                   step="0.01"
@@ -285,15 +268,7 @@
                 </p>
               </div>
               <div>
-                <label
-                  style="
-                    font-family: var(--font-main);
-                    color: var(--text-dark);
-                    font-weight: 600;
-                    font-size: 1em;
-                  "
-                  >Unité</label
-                >
+                <label class="block text-[color:var(--text-dark)] font-semibold text-base">Unité</label>
                 <select
                   v-model="getSavForm(index).unit"
                   :disabled="getSavForm(index).filled"
@@ -311,15 +286,7 @@
                 </p>
               </div>
               <div>
-                <label
-                  style="
-                    font-family: var(--font-main);
-                    color: var(--text-dark);
-                    font-weight: 600;
-                    font-size: 1em;
-                  "
-                  >Motif</label
-                >
+                <label class="block text-[color:var(--text-dark)] font-semibold text-base">Motif</label>
                 <select
                   v-model="getSavForm(index).reason"
                   :disabled="getSavForm(index).filled"
@@ -340,14 +307,7 @@
 
             <!-- Champ commentaire optionnel -->
             <div class="mt-4">
-              <label
-                style="
-                  font-family: var(--font-main);
-                  color: var(--text-dark);
-                  font-weight: 600;
-                  font-size: 1em;
-                "
-              >
+              <label class="block text-[color:var(--text-dark)] font-semibold text-base">
                 Commentaire
                 <span class="text-xs text-gray-500">(optionnel)</span>
               </label>
@@ -369,16 +329,7 @@
               "
               class="mt-4"
             >
-              <label
-                style="
-                  font-family: var(--font-main);
-                  color: var(--text-dark);
-                  font-weight: 600;
-                  font-size: 1em;
-                  margin-bottom: 0.5em;
-                  display: block;
-                "
-              >
+              <label class="block text-[color:var(--text-dark)] font-semibold text-base mb-2">
                 Photos
                 <span class="text-xs text-gray-500"
                   >({{ getSavForm(index).reason === 'abime' ? 'obligatoire' : 'optionnel' }} -
@@ -880,6 +831,14 @@ export default {
 <style scoped>
 .webhook-items {
   @apply w-full;
+}
+
+.btn-main.btn-main--danger {
+  background: #e23a3a;
+}
+
+.btn-main.btn-main--danger:hover {
+  background: #c53030;
 }
 
 /* Animation pour le toast (existante) */

@@ -22,7 +22,7 @@ pour refactoriser le composant cle et stabiliser le flux SAV.
 | SAV-007 | Fait | E2E happy path Playwright ajoute et execute OK |
 | SAV-008 | Fait | E2E erreurs Playwright ajoute et execute OK |
 | SAV-009 | Fait | Centralise appels Make (Home + SAV) dans `useApiClient`, supprime service OneDrive client non utilise |
-| SAV-010 | A faire | --- |
+| SAV-010 | Fait | Nettoyage styles SAV (suppression inline, classes Tailwind/vars), ajustement config Vitest pour ignorer e2e |
 
 ## Backlog detaille (tickets + estimations)
 Estimations en jours-homme (JH).

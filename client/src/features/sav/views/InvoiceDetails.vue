@@ -1,15 +1,30 @@
 <template>
-  <div class="min-h-screen flex items-center justify-center" style="background: var(--bg-white);">
-    <div class="bg-white p-8 rounded-lg shadow-md w-full max-w-4xl" style="font-family: var(--font-main);">
-      <h1 style="font-size:2.2em;font-family:var(--font-main);color:var(--main-orange);font-weight:800;text-align:center;margin-bottom:1.5em;">Détail de la facture</h1>
-      <div class="mb-4 p-4" style="background:#f6f6f6;border-radius:16px;">
-        <h2 style="font-size:1.3em;font-family:var(--font-main);color:var(--main-orange);font-weight:700;margin-bottom:0.5em;">Informations Facture</h2>
-        <p style="color:var(--text-dark);margin-bottom:0.2em;"><span style="font-weight:600;">Client:</span> {{ customerName }}</p>
-        <p style="color:var(--text-dark);margin-bottom:0.2em;"><span style="font-weight:600;">N° Facture:</span> {{ invoiceNumber }}</p>
-        <p style="color:var(--text-dark);margin-bottom:0.2em;"><span style="font-weight:600;">ID Client:</span> {{ customerId }}</p>
-        <p style="color:var(--text-dark);margin-bottom:0.2em;"><span style="font-weight:600;">Adresse e-mail:</span> {{ email }}</p>
-        <p style="color:var(--text-dark);margin-bottom:0.2em;"><span style="font-weight:600;">Statut:</span> <span :style="paidStatus ? 'color:#4E944F;font-weight:700;' : 'color:#e23a3a;font-weight:700;'">{{ paidStatus ? 'Payée' : 'Non Payée' }}</span></p>
-        <p v-if="specialMention" style="color:var(--text-dark);margin-top:0.4em;"><span style="font-weight:600;">Mention Spéciale:</span> {{ specialMention }}</p>
+  <div class="min-h-screen flex items-center justify-center bg-[color:var(--bg-white)]">
+    <div class="bg-white p-8 rounded-lg shadow-md w-full max-w-4xl">
+      <h1 class="text-4xl text-center mb-6">Détail de la facture</h1>
+      <div class="mb-4 p-4 bg-gray-50 rounded-2xl">
+        <h2 class="text-xl font-extrabold mb-2">Informations Facture</h2>
+        <p class="text-[color:var(--text-dark)] mb-1">
+          <span class="font-semibold">Client:</span> {{ customerName }}
+        </p>
+        <p class="text-[color:var(--text-dark)] mb-1">
+          <span class="font-semibold">N° Facture:</span> {{ invoiceNumber }}
+        </p>
+        <p class="text-[color:var(--text-dark)] mb-1">
+          <span class="font-semibold">ID Client:</span> {{ customerId }}
+        </p>
+        <p class="text-[color:var(--text-dark)] mb-1">
+          <span class="font-semibold">Adresse e-mail:</span> {{ email }}
+        </p>
+        <p class="text-[color:var(--text-dark)] mb-1">
+          <span class="font-semibold">Statut:</span>
+          <span :class="paidStatus ? 'text-[#4E944F] font-bold' : 'text-[#e23a3a] font-bold'">
+            {{ paidStatus ? 'Payée' : 'Non Payée' }}
+          </span>
+        </p>
+        <p v-if="specialMention" class="text-[color:var(--text-dark)] mt-2">
+          <span class="font-semibold">Mention Spéciale:</span> {{ specialMention }}
+        </p>
       </div>
 
       <!-- Display Parsing Error -->
@@ -24,7 +39,7 @@
           @sav-submitted="handleSavSubmission"
         />
       </div>
-      <router-link to="/" class="btn-main" style="width:100%;display:block;text-align:center;font-size:1.1em;margin-top:2em;">Retour</router-link>
+      <router-link to="/" class="btn-main w-full block text-center text-[1.1em] mt-8">Retour</router-link>
     </div>
   </div>
 </template>
