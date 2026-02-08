@@ -83,6 +83,7 @@ export default defineConfig({
     },
     setupFiles: ['./tests/unit/setup.js'],
     include: ['**/*.spec.js', '**/*.test.js'],
+    exclude: ['**/node_modules/**', '**/dist/**', 'tests/e2e/**'],
     server: {
       deps: {
         inline: [
