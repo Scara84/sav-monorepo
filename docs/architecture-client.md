@@ -1,0 +1,162 @@
+# Architecture — Client (Vue 3)
+
+> Partie : `client/` — package `@sav-app/client` v1.0.0 — type `web` (SPA).
+
+## Résumé exécutif
+
+SPA Vue 3 qui porte le parcours SAV Fruitstock : un utilisateur retrouve sa facture via un formulaire de lookup (webhook Make.com), constate les articles, signale ce qui ne va pas (formulaire par ligne + photos), puis la demande consolidée est uploadée sur OneDrive via le backend et notifiée par webhook à Make.com.
+
+L'architecture suit trois principes :
+
+- **Découpage par feature** (`src/features/sav/`) pour regrouper views, composants et composables autour d'un même domaine métier.
+- **Composition API + composables** pour concentrer la logique (HTTP, validation, upload, Excel) hors du composant de présentation.
+- **Appels sortants centralisés** via `useApiClient` (retry exponentiel) pour la majorité des appels backend + Make.com.
+
+## Stack technique
+
+| Catégorie | Technologie | Version | Justification |
+|-----------|-------------|---------|---------------|
+| Framework | Vue | 3.2.47 | Composition API + `<script setup>` |
+| Routing | Vue Router | 4.1.6 | SPA avec 4 routes |
+| i18n | Vue I18n | 9.2.2 | Installé ; aucune locale externe, UI en français hardcodé |
+| HTTP | Axios | 1.3.4 | Mocké dans tests unitaires |
+| Excel | xlsx | 0.18.5 | Génération Excel 3 onglets |
+| Auth Microsoft | `@azure/msal-browser` | 4.11.0 | Dépendance présente, flux non activé (tout passe par le backend) |
+| Microsoft Graph (client) | `@microsoft/microsoft-graph-client` | 3.0.7 | Dépendance présente, non utilisée activement |
+| Email transactionnel | `@emailjs/browser` | 4.4.1 | Dépendance présente, non utilisée activement |
+| Supabase | `@supabase/supabase-js` | 2.48.1 | Client instancié (`src/lib/supabase.js`), optionnel via env |
+| CSS | Tailwind CSS | 3.2.4 | Utilitaires + thème custom Fruitstock |
+| Build / Dev | Vite | 5.2.0 | Dev server 5173, proxy `/api` → `VITE_API_URL` |
+| Tests unit | Vitest | 1.6.0 | Environnement `happy-dom`, mocks inline |
+| Tests E2E | Playwright | 1.45.0 | Base URL 5173, retries 2 en CI |
+| Lint / Format | ESLint (`plugin:vue/vue3-essential`) + Prettier 3 | — | `semi: false`, `singleQuote: true`, `printWidth: 100` |
+
+### Stack « mort » à surveiller
+
+Les dépendances suivantes sont installées mais **non utilisées** dans le code exploré : `@azure/msal-browser`, `msal`, `@microsoft/microsoft-graph-client`, `@emailjs/browser`, `express`, `dotenv`. Candidates à suppression lors du prochain nettoyage.
+
+## Pattern d'architecture
+
+- **SPA à routing hash-less** (HTML5 history) avec 4 routes.
+- **Feature-based** : tout le SAV est contenu dans `src/features/sav/` (views + components + composables + lib test).
+- **Atomic Design « en chantier »** : `components/atoms/`, `components/molecules/`, `components/organisms/` existent mais sont encore vides — seul `components/layout/Header.vue` et `components/HeroSection.vue` sont peuplés.
+- **État : local aux composants** via `ref()` / `reactive()`. Aucun Pinia/Vuex. Les données inter-routes transitent via **query params** (cf. passage `/invoice-details`).
+- **Retry centralisé** : `useApiClient` encapsule les appels HTTP avec backoff exponentiel (3 tentatives).
+
+## Routing
+
+Fichier : [client/src/router/index.js](../client/src/router/index.js)
+
+| Chemin | Nom | Composant | Props | Notes |
+|--------|-----|-----------|-------|-------|
+| `/` | Home | `src/features/sav/views/Home.vue` | — | Formulaire lookup facture (référence 14 chars + email) |
+| `/invoice-details` | InvoiceDetails | `src/features/sav/views/InvoiceDetails.vue` | via query | Liste articles + formulaires SAV |
+| `/sav-confirmation` | SavConfirmation | `src/features/sav/views/SavConfirmation.vue` | `true` (props route) | Écran succès |
+| `/maintenance` | Maintenance | `src/views/Maintenance.vue` | — | Page statique |
+
+**Garde globale `beforeEach`** :
+
+- Lit `VITE_MAINTENANCE_MODE` (`'1'` ou `'0'`).
+- Lit un éventuel `?bypass=<token>` : si égal à `VITE_MAINTENANCE_BYPASS_TOKEN`, stocke `maintenance_bypass_enabled=1` en `localStorage`.
+- Si maintenance activée et pas de bypass → redirige vers `/maintenance`.
+
+## Architecture du composant pivot
+
+Le composant [client/src/features/sav/components/WebhookItemsList.vue](../client/src/features/sav/components/WebhookItemsList.vue) orchestre tout le parcours SAV. Il délègue à 4 composables :
+
+```
+┌──────────────── WebhookItemsList.vue (UI + orchestration) ────────────────┐
+│                                                                            │
+│   useSavForms()       → état formulaires, validation, hasFilledForms       │
+│   useImageUpload()    → drag&drop, validation MIME/taille, renommage       │
+│   useApiClient()      → upload OneDrive, share link, webhooks Make.com     │
+│   useExcelGenerator() → Excel 3 onglets (Réclamations, Client, SAV)        │
+│                                                                            │
+└────────────────────────────────────────────────────────────────────────────┘
+```
+
+Détail des composables :
+
+### `useApiClient` — `features/sav/composables/useApiClient.js`
+
+- `uploadToOneDrive(file, folder, onProgress)` → `POST {VITE_API_URL}/api/upload-onedrive` (header `X-API-Key`).
+- `getFolderShareLink(folder)` → `POST /api/folder-share-link`.
+- `postMakeWebhook(url, payload)` → appel direct Make.com (lookup facture, soumission SAV).
+- Implémente un **retry exponentiel** (3 tentatives, backoff doublé) autour de chaque appel axios.
+
+### `useSavForms`
+
+- Map `ref()` d'états par ligne d'article (`shown`, `filled`, `errors`).
+- Computed `hasFilledForms` / `hasUnfinishedForms` pour activer le bouton global.
+- Validation : quantité > 0, unité obligatoire, motif obligatoire.
+
+### `useImageUpload`
+
+- Accepte JPEG/PNG/GIF/WebP/SVG/HEIC, 10 Mo max.
+- Renomme avec préfixe/timestamp et remarque éventuelle.
+- Aperçus, drag & drop, suppression.
+
+### `useExcelGenerator`
+
+- Onglet 1 **Réclamations** : lignes SAV.
+- Onglet 2 **Infos Client** : données facture.
+- Onglet 3 **SAV** : récapitulatif structuré.
+- Export en base64 pour upload via `useApiClient`.
+
+## Architecture des données
+
+Aucune base locale. Le client consomme et émet des données JSON :
+
+| Source | Type | Usage |
+|--------|------|-------|
+| Make.com — webhook lookup | Réponse JSON (facture + items) | Propagée vers `/invoice-details` |
+| Backend `/api/upload-onedrive` | Réponse `{success, file: {url, name, id}}` | URL stockée pour l'Excel |
+| Backend `/api/folder-share-link` | Réponse `{success, shareLink}` | Inclus dans le webhook final |
+| Make.com — webhook SAV | Payload : lignes + lien partage | Redirige vers `/sav-confirmation` |
+
+Pas de cache ni de persistance hors `localStorage` (uniquement pour le bypass maintenance).
+
+## Conception d'API (côté client)
+
+Le client parle à deux domaines :
+
+1. **Backend SAV** (voir [api-contracts-server.md](./api-contracts-server.md)) — via `VITE_API_URL`, header `X-API-Key` (valeur `VITE_API_KEY`).
+2. **Webhooks Make.com** — via `VITE_WEBHOOK_URL` (lookup) et `VITE_WEBHOOK_URL_DATA_SAV` (soumission). Aucune authentification côté client ; les URLs sont elles-mêmes secrètes.
+
+## Composants
+
+Voir l'inventaire complet dans [component-inventory-client.md](./component-inventory-client.md).
+
+## Workflow de développement
+
+Voir [development-guide-client.md](./development-guide-client.md).
+
+## Architecture de déploiement
+
+Voir [deployment-guide.md](./deployment-guide.md). Deux cibles configurées : **Vercel** (`vercel.json`, framework `vite`) et **Netlify** (`netlify.toml`, Node 18, redirect SPA).
+
+## Stratégie de tests
+
+- **Unitaires (Vitest + happy-dom)** : setup [tests/unit/setup.js](../client/tests/unit/setup.js) instancie i18n, mocke `fetch`/`localStorage`/`matchMedia`.
+  - Mocks inline (via `vitest.config.js`) : `@supabase/supabase-js`, `xlsx`, `axios`, `vue-i18n`.
+  - Couverture V8, rapports texte/JSON/HTML.
+  - Spec existante : `WebhookItemsList.spec.js` (7 tests : affichage items, boutons, formulaires, formatage).
+- **E2E (Playwright)** : base URL `http://localhost:5173`, web server `npm run dev -- --host`.
+  - `sav-happy-path.spec.js` : lookup → upload → Excel → webhook → confirmation.
+  - `sav-error-cases.spec.js` : API key manquante, rate limit, upload partiel.
+  - Retries : 2 en CI, 0 en local ; timeout global 60 s.
+
+## Variables d'environnement
+
+Voir détail dans [development-guide-client.md](./development-guide-client.md#variables-denvironnement).
+
+| Nom | Utilisation |
+|-----|-------------|
+| `VITE_WEBHOOK_URL` | Webhook Make.com lookup facture |
+| `VITE_WEBHOOK_URL_DATA_SAV` | Webhook Make.com soumission SAV |
+| `VITE_API_URL` | URL backend (défaut `http://localhost:3000`) |
+| `VITE_API_KEY` | Clé API envoyée en `X-API-Key` |
+| `VITE_MAINTENANCE_MODE` | `'1'` pour activer `/maintenance` |
+| `VITE_MAINTENANCE_BYPASS_TOKEN` | Token de contournement maintenance |
+| `VITE_SUPABASE_URL` | (optionnel) |
+| `VITE_SUPABASE_ANON_KEY` | (optionnel) |

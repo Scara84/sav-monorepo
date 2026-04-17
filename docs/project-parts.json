@@ -1,0 +1,68 @@
+{
+  "repository_type": "multi-part",
+  "project_name": "sav-monorepo",
+  "description": "Application SAV Fruitstock : client Vue 3 + backend Express avec intégration OneDrive (Microsoft Graph).",
+  "parts": [
+    {
+      "part_id": "client",
+      "display_name": "Client SAV (frontend Vue 3)",
+      "root_path": "client/",
+      "project_type_id": "web",
+      "primary_language": "JavaScript",
+      "primary_framework": "Vue 3",
+      "entry_point": "client/src/main.js",
+      "package_name": "@sav-app/client",
+      "package_version": "1.0.0"
+    },
+    {
+      "part_id": "server",
+      "display_name": "Backend SAV (API Express + OneDrive)",
+      "root_path": "server/",
+      "project_type_id": "backend",
+      "primary_language": "JavaScript (ES modules)",
+      "primary_framework": "Express 4",
+      "entry_point": "server/server.js",
+      "package_name": "@sav-app/server",
+      "package_version": "1.0.2"
+    }
+  ],
+  "integration_points": [
+    {
+      "from": "client",
+      "to": "server",
+      "type": "REST",
+      "protocol": "HTTPS",
+      "auth": "header X-API-Key",
+      "endpoints": [
+        "POST /api/upload",
+        "POST /api/upload-onedrive",
+        "POST /api/folder-share-link",
+        "POST /api/get-upload-token",
+        "POST /api/submit-sav-urls"
+      ]
+    },
+    {
+      "from": "client",
+      "to": "Make.com",
+      "type": "Webhook",
+      "protocol": "HTTPS",
+      "env_vars": [
+        "VITE_WEBHOOK_URL",
+        "VITE_WEBHOOK_URL_DATA_SAV"
+      ],
+      "purpose": "Recherche facture + soumission demande SAV"
+    },
+    {
+      "from": "server",
+      "to": "Microsoft Graph",
+      "type": "REST",
+      "protocol": "HTTPS",
+      "auth": "MSAL Client Credentials (OAuth2)",
+      "purpose": "Upload fichiers et création liens de partage OneDrive"
+    }
+  ],
+  "deployment": {
+    "client": ["Vercel", "Netlify"],
+    "server": ["Vercel (serverless)"]
+  }
+}
