@@ -59,3 +59,13 @@ Thumbs.db
 # Server uploads
 server/uploads/*
 !server/uploads/.gitkeep
+
+# BMAD-METHOD
+_bmad
+_bmad-output
+.agents/
+.claude
+CLAUDE.md
+CLAUDE.local.md
+.ai/*
+.mcp.json
