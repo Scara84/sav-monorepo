@@ -56,10 +56,6 @@ export default defineConfig({
       {
         find: '@utils',
         replacement: `${srcPath}/utils`
-      },
-      {
-        find: /^@\/lib\/supabase$/,
-        replacement: resolve(__dirname, './tests/unit/__mocks__/supabase.js')
       }
     ]
   },
@@ -87,7 +83,6 @@ export default defineConfig({
     server: {
       deps: {
         inline: [
-          '@supabase/supabase-js',
           'xlsx',
           'axios',
           'vue-i18n'
@@ -96,7 +91,6 @@ export default defineConfig({
     },
     deps: {
       inline: [
-        '@supabase/supabase-js',
         'xlsx',
         'axios',
         'vue-i18n'
@@ -111,6 +105,6 @@ export default defineConfig({
     }
   },
   optimizeDeps: {
-    include: ['@supabase/supabase-js', 'xlsx', 'axios', 'vue-i18n']
+    include: ['xlsx', 'axios', 'vue-i18n']
   }
 })

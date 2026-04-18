@@ -1,5 +1,7 @@
 # Résumé des Améliorations - SAV Application
 
+> ⚠️ **Document historique (antérieur à Epic 1)** — Ce résumé décrit l'état du projet avant la suppression du serveur Infomaniak (2026-04-17). Pour l'architecture actuelle, voir [docs/integration-architecture.md](docs/integration-architecture.md) et [docs/api-contracts-vercel.md](docs/api-contracts-vercel.md).
+
 ## 📊 Vue d'Ensemble
 
 **Branche:** `feature/security-improvements`  

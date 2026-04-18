@@ -34,6 +34,8 @@ const buildInvoice = () => ({
   ],
 })
 
+const MOCK_GRAPH_HOST = 'https://mock-graph.local'
+
 const openInvoiceDetails = async (page) => {
   const invoice = buildInvoice()
   const webhookResponse = encodeURIComponent(JSON.stringify(invoice))
@@ -66,12 +68,12 @@ const fillSavForm = async (page, { imageCount = 1 } = {}) => {
   await submitAllButton.click()
 }
 
-test('SAV error - upload unauthorized', async ({ page }) => {
-  await page.route('**/api/upload-onedrive', async (route) => {
+test('SAV error — API key invalide (403 upload-session)', async ({ page }) => {
+  await page.route('**/api/upload-session', async (route) => {
     await route.fulfill({
-      status: 401,
+      status: 403,
       contentType: 'application/json',
-      body: JSON.stringify({ error: 'Unauthorized' }),
+      body: JSON.stringify({ success: false, error: 'API key invalide' }),
     })
   })
 
@@ -79,7 +81,7 @@ test('SAV error - upload unauthorized', async ({ page }) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ success: true, shareLink: 'https://example.com/folder' }),
+      body: JSON.stringify({ success: true, shareLink: 'https://mock-share.local/folder' }),
     })
   })
 
@@ -99,12 +101,31 @@ test('SAV error - upload unauthorized', async ({ page }) => {
   await expect(page).not.toHaveURL(/sav-confirmation/)
 })
 
-test('SAV error - rate limit on share link', async ({ page }) => {
-  await page.route('**/api/upload-onedrive', async (route) => {
+test('SAV error — rate limit sur share link (429)', async ({ page }) => {
+  await page.route('**/api/upload-session', async (route) => {
+    const body = route.request().postDataJSON() || {}
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ success: true, file: { url: 'https://example.com/file.jpg' } }),
+      body: JSON.stringify({
+        success: true,
+        uploadUrl: `${MOCK_GRAPH_HOST}/upload/${encodeURIComponent(body.filename || 'file')}`,
+        storagePath: `SAV_Images/${body.savDossier || 'SAV_TEST'}/${body.filename || 'file'}`,
+        expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+      }),
+    })
+  })
+
+  await page.route(`${MOCK_GRAPH_HOST}/**`, async (route) => {
+    await route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        id: 'mock-id',
+        name: 'photo.jpg',
+        webUrl: 'https://mock-share.local/photo.jpg',
+        size: 4,
+      }),
     })
   })
 
@@ -132,24 +153,42 @@ test('SAV error - rate limit on share link', async ({ page }) => {
   await expect(page).not.toHaveURL(/sav-confirmation/)
 })
 
-test('SAV error - partial upload failure', async ({ page }) => {
-  let uploadCount = 0
-  await page.route('**/api/upload-onedrive', async (route) => {
-    uploadCount += 1
-
-    if (uploadCount === 1) {
-      await route.fulfill({
-        status: 200,
-        contentType: 'application/json',
-        body: JSON.stringify({ success: true, file: { url: 'https://example.com/file.jpg' } }),
-      })
-      return
-    }
-
+test('SAV error — PUT Graph échoue partiellement (500)', async ({ page }) => {
+  await page.route('**/api/upload-session', async (route) => {
+    const body = route.request().postDataJSON() || {}
     await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        success: true,
+        uploadUrl: `${MOCK_GRAPH_HOST}/upload/${encodeURIComponent(body.filename || 'file')}`,
+        storagePath: `SAV_Images/${body.savDossier || 'SAV_TEST'}/${body.filename || 'file'}`,
+        expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+      }),
+    })
+  })
+
+  let putCount = 0
+  await page.route(`${MOCK_GRAPH_HOST}/**`, async (route) => {
+    putCount += 1
+    if (putCount === 1) {
+      // Premier fichier : succès
+      return route.fulfill({
+        status: 201,
+        contentType: 'application/json',
+        body: JSON.stringify({
+          id: 'mock-id-1',
+          name: 'photo-1.jpg',
+          webUrl: 'https://mock-share.local/photo-1.jpg',
+          size: 4,
+        }),
+      })
+    }
+    // Autres PUT : échec 500 (sera retry 3x côté client puis abandon)
+    return route.fulfill({
       status: 500,
       contentType: 'application/json',
-      body: JSON.stringify({ error: 'Upload failed' }),
+      body: JSON.stringify({ error: 'Internal graph error' }),
     })
   })
 
@@ -157,7 +196,7 @@ test('SAV error - partial upload failure', async ({ page }) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ success: true, shareLink: 'https://example.com/folder' }),
+      body: JSON.stringify({ success: true, shareLink: 'https://mock-share.local/folder' }),
     })
   })
 
@@ -172,7 +211,7 @@ test('SAV error - partial upload failure', async ({ page }) => {
   await openInvoiceDetails(page)
   await fillSavForm(page, { imageCount: 2 })
 
-  await expect(page.getByText("Erreur d'envoi")).toBeVisible({ timeout: 15000 })
+  await expect(page.getByText("Erreur d'envoi")).toBeVisible({ timeout: 20000 })
   await expect(page.getByText(/upload de 1 fichier/i)).toBeVisible()
   await expect(page).not.toHaveURL(/sav-confirmation/)
 })

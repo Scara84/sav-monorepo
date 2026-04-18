@@ -3,6 +3,28 @@
 Ce document consolide la critique priorisee, le backlog detaille et le plan pas-a-pas
 pour refactoriser le composant cle et stabiliser le flux SAV.
 
+## Epic 1 (2026-04-17) — Suppression du serveur Infomaniak via OneDrive upload session
+
+**Statut** : merge-ready (pending smoke test preview + accord explicite user).
+
+- Stories 1.1 à 1.4 livrées sur la branche `feature/supabase-direct-upload`.
+- Logique MSAL/Graph portée dans [client/api/](client/api/) (fonctions serverless Vercel).
+- Flow upload en 2 étapes : `POST /api/upload-session` → `PUT uploadUrl` direct Microsoft Graph (le binaire contourne Vercel).
+- Dossier `server/` prêt à être supprimé après smoke test preview.
+- Instance Infomaniak à conserver en **standby 2 semaines** après merge, puis décommissionnement physique.
+
+### Phase 2 — Persistance + Admin SAV (à planifier)
+
+Phase non démarrée. Objectifs :
+
+- **Table Postgres** (Supabase ou Neon) pour persister les soumissions SAV (avant/après envoi Make.com).
+- **UI admin interne** pour lister, rechercher, re-traiter les SAV, voir les webhook failures.
+- **Observabilité** : logs structurés, métriques, alertes sur échecs de webhook/upload.
+- **Retraitement** : rejeu des soumissions perdues (si Make.com down ou webhook invalide).
+
+Aucun ticket Phase 2 encore écrit — à cadrer via `bmad-product-brief` puis `bmad-create-prd`.
+
+
 ## Top 5 (priorite / impact)
 1) Refactor `WebhookItemsList.vue` vers les composables existants (maintenance / testabilite)
 2) Ajouter des tests E2E pour le flux SAV critique (fiabilite produit)

@@ -22,14 +22,8 @@ export default defineConfig(({ mode }) => {
       port: 5173,
       strictPort: true,
       open: true,
-      proxy: {
-        // Redirige les requêtes API vers le serveur backend
-        '/api': {
-          target: process.env.VITE_API_URL || 'http://localhost:3001',
-          changeOrigin: true,
-          rewrite: (path) => path.replace(/^\/api/, '')
-        }
-      }
+      // Les routes /api/* sont servies par Vercel serverless (client/api/*.js).
+      // En dev local, utiliser `vercel dev` qui sert à la fois Vite et les functions.
     },
     resolve: {
       alias: [

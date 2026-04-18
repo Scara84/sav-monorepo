@@ -34,14 +34,34 @@ const buildInvoice = () => ({
   ],
 })
 
-test('SAV happy path', async ({ page }) => {
-  await page.route('**/api/upload-onedrive', async (route) => {
+const MOCK_GRAPH_HOST = 'https://mock-graph.local'
+
+test('SAV happy path (flow 2 étapes OneDrive upload session)', async ({ page }) => {
+  // Étape A — upload-session : renvoie un uploadUrl mock
+  await page.route('**/api/upload-session', async (route) => {
+    const body = route.request().postDataJSON() || {}
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
       body: JSON.stringify({
         success: true,
-        file: { url: 'https://example.com/file.jpg' },
+        uploadUrl: `${MOCK_GRAPH_HOST}/upload/${encodeURIComponent(body.filename || 'file')}`,
+        storagePath: `SAV_Images/${body.savDossier || 'SAV_TEST'}/${body.filename || 'file'}`,
+        expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+      }),
+    })
+  })
+
+  // Étape B — PUT direct sur mock Graph : renvoie un DriveItem avec webUrl
+  await page.route(`${MOCK_GRAPH_HOST}/**`, async (route) => {
+    await route.fulfill({
+      status: 201,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        id: 'mock-drive-item-id',
+        name: 'photo.jpg',
+        webUrl: 'https://mock-share.local/photo.jpg',
+        size: 4,
       }),
     })
   })
@@ -52,7 +72,7 @@ test('SAV happy path', async ({ page }) => {
       contentType: 'application/json',
       body: JSON.stringify({
         success: true,
-        shareLink: 'https://example.com/folder',
+        shareLink: 'https://mock-share.local/folder',
       }),
     })
   })

@@ -24,3 +24,6 @@ pnpm-debug.log*
 # Playwright
 /playwright-report/
 /test-results/
+
+# Local dev tooling (non committé)
+dev-api-server.cjs

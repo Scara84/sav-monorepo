@@ -29,19 +29,16 @@ Variables reconnues (préfixe `VITE_*` obligatoire) :
 |----------|-------------|-------|--------|
 | `VITE_WEBHOOK_URL` | ✅ | Webhook Make.com — lookup facture | — |
 | `VITE_WEBHOOK_URL_DATA_SAV` | ✅ | Webhook Make.com — soumission SAV | — |
-| `VITE_API_URL` | ✅ (prod) | URL du backend SAV | `http://localhost:3000` |
-| `VITE_API_KEY` | ✅ (prod) | Clé envoyée en `X-API-Key` (≥ 32 chars) | — |
+| `VITE_API_KEY` | ✅ (prod) | Clé envoyée en `X-API-Key` aux routes Vercel `/api/*` (≥ 32 chars) | — |
 | `VITE_MAINTENANCE_MODE` | ❌ | `'1'` pour activer la page `/maintenance` | `'0'` |
 | `VITE_MAINTENANCE_BYPASS_TOKEN` | ❌ | Token passé via `?bypass=...` pour contourner | — |
-| `VITE_SUPABASE_URL` | ❌ | Client Supabase (inactif) | — |
-| `VITE_SUPABASE_ANON_KEY` | ❌ | Idem | — |
 
 Le dev server Vite lit `.env`, `.env.local`, `.env.development` (cf. docs Vite).
 
 ## Commandes utiles
 
 ```bash
-npm run dev              # Vite dev server : http://localhost:5173 (proxy /api → VITE_API_URL)
+npm run dev              # Vite dev server : http://localhost:5173 (sans API — utiliser `vercel dev` pour tester les routes /api/*)
 npm run build            # Build production → dist/
 npm run serve            # Vite preview sur le build
 npm run start            # Express (server.js) pour servir dist/ (usage local uniquement)
@@ -57,17 +54,14 @@ npm run lint             # ESLint fix (.vue,.js,.jsx,.cjs,.mjs)
 npm run format           # Prettier sur src/
 ```
 
-## Proxy Vite
+## Routes `/api/*` — Vercel serverless functions
 
-`vite.config.js` configure un proxy :
+Depuis Epic 1 (pivot OneDrive upload session), les routes `/api/*` sont servies par des **fonctions serverless Vercel** (cf. [client/api/](../../client/api/)) et non plus par un backend Express distinct.
 
-```
-/api/* (dev) → VITE_API_URL (défaut http://localhost:3001)
-```
+- **Prod / Preview Vercel** : `/api/upload-session`, `/api/folder-share-link` sont servies automatiquement par Vercel.
+- **Dev local** : utiliser `vercel dev` (démarre Vite + routes serverless ensemble). `npm run dev` seul ne sert pas les routes `/api/*`.
 
-Cela permet d'éviter les problèmes CORS en dev : le code appelle `/api/...` en relatif.
-
-> ⚠️ Incohérence à corriger : `vite.config.js` pointe `VITE_API_URL` par défaut sur `localhost:3001` (pour le proxy), mais le backend écoute sur `3000` par défaut (`server.js`). Forcer `VITE_API_URL=http://localhost:3000` en local, ou ajuster le port du backend (`PORT=3001 npm run dev` côté serveur).
+Le binaire des fichiers uploadés transite **directement du navigateur à Microsoft Graph** via l'`uploadUrl` retournée par `/api/upload-session` (contourne la limite Vercel 4 Mo).
 
 ## Structure de travail recommandée
 
@@ -92,13 +86,13 @@ Cela permet d'éviter les problèmes CORS en dev : le code appelle `/api/...` en
   - Exemple : `tests/unit/features/sav/components/WebhookItemsList.spec.js`.
 - **E2E** : `tests/e2e/`, Playwright. Deux specs : `sav-happy-path.spec.js`, `sav-error-cases.spec.js`.
   - Démarrage auto de Vite sur `:5173` (`webServer` dans `playwright.config.js`).
-  - Variables d'env forcées en test : `VITE_API_URL=http://localhost:3001`, `VITE_MAINTENANCE_MODE=0`.
+  - Variables d'env forcées en test : `VITE_MAINTENANCE_MODE=0`. Les routes `/api/*` sont mockées par `page.route()` dans chaque spec.
 
 ## Dépannage rapide
 
 | Symptôme | Piste |
 |----------|-------|
-| Appels `/api/*` 404 en dev | Vérifier que le backend tourne et que `VITE_API_URL` pointe au bon port. |
+| Appels `/api/*` 404 en dev | Démarrer `vercel dev` au lieu de `npm run dev` (les routes serverless ne sont pas servies par Vite). |
 | `403 Forbidden` sur l'upload | `VITE_API_KEY` ≠ `API_KEY` backend. |
 | Redirect systématique vers `/maintenance` | `VITE_MAINTENANCE_MODE='1'` — mettre `'0'` ou passer `?bypass=<token>`. |
 | Excel vide ou mal encodé | Voir [VERIFICATION_CARACTERES.md](../VERIFICATION_CARACTERES.md) pour les règles de sanitization. |

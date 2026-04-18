@@ -1,15 +1,15 @@
 # Architecture d'intégration
 
-Ce document décrit comment les deux parties du dépôt (`client` et `server`) communiquent entre elles et avec les systèmes externes.
+Ce document décrit comment l'application SAV Fruitstock communique avec les systèmes externes après **Epic 1 — Suppression du serveur Infomaniak via OneDrive upload session** (pivoté le 2026-04-17).
 
 ## Acteurs
 
 | Acteur | Rôle |
 |--------|------|
-| **Client Vue** (`client/`) | UI utilisateur, déployé sur Vercel/Netlify. |
-| **Backend SAV** (`server/`) | Proxy sécurisé vers Microsoft Graph, déployé sur Vercel (serverless). |
+| **Client Vue** (`client/src/`) | UI utilisateur, déployée sur Vercel. |
+| **Fonctions serverless Vercel** (`client/api/`) | Négociation MSAL + Microsoft Graph (upload session, share link). Ne voient **jamais** le binaire. |
+| **Microsoft Graph / OneDrive** | Stockage des pièces jointes et du récapitulatif Excel. Le binaire y transite **directement depuis le navigateur** via `uploadUrl` signée. |
 | **Make.com** | Automatisation (lookup facture, notification SAV vers équipe interne). |
-| **Microsoft Graph / OneDrive** | Stockage des pièces jointes et du récapitulatif Excel. |
 
 ## Flux global
 
@@ -22,23 +22,24 @@ Ce document décrit comment les deux parties du dépôt (`client` et `server`) c
          │──────────────────────────────────────────►  VITE_WEBHOOK_URL
          │                                             ◄─ JSON facture + items
          │
-         │ 2. (pour chaque image/fichier)
-         │    POST /api/upload-onedrive (X-API-Key)    (Backend)
-         │──────────────────────────────────────────►  server
-         │                              ┌──────────── MSAL (client credentials)
-         │                              │
-         │                              ▼
-         │                        Microsoft Graph ──► OneDrive
-         │                              │
-         │                              ◄─ webUrl
-         │    ◄────────────────────────── {success, file:{url,...}}
+         │ 2. (pour chaque fichier image ou Excel)
+         │    a. POST /api/upload-session              (Vercel serverless)
+         │       { filename, savDossier, mimeType, size }
+         │──────────────────────────────────────────►  MSAL + Graph createUploadSession
+         │    ◄───────────────────────────────────── { uploadUrl, expiresAt, storagePath }
          │
-         │ 3. POST /api/folder-share-link (X-API-Key)
-         │──────────────────────────────────────────►  server ──► Graph (createLink)
-         │    ◄───────────────────────── {shareLink}
+         │    b. PUT <uploadUrl> (binaire direct)      ┌─────► Microsoft Graph ──► OneDrive
+         │       Content-Range: bytes 0-N/N           │       (le binaire contourne Vercel)
+         │──────────────────────────────────────────► │
+         │    ◄───────────────────────────────────── { webUrl, id, ... } DriveItem
+         │
+         │ 3. POST /api/folder-share-link (X-API-Key)  (Vercel serverless)
+         │──────────────────────────────────────────►  Graph createLink
+         │    ◄───────────────────────────────────── { shareLink }
          │
          │ 4. POST webhook SAV (Make.com)              VITE_WEBHOOK_URL_DATA_SAV
-         │──────────────────────────────────────────►  payload (items, lien partage)
+         │    payload { fileUrls, shareLink, items, ... }
+         │──────────────────────────────────────────►
          │
          ▼
    /sav-confirmation
@@ -46,84 +47,109 @@ Ce document décrit comment les deux parties du dépôt (`client` et `server`) c
 
 ## Points d'intégration
 
-### Client ↔ Backend SAV
+### Client ↔ Vercel serverless functions
 
-- **Transport** : HTTPS, JSON ou `multipart/form-data`.
-- **Authentification** : header `X-API-Key` (valeur `VITE_API_KEY` côté client ≡ `API_KEY` côté serveur).
-- **Routing dev** : proxy Vite (`/api/*` → `VITE_API_URL`) — évite le CORS en local.
-- **Routing prod** : URLs publiques distinctes ; le backend maintient une **whitelist CORS** côté `server/src/config/server.config.js`.
-- **Endpoints consommés par le client** :
+- **Transport** : HTTPS, JSON léger (pas de multipart — le binaire passe direct à Graph).
+- **Authentification** : header `X-API-Key` (valeur `VITE_API_KEY` côté client ≡ `API_KEY` côté Vercel env).
+- **Même origine** : les routes `/api/*` sont servies par le même déploiement Vercel que le SPA — pas de CORS.
+- **Endpoints** :
 
-| Appel côté client | Endpoint backend | Composable |
-|-------------------|------------------|-----------|
-| Upload image/Excel | `POST /api/upload-onedrive` (alias de `/api/upload`) | `useApiClient.uploadToOneDrive` |
-| Lien de partage dossier | `POST /api/folder-share-link` | `useApiClient.getFolderShareLink` |
-| (non utilisé) Token upload direct | `POST /api/get-upload-token` | — |
-| (non utilisé) Validation URLs directes | `POST /api/submit-sav-urls` | — |
+| Appel côté client | Fonction serverless | Composable |
+|-------------------|---------------------|-----------|
+| Négocier upload session | [POST /api/upload-session](../client/api/upload-session.js) | `useApiClient.uploadToBackend` (étape A) |
+| PUT binaire direct | (pas un endpoint Vercel — directement Microsoft) | `useApiClient.uploadToBackend` (étape B) |
+| Lien de partage dossier | [POST /api/folder-share-link](../client/api/folder-share-link.js) | `useApiClient.getFolderShareLink` |
 
-- **Contrats** : détaillés dans [api-contracts-server.md](./api-contracts-server.md).
+- **Contrats détaillés** : [api-contracts-vercel.md](./api-contracts-vercel.md).
+
+### Navigateur ↔ Microsoft Graph (PUT direct)
+
+- **Transport** : HTTPS PUT sur `uploadUrl` signée (domaines `*.sharepoint.com` ou `graph.microsoft.com`).
+- **Authentification** : aucune côté client — l'`uploadUrl` est une URL signée à usage unique (validité ≈ 6h).
+- **Headers** : `Content-Range: bytes 0-<size-1>/<size>`. **Pas de `Content-Type`** (Graph le dérive de l'extension).
+- **Réponse** : `DriveItem` JSON complet (contient `webUrl`, `id`, `size`, etc.).
+- **Progress** : `xhr.upload.onprogress` côté client pour la barre de progression ([useApiClient.putBlobToGraph](../client/src/features/sav/composables/useApiClient.js)).
 
 ### Client ↔ Make.com
 
 - **Transport** : HTTPS POST JSON.
 - **Authentification** : aucune ; la confidentialité repose sur le secret de l'URL.
 - **Usages** :
-  - `VITE_WEBHOOK_URL` — lookup facture depuis [features/sav/views/Home.vue](../client/src/features/sav/views/Home.vue). Retourne les données facture (numéro, date, items, email client).
-  - `VITE_WEBHOOK_URL_DATA_SAV` — soumission de la demande SAV consolidée (items retenus + quantités + motifs + lien de partage OneDrive).
-- **Pourquoi directement depuis le navigateur** : Make.com est un outil no-code métier ; chaque scénario peut évoluer indépendamment du code. Le backend n'a aucune valeur ajoutée sur ce chemin.
+  - `VITE_WEBHOOK_URL` — lookup facture depuis [features/sav/views/Home.vue](../client/src/features/sav/views/Home.vue).
+  - `VITE_WEBHOOK_URL_DATA_SAV` — soumission de la demande SAV consolidée (items + `fileUrls` OneDrive + `shareLink`).
 
-### Backend ↔ Microsoft Graph
+### Vercel serverless ↔ Microsoft Graph (négociation uniquement)
 
 - **Transport** : HTTPS vers `https://graph.microsoft.com/v1.0/drives/<DRIVE_ID>`.
-- **Authentification** : OAuth2 **Client Credentials** via `@azure/msal-node` (token scope `https://graph.microsoft.com/.default`), valable ≈ 1 h, renouvelé à chaque requête Graph par le `authProvider` custom.
-- **Encapsulation** : toutes les interactions passent par [OneDriveService](../server/src/services/oneDrive.service.js) — aucun contrôleur n'instancie directement un client Graph.
-- **Opérations** :
+- **Authentification** : OAuth2 **Client Credentials** via `@azure/msal-node` (scope `https://graph.microsoft.com/.default`), cache in-memory par container serverless.
+- **Opérations** (toutes encapsulées dans [client/api/_lib/onedrive.js](../client/api/_lib/onedrive.js)) :
   - `ensureFolderExists(path)` — crée la hiérarchie `SAV_Images/<savDossier>/...` si absente.
-  - `uploadFile(buffer, fileName, folder, contentType)` — `PUT /items/{id}/content`.
-  - `createShareLink(itemId, ...)` — `POST /items/{id}/createLink`, scope `anonymous`, type `view`.
+  - `createUploadSession({ parentFolderId, filename })` — `POST /items/{id}:/{filename}:/createUploadSession`, `conflictBehavior: rename`.
+  - `getShareLinkForFolderPath(path)` — résout le dossier puis `POST /items/{id}/createLink`, scope `anonymous`, type `view`.
 
 ## Format des données
 
-### Lookup facture (Make.com → client)
+### Upload (flow 2 étapes)
 
-Format exact non documenté ici ; le client attend un JSON contenant les items et les coordonnées client, propagé tel quel vers `/invoice-details` (query params).
-
-### Upload (client → backend → Graph)
-
-- Requête client : `multipart/form-data` avec `file` + `savDossier`.
-- Réponse backend : `{ success, file: { name, url, id, size, lastModified } }`.
-- Le `url` renvoyé est un `webUrl` OneDrive stocké dans le payload final du webhook SAV.
+**Étape A — Request client → serverless :**
+```json
+{ "filename": "photo.jpg", "savDossier": "SAV_776_25S43", "mimeType": "image/jpeg", "size": 8388608 }
+```
+**Étape A — Response :**
+```json
+{ "success": true, "uploadUrl": "https://...", "expiresAt": "...", "storagePath": "SAV_Images/SAV_776_25S43/photo.jpg" }
+```
+**Étape B — Request navigateur → Graph :** `PUT <uploadUrl>` avec body binaire.
+**Étape B — Response :** `DriveItem` JSON (`{ id, webUrl, size, ... }`).
 
 ### Excel récapitulatif
 
 - Généré côté client via `useExcelGenerator` (xlsx 0.18.5).
 - 3 onglets : **Réclamations**, **Infos Client**, **SAV**.
-- Exporté en base64 puis uploadé via `POST /api/upload-onedrive` dans le même `savDossier` que les images.
+- Converti en Blob puis uploadé par le même flow 2 étapes que les images.
 
 ### Soumission SAV (client → Make.com)
 
 Payload JSON incluant :
-
 - les lignes SAV retenues (réf. article, quantité, unité, motif, notes),
-- les URLs OneDrive des images uploadées,
-- le lien de partage du dossier (retour de `/api/folder-share-link`),
-- les coordonnées client et la référence facture.
+- `fileUrls` : `webUrl` OneDrive de chaque fichier (images + Excel),
+- `shareLink` : lien de partage du dossier (retour de `/api/folder-share-link`),
+- coordonnées client et référence facture.
 
-## Matrice CORS / whitelist
+**Contrat identique à l'ancien payload** — le scénario Make.com n'a **pas** été modifié.
 
-| Origine | Autorisée par le backend ? |
-|---------|-----------------------------|
-| `https://sav-fruitstock.vercel.app` | ✅ |
-| `https://sav.fruitstock.eu`, `https://www.sav.fruitstock.eu` | ✅ |
-| `http://localhost:3000`, `http://localhost:5173` | ✅ |
-| `https://sav-monorepo-*.vercel.app` (previews) | ✅ (regex) |
-| Tout le reste | ❌ |
+## Variables d'environnement
 
-À modifier dans [server/src/config/server.config.js](../server/src/config/server.config.js) pour chaque nouveau domaine.
+### Scope client (bundle Vite — exposé au navigateur)
+
+| Variable | Rôle |
+|----------|------|
+| `VITE_API_KEY` | Clé envoyée en `X-API-Key` aux routes Vercel `/api/*` |
+| `VITE_WEBHOOK_URL` | Webhook Make.com — lookup facture |
+| `VITE_WEBHOOK_URL_DATA_SAV` | Webhook Make.com — soumission SAV |
+| `VITE_MAINTENANCE_MODE` / `VITE_MAINTENANCE_BYPASS_TOKEN` | Mode maintenance |
+
+### Scope serverless (Vercel env — jamais dans le bundle)
+
+| Variable | Rôle |
+|----------|------|
+| `API_KEY` | Comparée à `X-API-Key` reçu |
+| `MICROSOFT_CLIENT_ID` / `MICROSOFT_TENANT_ID` / `MICROSOFT_CLIENT_SECRET` | App registration Azure |
+| `MICROSOFT_DRIVE_ID` | Drive OneDrive/SharePoint cible |
+| `MICROSOFT_DRIVE_PATH` | Racine des SAV (ex: `SAV_Images`) |
 
 ## Couplages à surveiller
 
-- **`VITE_API_KEY` ↔ `API_KEY`** : doivent être synchronisés lors de rotations.
-- **URL du backend** : changement côté Vercel ⇒ mise à jour de `VITE_API_URL` côté client.
-- **`MS_GRAPH.DRIVE_ID`** (constante en dur dans [constants.js](../server/src/config/constants.js)) : si le tenant/drive change, modifier et redéployer.
-- **Make.com** : les URLs de webhooks changent quand un scénario est régénéré. Les deux `VITE_WEBHOOK_URL*` sont consommées directement dans le JavaScript compilé côté client — un redéploiement est nécessaire.
+- **`VITE_API_KEY` ↔ `API_KEY`** (Vercel env) : doivent rester synchronisés lors des rotations.
+- **`MICROSOFT_DRIVE_ID`** : si le tenant/drive cible change, mise à jour de la var d'env Vercel + redéploiement.
+- **Make.com** : les URLs de webhooks changent quand un scénario est régénéré — mise à jour de `VITE_WEBHOOK_URL*` + redéploiement.
+- **Payload Make.com** : le format `{ fileUrls, shareLink, items }` est consommé par un scénario no-code. Toute évolution doit être coordonnée avec l'équipe Make.com.
+
+## Ce qui a disparu (avant Epic 1)
+
+- ~~Serveur Express Infomaniak (`server/`)~~ — remplacé par [client/api/](../client/api/).
+- ~~Endpoint `POST /api/upload-onedrive` (multipart)~~ — remplacé par le flow 2 étapes upload-session + PUT direct Graph.
+- ~~Variable `VITE_API_URL`~~ — routes `/api/*` sont désormais en même-origine (pas besoin d'URL explicite).
+- ~~Proxy Vite `/api` → backend~~ — retiré de [client/vite.config.js](../client/vite.config.js).
+
+Docs archivées : [archive/api-contracts-server.md](../archive/api-contracts-server.md), [archive/architecture-server.md](../archive/architecture-server.md), [archive/development-guide-server.md](../archive/development-guide-server.md).
