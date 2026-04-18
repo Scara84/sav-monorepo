@@ -56,6 +56,10 @@ export default defineConfig({
       {
         find: '@utils',
         replacement: `${srcPath}/utils`
+      },
+      {
+        find: '@shared',
+        replacement: resolve(__dirname, './shared')
       }
     ]
   },

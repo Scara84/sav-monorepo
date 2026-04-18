@@ -66,6 +66,10 @@ export default defineConfig(({ mode }) => {
         {
           find: '@utils',
           replacement: `${srcPath}/utils`
+        },
+        {
+          find: '@shared',
+          replacement: fileURLToPath(new URL('./shared', import.meta.url))
         }
       ]
     }

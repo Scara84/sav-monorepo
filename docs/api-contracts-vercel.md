@@ -48,7 +48,7 @@ Body:
 | `MICROSOFT_DRIVE_PATH` env configurée | 500 |
 | `filename` non vide, string | 400 |
 | `mimeType` dans [whitelist](#mime-whitelist) | 400 |
-| `size` > 0 et ≤ 10 485 760 (10 Mo) | 400 |
+| `size` entier > 0 et ≤ 26 214 400 (25 Mo, constante partagée [client/shared/file-limits.json](../client/shared/file-limits.json)) | 400 |
 | `savDossier` non vide après sanitization (`[A-Za-z0-9_-]+`, max 100 chars) | 400 |
 
 ### Response 200

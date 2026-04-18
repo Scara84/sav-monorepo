@@ -56,7 +56,7 @@ Les dossiers `components/atoms/`, `components/molecules/`, `components/organisms
 |------------|---------|----------------|
 | `useApiClient` | [useApiClient.js](../client/src/features/sav/composables/useApiClient.js) | Appels HTTP (upload OneDrive, share link, webhooks Make.com) avec retry exponentiel (3 tentatives). |
 | `useSavForms` | [useSavForms.js](../client/src/features/sav/composables/useSavForms.js) | État des formulaires SAV par ligne, validation (quantité > 0, unité, motif), computed `hasFilledForms` / `hasUnfinishedForms`. |
-| `useImageUpload` | [useImageUpload.js](../client/src/features/sav/composables/useImageUpload.js) | Drag & drop, validation MIME (JPEG/PNG/GIF/WebP/SVG/HEIC), taille max 10 Mo, renommage avec mention spéciale. |
+| `useImageUpload` | [useImageUpload.js](../client/src/features/sav/composables/useImageUpload.js) | Drag & drop, validation MIME (JPEG/PNG/GIF/WebP/SVG/HEIC), taille max définie dans [client/shared/file-limits.json](../client/shared/file-limits.json) (25 Mo), renommage avec mention spéciale. |
 | `useExcelGenerator` | [useExcelGenerator.js](../client/src/features/sav/composables/useExcelGenerator.js) | Génération d'un Excel 3 onglets (Réclamations / Infos Client / SAV) et export base64. |
 
 ### Génériques — `src/composables/`

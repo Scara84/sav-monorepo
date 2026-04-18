@@ -77,19 +77,19 @@ describe('POST /api/upload-session', () => {
     expect(res.body.error).toMatch(/MIME/)
   })
 
-  it('refuse si size > 10 Mo (400)', async () => {
+  it('refuse si size > maxFileSizeBytes (400)', async () => {
     const res = makeRes()
     await handleWithDeps(
       {
         method: 'POST',
         headers: { 'x-api-key': 'secret-key' },
-        body: { ...validBody, size: 11 * 1024 * 1024 },
+        body: { ...validBody, size: 26 * 1024 * 1024 },
       },
       res,
       { onedrive: mockOnedrive() }
     )
     expect(res.statusCode).toBe(400)
-    expect(res.body.error).toMatch(/10 Mo/)
+    expect(res.body.error).toMatch(/25 Mo/)
   })
 
   it('refuse size 0 (400)', async () => {

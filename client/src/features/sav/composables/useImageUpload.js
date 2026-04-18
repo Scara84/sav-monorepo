@@ -1,3 +1,5 @@
+import fileLimits from '@shared/file-limits.json';
+
 /**
  * Composable pour gérer l'upload d'images
  * Extrait la logique d'upload d'images de WebhookItemsList
@@ -12,7 +14,8 @@ export function useImageUpload() {
     'image/heic',
     'image/heif'
   ];
-  const maxFileSize = 10 * 1024 * 1024;
+  const maxFileSize = fileLimits.maxFileSizeBytes;
+  const maxFileSizeMb = fileLimits.maxFileSizeMb;
 
   /**
    * Renomme un fichier avec la mention spéciale
@@ -45,7 +48,7 @@ export function useImageUpload() {
     });
 
     if (invalidFiles.length > 0) {
-      form.errors.images = 'Certains fichiers ne sont pas valides (formats acceptés: JPEG, PNG, GIF, WebP, SVG, HEIC - taille max 10Mo)';
+      form.errors.images = `Certains fichiers ne sont pas valides (formats acceptés: JPEG, PNG, GIF, WebP, SVG, HEIC - taille max ${maxFileSizeMb}Mo)`;
       if (showToast) {
         showToast('Certains fichiers ne sont pas valides', 'error');
       }
@@ -97,6 +100,7 @@ export function useImageUpload() {
   return {
     acceptedTypes,
     maxFileSize,
+    maxFileSizeMb,
     handleImageUpload,
     handleDrop,
     removeImage,

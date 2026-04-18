@@ -94,7 +94,7 @@ Détail des composables :
 
 ### `useImageUpload`
 
-- Accepte JPEG/PNG/GIF/WebP/SVG/HEIC, 10 Mo max.
+- Accepte JPEG/PNG/GIF/WebP/SVG/HEIC, taille max définie dans [client/shared/file-limits.json](../client/shared/file-limits.json) (25 Mo).
 - Renomme avec préfixe/timestamp et remarque éventuelle.
 - Aperçus, drag & drop, suppression.
 

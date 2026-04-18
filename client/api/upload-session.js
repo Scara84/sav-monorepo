@@ -2,8 +2,9 @@ const { requireApiKey } = require('./_lib/auth.js')
 const { isMimeAllowed } = require('./_lib/mime.js')
 const { sanitizeFilename, sanitizeSavDossier } = require('./_lib/sanitize.js')
 const onedrive = require('./_lib/onedrive.js')
+const fileLimits = require('../shared/file-limits.json')
 
-const MAX_SIZE_BYTES = 10 * 1024 * 1024
+const MAX_SIZE_BYTES = fileLimits.maxFileSizeBytes
 
 function errorResponse(res, status, error) {
   res.status(status).json({ success: false, error })
@@ -38,7 +39,11 @@ async function handleWithDeps(req, res, deps = {}) {
     return errorResponse(res, 400, 'size requis et doit être un entier positif')
   }
   if (size > MAX_SIZE_BYTES) {
-    return errorResponse(res, 400, `Taille maximum 10 Mo dépassée (${size} octets)`)
+    return errorResponse(
+      res,
+      400,
+      `Taille maximum ${fileLimits.maxFileSizeMb} Mo dépassée (${size} octets)`
+    )
   }
 
   const sanitizedFolder = sanitizeSavDossier(savDossier)
