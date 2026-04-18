@@ -1,0 +1,24 @@
+# Sprint Status — SAV Fruitstock
+# Géré par BMAD create-story / dev-story / code-review
+#
+# STATUS DEFINITIONS:
+#   backlog         → story pas encore créée (seul l'epic la référence)
+#   ready-for-dev   → story fichier créé, prête à être implémentée
+#   in-progress     → dev en cours
+#   review          → implémentation terminée, en attente de code-review
+#   done            → mergée
+#
+# Les statuts d'epic suivent la même logique : backlog → in-progress → done
+
+last_updated: 2026-04-18
+# ARCHIVÉ — Phase 1 terminée et mergée (PR #2, commit 93db4aa, 2026-04-18).
+# Conservé ici pour traçabilité historique uniquement.
+# Le sprint status actif Phase 2 est dans ../sprint-status.yaml
+
+development_status:
+  # Epic 1 — Suppression du serveur Infomaniak via OneDrive upload session
+  epic-1: done
+  1-1-graph-upload-session-routes: done
+  1-2-client-api-refactor: done
+  1-3-tests-adaptation: done
+  1-4-server-removal-and-cleanup: done

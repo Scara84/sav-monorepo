@@ -3,26 +3,65 @@
 Ce document consolide la critique priorisee, le backlog detaille et le plan pas-a-pas
 pour refactoriser le composant cle et stabiliser le flux SAV.
 
-## Epic 1 (2026-04-17) — Suppression du serveur Infomaniak via OneDrive upload session
+## Phase 1 (Epic 1, 2026-04-17/18) — Suppression du serveur Infomaniak via OneDrive upload session
 
-**Statut** : merge-ready (pending smoke test preview + accord explicite user).
+**Statut** : ✅ **Terminée et mergée** (PR #2, commit `93db4aa`, 2026-04-18).
 
-- Stories 1.1 à 1.4 livrées sur la branche `feature/supabase-direct-upload`.
+- Stories 1.1 à 1.4 livrées sur la branche `feature/supabase-direct-upload`, mergées dans `main`.
 - Logique MSAL/Graph portée dans [client/api/](client/api/) (fonctions serverless Vercel).
 - Flow upload en 2 étapes : `POST /api/upload-session` → `PUT uploadUrl` direct Microsoft Graph (le binaire contourne Vercel).
-- Dossier `server/` prêt à être supprimé après smoke test preview.
-- Instance Infomaniak à conserver en **standby 2 semaines** après merge, puis décommissionnement physique.
+- Serveur Express Infomaniak supprimé (commit `33b9ef4`).
+- Taille max upload unifiée à 25 Mo (commit `0802c5f`).
+- Sprint Phase 1 archivé sous [_bmad-output/implementation-artifacts/phase-1/](_bmad-output/implementation-artifacts/phase-1/).
 
-### Phase 2 — Persistance + Admin SAV (à planifier)
+## Phase 2 (2026-04-18) — Plateforme SAV interne + self-service client
 
-Phase non démarrée. Objectifs :
+**Statut** : 📋 **Planification terminée, dev à démarrer** (branche `interface-admin`).
 
-- **Table Postgres** (Supabase ou Neon) pour persister les soumissions SAV (avant/après envoi Make.com).
-- **UI admin interne** pour lister, rechercher, re-traiter les SAV, voir les webhook failures.
-- **Observabilité** : logs structurés, métriques, alertes sur échecs de webhook/upload.
-- **Retraitement** : rejeu des soumissions perdues (si Make.com down ou webhook invalide).
+Transforme l'app d'une passerelle de capture en **plateforme SAV complète** qui remplace le classeur Excel `SAV_Admin.xlsm` en **big bang**. Trois zones : back-office opérateur, self-service adhérent/responsable, reporting.
 
-Aucun ticket Phase 2 encore écrit — à cadrer via `bmad-product-brief` puis `bmad-create-prd`.
+### Artefacts de planification
+
+| Document | Ligne count | Contenu |
+|----------|-------------|---------|
+| [Product Brief](_bmad-output/planning-artifacts/product-brief-sav-monorepo.md) | ~220 | Brief exécutif (vision, problème, solution, utilisateurs, risques) |
+| [Brief Distillate](_bmad-output/planning-artifacts/product-brief-sav-monorepo-distillate.md) | ~260 | Pack de contexte dense (13 sections, rétro-ingénierie Excel complète) |
+| [PRD](_bmad-output/planning-artifacts/prd.md) | ~1 620 | 71 FRs + 62 NFRs + schéma BDD + contrats API + 7 epics + AC |
+| [PRD Validation](_bmad-output/planning-artifacts/prd-validation-report.md) | ~420 | Rapport validation BMad (VALIDATED, 100 % couverture) |
+| [Architecture](_bmad-output/planning-artifacts/architecture.md) | ~1 480 | Stack, décisions (26 CAD), patterns, structure projet complète |
+| [Epics & Stories](_bmad-output/planning-artifacts/epics.md) | ~1 480 | 7 epics, 44 stories, AC Given/When/Then, coverage map FR→Epic |
+| [Sprint Status](_bmad-output/implementation-artifacts/sprint-status.yaml) | — | État live de chaque story (backlog → done) |
+
+### Epics Phase 2
+
+| Epic | Focus | Stories |
+|------|-------|---------|
+| **Epic 1** | Accès authentifié & fondations plateforme | 7 |
+| **Epic 2** | Capture client fiable avec persistance & brouillon | 4 |
+| **Epic 3** | Traitement opérationnel des SAV en back-office | 7 |
+| **Epic 4** | Moteur comptable fidèle (calculs, avoirs, bons SAV PDF) | 6 |
+| **Epic 5** | Pilotage (exports fournisseurs + reporting + alertes) | 6 |
+| **Epic 6** | Espace self-service adhérent + responsable + notifications | 7 |
+| **Epic 7** | Administration, RGPD, intégration ERP, cutover prod | 7 |
+
+**Dépendances :** Epic 1 → 2 → 3 → {4, 5, 6} → 7
+
+### Décisions techniques Phase 2 (verrouillées)
+
+- **Stack ajoutée :** Supabase Postgres (région UE), Resend (email), `@react-pdf/renderer` (PDF serverless), Pinia, Zod, TypeScript strict
+- **Stack conservée :** Vue 3 Composition + Vite + Tailwind + Vercel serverless + MSAL + Graph/OneDrive (Epic 1)
+- **Découplage fichiers/métadonnées :** OneDrive pour fichiers, Postgres pour métadonnées seulement
+- **Big Bang Palier C :** tous les epics complets avant prod, Excel débranché à J+1
+- **RLS Postgres** activée sur toutes les tables métier, tests RLS dédiés obligatoires
+
+### Pré-requis avant cutover Phase 2
+
+- [ ] DPIA signé (blocker NFR-D8)
+- [ ] 2e compte admin Fruitstock provisionné (anti-SPOF)
+- [ ] Coffre-fort secrets partagé (1Password/Bitwarden) avec 2 accès
+- [ ] Test de charge séquence d'avoir 10k émissions passé (NFR-D3)
+- [ ] Shadow run 14 j app vs Excel à l'euro près
+- [ ] Plan Vercel (Hobby vs Pro) arbitré pour cron jobs et timeout 60s sur exports/PDF
 
 
 ## Top 5 (priorite / impact)

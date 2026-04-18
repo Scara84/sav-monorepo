@@ -1,0 +1,132 @@
+# generated: 2026-04-18
+# last_updated: 2026-04-18
+# project: sav-monorepo
+# project_key: NOKEY
+# tracking_system: file-system
+# story_location: _bmad-output/implementation-artifacts
+# phase: 2
+# source: _bmad-output/planning-artifacts/epics.md
+#
+# Phase 1 (Suppression serveur Infomaniak) est archivée sous ./phase-1/
+#
+# STATUS DEFINITIONS:
+# ==================
+# Epic Status:
+#   - backlog: Epic pas encore démarré
+#   - in-progress: Epic en cours de réalisation
+#   - done: Toutes les stories de l'epic sont terminées
+#
+# Epic Status Transitions:
+#   - backlog → in-progress: automatique à la création de la première story
+#   - in-progress → done: manuel quand toutes les stories sont en 'done'
+#
+# Story Status:
+#   - backlog: Story n'existe que dans epics.md
+#   - ready-for-dev: Fichier story créé dans implementation-artifacts/
+#   - in-progress: Dev actif sur l'implémentation
+#   - review: Prêt pour code-review
+#   - done: Story terminée et mergée
+#
+# Retrospective Status:
+#   - optional: Peut être lancée mais non obligatoire
+#   - done: Rétrospective effectuée
+#
+# WORKFLOW NOTES:
+# ===============
+# - Les stories sont ordonnées dans l'ordre logique de livraison de chaque epic
+# - Dépendances inter-epic : 1 → 2 → 3 → 4/5/6 → 7
+# - Une story passe par 'review' avant 'done' (via bmad-code-review)
+
+generated: 2026-04-18
+last_updated: 2026-04-18
+project: sav-monorepo
+project_key: NOKEY
+tracking_system: file-system
+story_location: _bmad-output/implementation-artifacts
+
+development_status:
+  # ──────────────────────────────────────────────────────────────
+  # Epic 1: Accès authentifié & fondations plateforme
+  # ──────────────────────────────────────────────────────────────
+  epic-1: backlog
+  1-1-setup-typescript-strict-migration-dependances: backlog
+  1-2-migration-bdd-initiale-identites-audit-auth-infra: backlog
+  1-3-middleware-serverless-unifie: backlog
+  1-4-auth-msal-sso-operateur-admin: backlog
+  1-5-auth-magic-link-adherent-et-responsable: backlog
+  1-6-audit-trail-et-journalisation-transverse: backlog
+  1-7-infrastructure-jobs-cron-ci-cd-healthcheck: backlog
+  epic-1-retrospective: optional
+
+  # ──────────────────────────────────────────────────────────────
+  # Epic 2: Capture client fiable avec persistance & brouillon
+  # ──────────────────────────────────────────────────────────────
+  epic-2: backlog
+  2-1-migration-tables-sav-catalogue-import-initial: backlog
+  2-2-endpoint-webhook-capture-avec-signature-hmac: backlog
+  2-3-brouillon-formulaire-cote-serveur-auto-save: backlog
+  2-4-integration-onedrive-dans-le-flow-capture: backlog
+  epic-2-retrospective: optional
+
+  # ──────────────────────────────────────────────────────────────
+  # Epic 3: Traitement opérationnel des SAV en back-office
+  # ──────────────────────────────────────────────────────────────
+  epic-3: backlog
+  3-1-migration-commentaires-sav: backlog
+  3-2-endpoint-liste-sav-filtres-recherche-pagination-cursor: backlog
+  3-3-vue-liste-sav-en-back-office: backlog
+  3-4-vue-detail-sav-en-back-office: backlog
+  3-5-transitions-de-statut-assignation-verrou-optimiste: backlog
+  3-6-edition-lignes-sav-avec-validations-bloquantes: backlog
+  3-7-tags-commentaires-duplication-fichiers-additionnels: backlog
+  epic-3-retrospective: optional
+
+  # ──────────────────────────────────────────────────────────────
+  # Epic 4: Moteur comptable fidèle (calculs, avoirs, bons SAV PDF)
+  # ──────────────────────────────────────────────────────────────
+  epic-4: backlog
+  4-1-migration-avoirs-sequence-transactionnelle-rpc: backlog
+  4-2-moteur-calculs-metier-typescript-triggers-miroirs-fixture-excel: backlog
+  4-3-integration-moteur-dans-la-vue-detail-preview-live: backlog
+  4-4-emission-atomique-n-avoir-bon-sav: backlog
+  4-5-template-pdf-charte-fruitstock-generation-serverless: backlog
+  4-6-test-de-charge-sequence-d-avoir: backlog
+  epic-4-retrospective: optional
+
+  # ──────────────────────────────────────────────────────────────
+  # Epic 5: Pilotage — exports fournisseurs + reporting + alertes
+  # ──────────────────────────────────────────────────────────────
+  epic-5: backlog
+  5-1-architecture-export-generique-config-rufino-migration: backlog
+  5-2-endpoint-export-fournisseur-ui-back-office: backlog
+  5-3-endpoints-reporting-dashboard-vue: backlog
+  5-4-export-csv-reporting-ad-hoc: backlog
+  5-5-job-cron-alertes-seuil-produit-config-admin: backlog
+  5-6-ajout-d-un-deuxieme-fournisseur-validation-architecture: backlog
+  epic-5-retrospective: optional
+
+  # ──────────────────────────────────────────────────────────────
+  # Epic 6: Espace self-service adhérent + responsable + notifications
+  # ──────────────────────────────────────────────────────────────
+  epic-6: backlog
+  6-1-migration-email-outbox-preferences-notifications: backlog
+  6-2-landing-magic-link-liste-sav-adherent: backlog
+  6-3-detail-sav-adherent-commentaires-bidirectionnels-fichiers: backlog
+  6-4-telechargement-pdf-bon-sav-preferences-notifications: backlog
+  6-5-scope-etendu-responsable-de-groupe: backlog
+  6-6-envoi-emails-transactionnels-transitions-nouveau-sav-via-outbox-retry: backlog
+  6-7-recap-hebdomadaire-responsable-opt-in: backlog
+  epic-6-retrospective: optional
+
+  # ──────────────────────────────────────────────────────────────
+  # Epic 7: Administration, RGPD, intégration ERP, cutover prod
+  # ──────────────────────────────────────────────────────────────
+  epic-7: backlog
+  7-1-migration-erp-push-queue-module-push-builder: backlog
+  7-2-push-erp-au-passage-cloture-retry-alerte: backlog
+  7-3-ecrans-admin-operateurs-catalogue-listes-validation: backlog
+  7-4-ecran-admin-settings-versionnes: backlog
+  7-5-audit-trail-filtrable-file-erp-consultable: backlog
+  7-6-admin-rgpd-export-json-signe-anonymisation: backlog
+  7-7-cutover-scripte-runbooks-dpia: backlog
+  epic-7-retrospective: optional

@@ -62,7 +62,17 @@ server/uploads/*
 
 # BMAD-METHOD
 _bmad
-_bmad-output
+_bmad-output/*
+!_bmad-output/planning-artifacts/
+_bmad-output/planning-artifacts/*
+!_bmad-output/planning-artifacts/*.md
+!_bmad-output/implementation-artifacts/
+_bmad-output/implementation-artifacts/*
+!_bmad-output/implementation-artifacts/*.yaml
+!_bmad-output/implementation-artifacts/*.md
+!_bmad-output/implementation-artifacts/phase-*/
+!_bmad-output/implementation-artifacts/phase-*/*.yaml
+!_bmad-output/implementation-artifacts/phase-*/*.md
 _bmad-input
 .agents/
 .claude
