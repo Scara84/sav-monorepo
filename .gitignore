@@ -63,6 +63,7 @@ server/uploads/*
 # BMAD-METHOD
 _bmad
 _bmad-output
+_bmad-input
 .agents/
 .claude
 CLAUDE.md
