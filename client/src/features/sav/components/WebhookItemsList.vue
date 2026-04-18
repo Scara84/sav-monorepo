@@ -333,7 +333,7 @@
                 Photos
                 <span class="text-xs text-gray-500"
                   >({{ getSavForm(index).reason === 'abime' ? 'obligatoire' : 'optionnel' }} -
-                  formats acceptés: JPEG, PNG, GIF, WebP, SVG, HEIC - max 10Mo par image)</span
+                  formats acceptés: JPEG, PNG, GIF, WebP, SVG, HEIC - max {{ maxFileSizeMb }}Mo par image)</span
                 >
               </label>
 
@@ -384,7 +384,7 @@
                   </p>
 
                   <!-- Texte secondaire -->
-                  <p class="text-xs text-gray-500">JPEG, PNG, GIF, WebP, SVG, HEIC (max 10Mo)</p>
+                  <p class="text-xs text-gray-500">JPEG, PNG, GIF, WebP, SVG, HEIC (max {{ maxFileSizeMb }}Mo)</p>
                 </div>
               </div>
               <!-- Prévisualisation des images -->
@@ -527,6 +527,7 @@ export default {
       handleImageUpload: handleImageUploadBase,
       handleDrop: handleDropBase,
       removeImage: removeImageBase,
+      maxFileSizeMb,
     } = useImageUpload()
     const { uploadToBackend: uploadToBackendApi, getFolderShareLink, submitSavWebhook } =
       useApiClient()
@@ -823,6 +824,7 @@ export default {
       uploadStatus,
       uploadErrorMessage,
       closeUploadModal,
+      maxFileSizeMb,
     }
   },
 }

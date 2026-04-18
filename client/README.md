@@ -5,6 +5,11 @@ Application de gestion des demandes SAV avec export Excel et intégration OneDri
 ## Structure du projet
 
 ```
+api/                # Fonctions serverless Vercel (MSAL + Graph)
+├── _lib/           # graph, onedrive, auth, sanitize, mime
+├── upload-session.js       # POST — négocie une upload session OneDrive
+└── folder-share-link.js    # POST — crée un lien de partage dossier
+
 src/
 ├── assets/           # Ressources statiques (images, polices, etc.)
 ├── components/       # Composants génériques réutilisables
@@ -24,7 +29,7 @@ src/
 └── utils/           # Utilitaires et helpers
 
 tests/              # Tests
-├── unit/           # Tests unitaires
+├── unit/           # Tests unitaires (inclut tests/unit/api/* pour les serverless)
 └── e2e/            # Tests end-to-end
 ```
 
@@ -57,9 +62,12 @@ npm run test:e2e
 Créez un fichier `.env` à la racine du projet avec les variables suivantes :
 
 ```env
-VITE_WEBHOOK_URL_DATA_SAV=votre_url_webhook
-# Autres variables d'environnement...
+VITE_API_KEY=...                           # envoyée en X-API-Key aux routes /api/*
+VITE_WEBHOOK_URL=https://hook.make.com/... # lookup facture
+VITE_WEBHOOK_URL_DATA_SAV=https://...      # soumission SAV
 ```
+
+Détails complets : [docs/development-guide-client.md](../docs/development-guide-client.md) et [docs/api-contracts-vercel.md](../docs/api-contracts-vercel.md).
 
 ## Bonnes pratiques
 

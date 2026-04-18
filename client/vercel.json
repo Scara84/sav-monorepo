@@ -2,5 +2,9 @@
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "installCommand": "npm install",
-  "framework": "vite"
+  "framework": "vite",
+  "functions": {
+    "api/upload-session.js": { "maxDuration": 10 },
+    "api/folder-share-link.js": { "maxDuration": 10 }
+  }
 }

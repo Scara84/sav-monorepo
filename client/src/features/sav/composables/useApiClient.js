@@ -1,253 +1,252 @@
-import axios from 'axios';
+import axios from 'axios'
 
 /**
- * Composable pour gérer les appels API avec retry logic
+ * Composable pour gérer les appels API avec retry logic.
+ *
+ * Architecture post-Epic 1 :
+ *   uploadToBackend = (A) POST /api/upload-session → { uploadUrl }
+ *                   + (B) PUT uploadUrl directement sur Microsoft Graph (binaire off Vercel)
  */
 export function useApiClient() {
-
-  /**
-   * Récupère l'API key depuis les variables d'environnement
-   */
   const getApiKey = () => {
-    return import.meta.env.VITE_API_KEY || '';
-  };
+    return import.meta.env.VITE_API_KEY || ''
+  }
 
   /**
-   * Fonction de retry avec backoff exponentiel
-   * @param {Function} fn - Fonction à exécuter avec retry
-   * @param {number} maxRetries - Nombre maximum de tentatives
-   * @param {number} baseDelay - Délai de base en ms (sera multiplié exponentiellement)
+   * Retry avec backoff exponentiel (pas de retry sur 4xx).
    */
   const withRetry = async (fn, maxRetries = 3, baseDelay = 1000) => {
-    let lastError;
-    
+    let lastError
+
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       try {
-        return await fn();
+        return await fn()
       } catch (error) {
-        lastError = error;
-        
-        // Ne pas retry si c'est une erreur 4xx (erreur client)
+        lastError = error
+
         if (error.response && error.response.status >= 400 && error.response.status < 500) {
-          throw error;
+          throw error
         }
-        
-        // Si c'est la dernière tentative, throw l'erreur
+        if (error.status && error.status >= 400 && error.status < 500) {
+          throw error
+        }
+
         if (attempt === maxRetries - 1) {
-          throw error;
+          throw error
         }
-        
-        // Calculer le délai avec backoff exponentiel
-        const delay = baseDelay * Math.pow(2, attempt);
-        console.warn(`Tentative ${attempt + 1} échouée, retry dans ${delay}ms...`, error.message);
-        
-        // Attendre avant de retry
-        await new Promise(resolve => setTimeout(resolve, delay));
+
+        const delay = baseDelay * Math.pow(2, attempt)
+        console.warn(`Tentative ${attempt + 1} échouée, retry dans ${delay}ms...`, error.message)
+
+        await new Promise((resolve) => setTimeout(resolve, delay))
       }
     }
-    
-    throw lastError;
-  };
+
+    throw lastError
+  }
 
   /**
-   * Upload un fichier vers le backend avec retry logic
-   * @param {File|Object} file - Fichier à uploader (ou objet avec content et filename pour Excel)
-   * @param {string} savDossier - Nom du dossier SAV
-   * @param {boolean} isBase64 - true si le fichier est en base64
+   * Convertit une string base64 en Blob.
+   */
+  const base64ToBlob = (base64, mimeType) => {
+    const byteCharacters = atob(base64)
+    const byteNumbers = new Array(byteCharacters.length)
+    for (let i = 0; i < byteCharacters.length; i++) {
+      byteNumbers[i] = byteCharacters.charCodeAt(i)
+    }
+    return new Blob([new Uint8Array(byteNumbers)], { type: mimeType })
+  }
+
+  /**
+   * PUT binaire direct sur l'uploadUrl Microsoft Graph avec progress.
+   * Retourne la DriveItem JSON (contient webUrl).
+   */
+  const putBlobToGraph = (uploadUrl, blob, onProgress) => {
+    return new Promise((resolve, reject) => {
+      const xhr = new XMLHttpRequest()
+      xhr.open('PUT', uploadUrl)
+      xhr.setRequestHeader('Content-Range', `bytes 0-${blob.size - 1}/${blob.size}`)
+      xhr.responseType = 'json'
+
+      xhr.upload.onprogress = (e) => {
+        if (e.lengthComputable && onProgress) {
+          onProgress(Math.round((e.loaded * 100) / e.total))
+        }
+      }
+      xhr.onload = () => {
+        if (xhr.status === 200 || xhr.status === 201) {
+          resolve(xhr.response)
+        } else {
+          const err = new Error(
+            `Graph PUT ${xhr.status}: ${xhr.response ? JSON.stringify(xhr.response) : 'erreur inconnue'}`
+          )
+          err.status = xhr.status
+          reject(err)
+        }
+      }
+      xhr.onerror = () => reject(new Error('Network error lors du PUT direct OneDrive'))
+      xhr.send(blob)
+    })
+  }
+
+  /**
+   * Upload un fichier vers OneDrive en 2 étapes (upload-session + PUT direct Graph).
+   * @param {File|{content:string,filename:string}} file
+   * @param {string} savDossier
+   * @param {{ isBase64?: boolean, onProgress?: (pct:number)=>void }} options
+   * @returns {Promise<string>} webUrl OneDrive du fichier uploadé
    */
   const uploadToBackend = async (file, savDossier, options = {}) => {
-    const { isBase64 = false, onProgress } = options;
-    const formData = new FormData();
-    
-    if (isBase64) {
-      // Convertir le base64 en Blob pour les fichiers Excel
-      const byteCharacters = atob(file.content);
-      const byteNumbers = new Array(byteCharacters.length);
-      for (let i = 0; i < byteCharacters.length; i++) {
-        byteNumbers[i] = byteCharacters.charCodeAt(i);
+    const { isBase64 = false, onProgress } = options
+
+    const filename = isBase64 ? file.filename : file.name
+    const mimeType = isBase64
+      ? 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+      : file.type
+    const blob = isBase64 ? base64ToBlob(file.content, mimeType) : file
+    const size = blob.size
+
+    const apiKey = getApiKey()
+    const headers = { 'Content-Type': 'application/json' }
+    if (apiKey) headers['X-API-Key'] = apiKey
+
+    // Étape A : négocier une upload session
+    const sessionFn = async () => {
+      const response = await axios.post(
+        '/api/upload-session',
+        { filename, savDossier, mimeType, size },
+        { headers }
+      )
+      if (!response.data || !response.data.success) {
+        const err = new Error(response.data?.error || 'upload-session failed')
+        err.response = { status: 400, data: response.data }
+        throw err
       }
-      const byteArray = new Uint8Array(byteNumbers);
-      const blob = new Blob([byteArray], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' });
-      formData.append('file', blob, file.filename);
-    } else {
-      // Pour les images et autres fichiers
-      formData.append('file', file);
+      return response.data
     }
+    const { uploadUrl } = await withRetry(sessionFn, 3, 1000)
 
-    // Ajouter le nom du dossier SAV au formulaire
-    if (savDossier) {
-      formData.append('savDossier', savDossier);
+    // Étape B : PUT binaire direct Microsoft Graph
+    const putFn = () => putBlobToGraph(uploadUrl, blob, onProgress)
+    const driveItem = await withRetry(putFn, 3, 1000)
+
+    if (!driveItem || !driveItem.webUrl) {
+      throw new Error('Réponse Graph invalide : webUrl manquant dans la DriveItem')
     }
-
-    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000';
-    const apiKey = getApiKey();
-    
-    const uploadFn = async () => {
-      const headers = {
-        'Content-Type': 'multipart/form-data'
-      };
-      
-      // Ajouter l'API key si elle existe
-      if (apiKey) {
-        headers['X-API-Key'] = apiKey;
-      }
-      
-      const response = await axios.post(`${apiUrl}/api/upload-onedrive`, formData, {
-        headers,
-        onUploadProgress: (progressEvent) => {
-          if (onProgress && progressEvent.total) {
-            const percentCompleted = Math.round(
-              (progressEvent.loaded * 100) / progressEvent.total
-            );
-            onProgress(percentCompleted);
-          }
-        }
-      });
-      
-      if (response.data && response.data.success) {
-        return response.data.file.url; // Retourne l'URL directe du fichier
-      } else {
-        throw new Error(response.data.error || 'Upload failed');
-      }
-    };
-
-    // Exécuter l'upload avec retry logic
-    return await withRetry(uploadFn, 3, 1000);
-  };
+    return driveItem.webUrl
+  }
 
   /**
-   * Récupère le lien de partage d'un dossier SAV
-   * @param {string} savDossier - Nom du dossier SAV
+   * Récupère le lien de partage d'un dossier SAV via la route Vercel serverless.
    */
   const getFolderShareLink = async (savDossier) => {
-    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000';
-    const apiKey = getApiKey();
-    
-    const fetchFn = async () => {
-      const headers = {};
-      
-      // Ajouter l'API key si elle existe
-      if (apiKey) {
-        headers['X-API-Key'] = apiKey;
-      }
-      
-      const response = await axios.post(`${apiUrl}/api/folder-share-link`, { savDossier }, { headers });
-      
-      if (!response.data || !response.data.success) {
-        throw new Error(response.data.error || 'Impossible de récupérer le lien de partage du dossier.');
-      }
-      
-      return response.data.shareLink;
-    };
+    const apiKey = getApiKey()
 
-    // Exécuter avec retry logic
-    return await withRetry(fetchFn, 3, 1000);
-  };
+    const fetchFn = async () => {
+      const headers = {}
+      if (apiKey) headers['X-API-Key'] = apiKey
+
+      const response = await axios.post('/api/folder-share-link', { savDossier }, { headers })
+
+      if (!response.data || !response.data.success) {
+        throw new Error(
+          response.data?.error || 'Impossible de récupérer le lien de partage du dossier.'
+        )
+      }
+      return response.data.shareLink
+    }
+
+    return await withRetry(fetchFn, 3, 1000)
+  }
 
   /**
-   * Upload tous les fichiers en parallèle avec gestion d'erreurs
-   * @param {Array} files - Tableau de fichiers à uploader
-   * @param {string} savDossier - Nom du dossier SAV
+   * Upload tous les fichiers en parallèle avec gestion d'erreurs.
    */
   const uploadFilesParallel = async (files, savDossier) => {
     const uploadPromises = files.map(async (fileObj) => {
+      const fileName = fileObj.file?.name || fileObj.filename
       try {
         const url = await uploadToBackend(fileObj.file, savDossier, {
-          isBase64: fileObj.isBase64
-        });
-        return { success: true, url, fileName: fileObj.file.name || fileObj.filename };
+          isBase64: fileObj.isBase64,
+        })
+        return { success: true, url, fileName }
       } catch (error) {
-        console.error(`Erreur lors de l'upload de ${fileObj.file.name || fileObj.filename}:`, error);
-        return { success: false, error: error.message, fileName: fileObj.file.name || fileObj.filename };
+        console.error(`Erreur lors de l'upload de ${fileName}:`, error)
+        return { success: false, error: error.message, fileName }
       }
-    });
+    })
 
-    const results = await Promise.allSettled(uploadPromises);
-    
-    // Retourner les résultats formatés
-    return results.map(result => {
+    const results = await Promise.allSettled(uploadPromises)
+
+    return results.map((result) => {
       if (result.status === 'fulfilled') {
-        return result.value;
-      } else {
-        return { success: false, error: result.reason.message };
+        return result.value
       }
-    });
-  };
+      return { success: false, error: result.reason.message }
+    })
+  }
 
   /**
-   * Envoie les URLs des fichiers uploadés au backend pour validation et traitement
-   * @param {Array} fileUrls - Tableau des URLs OneDrive des fichiers uploadés
-   * @param {string} savDossier - Nom du dossier SAV
-   * @param {Object} payload - Données SAV à envoyer
+   * @deprecated Non utilisée dans le flow SAV actif (pas d'appelant dans `src/`).
+   * La route `/api/submit-sav-urls` n'existe pas côté Vercel serverless.
+   * Signature conservée uniquement pour respecter AC#1 de la story 1.2 ;
+   * à supprimer lors d'un futur nettoyage d'API.
    */
   const submitUploadedFileUrls = async (fileUrls, savDossier, payload) => {
-    const apiUrl = import.meta.env.VITE_API_URL || 'http://localhost:3000';
-    const apiKey = getApiKey();
-    
-    const submitFn = async () => {
-      const headers = {
-        'Content-Type': 'application/json'
-      };
-      
-      // Ajouter l'API key si elle existe
-      if (apiKey) {
-        headers['X-API-Key'] = apiKey;
-      }
-      
-      const response = await axios.post(`${apiUrl}/api/submit-sav-urls`, {
-        savDossier,
-        fileUrls,
-        payload
-      }, { headers });
-      
-      if (!response.data || !response.data.success) {
-        throw new Error(response.data.error || 'Impossible de soumettre les URLs');
-      }
-      
-      return response.data;
-    };
+    const apiKey = getApiKey()
 
-    // Exécuter avec retry logic
-    return await withRetry(submitFn, 3, 1000);
-  };
+    const submitFn = async () => {
+      const headers = { 'Content-Type': 'application/json' }
+      if (apiKey) headers['X-API-Key'] = apiKey
+
+      const response = await axios.post(
+        '/api/submit-sav-urls',
+        { savDossier, fileUrls, payload },
+        { headers }
+      )
+
+      if (!response.data || !response.data.success) {
+        throw new Error(response.data?.error || 'Impossible de soumettre les URLs')
+      }
+      return response.data
+    }
+
+    return await withRetry(submitFn, 3, 1000)
+  }
 
   /**
-   * Envoie le payload SAV au webhook (Make.com)
-   * @param {Object} payload - Donnees SAV a envoyer
+   * Envoie le payload SAV au webhook Make.com.
    */
   const submitSavWebhook = async (payload) => {
-    const webhookUrl = import.meta.env.VITE_WEBHOOK_URL_DATA_SAV;
+    const webhookUrl = import.meta.env.VITE_WEBHOOK_URL_DATA_SAV
     if (!webhookUrl) {
-      throw new Error('VITE_WEBHOOK_URL_DATA_SAV is not configured');
+      throw new Error('VITE_WEBHOOK_URL_DATA_SAV is not configured')
     }
 
     const submitFn = async () => {
-      const response = await axios.post(webhookUrl, payload);
-      return response.data;
-    };
+      const response = await axios.post(webhookUrl, payload)
+      return response.data
+    }
 
-    return await withRetry(submitFn, 3, 1000);
-  };
+    return await withRetry(submitFn, 3, 1000)
+  }
 
   /**
-   * Lookup invoice details via Make.com webhook
-   * @param {Object} payload - Donnees lookup facture
-   * @param {string} payload.transformedReference
-   * @param {string} payload.email
+   * Lookup invoice details via Make.com webhook.
    */
   const submitInvoiceLookupWebhook = async (payload) => {
-    const webhookUrl = import.meta.env.VITE_WEBHOOK_URL;
+    const webhookUrl = import.meta.env.VITE_WEBHOOK_URL
     if (!webhookUrl) {
-      throw new Error('VITE_WEBHOOK_URL is not configured');
+      throw new Error('VITE_WEBHOOK_URL is not configured')
     }
 
     const submitFn = async () => {
-      const response = await axios.post(webhookUrl, payload);
-      return response.data;
-    };
+      const response = await axios.post(webhookUrl, payload)
+      return response.data
+    }
 
-    return await withRetry(submitFn, 3, 1000);
-  };
+    return await withRetry(submitFn, 3, 1000)
+  }
 
   return {
     uploadToBackend,
@@ -256,6 +255,6 @@ export function useApiClient() {
     submitUploadedFileUrls,
     submitSavWebhook,
     submitInvoiceLookupWebhook,
-    withRetry
-  };
+    withRetry,
+  }
 }
