@@ -15,16 +15,20 @@ sav-monorepo/
 ├── .agents/                # Skills additionnels
 ├── dist/                   # Build artefact
 ├── .env                    # Variables d'environnement locales (non versionné)
-├── ROADMAP.md              # Backlog refacto / évolutions
-├── SECURITY_IMPROVEMENTS.md
+├── ROADMAP.md              # Backlog refacto / évolutions (Epic 1 + Phase 2)
 ├── PERFORMANCE_IMPROVEMENTS.md
 ├── MIGRATION_GUIDE.md
-├── PRE_MERGE_CHECKLIST.md
-├── VERCEL_DEPLOYMENT.md
-├── VERCEL_FIX.md
-├── FIX_ONEDRIVE_FILENAME.md
 ├── VERIFICATION_CARACTERES.md
-└── SUMMARY.md
+├── SUMMARY.md              # Historique pré-Epic 1
+└── archive/                # Docs pré-Epic 1 archivées (server Express, checklist, fixes)
+    ├── SECURITY_IMPROVEMENTS.md
+    ├── PRE_MERGE_CHECKLIST.md
+    ├── VERCEL_DEPLOYMENT.md
+    ├── VERCEL_FIX.md
+    ├── FIX_ONEDRIVE_FILENAME.md
+    ├── api-contracts-server.md
+    ├── architecture-server.md
+    └── development-guide-server.md
 ```
 
 ## Client (`client/`)
@@ -87,15 +91,19 @@ client/
 │       └── sav-error-cases.spec.js   # API key manquante, rate limit, upload partiel
 ├── public/                           # Fichiers statiques servis tels quels
 ├── samples_test/                     # Échantillons de fichiers pour tests manuels
+├── api/                              # Fonctions serverless Vercel (post Epic 1)
+│   ├── _lib/                         # graph, onedrive, auth, sanitize, mime (jamais bundlés au SPA)
+│   ├── upload-session.js             # POST /api/upload-session (négocie upload session OneDrive)
+│   └── folder-share-link.js          # POST /api/folder-share-link (lien partage anonyme)
 ├── index.html                        # Entrée Vite (mount #app)
-├── vite.config.js                    # Build + dev server + proxy /api → VITE_API_URL, alias @/
-├── vitest.config.js                  # happy-dom + mocks inline (supabase/xlsx/axios/vue-i18n)
+├── vite.config.js                    # Build + dev server SPA + alias @/ (pas de proxy /api — servi par Vercel serverless)
+├── vitest.config.js                  # happy-dom + mocks inline (xlsx/axios/vue-i18n)
 ├── playwright.config.js              # Base URL :5173, retries CI, timeout 60s
 ├── tailwind.config.js                # content : src/**/*.{vue,js,ts,jsx,tsx}
 ├── postcss.config.js                 # Tailwind + Autoprefixer
-├── netlify.toml                      # Build Netlify (Node 18, redirect SPA *→index.html)
-├── vercel.json                       # framework: vite, output: dist
-├── server.js                         # Serveur Express pour mode "start" (preview local)
+├── netlify.toml                      # Build Netlify (Node 18, redirect SPA *→index.html) — obsolète
+├── vercel.json                       # framework: vite, output: dist + functions (maxDuration 10s)
+├── server.js                         # Serveur Express legacy Infomaniak (preview local) — obsolète, à retirer avec server/
 ├── package.json                      # @sav-app/client
 └── README.md
 ```
@@ -106,7 +114,9 @@ client/
 - **`src/router/index.js`** : garde `beforeEach` qui applique le mode maintenance et le token de bypass stocké en `localStorage`.
 - **`src/features/sav/components/WebhookItemsList.vue`** : composant orchestrateur de tout le flux SAV (liste articles, formulaires, upload images, génération Excel, envoi final).
 
-## Serveur (`server/`)
+## Serveur (`server/`) — **obsolète post Epic 1, à supprimer**
+
+> La logique ci-dessous a été portée dans `client/api/_lib/` en story 1.1. Le dossier `server/` reste temporairement en place pendant la période de standby (2 semaines post-merge) pour rollback rapide.
 
 ```
 server/
@@ -157,21 +167,17 @@ server/
 
 | Dossier | Rôle | Partie |
 |---------|------|--------|
-| `client/src/features/sav/` | Logique métier SAV (views, composables, composant pivot) | client |
-| `client/src/components/layout/` | Layout global (Header) | client |
-| `client/src/router/` | Routing + garde maintenance | client |
-| `client/src/lib/` | Clients SDK externes (Supabase) | client |
-| `client/tests/` | Tests unitaires + E2E | client |
-| `server/src/routes/` | Définition des endpoints HTTP | server |
-| `server/src/controllers/` | Orchestration requête/réponse | server |
-| `server/src/services/` | Wrapper Microsoft Graph / OneDrive | server |
-| `server/src/middlewares/` | Auth, rate limit, validation/sanitization | server |
-| `server/src/config/` | ENV + CORS + constantes | server |
-| `server/tests/` | Tests Vitest + supertest | server |
+| `client/src/features/sav/` | Logique métier SAV (views, composables, composant pivot) | client SPA |
+| `client/src/components/layout/` | Layout global (Header) | client SPA |
+| `client/src/router/` | Routing + garde maintenance | client SPA |
+| `client/api/_lib/` | MSAL + Graph + sanitize + mime + auth (serverless, jamais bundlé au navigateur) | client serverless |
+| `client/api/` | Routes serverless Vercel (`upload-session`, `folder-share-link`) | client serverless |
+| `client/tests/` | Tests unitaires (+ `tests/unit/api/` pour serverless) + E2E Playwright | client |
 
 ## Interfaces entre parties
 
-- Le client appelle le serveur via l'URL définie par `VITE_API_URL` (proxy local `/api → http://localhost:3001` en dev Vite). Toutes les requêtes portent le header `X-API-Key` (valeur `VITE_API_KEY` côté client ↔ `API_KEY` côté serveur).
-- Le client appelle directement Make.com via `VITE_WEBHOOK_URL` et `VITE_WEBHOOK_URL_DATA_SAV` (hors du backend).
+- Le navigateur appelle les **routes serverless Vercel** via chemins **relatifs** `/api/*` (même-origine). Header `X-API-Key` = `VITE_API_KEY` côté client ↔ `API_KEY` côté env serverless.
+- Le navigateur fait ensuite un **PUT direct sur Microsoft Graph** (domaines `*.sharepoint.com` / `*.graph.microsoft.com`) pour l'upload binaire, bypassant Vercel.
+- Le navigateur appelle directement Make.com via `VITE_WEBHOOK_URL` (lookup) et `VITE_WEBHOOK_URL_DATA_SAV` (soumission).
 
 Voir [integration-architecture.md](./integration-architecture.md) pour le détail des flux.

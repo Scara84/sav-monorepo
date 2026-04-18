@@ -45,19 +45,20 @@ La logique MSAL/Microsoft Graph a été portée dans `client/api/` (fonctions se
 
 Ces documents sont antérieurs à Epic 1 mais restent des sources de vérité :
 
-- [ROADMAP.md](../ROADMAP.md) — backlog priorisé, refactors SAV
-- [SECURITY_IMPROVEMENTS.md](../SECURITY_IMPROVEMENTS.md) — durcissement sécurité
+- [ROADMAP.md](../ROADMAP.md) — backlog priorisé, refactors SAV (**mise à jour Epic 1 + Phase 2**)
 - [PERFORMANCE_IMPROVEMENTS.md](../PERFORMANCE_IMPROVEMENTS.md) — optimisations perf
 - [MIGRATION_GUIDE.md](../MIGRATION_GUIDE.md) — notes de migration historiques
-- [PRE_MERGE_CHECKLIST.md](../PRE_MERGE_CHECKLIST.md) — checklist avant merge
-- [VERCEL_DEPLOYMENT.md](../VERCEL_DEPLOYMENT.md) — déploiement Vercel
-- [VERIFICATION_CARACTERES.md](../VERIFICATION_CARACTERES.md) — règles de sanitization OneDrive/SharePoint
-- [SUMMARY.md](../SUMMARY.md) — résumé historique
-- [client/README.md](../client/README.md) — README client
+- [VERIFICATION_CARACTERES.md](../VERIFICATION_CARACTERES.md) — règles de sanitization OneDrive/SharePoint (toujours actives)
+- [client/README.md](../client/README.md) — README client (**mise à jour Epic 1**)
 
 ### Archives
 
-- [archive/](../archive/) — docs obsolètes (serveur Express, fixes historiques)
+- [archive/](../archive/) — docs obsolètes (serveur Express, fixes historiques, déploiement pré-Epic 1, checklist pré-merge pré-Epic 1, durcissement sécurité pré-Epic 1)
+  - `VERCEL_DEPLOYMENT.md` — pré-Epic 1 (deux projets Vercel séparés)
+  - `PRE_MERGE_CHECKLIST.md` — pré-Epic 1 (inclut `/api/upload-onedrive`)
+  - `SECURITY_IMPROVEMENTS.md` — pré-Epic 1 (middlewares Express, CORS, rate limit)
+  - `VERCEL_FIX.md`, `FIX_ONEDRIVE_FILENAME.md` — fixes historiques
+  - `api-contracts-server.md`, `architecture-server.md`, `development-guide-server.md` — serveur Express
 
 ## Démarrage rapide
 

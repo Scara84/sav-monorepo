@@ -22,18 +22,17 @@ L'architecture suit trois principes :
 | HTTP | Axios | 1.3.4 | Mocké dans tests unitaires |
 | Excel | xlsx | 0.18.5 | Génération Excel 3 onglets |
 | Auth Microsoft | `@azure/msal-browser` | 4.11.0 | Dépendance présente, flux non activé (tout passe par le backend) |
-| Microsoft Graph (client) | `@microsoft/microsoft-graph-client` | 3.0.7 | Dépendance présente, non utilisée activement |
-| Email transactionnel | `@emailjs/browser` | 4.4.1 | Dépendance présente, non utilisée activement |
-| Supabase | `@supabase/supabase-js` | 2.48.1 | Client instancié (`src/lib/supabase.js`), optionnel via env |
+| Microsoft Graph (serverless) | `@microsoft/microsoft-graph-client` | 3.0.7 | Utilisé par les fonctions serverless `client/api/_lib/` (jamais bundlé au navigateur) |
+| MSAL Node (serverless) | `@azure/msal-node` | 3.6.0 | Client credentials flow pour les fonctions serverless |
 | CSS | Tailwind CSS | 3.2.4 | Utilitaires + thème custom Fruitstock |
-| Build / Dev | Vite | 5.2.0 | Dev server 5173, proxy `/api` → `VITE_API_URL` |
+| Build / Dev | Vite | 5.2.0 | Dev server 5173 (SPA). Pour servir aussi les routes `/api/*`, utiliser `vercel dev` |
 | Tests unit | Vitest | 1.6.0 | Environnement `happy-dom`, mocks inline |
 | Tests E2E | Playwright | 1.45.0 | Base URL 5173, retries 2 en CI |
 | Lint / Format | ESLint (`plugin:vue/vue3-essential`) + Prettier 3 | — | `semi: false`, `singleQuote: true`, `printWidth: 100` |
 
 ### Stack « mort » à surveiller
 
-Les dépendances suivantes sont installées mais **non utilisées** dans le code exploré : `@azure/msal-browser`, `msal`, `@microsoft/microsoft-graph-client`, `@emailjs/browser`, `express`, `dotenv`. Candidates à suppression lors du prochain nettoyage.
+Post Epic 1, les deps mortes suivantes ont été supprimées : `@azure/msal-browser`, `msal`, `@emailjs/browser`, `@supabase/supabase-js`. Restent `express` et `dotenv` — utilisées uniquement par `client/server.js` (entrypoint Infomaniak legacy), à retirer lors du cleanup complet avec `server/`.
 
 ## Pattern d'architecture
 
@@ -69,7 +68,8 @@ Le composant [client/src/features/sav/components/WebhookItemsList.vue](../client
 │                                                                            │
 │   useSavForms()       → état formulaires, validation, hasFilledForms       │
 │   useImageUpload()    → drag&drop, validation MIME/taille, renommage       │
-│   useApiClient()      → upload OneDrive, share link, webhooks Make.com     │
+│   useApiClient()      → orchestration upload 2 étapes + share link +       │
+│                         webhooks Make.com                                  │
 │   useExcelGenerator() → Excel 3 onglets (Réclamations, Client, SAV)        │
 │                                                                            │
 └────────────────────────────────────────────────────────────────────────────┘
@@ -79,10 +79,12 @@ Détail des composables :
 
 ### `useApiClient` — `features/sav/composables/useApiClient.js`
 
-- `uploadToOneDrive(file, folder, onProgress)` → `POST {VITE_API_URL}/api/upload-onedrive` (header `X-API-Key`).
-- `getFolderShareLink(folder)` → `POST /api/folder-share-link`.
-- `postMakeWebhook(url, payload)` → appel direct Make.com (lookup facture, soumission SAV).
-- Implémente un **retry exponentiel** (3 tentatives, backoff doublé) autour de chaque appel axios.
+- `uploadToBackend(file, savDossier, { isBase64, onProgress })` → orchestration **2 étapes** :
+  1. `POST /api/upload-session` (JSON) → négocie une upload session OneDrive auprès de la fonction serverless Vercel, qui retourne `{ uploadUrl, expiresAt, storagePath }`.
+  2. `PUT <uploadUrl>` (binaire, XHR) envoyé **directement** à Microsoft Graph (domaines `*.sharepoint.com` / `*.graph.microsoft.com`) — le binaire **ne transite jamais par Vercel**. Retourne une `DriveItem` avec `webUrl`.
+- `getFolderShareLink(savDossier)` → `POST /api/folder-share-link` (chemin relatif, même-origine).
+- `submitSavWebhook` / `submitInvoiceLookupWebhook` → appel direct Make.com (lookup facture, soumission SAV).
+- **Retry exponentiel** (3 tentatives, backoff doublé) autour des appels axios ET du PUT XHR ; pas de retry sur 4xx (`error.response.status` ou `error.status`).
 
 ### `useSavForms`
 
@@ -110,18 +112,20 @@ Aucune base locale. Le client consomme et émet des données JSON :
 | Source | Type | Usage |
 |--------|------|-------|
 | Make.com — webhook lookup | Réponse JSON (facture + items) | Propagée vers `/invoice-details` |
-| Backend `/api/upload-onedrive` | Réponse `{success, file: {url, name, id}}` | URL stockée pour l'Excel |
-| Backend `/api/folder-share-link` | Réponse `{success, shareLink}` | Inclus dans le webhook final |
-| Make.com — webhook SAV | Payload : lignes + lien partage | Redirige vers `/sav-confirmation` |
+| Serverless `/api/upload-session` | Réponse `{success, uploadUrl, expiresAt, storagePath}` | Upload URL signée utilisée au PUT direct Microsoft |
+| Microsoft Graph (PUT direct) | Réponse `DriveItem` (`{id, webUrl, size, ...}`) | `webUrl` stocké pour le webhook Make.com |
+| Serverless `/api/folder-share-link` | Réponse `{success, shareLink}` | Inclus dans le webhook final |
+| Make.com — webhook SAV | Payload : lignes + `fileUrls` + `shareLink` | Redirige vers `/sav-confirmation` |
 
 Pas de cache ni de persistance hors `localStorage` (uniquement pour le bypass maintenance).
 
 ## Conception d'API (côté client)
 
-Le client parle à deux domaines :
+Le navigateur parle à trois domaines :
 
-1. **Backend SAV** (voir [api-contracts-server.md](./api-contracts-server.md)) — via `VITE_API_URL`, header `X-API-Key` (valeur `VITE_API_KEY`).
-2. **Webhooks Make.com** — via `VITE_WEBHOOK_URL` (lookup) et `VITE_WEBHOOK_URL_DATA_SAV` (soumission). Aucune authentification côté client ; les URLs sont elles-mêmes secrètes.
+1. **Fonctions serverless Vercel** (voir [api-contracts-vercel.md](./api-contracts-vercel.md)) — chemins `/api/*` **relatifs**, même-origine que le SPA, header `X-API-Key` (valeur `VITE_API_KEY`).
+2. **Microsoft Graph / SharePoint** — PUT direct sur `uploadUrl` signée (pas d'authentification côté client — URL pré-signée pour l'item cible).
+3. **Webhooks Make.com** — via `VITE_WEBHOOK_URL` (lookup) et `VITE_WEBHOOK_URL_DATA_SAV` (soumission). Aucune authentification côté client ; les URLs sont elles-mêmes secrètes.
 
 ## Composants
 
@@ -133,7 +137,7 @@ Voir [development-guide-client.md](./development-guide-client.md).
 
 ## Architecture de déploiement
 
-Voir [deployment-guide.md](./deployment-guide.md). Deux cibles configurées : **Vercel** (`vercel.json`, framework `vite`) et **Netlify** (`netlify.toml`, Node 18, redirect SPA).
+Voir [deployment-guide.md](./deployment-guide.md). Cible unique depuis Epic 1 : **Vercel** (`vercel.json`, framework `vite` + fonctions serverless auto-détectées dans `client/api/`). Le binaire des fichiers SAV ne transite jamais par Vercel (PUT direct Microsoft Graph).
 
 ## Stratégie de tests
 
@@ -150,13 +154,21 @@ Voir [deployment-guide.md](./deployment-guide.md). Deux cibles configurées : **
 
 Voir détail dans [development-guide-client.md](./development-guide-client.md#variables-denvironnement).
 
+### Côté bundle client (exposé au navigateur — préfixe `VITE_`)
+
 | Nom | Utilisation |
 |-----|-------------|
 | `VITE_WEBHOOK_URL` | Webhook Make.com lookup facture |
 | `VITE_WEBHOOK_URL_DATA_SAV` | Webhook Make.com soumission SAV |
-| `VITE_API_URL` | URL backend (défaut `http://localhost:3000`) |
-| `VITE_API_KEY` | Clé API envoyée en `X-API-Key` |
+| `VITE_API_KEY` | Clé API envoyée en `X-API-Key` aux routes Vercel `/api/*` |
 | `VITE_MAINTENANCE_MODE` | `'1'` pour activer `/maintenance` |
 | `VITE_MAINTENANCE_BYPASS_TOKEN` | Token de contournement maintenance |
-| `VITE_SUPABASE_URL` | (optionnel) |
-| `VITE_SUPABASE_ANON_KEY` | (optionnel) |
+
+### Côté fonctions serverless (jamais exposées au navigateur — pas de préfixe)
+
+| Nom | Utilisation |
+|-----|-------------|
+| `API_KEY` | Comparée au `X-API-Key` reçu (doit être égale à `VITE_API_KEY`) |
+| `MICROSOFT_CLIENT_ID` / `MICROSOFT_TENANT_ID` / `MICROSOFT_CLIENT_SECRET` | App registration Azure AD |
+| `MICROSOFT_DRIVE_ID` | Drive OneDrive/SharePoint cible |
+| `MICROSOFT_DRIVE_PATH` | Racine des dossiers SAV (ex: `SAV_Images`) |

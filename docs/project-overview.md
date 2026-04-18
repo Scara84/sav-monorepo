@@ -71,11 +71,16 @@ Application SAV (Service Après-Vente) Fruitstock permettant à un client de :
 
 Ces documents précèdent cette documentation générée mais restent pertinents :
 
-- [ROADMAP.md](../ROADMAP.md) — backlog priorisé, refactors réalisés (composables SAV, E2E, API client unifié).
-- [SECURITY_IMPROVEMENTS.md](../SECURITY_IMPROVEMENTS.md) — durcissement sécurité (Helmet, CORS, validation, sanitization).
+- [ROADMAP.md](../ROADMAP.md) — backlog priorisé, refactors réalisés (composables SAV, E2E, API client unifié). **Mise à jour Epic 1 + Phase 2.**
 - [PERFORMANCE_IMPROVEMENTS.md](../PERFORMANCE_IMPROVEMENTS.md) — optimisations perf.
 - [MIGRATION_GUIDE.md](../MIGRATION_GUIDE.md) — notes de migration.
-- [PRE_MERGE_CHECKLIST.md](../PRE_MERGE_CHECKLIST.md) — checklist avant merge.
-- [VERCEL_DEPLOYMENT.md](../VERCEL_DEPLOYMENT.md), [VERCEL_FIX.md](../VERCEL_FIX.md) — notes Vercel.
-- [FIX_ONEDRIVE_FILENAME.md](../FIX_ONEDRIVE_FILENAME.md), [VERIFICATION_CARACTERES.md](../VERIFICATION_CARACTERES.md) — règles de sanitization des noms de fichiers.
+- [VERIFICATION_CARACTERES.md](../VERIFICATION_CARACTERES.md) — règles de sanitization OneDrive/SharePoint (toujours actives).
 - [SUMMARY.md](../SUMMARY.md) — résumé historique.
+
+### Archives (pré-Epic 1)
+
+- [archive/SECURITY_IMPROVEMENTS.md](../archive/SECURITY_IMPROVEMENTS.md) — durcissement sécurité serveur Express.
+- [archive/PRE_MERGE_CHECKLIST.md](../archive/PRE_MERGE_CHECKLIST.md) — checklist pré-merge pré-Epic 1.
+- [archive/VERCEL_DEPLOYMENT.md](../archive/VERCEL_DEPLOYMENT.md), [archive/VERCEL_FIX.md](../archive/VERCEL_FIX.md) — notes Vercel historiques.
+- [archive/FIX_ONEDRIVE_FILENAME.md](../archive/FIX_ONEDRIVE_FILENAME.md) — fix filename historique.
+- [archive/api-contracts-server.md](../archive/api-contracts-server.md), [archive/architecture-server.md](../archive/architecture-server.md), [archive/development-guide-server.md](../archive/development-guide-server.md) — serveur Express (port réalisé vers `client/api/` en Epic 1).

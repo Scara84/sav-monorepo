@@ -1,22 +1,18 @@
 # Guide de déploiement
 
-Le dépôt déploie **deux applications distinctes** : le client Vue et le backend Express. Chacune dispose de sa propre configuration.
+> Mis à jour post Epic 1 (2026-04-17). Avant Epic 1, un deuxième projet "server" était déployé séparément — voir [archive/](../archive/) pour la doc historique.
 
-## Vue d'ensemble des cibles
+Depuis Epic 1, **une seule application** est déployée : le projet Vercel `sav-monorepo-client` qui contient à la fois le SPA Vue et les fonctions serverless (`client/api/`).
 
-| Partie | Plateforme principale | Configuration |
-|--------|------------------------|---------------|
-| `client` | Vercel | [client/vercel.json](../client/vercel.json) — framework `vite`, build `npm run build`, output `dist/` |
-| `client` | Netlify (alt) | [client/netlify.toml](../client/netlify.toml) — Node 18, publish `dist`, redirect SPA `* → /index.html` |
-| `server` | Vercel (serverless) | [server/vercel.json](../server/vercel.json) — build `@vercel/node` sur `server.js`, tout le trafic routé vers ce handler |
+## Vue d'ensemble
 
-Les notes historiques Vercel restent précieuses :
+| Partie | Plateforme | Configuration |
+|--------|-----------|---------------|
+| SPA + routes `/api/*` | Vercel | [client/vercel.json](../client/vercel.json) — framework `vite`, build `npm run build`, output `dist/`, fonctions `client/api/*.js` (maxDuration 10s) |
 
-- [VERCEL_DEPLOYMENT.md](../VERCEL_DEPLOYMENT.md)
-- [VERCEL_FIX.md](../VERCEL_FIX.md)
-- [PRE_MERGE_CHECKLIST.md](../PRE_MERGE_CHECKLIST.md)
+Pas de second projet Vercel à maintenir, pas de serveur Express distant, pas d'Infomaniak après décommissionnement.
 
-## Client — Vercel
+## Configuration Vercel
 
 ```jsonc
 // client/vercel.json
@@ -24,91 +20,67 @@ Les notes historiques Vercel restent précieuses :
   "buildCommand": "npm run build",
   "outputDirectory": "dist",
   "installCommand": "npm install",
-  "framework": "vite"
+  "framework": "vite",
+  "functions": {
+    "api/upload-session.js": { "maxDuration": 10 },
+    "api/folder-share-link.js": { "maxDuration": 10 }
+  }
 }
 ```
 
-Variables d'environnement à configurer dans le projet Vercel :
+Vercel détecte automatiquement le dossier `client/api/` et compile chaque fichier `*.js` en fonction serverless Node.
 
-- `VITE_WEBHOOK_URL`
-- `VITE_WEBHOOK_URL_DATA_SAV`
-- `VITE_API_URL` (URL publique du backend, ex. `https://sav-monorepo-server.vercel.app`)
-- `VITE_API_KEY`
-- `VITE_MAINTENANCE_MODE` (`'0'` ou `'1'`)
-- `VITE_MAINTENANCE_BYPASS_TOKEN` (si besoin)
-- `VITE_SUPABASE_URL`, `VITE_SUPABASE_ANON_KEY` (optionnel)
+## Variables d'environnement
 
-## Client — Netlify (alternative)
+### Scope client (exposé au navigateur — préfixe `VITE_`)
 
-```toml
-# client/netlify.toml
-[build]
-  command = "npm run build"
-  publish = "dist"
+| Nom | Rôle |
+|-----|------|
+| `VITE_WEBHOOK_URL` | Webhook Make.com — lookup facture |
+| `VITE_WEBHOOK_URL_DATA_SAV` | Webhook Make.com — soumission SAV |
+| `VITE_API_KEY` | Clé envoyée en `X-API-Key` aux routes Vercel `/api/*` |
+| `VITE_MAINTENANCE_MODE` | `'1'` pour activer `/maintenance`, `'0'` sinon |
+| `VITE_MAINTENANCE_BYPASS_TOKEN` | Token passé via `?bypass=...` pour contourner |
 
-[build.environment]
-  NODE_VERSION = "18"
+### Scope serverless (jamais exposé au bundle — pas de préfixe)
 
-[[redirects]]
-  from = "/*"
-  to = "/index.html"
-  status = 200
-```
+| Nom | Rôle |
+|-----|------|
+| `API_KEY` | Comparée à `X-API-Key` reçu (doit == `VITE_API_KEY`) |
+| `MICROSOFT_CLIENT_ID` / `MICROSOFT_TENANT_ID` / `MICROSOFT_CLIENT_SECRET` | App registration Azure AD |
+| `MICROSOFT_DRIVE_ID` | Drive OneDrive/SharePoint cible |
+| `MICROSOFT_DRIVE_PATH` | Racine des dossiers SAV (ex: `SAV_Images`) |
 
-Mêmes variables à configurer côté Netlify.
-
-## Backend — Vercel (serverless)
-
-```json
-// server/vercel.json
-{
-  "version": 2,
-  "builds": [{ "src": "server.js", "use": "@vercel/node" }],
-  "routes": [{ "src": "/(.*)", "dest": "/server.js" }]
-}
-```
-
-Comportements clés :
-
-- `server.js` exporte l'app Express. Vercel l'enveloppe dans un handler ; aucune modification du code métier n'est requise.
-- La détection `process.env.VERCEL` **désactive** la création du dossier `uploads/` et des fichiers `logs/*.log` (FS read-only).
-- `express-rate-limit` ne fonctionne correctement que parce que `src/app.js` configure `trust proxy: 1` — à conserver en cas de refactor.
-
-Variables à configurer dans le projet Vercel serveur :
-
-- `MICROSOFT_CLIENT_ID`, `MICROSOFT_TENANT_ID`, `MICROSOFT_CLIENT_SECRET`
-- `API_KEY` (même valeur que `VITE_API_KEY` côté client)
-- `NODE_ENV=production`
-- `ONEDRIVE_FOLDER` (facultatif)
-- `CLIENT_URL` (ex. `https://sav.fruitstock.eu`)
-- `LOG_LEVEL=info` (facultatif)
+**Scopes Vercel** : toutes disponibles en **Production**. Pour une PR/feature branch, il suffit d'ajouter les variables en scope **Preview** pour que les previews soient fonctionnelles.
 
 ## Pipeline recommandé
 
-1. **Client**
-   - PR → preview Vercel (URL match regex whitelist CORS backend : `/^https:\/\/sav-monorepo-.*\.vercel\.app$/`).
-   - Merge → promotion production Vercel (URL `sav-fruitstock.vercel.app` ou `sav.fruitstock.eu`).
-2. **Serveur**
-   - PR → preview Vercel.
-   - Merge → promotion production.
-3. **Post-deploy**
-   - Vérifier `GET {server}/health` et `GET {server}/api/test`.
-   - Tester `POST /api/upload` avec la clé API prod via `curl` ou Postman.
-   - Confirmer le lookup facture depuis le client (webhook Make.com accessible depuis Vercel ?).
+1. **PR** sur `feature/*` ou `fix/*` → Vercel déploie automatiquement en **Preview** (URL unique `sav-monorepo-client-git-<branch-slug>-<hash>.vercel.app`).
+2. **Smoke test** sur la Preview URL : SAV complet avec fichier ≥ 8 Mo, vérifier en Network tab que le PUT binaire va bien sur `*.sharepoint.com` (pas Vercel).
+3. **Merge** → Vercel déploie en **Production** (`sav.fruitstock.eu` + alias).
+4. **Post-deploy** : vérifier `GET /` (SPA), `POST /api/upload-session` avec clé API, lookup facture Make.com, webhook SAV reçu.
 
 ## Sécurité déploiement
 
-- Les `.env*` ne doivent jamais être commités (couverts par `.gitignore`).
-- Le secret Azure n'est **jamais** exposé au client : il reste côté serveur.
-- La whitelist CORS dans [server/src/config/server.config.js](../server/src/config/server.config.js) doit être mise à jour à chaque nouveau domaine frontend.
-- La rotation de `API_KEY` : mettre à jour `VITE_API_KEY` (client) et `API_KEY` (serveur) **simultanément** pour éviter un trou de service.
+- Les `.env*` ne sont jamais commités (couverts par `client/.gitignore`).
+- Les secrets Azure (`MICROSOFT_CLIENT_SECRET`, etc.) sont scopés **serverless only** — jamais bundlés au SPA (pas de préfixe `VITE_`). Vérification : grep sur `dist/` après `npm run build` ne doit rien retourner pour ces noms.
+- Rotation `API_KEY` : mettre à jour `VITE_API_KEY` (scope client) **et** `API_KEY` (scope serverless) **simultanément** sur Vercel.
+- Rotation `MICROSOFT_CLIENT_SECRET` : renouveler dans Azure AD → Azure portal → App registrations → Certificates & secrets → New client secret (validité 12-24 mois). Puis mettre à jour sur Vercel (scope serverless).
 
 ## Pré-merge / DoD
 
-Voir la checklist exhaustive dans [PRE_MERGE_CHECKLIST.md](../PRE_MERGE_CHECKLIST.md). En résumé :
+- `cd client && npm test` vert.
+- `cd client && npm run test:e2e` vert (après `npm install @playwright/test` + `npx playwright install`).
+- `cd client && npm run lint` sans erreur.
+- Build Vite OK (`cd client && npm run build`).
+- Smoke test sur Preview Vercel : upload 3 fichiers dont ≥ 8 Mo, shareLink OK, webhook Make.com reçu, URLs dans OneDrive accessibles.
 
-- `npm test` vert sur client et serveur.
-- `npm run test:e2e` vert côté client.
-- `npm run lint` sans erreur.
-- Build Vite OK (`npm run build`).
-- `/health` et `/api/test` OK sur la preview Vercel.
+## Rollback
+
+Vercel permet un rollback instantané sur **n'importe quel deployment antérieur** marqué `isRollbackCandidate: true` via le dashboard. Le déploiement précédent reste accessible via son URL unique tant qu'il n'est pas explicitement supprimé.
+
+En cas de problème post-merge Epic 1 :
+1. Dashboard Vercel → Deployments → chercher le dernier deployment stable pre-Epic 1 (commit `78c7c49`) → "Promote to Production".
+2. Retirer les env vars serverless MICROSOFT_* + API_KEY du scope Production (les garder en Preview pour investigation).
+3. Ajouter à nouveau `VITE_API_URL` en scope Production (valeur : `https://server-sav.fruitstock.eu`) si le rollback nécessite de repointer vers Infomaniak (qui doit être resté en standby).
+4. Valider par un SAV réel sur prod restaurée.
