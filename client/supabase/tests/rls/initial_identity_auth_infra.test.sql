@@ -95,17 +95,21 @@ END $$;
 
 -- ------------------------------------------------------------
 -- Test 4 : trigger set_updated_at() met à jour updated_at
+-- NOTE : dans une transaction, now() est figé au début → on ne peut pas
+-- comparer deux UPDATE successifs. Stratégie : backdater updated_at
+-- manuellement puis vérifier que le trigger le remet à jour au UPDATE suivant.
 -- ------------------------------------------------------------
 DO $$
 DECLARE
-  old_ts timestamptz;
   new_ts timestamptz;
 BEGIN
-  UPDATE groups SET code = 'TEST-AUDIT' WHERE code = 'TEST-AUDIT' RETURNING updated_at INTO old_ts;
-  PERFORM pg_sleep(0.1);
+  -- Backdater à 2020 (obviously stale)
+  UPDATE groups SET updated_at = '2020-01-01'::timestamptz WHERE code = 'TEST-AUDIT';
+  -- Déclencher le trigger via un vrai UPDATE de colonne métier
   UPDATE groups SET name = 'Renamed' WHERE code = 'TEST-AUDIT' RETURNING updated_at INTO new_ts;
-  IF new_ts <= old_ts THEN
-    RAISE EXCEPTION 'FAIL: trigger set_updated_at() ne met pas à jour updated_at (% vs %)', old_ts, new_ts;
+  -- Le trigger doit avoir repositionné updated_at à now() (début de transaction)
+  IF new_ts < now() - interval '1 minute' THEN
+    RAISE EXCEPTION 'FAIL: trigger set_updated_at() ne met pas à jour updated_at (got %)', new_ts;
   END IF;
   RAISE NOTICE 'OK: trigger set_updated_at() actif';
 END $$;
