@@ -55,13 +55,11 @@ async function checkDb(requestId: string): Promise<CheckState> {
       .abortSignal(controller.signal)
     clearTimeout(timer)
     if (error) {
-      logger.warn('healthcheck db degraded', {
-        requestId,
-        errorMessage: error.message,
-        errorCode: (error as { code?: string }).code,
-        errorDetails: (error as { details?: string }).details,
-        errorHint: (error as { hint?: string }).hint,
-      })
+      const e = error as { message?: string; code?: string; details?: string; hint?: string }
+      // Log en texte brut pour traverser la troncature des logs Vercel
+      console.error(
+        `[HEALTH-DB-DEGRADED] code=${e.code ?? 'none'} msg=${e.message ?? 'none'} details=${e.details ?? 'none'} hint=${e.hint ?? 'none'}`
+      )
       return 'degraded'
     }
     return 'ok'
