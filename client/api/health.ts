@@ -55,7 +55,13 @@ async function checkDb(requestId: string): Promise<CheckState> {
       .abortSignal(controller.signal)
     clearTimeout(timer)
     if (error) {
-      logger.warn('healthcheck db degraded', { requestId, error: error.message })
+      logger.warn('healthcheck db degraded', {
+        requestId,
+        errorMessage: error.message,
+        errorCode: (error as { code?: string }).code,
+        errorDetails: (error as { details?: string }).details,
+        errorHint: (error as { hint?: string }).hint,
+      })
       return 'degraded'
     }
     return 'ok'
