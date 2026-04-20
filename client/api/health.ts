@@ -43,7 +43,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
     version: APP_VERSION,
     timestamp: new Date().toISOString(),
   }
-  if (process.env['HEALTH_DEBUG'] === '1' && dbResult.error) {
+  if (dbResult.error) {
     body.debug = { dbError: dbResult.error }
   }
   res.status(worst === 'down' ? 503 : 200).json(body)
