@@ -5,6 +5,17 @@
   "framework": "vite",
   "functions": {
     "api/upload-session.js": { "maxDuration": 10 },
-    "api/folder-share-link.js": { "maxDuration": 10 }
-  }
+    "api/folder-share-link.js": { "maxDuration": 10 },
+    "api/health.ts": { "maxDuration": 5 },
+    "api/auth/msal/login.ts": { "maxDuration": 5 },
+    "api/auth/msal/callback.ts": { "maxDuration": 10 },
+    "api/auth/magic-link/issue.ts": { "maxDuration": 10 },
+    "api/auth/magic-link/verify.ts": { "maxDuration": 5 },
+    "api/cron/purge-tokens.ts": { "maxDuration": 30 },
+    "api/cron/cleanup-rate-limits.ts": { "maxDuration": 30 }
+  },
+  "crons": [
+    { "path": "/api/cron/purge-tokens", "schedule": "0 * * * *" },
+    { "path": "/api/cron/cleanup-rate-limits", "schedule": "15 * * * *" }
+  ]
 }

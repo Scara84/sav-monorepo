@@ -10,58 +10,58 @@ export default defineConfig({
     vue({
       template: {
         compilerOptions: {
-          isCustomElement: (tag) => tag.includes('-')
-        }
-      }
-    })
+          isCustomElement: (tag) => tag.includes('-'),
+        },
+      },
+    }),
   ],
   resolve: {
     alias: [
       {
         find: /^@\/(.*)/,
-        replacement: `${srcPath}/$1`
+        replacement: `${srcPath}/$1`,
       },
       {
         find: /^@tests\/(.*)/,
-        replacement: resolve(__dirname, './tests/$1')
+        replacement: resolve(__dirname, './tests/$1'),
       },
       {
         find: '@assets',
-        replacement: `${srcPath}/assets`
+        replacement: `${srcPath}/assets`,
       },
       {
         find: '@components',
-        replacement: `${srcPath}/components`
+        replacement: `${srcPath}/components`,
       },
       {
         find: '@composables',
-        replacement: `${srcPath}/composables`
+        replacement: `${srcPath}/composables`,
       },
       {
         find: '@features',
-        replacement: `${srcPath}/features`
+        replacement: `${srcPath}/features`,
       },
       {
         find: '@router',
-        replacement: `${srcPath}/router`
+        replacement: `${srcPath}/router`,
       },
       {
         find: '@stores',
-        replacement: `${srcPath}/stores`
+        replacement: `${srcPath}/stores`,
       },
       {
         find: '@styles',
-        replacement: `${srcPath}/styles`
+        replacement: `${srcPath}/styles`,
       },
       {
         find: '@utils',
-        replacement: `${srcPath}/utils`
+        replacement: `${srcPath}/utils`,
       },
       {
         find: '@shared',
-        replacement: resolve(__dirname, './shared')
-      }
-    ]
+        replacement: resolve(__dirname, './shared'),
+      },
+    ],
   },
   test: {
     globals: true,
@@ -78,37 +78,29 @@ export default defineConfig({
         '**/*.d.ts',
         '**/tests/**',
         '**/coverage/**',
-        '**/public/**'
-      ]
+        '**/public/**',
+      ],
     },
     setupFiles: ['./tests/unit/setup.js'],
-    include: ['**/*.spec.js', '**/*.test.js'],
+    include: ['**/*.spec.{js,ts}', '**/*.test.{js,ts}'],
     exclude: ['**/node_modules/**', '**/dist/**', 'tests/e2e/**'],
     server: {
       deps: {
-        inline: [
-          'xlsx',
-          'axios',
-          'vue-i18n'
-        ]
-      }
+        inline: ['xlsx', 'axios'],
+      },
     },
     deps: {
-      inline: [
-        'xlsx',
-        'axios',
-        'vue-i18n'
-      ]
+      inline: ['xlsx', 'axios'],
     },
     mockReset: true,
     clearMocks: true,
     environmentOptions: {
       jsdom: {
-        url: 'http://localhost:3000/'
-      }
-    }
+        url: 'http://localhost:3000/',
+      },
+    },
   },
   optimizeDeps: {
-    include: ['xlsx', 'axios', 'vue-i18n']
-  }
+    include: ['xlsx', 'axios'],
+  },
 })

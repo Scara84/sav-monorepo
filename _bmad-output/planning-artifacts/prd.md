@@ -22,9 +22,9 @@ classification:
   projectContext: brownfield
 technicalDecisions:
   database: supabase-postgres
-  smtpProvider: resend
+  smtpProvider: infomaniak-smtp-nodemailer
   pdfGenerator: react-pdf-renderer-serverless
-  emailOutbound: direct-serverless-via-resend
+  emailOutbound: direct-serverless-via-smtp-infomaniak
   emailInbound: make-com-webhook-unchanged
   language: typescript-new-code-allowjs-legacy
 inputDocuments:
@@ -119,7 +119,7 @@ recompacter stockage et persistance).
 - **Type de projet** : Application web SaaS interne (SPA Vue 3 + fonctions serverless
   Vercel) avec trois zones multi-tenant (back-office opérateur, self-service adhérent,
   self-service responsable de groupe), intégrations externes (OneDrive/Graph, Make.com,
-  Resend, ERP maison, Pennylane différé V2+), et génération de documents (PDF bon SAV,
+  SMTP Infomaniak, ERP maison, Pennylane différé V2+), et génération de documents (PDF bon SAV,
   export CSV/XLSX fournisseur).
 - **Domaine** : Service Après-Vente / opérations back-office pour coopérative alimentaire
   type AMAP. Données financières (avoirs, TVA, remises), données personnelles RGPD
@@ -140,9 +140,9 @@ Les 5 questions techniques ouvertes du brief sont tranchées ici pour la suite d
 | # | Sujet | Décision | Justification |
 |---|-------|----------|---------------|
 | 11 | Base de données | **Supabase Postgres** | SDK JS mature, RLS native (multi-tenant RBAC offert côté DB), auth magic link intégrée (moins de code), free tier suffisant pour 100 SAV/mois métadonnées, Postgres `tsvector`/GIN natif pour full-text, migrations SQL versionnées. |
-| 12 | SMTP fallback | **Resend** | DX Vercel-native, domaine vérifié en minutes, 3 000 mails/mois gratuit, deliverability FR correcte, API JSON simple. |
+| 12 | Provider email transactionnel | **SMTP Infomaniak via Nodemailer** | Compte mail existant chez Fruitstock, pas de provider externe supplémentaire à contractualiser, hébergement CH (décision d'adéquation RGPD UE→CH valide), coût nul marginal, SPF/DKIM/DMARC gérés directement chez le registrar DNS. Nodemailer = lib de référence Node pour SMTP. |
 | 13 | PDF generator serverless | **`@react-pdf/renderer`** | Pur JS, aucun binaire Chromium, tient dans les 10 s Vercel, bundle ≈ 2 Mo, templating déclaratif maintenable. `puppeteer-core + @sparticuz/chromium` gardé en note V2 si besoin HTML/CSS riche. |
-| 14 | Email de sortie (confirmation + notifications) | **Envoi direct Resend serveur** | Une fois la DB en place, le détour Make.com devient un SPOF inutile. Template HTML charte orange conservé à l'identique mais rendu côté serveur. Make.com reste **en entrée** (capture client) inchangé. |
+| 14 | Email de sortie (confirmation + notifications) | **Envoi direct SMTP Infomaniak depuis Vercel serverless** | Une fois la DB en place, le détour Make.com devient un SPOF inutile. Template HTML charte orange conservé à l'identique mais rendu côté serveur. Make.com reste **en entrée** (capture client) inchangé. |
 | 15 | Langage | **TypeScript pour tout code Phase 2** | Volumétrie × 2-3 vs Epic 1, 4+ modèles centraux, contrats API partagés frontend/backend, RBAC complexe. `allowJs: true` — code Epic 1 reste en JS, migration opportuniste fichier par fichier. |
 
 
@@ -228,7 +228,7 @@ Les 5 questions techniques ouvertes du brief sont tranchées ici pour la suite d
 - Numérotation séquentielle d'avoirs en BDD, verrou transactionnel, seed = dernier n° du Google Sheet au jour de bascule
 - Génération bon SAV PDF (`@react-pdf/renderer`, charte Fruitstock, TVA + remise)
 - Export fournisseur générique (Rufino = instance 1 : ES, traduction motifs via table de mapping, conversion unités, colonnes FECHA/REFERENCE/ALBARAN, `IMPORTE = PESO × PRECIO`)
-- Envoi email confirmation client : **direct Resend serveur**, template HTML charte orange conservé à l'identique
+- Envoi email confirmation client : **direct SMTP Infomaniak depuis Vercel (Nodemailer)**, template HTML charte orange conservé à l'identique
 - Notifications email automatiques : (a) client à chaque changement de statut, (b) opérateur à chaque nouveau SAV entrant, (c) responsable à la création d'un SAV dans son groupe (opt-in)
 - **Extensions quasi gratuites IN V1** :
   - Duplication d'un SAV en brouillon (copy row, statut `Brouillon`)
@@ -311,7 +311,7 @@ Claire gère aujourd'hui 50-100 SAV/mois via Excel. Elle vit la douleur tous les
 
 **Résolution.** Temps mesuré : 3 min 20 s. Le SAV suivant, elle l'enchaîne. Sur les 7 nouveaux, elle en traite 6 en 25 min. Le 7ᵉ nécessite une vérification fournisseur — elle l'étiquette avec le tag `à rappeler` et ajoute un commentaire interne. Avant de partir en pause, elle consulte le dashboard : 6 SAV clôturés ce matin, coût total 287 €, délai moyen 4 min. Sa journée ne ressemble plus à celle d'il y a 3 mois.
 
-**Capacités révélées :** MSAL SSO opérateur, dashboard avec alertes seuil, liste filtrée/triée, vue détail SAV, prévisualisation fichiers OneDrive inline, transitions de statut humaines, pré-calculs automatiques, gestion conversions pièce↔kg, lookup rôle `group_manager` automatique, génération PDF côté serverless, export fournisseur générique (Rufino = instance 1), envoi email direct via Resend, push ERP maison, tags libres, commentaires internes, audit trail, métriques live dashboard.
+**Capacités révélées :** MSAL SSO opérateur, dashboard avec alertes seuil, liste filtrée/triée, vue détail SAV, prévisualisation fichiers OneDrive inline, transitions de statut humaines, pré-calculs automatiques, gestion conversions pièce↔kg, lookup rôle `group_manager` automatique, génération PDF côté serverless, export fournisseur générique (Rufino = instance 1), envoi email direct via SMTP Infomaniak, push ERP maison, tags libres, commentaires internes, audit trail, métriques live dashboard.
 
 ### Journey 2 — Opérateur SAV : cas limite (validation bloquante + escalade)
 
@@ -379,7 +379,7 @@ Les 5 journeys révèlent les capacités suivantes, consolidées par famille :
 | **Liste & recherche** | Filtres (statut, date, facture, client, produit, tag, groupe), tri, full-text, pagination | opérateur, adhérent, responsable |
 | **Détail SAV** | Articles, photos/fichiers OneDrive inline, commentaires bidirectionnels, historique statut, calculs live | opérateur, adhérent, responsable |
 | **Traitement** | Transitions statut, validations bloquantes (unité, qté ≤ facture), coefficients d'avoir, conversion pièce↔kg, remise 4 %, TVA paramétrable | opérateur |
-| **Génération sortie** | PDF bon SAV charte, export fournisseur générique (Rufino = instance 1), envoi email direct Resend | opérateur |
+| **Génération sortie** | PDF bon SAV charte, export fournisseur générique (Rufino = instance 1), envoi email direct SMTP Infomaniak | opérateur |
 | **Notifications** | Email transitionnel adhérent, email nouveau SAV opérateur, récap hebdo responsable opt-in, alerte seuil produit opérateur | tous |
 | **Reporting** | Dashboard coût mensuel/annuel comparatif N-1, top 10 produits 90j, top motifs/fournisseurs, délai p50/p90, export CSV | opérateur, admin |
 | **Audit & RGPD** | Audit trail complet, export RGPD JSON, anonymisation (pas delete), logs d'accès magic link | admin |
@@ -406,7 +406,7 @@ Les 5 journeys révèlent les capacités suivantes, consolidées par famille :
 - **Localisation des données** :
   - Postgres Supabase : **région UE (Paris eu-west-3 ou Francfort eu-central-1)** — à vérifier au setup organisation Supabase
   - Fichiers OneDrive : inchangés vs Epic 1 (tenant Fruitstock, datacenter MS UE)
-  - Resend : vérifier région d'hébergement emails (US par défaut, UE disponible — **à forcer UE**)
+  - SMTP Infomaniak : hébergement Suisse (CH) — décision d'adéquation RGPD UE→CH valide (Commission européenne), pas de transfert extra-UE/EEE à vérifier
 - **Consentement** : implicite pour les communications liées à un SAV en cours (base légale : exécution contractuelle). Les alertes proactives (récap hebdo responsable) nécessitent opt-in explicite.
 - **Logs d'accès magic link** : table `auth_events` avec IP hash, user agent, résultat (succès/échec), délai TTL restant à l'usage.
 - **Rate limiting** : 5 magic links / email / heure, 10 / IP / heure (anti-énumération — vecteur d'attaque confirmé dans le brief §Risques).
@@ -451,14 +451,14 @@ Les 5 journeys révèlent les capacités suivantes, consolidées par famille :
 
 - **p95 < 500 ms** sur les lectures liste SAV, détail SAV, recherche full-text (sur volume cible année 1 : ≈ 1 200 SAV cumulés, négligeable pour Postgres indexé).
 - **p95 < 2 s** sur génération PDF (`@react-pdf/renderer` serverless, 10 s timeout Vercel large marge).
-- **p95 < 1 s** sur envoi email (Resend API).
+- **p95 < 2 s** sur envoi email (handshake SMTP Infomaniak + Nodemailer — plus élevé qu'un API HTTP, reste acceptable car l'envoi est toujours asynchrone via outbox).
 - **p95 < 3 s** sur export fournisseur Rufino (XLSX généré côté serverless).
 
 **Disponibilité**
 
 - **Cible SLO** : 99,5 % mensuel sur les endpoints back-office (tolère ≈ 3h30 d'indispo / mois).
 - **Cible SLO** : 99,5 % self-service adhérent (idem).
-- **Dépendances critiques** : Vercel (SLA), Supabase (SLA Pro upgrade éventuel si dispo free tier insuffisante), OneDrive/Graph (SLA Microsoft), Resend (SLA).
+- **Dépendances critiques** : Vercel (SLA), Supabase (SLA Pro upgrade éventuel si dispo free tier insuffisante), OneDrive/Graph (SLA Microsoft), SMTP Infomaniak (SLA hébergeur CH).
 - **Pas de DR cross-region V1** : backup Postgres quotidien (Supabase) + snapshot testé manuellement 1 fois avant cutover.
 
 ### Integration Requirements
@@ -471,7 +471,7 @@ Les 5 journeys révèlent les capacités suivantes, consolidées par famille :
 **Intégrations nouvelles Phase 2**
 
 - **Supabase Postgres** : auth (backing magic link), data, RLS, full-text index.
-- **Resend** : envoi email transactionnel (confirmations, notifications, alertes). Domain `sav.fruitstock.fr` à vérifier SPF/DKIM/DMARC.
+- **SMTP Infomaniak via Nodemailer** : envoi email transactionnel (confirmations, notifications, alertes). Compte mail dédié (`noreply@fruitstock.fr` ou sous-domaine `sav.fruitstock.fr`) à provisionner chez Infomaniak. Enregistrements DNS SPF/DKIM/DMARC à publier chez le registrar du domaine Fruitstock. Port 465 SSL recommandé (ou 587 STARTTLS).
 - **ERP maison** : push au passage `Clôturé`. Contrat à spécifier au §Functional Requirements. Exigences :
   - Idempotent (header `Idempotency-Key` = SAV ID + timestamp)
   - Retry queue persistée en BDD (job table `erp_push_queue`) si push échoue, backoff exponentiel, alerting après 3 échecs
@@ -493,7 +493,7 @@ Les 5 journeys révèlent les capacités suivantes, consolidées par famille :
 | Perte de données financières (crash BDD) | Backup Supabase quotidien + snapshot manuel testé 1× avant cutover, rétention backup ≥ 30 j |
 | Accès non autorisé inter-groupes | RLS Postgres activée table par table, tests unitaires RLS dédiés (user A ne peut pas lire SAV de user B), monitoring requêtes échouées en RLS |
 | Dépendance Make.com capture | Inchangée vs Epic 1 ; retry queue persistée BDD côté serveur si Make.com KO ; canal fallback noté pour V1.1 |
-| Dépendance Resend email | Retry queue persistée, canal fallback SMTP additionnel noté V1.1 si deliverability FR insuffisante |
+| Dépendance SMTP Infomaniak | Retry queue persistée (`email_outbox`), fallback SMTP secondaire noté V1.1 si incidents récurrents |
 | Dépendance OneDrive | Inchangée vs Epic 1, validée en prod |
 | DPIA non produit avant prod | Blocker explicite au checklist cutover ; document attaché au commit qui marque la release V1 |
 | Légal : facturation incorrecte sur bon SAV | Diff automatisé app vs Excel sur shadow run 14 j, 100 % des SAV comparés à l'euro près, critère de go/no-go |
@@ -529,11 +529,11 @@ Déploiement **single Vercel project** (SPA + serverless combinés), continuité
   - `/api/self-service/*` — endpoints adhérent/responsable
   - `/api/auth/*` — magic link (issue + verify), MSAL callback
   - `/api/admin/*` — gestion utilisateurs, catalogue, settings
-  - `/api/integrations/*` — webhook entrant capture, push ERP maison, Resend
+  - `/api/integrations/*` — webhook entrant capture, push ERP maison, envoi SMTP
   - `/api/exports/*` — génération XLSX (fournisseur Rufino, CSV générique)
   - `/api/pdf/*` — génération bon SAV
   - `/api/cron/*` — jobs Vercel Cron (alertes, purge, retry)
-- Un **module partagé** `client/api/_lib/*` : clients Supabase admin, Resend, PDF renderer, RBAC guard, JWT helpers, validation Zod.
+- Un **module partagé** `client/api/_lib/*` : clients Supabase admin, SMTP (Nodemailer + Infomaniak), PDF renderer, RBAC guard, JWT helpers, validation Zod.
 - Réutilisation directe du module MSAL/Graph Epic 1 (`_lib/graph-client.ts`) pour les URLs OneDrive.
 
 **Base de données — Supabase Postgres (région UE)**
@@ -556,7 +556,7 @@ Déploiement **single Vercel project** (SPA + serverless combinés), continuité
 |-------------|-----------|----------------|
 | Make.com webhook capture | entrant | **inchangé Epic 1** — le webhook continue de déclencher côté app ; le handler serveur inscrit désormais aussi en BDD (persistance miroir) |
 | Microsoft Graph / OneDrive | sortant | pattern Epic 1 client-credentials flow + upload session + `webUrl` |
-| Resend | sortant | nouveau — envois email transactionnels tous flux (confirmation, notifications, alertes seuil) |
+| SMTP Infomaniak (Nodemailer) | sortant | nouveau — envois email transactionnels tous flux (confirmation, notifications, alertes seuil) via `mail.infomaniak.com` port 465 SSL |
 | ERP maison | sortant | push JSON signé HMAC au passage statut `Clôturé`, idempotent, retry queue |
 | Supabase Auth | interne | magic link signé ou JWT maison (voir §Auth model) |
 
@@ -604,7 +604,7 @@ Déploiement **single Vercel project** (SPA + serverless combinés), continuité
 
 - **Magic link signé maison** (JWT HS256 + `jti` anti-replay). On n'utilise **pas** Supabase Auth magic link natif : la génération du JWT doit être couplée à la base `members` (lookup email → member_id → groupe + rôle responsable).
 - Flow :
-  1. `POST /api/auth/magic-link/issue` avec `{ email }` + rate limit 5 / email / heure. Si email connu, JWT émis + email envoyé via Resend contenant le lien. **Réponse identique (202) si email inconnu** (anti-énumération).
+  1. `POST /api/auth/magic-link/issue` avec `{ email }` + rate limit 5 / email / heure. Si email connu, JWT émis + email envoyé via SMTP Infomaniak (Nodemailer) contenant le lien. **Réponse identique (202) si email inconnu** (anti-énumération).
   2. Lien = `https://sav.fruitstock.fr/monespace/auth?token=<JWT>&redirect=/sav/:id`. TTL **15 min** pour consommation.
   3. Clic → `POST /api/auth/magic-link/verify` → vérifie signature, TTL, `jti` inutilisé. Marque `jti` consommé. Issue session cookie HttpOnly (TTL 24 h).
   4. Session renouvelée silencieusement sur chaque navigation ; expire à 24 h pour forcer un nouveau magic link (équilibre sécurité / UX).
@@ -934,7 +934,7 @@ CREATE TABLE email_outbox (
   text_body             text,
   status                text NOT NULL DEFAULT 'pending'
                         CHECK (status IN ('pending','sent','failed','bounced')),
-  resend_id             text,                                  -- id retourné par Resend
+  smtp_message_id       text,                                  -- Message-Id retourné par Nodemailer/SMTP
   attempts              integer NOT NULL DEFAULT 0,
   last_error            text,
   scheduled_at          timestamptz DEFAULT now(),
@@ -1050,7 +1050,7 @@ CREATE POLICY sav_group_manager_scope ON sav FOR SELECT
 
 **Compatibilité Epic 1**
 
-- Le webhook Make.com **entrée** reste inchangé côté contrat externe (Make.com). Côté serveur, le handler `POST /api/webhooks/capture` est réécrit pour persister en BDD **en plus** de re-déclencher Make.com (pour l'email actuel pendant la période de dev, jusqu'à bascule sur Resend direct).
+- Le webhook Make.com **entrée** reste inchangé côté contrat externe (Make.com). Côté serveur, le handler `POST /api/webhooks/capture` est réécrit pour persister en BDD **en plus** de re-déclencher Make.com (pour l'email actuel pendant la période de dev, jusqu'à bascule sur envoi SMTP direct via Nodemailer/Infomaniak).
 - Le module MSAL serverless Epic 1 est réutilisé : `client/api/_lib/graph-client.ts` (upload session, share link).
 - Le SPA Vue existant continue d'utiliser le formulaire de capture actuel. Les nouvelles zones (back-office, self-service) sont des routes nouvelles.
 
@@ -1070,9 +1070,9 @@ CREATE POLICY sav_group_manager_scope ON sav FOR SELECT
 
 **Environnements**
 
-- **`local`** : `vercel dev` + Supabase local (via Supabase CLI Docker) + Resend en mode test.
-- **`preview`** (Vercel preview URL par PR) : Supabase branche de preview Supabase si activée, sinon instance preview partagée. Resend en domaine de test.
-- **`production`** : Supabase prod, Resend domaine `sav.fruitstock.fr` vérifié, variables d'env prod.
+- **`local`** : `vercel dev` + Supabase local (via Supabase CLI Docker) + SMTP dev (MailHog recommandé ou compte SMTP Infomaniak de test).
+- **`preview`** (Vercel preview URL par PR) : Supabase branche de preview Supabase si activée, sinon instance preview partagée. SMTP Infomaniak avec expéditeur préfixé `[PREVIEW]`.
+- **`production`** : Supabase prod, SMTP Infomaniak compte `noreply@fruitstock.fr` (ou domaine équivalent), DNS SPF/DKIM/DMARC vérifiés, variables d'env prod.
 
 ## Project Scoping & Phased Development
 
@@ -1102,7 +1102,7 @@ Ce choix se justifie par trois raisons structurantes :
 - **Accès opérateur 1-2 h/semaine pendant le dev** pour validation itérative + shadow run 2-4 semaines à plein temps avant bascule.
 - **2ᵉ compte admin Fruitstock identifié** avant cutover (anti-SPOF humain).
 - **Coffre-fort secrets partagés** (Bitwarden/1Password Fruitstock) provisioné avec au moins 2 accès.
-- **Zéro CAPEX infra V1** : Supabase free tier + Vercel Hobby/Pro + Resend gratuit couvrent le volume année 1 (≈ 1 200 SAV, ≈ 3 500 emails/mois).
+- **Zéro CAPEX infra V1** : Supabase free tier + Vercel Hobby/Pro + compte SMTP Infomaniak existant Fruitstock couvrent le volume année 1 (≈ 1 200 SAV, ≈ 3 500 emails/mois).
 
 ### MVP Feature Set (Phase 1 — cf. §Product Scope pour le détail)
 
@@ -1113,7 +1113,7 @@ Ce choix se justifie par trois raisons structurantes :
 | Famille | Must-have MVP |
 |---------|---------------|
 | Auth | MSAL SSO opérateur/admin + magic link adhérent/responsable + rate limiting + logs |
-| Back-office SAV | Liste/filtres/recherche full-text, détail, transitions statut, calculs métier Excel portés, validations bloquantes, PDF, export Rufino, email direct Resend |
+| Back-office SAV | Liste/filtres/recherche full-text, détail, transitions statut, calculs métier Excel portés, validations bloquantes, PDF, export Rufino, email direct via SMTP Infomaniak |
 | Self-service | Historique SAV propres, détail, commentaires bidir, fichiers, brouillon serveur |
 | Responsable | Scope étendu groupe + filtres + récap hebdo opt-in |
 | Reporting | Dashboard coût mensuel/annuel + comparatif N-1, top 10 produits 90j, délai p50/p90, export CSV, alertes seuil |
@@ -1145,7 +1145,7 @@ Tri des Growth features par probabilité d'implémentation rapide post-V1 :
 | Collision n° d'avoir en production | Faible | Critique (comptable) | Transaction Postgres + unique constraint + test charge 10k émissions |
 | Dépassement timeout 10 s sur `/api/exports/*` ou `/api/pdf/*` | Moyen | Modéré (UX opérateur dégradée) | Bench sur données test réalistes (100 lignes SAV) avant cutover ; bump à 60 s (plan Pro) si nécessaire |
 | Régression auth magic link (énumération possible) | Faible | Critique (RGPD + réputation) | Rate limiting + réponse identique email connu/inconnu + logs + code review dédié |
-| Plan gratuit Supabase ou Resend insuffisant | Faible | Modéré | Monitoring usage mensuel, upgrade Pro si nécessaire (coût < 50 €/mois) |
+| Plan gratuit Supabase saturé ou quota SMTP Infomaniak dépassé | Faible | Modéré | Monitoring usage mensuel, upgrade Supabase Pro si nécessaire (coût < 50 €/mois), surveillance volume emails vs quota mensuel Infomaniak |
 | Dépendance MSAL / Graph / OneDrive | Faible | Critique (accès fichiers) | Pattern Epic 1 en prod, retry exponentiel, cache MSAL |
 
 **Risques marché**
@@ -1169,7 +1169,7 @@ Tri des Growth features par probabilité d'implémentation rapide post-V1 :
 
 - **Plan B coupe scope V1** (si retard M+4-5) : déplacer en V1.1 les Tags libres, Duplication brouillon, Alertes seuil (les trois extensions « quasi gratuites » les moins critiques au MVP). La liste/filtre/détail/PDF/Rufino/self-service reste IN.
 - **Plan B perte OneDrive temporaire** : dégradation propre (l'app indique « fichiers indisponibles, réessayez dans N min »), les métadonnées restent consultables en BDD.
-- **Plan B Resend KO** : `email_outbox` en `status=failed` + alerte opérateur + fallback manuel (envoi mailto: depuis le PDF téléchargé) documenté dans runbook.
+- **Plan B SMTP Infomaniak KO** : `email_outbox` en `status=failed` + alerte opérateur + fallback manuel (envoi mailto: depuis le PDF téléchargé) documenté dans runbook.
 - **Plan B rollback cutover J+0 → J+7** : réactivation d'Excel sur les nouveaux SAV, export complet de la BDD vers fichiers `.xlsm`, arbitrage décideur nommé (Antho par défaut). Procédure dans runbook, testée 1× avant cutover.
 
 ## Functional Requirements
@@ -1277,7 +1277,7 @@ Tri des Growth features par probabilité d'implémentation rapide post-V1 :
 
 - **FR69** : `Système` inscrit dans l'audit trail toute création, modification, transition, suppression, anonymisation d'entités métier critiques (SAV, lignes, avoirs, membres, settings).
 - **FR70** : `Système` purge automatiquement les brouillons self-service expirés (> 30 j) et les magic link tokens consommés ou expirés.
-- **FR71** : `Système` expose des endpoints techniques de santé (`/api/health`) retournant l'état des dépendances critiques (DB, Graph, Resend).
+- **FR71** : `Système` expose des endpoints techniques de santé (`/api/health`) retournant l'état des dépendances critiques (DB, Graph, SMTP Infomaniak).
 
 ## Non-Functional Requirements
 
@@ -1289,13 +1289,13 @@ Tri des Growth features par probabilité d'implémentation rapide post-V1 :
 - **NFR-P2** — p95 < **2 s** pour la génération d'un bon SAV PDF (`@react-pdf/renderer` serverless). Marge vs timeout Vercel 10 s suffisante.
 - **NFR-P3** — p95 < **3 s** pour un export fournisseur Rufino XLSX sur 1 mois de données (≈ 100-200 lignes) ; p95 < **8 s** sur 1 an (≈ 1 200-2 400 lignes). Si dépassement : bump timeout 60 s (plan Pro Vercel).
 - **NFR-P4** — p95 < **1 s** pour émettre un numéro d'avoir + persister l'enregistrement (transaction courte).
-- **NFR-P5** — p95 < **1 s** pour l'envoi d'un email via Resend (latence côté API Resend + persistance outbox).
+- **NFR-P5** — p95 < **2 s** pour l'envoi d'un email via SMTP Infomaniak (handshake SMTP + Nodemailer + persistance outbox) ; l'envoi étant asynchrone via outbox, cette latence n'est jamais bloquante pour l'utilisateur.
 - **NFR-P6** — **< 10 s** entre le clic du magic link et le rendu de la liste SAV adhérent (vérification JWT + session + premier render SPA + premier fetch).
 - **NFR-P7** — Les requêtes dashboard reporting doivent s'exécuter en < **2 s** (agrégations SQL avec index dédiés sur `closed_at`, `group_id`, `product_id`).
 
 ### Security
 
-- **NFR-S1** — Tous les secrets (MSAL, Graph, Supabase service key, JWT secret magic link, Resend, ERP HMAC) sont stockés exclusivement en variables d'environnement serverless Vercel, **jamais préfixés `VITE_`**.
+- **NFR-S1** — Tous les secrets (MSAL, Graph, Supabase service key, JWT secret magic link, `SMTP_*` Infomaniak, ERP HMAC) sont stockés exclusivement en variables d'environnement serverless Vercel, **jamais préfixés `VITE_`**.
 - **NFR-S2** — Le JWT magic link est signé HS256 avec secret 256 bits minimum, rotaté au moins annuellement. Claims obligatoires : `sub` (member_id), `scope`, `exp` (≤ 15 min à l'émission), `jti` (UUID v4).
 - **NFR-S3** — Les mots de passe ne sont **pas stockés** (magic link + MSAL SSO uniquement).
 - **NFR-S4** — Row Level Security Postgres activée sur toutes les tables `sav`, `sav_lines`, `sav_files`, `sav_comments`, `credit_notes`, `members`. Tests dédiés `user A cannot read user B`.
@@ -1315,8 +1315,8 @@ Tri des Growth features par probabilité d'implémentation rapide post-V1 :
 - **NFR-R3** — Backup Postgres automatique quotidien (Supabase), rétention ≥ 30 jours. Test de restauration manuel effectué 1× avant cutover et documenté.
 - **NFR-R4** — Retry queue persistée en BDD pour les emails sortants (`email_outbox`) et push ERP (`erp_push_queue`) : backoff exponentiel 1 min → 2 min → 4 min → 8 min, marque `failed` après 5 tentatives, alerte opérateur.
 - **NFR-R5** — Dégradation propre : si OneDrive indisponible, les SAV restent consultables (métadonnées en BDD), seuls les fichiers affichent un message d'erreur clair + retry automatique côté UI.
-- **NFR-R6** — Dégradation propre : si Resend indisponible, les transitions de statut se font sans rollback, l'email est mis en outbox `pending`, l'opérateur voit une alerte mais le SAV avance.
-- **NFR-R7** — Healthcheck `/api/health` retourne un JSON `{ db: ok|degraded|down, graph: ok|degraded|down, resend: ok|degraded|down }` utilisé par monitoring externe.
+- **NFR-R6** — Dégradation propre : si SMTP Infomaniak indisponible, les transitions de statut se font sans rollback, l'email est mis en outbox `pending`, l'opérateur voit une alerte mais le SAV avance.
+- **NFR-R7** — Healthcheck `/api/health` retourne un JSON `{ db: ok|degraded|down, graph: ok|degraded|down, smtp: ok|degraded|down }` utilisé par monitoring externe.
 
 ### Scalability
 
@@ -1333,7 +1333,7 @@ Tri des Growth features par probabilité d'implémentation rapide post-V1 :
 - **NFR-D4** — Rétention données transactionnelles (SAV, lignes, avoirs, commentaires) : **10 ans** (obligation comptable FR). Soft-delete uniquement ; purge différée sur cold storage V2+ si nécessaire.
 - **NFR-D5** — Rétention audit trail : ≥ **3 ans**.
 - **NFR-D6** — Rétention logs auth events : ≥ 6 mois (CNIL).
-- **NFR-D7** — Les données (Postgres, OneDrive, Resend) sont hébergées en **UE**. Localisation vérifiée au setup de chaque service.
+- **NFR-D7** — Les données (Postgres, OneDrive) sont hébergées en **UE** ; SMTP Infomaniak est hébergé en **Suisse**, couvert par la décision d'adéquation RGPD UE→CH de la Commission européenne. Localisation vérifiée au setup de chaque service.
 - **NFR-D8** — Le DPIA est produit, signé, et versionné **avant la mise en prod V1** (attaché au commit de release).
 - **NFR-D9** — L'export RGPD d'un adhérent doit être complet (tous SAV, lignes, commentaires, avoirs, fichiers référencés) et signé cryptographiquement.
 - **NFR-D10** — L'anonymisation d'un adhérent préserve les montants historiques et les n° d'avoir (obligation comptable), mais efface nom, email, téléphone, remplace par `ANON-{hash}`.
@@ -1377,7 +1377,7 @@ Tri des Growth features par probabilité d'implémentation rapide post-V1 :
 
 - **NFR-IN1** — Le webhook Make.com capture reçoit le contrat JSON Epic 1 inchangé (`items`, `fileUrls`, `shareLink`, `customerEmail`, `invoiceRef`). Rupture de ce contrat = breaking change qui n'a pas lieu V1.
 - **NFR-IN2** — Le push ERP maison est idempotent : un retry après échec doit être rejeté par l'ERP avec `200 OK` (idempotency-key).
-- **NFR-IN3** — Tous les appels sortants (Graph, Resend, ERP) ont un timeout explicite ≤ 8 s (marge pour ne pas faire cramer le timeout serverless de 10 s).
+- **NFR-IN3** — Tous les appels sortants (Graph, SMTP Infomaniak, ERP) ont un timeout explicite ≤ 8 s (marge pour ne pas faire cramer le timeout serverless de 10 s).
 - **NFR-IN4** — Tous les appels sortants sont retry-safe : retry exponentiel 3 tentatives avec jitter, puis queue persistée.
 
 ## Open Questions — Résolution
@@ -1409,9 +1409,9 @@ Les 15 questions ouvertes du brief (§8 du distillate) sont tranchées ici. Les 
 ### Technique (rappel — verrouillé en §Décisions techniques)
 
 11. **DB** → **Supabase Postgres** (région UE)
-12. **SMTP fallback** → **Resend** (région UE, domaine `sav.fruitstock.fr`)
+12. **Provider email transactionnel** → **SMTP Infomaniak via Nodemailer** (hébergement CH, adequacy UE ; compte mail existant Fruitstock)
 13. **PDF generator serverless** → **`@react-pdf/renderer`**
-14. **Webhook Make.com email sortie** → **Remplacé par envoi direct Resend serveur.** Make.com reste pour la **capture** (entrée, Epic 1 inchangé).
+14. **Webhook Make.com email sortie** → **Remplacé par envoi SMTP direct depuis Vercel (Nodemailer + Infomaniak).** Make.com reste pour la **capture** (entrée, Epic 1 inchangé).
 15. **TypeScript V2** → **TypeScript strict pour tout le nouveau code Phase 2.** Code Epic 1 reste en JS (`allowJs: true`), migration opportuniste fichier par fichier.
 
 ### Organisationnel (hors liste initiale mais critiques)
@@ -1434,7 +1434,7 @@ Les 15 questions ouvertes du brief (§8 du distillate) sont tranchées ici. Les 
 - Setup projet Supabase (région UE), schéma initial (toutes les tables §Database Schema)
 - Migrations versionnées Supabase CLI
 - Génération types TS (`supabase gen types`)
-- Module `_lib` serverless : clients Supabase admin, Resend, PDF, JWT, logger structuré, healthcheck
+- Module `_lib` serverless : clients Supabase admin, SMTP (Nodemailer + Infomaniak), PDF, JWT, logger structuré, healthcheck
 - Auth back-office : MSAL SSO + session cookie (réutilise patterns Epic 1)
 - Auth self-service : endpoints `/api/auth/magic-link/issue` et `/verify`, JWT HS256, rate limiting, anti-énumération, table `auth_events`
 - Pinia store, router guards, intercepteur Axios unifié
@@ -1449,7 +1449,7 @@ Les 15 questions ouvertes du brief (§8 du distillate) sont tranchées ici. Les 
 - AC-2.1.3 : Un magic link consommé une fois retourne 410 Gone au 2ᵉ appel (FR6)
 - AC-2.1.4 : Un magic link émis sur email inconnu renvoie le même 202 qu'un email connu, mesuré par test bout-en-bout (FR4, NFR-S5)
 - AC-2.1.5 : Test RLS : user adhérent A ne lit pas un SAV de user B (NFR-S4, NFR-M6)
-- AC-2.1.6 : `/api/health` retourne état DB, Graph, Resend (NFR-R7)
+- AC-2.1.6 : `/api/health` retourne état DB, Graph, SMTP Infomaniak (NFR-R7)
 
 ### Epic 2.2 — Capture & persistance flux entrant
 
@@ -1554,9 +1554,9 @@ Les 15 questions ouvertes du brief (§8 du distillate) sont tranchées ici. Les 
 - AC-2.6.1 : Un adhérent avec magic link valide voit sa liste de SAV en < 10 s (FR37, NFR-P6)
 - AC-2.6.2 : Un responsable voit les SAV de son groupe (adhérents avec `group_id` matching) — test avec 2 groupes distincts, aucun leak (FR43, NFR-S4)
 - AC-2.6.3 : Un adhérent ne peut pas voir un commentaire `visibility = internal` (FR17, FR37)
-- AC-2.6.4 : Transition statut SAV → email reçu par l'adhérent via Resend sous 60 s p95 (FR46, NFR-P5)
+- AC-2.6.4 : Transition statut SAV → email reçu par l'adhérent via SMTP Infomaniak sous 60 s p95 (FR46, NFR-P5)
 - AC-2.6.5 : Écran self-service accessible au clavier uniquement (Tab-navigable), contraste AA vérifié via audit Lighthouse (NFR-A1 à NFR-A4)
-- AC-2.6.6 : Panne simulée Resend → email mis en outbox `pending`, job Cron le reprend à rétablissement (NFR-R4, NFR-R6)
+- AC-2.6.6 : Panne simulée SMTP Infomaniak → email mis en outbox `pending`, job Cron le reprend à rétablissement (NFR-R4, NFR-R6)
 
 ### Epic 2.7 — Administration, RGPD, intégration ERP, cutover
 
@@ -1611,7 +1611,7 @@ Les risques ont été détaillés en §Risk-Based Scoping. Récapitulatif des **
 | La stack Epic 1 (Vue 3 + Vercel + MSAL + Graph) supporte la charge multi-zones | Très haute | Validée en prod Epic 1 |
 | L'opérateur accepte l'UX nouvelle en 2-4 semaines de shadow run | Moyenne | Itération 1-2h/semaine pendant dev + formation pendant shadow run |
 | Supabase free tier suffit V1 | Haute | Monitoring usage mensuel, upgrade Pro < 50 €/mois si dépassement |
-| Resend gratuit suffit V1 (3 000 mails/mois) | Haute | ≈ 1 200-2 000 mails/mois estimé (100 SAV × 4 transitions + récaps) |
+| Compte SMTP Infomaniak existant absorbe le volume V1 | Haute | ≈ 1 200-2 000 mails/mois estimé (100 SAV × 4 transitions + récaps) vs quota compte Infomaniak (à vérifier au setup) |
 | Le 2ᵉ admin Fruitstock est identifié et disponible avant cutover | Moyenne | Blocker explicite du checklist cutover |
 | Le DPIA est signé avant prod | Haute | Blocker explicite du checklist cutover |
 | La logique FDP Excel reste claire après échange avec l'opérateur | Moyenne | Cas réel identifié au shadow run + devis métier V1 |

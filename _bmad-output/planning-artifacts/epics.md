@@ -137,7 +137,7 @@ Les 62 NFRs du PRD. Liste condensée par famille ; source : [prd.md §Non-Functi
 
 - **Performance :** p95 < 500 ms lectures, < 2 s PDF, < 3 s exports 1 mois, < 2 s dashboard
 - **Security :** secrets env vars, JWT HS256, RLS Postgres toutes tables, CORS strict, CSP, HMAC signatures, rate limiting, pas de PII en logs
-- **Reliability :** SLO 99,5 %, backup quotidien + test restauration, outbox/retry queue, dégradation propre OneDrive/Resend KO, healthcheck
+- **Reliability :** SLO 99,5 %, backup quotidien + test restauration, outbox/retry queue, dégradation propre OneDrive/SMTP Infomaniak KO, healthcheck
 - **Scalability :** volume 300 SAV/mois cible, 10 émissions concurrentes avoirs sans collision, 50 self-service simultanés, 4 jobs cron
 - **Data integrity :** montants en centimes, taux snapshot au gel, numérotation séquentielle sans trou, rétention 10 ans transactionnel + 3 ans audit + 6 mois auth, UE hosting, DPIA signé pré-prod
 - **Observability :** logs JSON structuré, métriques clés, 4 alertes (0 SAV clôturé 24h, webhooks KO, PDF KO > 5 %, email KO > 5 %), audit trail SQL
@@ -150,7 +150,7 @@ Les 62 NFRs du PRD. Liste condensée par famille ; source : [prd.md §Non-Functi
 
 Exigences techniques additionnelles extraites de [architecture.md](architecture.md) — éléments non-FR mais impactant la décomposition en stories :
 
-- **Starter** : brownfield Epic 1 conservé (pas de nouveau projet Vercel, pas de nouveau framework). Epic 2.1 Story 1 = setup TypeScript strict + ajout dépendances (Supabase, Pinia, Zod, `@react-pdf/renderer`, Resend, `@vueuse/core`, `radix-vue`) + suppression dépendances orphelines (`@azure/msal-browser`, `vue-i18n`)
+- **Starter** : brownfield Epic 1 conservé (pas de nouveau projet Vercel, pas de nouveau framework). Epic 2.1 Story 1 = setup TypeScript strict + ajout dépendances (Supabase, Pinia, Zod, `@react-pdf/renderer`, Nodemailer + `@types/nodemailer`, `@vueuse/core`, `radix-vue`) + suppression dépendances orphelines (`@azure/msal-browser`, `vue-i18n`)
 - **Migrations Supabase versionnées** sous `supabase/migrations/` avec Supabase CLI ; CI bloque si migration échoue sur DB vierge
 - **RLS activée dès la migration initiale** sur toutes les tables métier ; tests RLS dédiés obligatoires (1 par policy minimum)
 - **Middleware unifié** `withAuth` + `withRbac` + `withRateLimit` à concevoir dans Epic 2.1 story dédiée
@@ -271,10 +271,10 @@ Chaque FR → un epic qui le couvre (un FR peut apparaître dans plusieurs epics
 **FRs couverts :** FR1, FR3, FR4, FR5, FR6, FR7, FR8, FR69, FR70, FR71
 
 **Notes implémentation :**
-- Setup TypeScript strict + ajout dépendances (Supabase, Pinia, Zod, `@react-pdf/renderer`, Resend, `radix-vue`, `@vueuse/core`) + suppression orphelines (`@azure/msal-browser`, `vue-i18n`)
+- Setup TypeScript strict + ajout dépendances (Supabase, Pinia, Zod, `@react-pdf/renderer`, Nodemailer + `@types/nodemailer`, `radix-vue`, `@vueuse/core`) + suppression orphelines (`@azure/msal-browser`, `vue-i18n`)
 - Migration SQL initiale complète (18 tables + RLS + triggers + rate_limit_buckets + webhook_inbox)
 - Middleware unifié `withAuth` + `withRbac` + `withRateLimit` + `withValidation(zod)` + error envelope
-- Clients Supabase (`supabaseUser`, `supabaseAdmin`), Resend, logger structuré
+- Clients Supabase (`supabaseUser`, `supabaseAdmin`), SMTP (Nodemailer + Infomaniak), logger structuré
 - Jobs cron Vercel : squelettes (purge tokens, purge brouillons expirés, healthcheck agrégé)
 - Tests RLS dédiés framework + fixtures JWT mint
 - CI GitHub Actions complète (lint, typecheck, vitest, migrations-check, playwright, build)
@@ -348,7 +348,7 @@ Chaque FR → un epic qui le couvre (un FR peut apparaître dans plusieurs epics
 
 ### Epic 6 : Espace self-service adhérent + responsable + notifications
 
-**Outcome utilisateur :** Un adhérent accède à son espace via magic link, consulte ses SAV, voit les statuts en temps réel, lit et ajoute des commentaires, joint des fichiers additionnels, télécharge le PDF du bon SAV. Un responsable accède en plus au scope étendu de son groupe. Tous reçoivent des emails automatiques à chaque transition de statut via Resend, avec opt-out granulaire.
+**Outcome utilisateur :** Un adhérent accède à son espace via magic link, consulte ses SAV, voit les statuts en temps réel, lit et ajoute des commentaires, joint des fichiers additionnels, télécharge le PDF du bon SAV. Un responsable accède en plus au scope étendu de son groupe. Tous reçoivent des emails automatiques à chaque transition de statut via SMTP Infomaniak, avec opt-out granulaire.
 
 **FRs couverts :** FR37, FR38, FR39, FR40, FR42, FR43, FR44, FR45, FR46, FR47, FR49, FR50, FR51
 
@@ -417,7 +417,7 @@ So that tout le code Phase 2 est type-safe et le bundle ne traîne plus de dead 
 
 **Given** le `package.json` après installation
 **When** je vérifie les dépendances
-**Then** `@supabase/supabase-js`, `pinia`, `zod`, `@react-pdf/renderer`, `resend`, `@vueuse/core`, `radix-vue`, `supabase` (CLI dev) sont présents
+**Then** `@supabase/supabase-js`, `pinia`, `zod`, `@react-pdf/renderer`, `nodemailer`, `@types/nodemailer` (dev), `@vueuse/core`, `radix-vue`, `supabase` (CLI dev) sont présents
 **And** `@azure/msal-browser` et `vue-i18n` sont absents (orphelines supprimées)
 
 **Given** un pre-commit hook installé
@@ -499,7 +499,7 @@ So that je n'ai aucun mot de passe à créer et mes données sont protégées co
 **Given** je saisis une adresse email sur la page self-service
 **When** je clique « Recevoir mon lien »
 **Then** la réponse HTTP est 202 avec un message neutre « Si un compte existe pour cette adresse, vous recevrez un email » **indépendamment de l'existence de mon compte**
-**And** si l'email est connu, je reçois via Resend un email contenant un lien `/monespace/auth?token=<JWT>` (TTL 15 min)
+**And** si l'email est connu, je reçois via SMTP Infomaniak (Nodemailer) un email contenant un lien `/monespace/auth?token=<JWT>` (TTL 15 min)
 
 **Given** je clique le lien magique valide
 **When** la page `/monespace/auth` échange le token
@@ -552,7 +552,7 @@ So that la plateforme est observable, testable en CI, et s'auto-entretient (purg
 
 **Given** `GET /api/health`
 **When** je l'appelle sans authentification
-**Then** la réponse est 200 JSON `{ status: 'ok' | 'degraded', checks: { db: 'ok'|'degraded'|'down', graph: ..., resend: ... }, version, timestamp }`
+**Then** la réponse est 200 JSON `{ status: 'ok' | 'degraded', checks: { db: 'ok'|'degraded'|'down', graph: ..., smtp: ... }, version, timestamp }`
 
 **Given** `vercel.json` avec les cron jobs configurés
 **When** Vercel déclenche le cron
@@ -1126,11 +1126,11 @@ So que rien ne passe inaperçu.
 
 **Given** le cron `retry-emails.ts` horaire
 **When** il s'exécute
-**Then** les `email_outbox WHERE status='pending' OR (status='failed' AND attempts<5)` sont envoyés via Resend, `status='sent'` si OK, `attempts++` et `last_error` si KO
+**Then** les `email_outbox WHERE status='pending' OR (status='failed' AND attempts<5)` sont envoyés via SMTP Infomaniak (Nodemailer), `status='sent'` + `smtp_message_id` renseigné si OK, `attempts++` et `last_error` si KO
 **And** backoff exponentiel (1min, 2min, 4min, 8min) entre retries
 **And** après 5 échecs, `status='failed'` définitif, alerte opérateur
 
-**Given** Resend est KO simulé (mock retourne 500)
+**Given** SMTP Infomaniak est KO simulé (mock `nodemailer.sendMail` rejette avec timeout/ECONNREFUSED)
 **When** le cron s'exécute
 **Then** les emails restent en `pending` avec `last_error`, aucune donnée perdue, le SAV ne rollback pas
 

@@ -48,7 +48,7 @@ Transforme l'app d'une passerelle de capture en **plateforme SAV complète** qui
 
 ### Décisions techniques Phase 2 (verrouillées)
 
-- **Stack ajoutée :** Supabase Postgres (région UE), Resend (email), `@react-pdf/renderer` (PDF serverless), Pinia, Zod, TypeScript strict
+- **Stack ajoutée :** Supabase Postgres (région UE), Nodemailer + SMTP Infomaniak (email, CH adequacy UE), `@react-pdf/renderer` (PDF serverless), Pinia, Zod, TypeScript strict
 - **Stack conservée :** Vue 3 Composition + Vite + Tailwind + Vercel serverless + MSAL + Graph/OneDrive (Epic 1)
 - **Découplage fichiers/métadonnées :** OneDrive pour fichiers, Postgres pour métadonnées seulement
 - **Big Bang Palier C :** tous les epics complets avant prod, Excel débranché à J+1

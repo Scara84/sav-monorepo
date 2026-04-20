@@ -67,8 +67,8 @@ Drivers d'architecture principaux :
 - **NFR-S2** JWT HS256 magic link : secret 256 bits en env var, rotation annuelle, claim `jti`
 - **NFR-D3** zéro collision n° d'avoir : transaction Postgres + UPDATE...RETURNING + unique constraint + test charge 10 000 émissions
 - **NFR-D2** gel des taux à l'émission : snapshot colonnes dans `sav_lines` et `credit_notes`
-- **NFR-D7** données UE : région Supabase + Resend + OneDrive (tenant Fruitstock) vérifiées
-- **NFR-R1-R2** SLO 99,5 % : dépendances Vercel + Supabase + Graph + Resend, dégradation propre si OneDrive/Resend KO
+- **NFR-D7** données UE : région Supabase + SMTP Infomaniak (CH — décision d'adéquation UE valide) + OneDrive (tenant Fruitstock) vérifiées
+- **NFR-R1-R2** SLO 99,5 % : dépendances Vercel + Supabase + Graph + SMTP Infomaniak, dégradation propre si OneDrive/SMTP KO
 - **NFR-R4** retry queue persistée : tables `email_outbox` + `erp_push_queue`, backoff exponentiel
 - **NFR-A1-A5** WCAG AA + responsive 375 px : standard Tailwind + composants headless (shadcn-vue ou équivalent), audits Lighthouse dans la CI
 
@@ -92,7 +92,7 @@ Drivers d'architecture principaux :
 3. Supabase Postgres — 18 tables + triggers + fonctions RPC + RLS + migrations versionnées
 4. Module partagé `client/api/_lib/*` — clients externes, helpers auth, moteur calcul, RBAC guard, logger, validation Zod
 5. Module frontend partagé `client/src/shared/*` — composables, types, stores Pinia, composants headless
-6. Intégrations externes : Graph (existant Epic 1), Make.com webhook (existant Epic 1), Resend (nouveau), ERP maison (nouveau)
+6. Intégrations externes : Graph (existant Epic 1), Make.com webhook (existant Epic 1), SMTP Infomaniak via Nodemailer (nouveau), ERP maison (nouveau)
 7. Jobs cron Vercel — scheduler déclaratif dans `vercel.json`
 
 ### Technical Constraints & Dependencies
@@ -104,7 +104,7 @@ Drivers d'architecture principaux :
 - **SPA + serverless dans un seul projet Vercel** (héritage Epic 1, non remis en cause)
 - **Pas de runtime longue durée** (pas de Node server, pas de worker containerisé) — conséquence : toute tâche longue passe par un job cron + queue persistée
 - **TypeScript strict obligatoire pour tout code Phase 2** ; code Epic 1 reste en JS via `allowJs: true`, migration opportuniste
-- **Stack verrouillée :** Vue 3 Composition + Vite + Tailwind + Vercel + MSAL + Graph + Supabase + Resend + `@react-pdf/renderer` + Zod + Pinia
+- **Stack verrouillée :** Vue 3 Composition + Vite + Tailwind + Vercel + MSAL + Graph + Supabase + Nodemailer (SMTP Infomaniak) + `@react-pdf/renderer` + Zod + Pinia
 - **Pas de migration des fichiers OneDrive :** la BDD ne stocke que les `webUrl` + `onedriveItemId`
 - **Pas d'appel Pennylane V1 :** différé (FR hors V1)
 - **Pas de Supabase Storage ni OneDrive-comme-DB :** leçon plan v1 abandonné
@@ -116,7 +116,7 @@ Drivers d'architecture principaux :
 | Vercel | hébergement SPA + serverless + cron | 99,99 % SLA Pro | élevé si tombe (tout tombe) |
 | Supabase | Postgres + RLS + auth helpers | 99,9 % | élevé (BDD = source unique de vérité) |
 | Microsoft Graph + OneDrive | stockage fichiers | 99,9 % MS | modéré (dégradation propre possible) |
-| Resend | email transactionnel | 99,9 % | modéré (queue + alerte opérateur) |
+| SMTP Infomaniak | email transactionnel (Nodemailer, `mail.infomaniak.com` port 465 SSL) | 99,9 % (SLA hébergeur CH) | modéré (queue + alerte opérateur) |
 | Make.com | webhook capture entrante | 99,5 % | modéré (inchangé Epic 1, signature HMAC ajoutée) |
 | ERP maison | push sortant | interne | modéré (queue + retry) |
 
@@ -176,7 +176,7 @@ Aspects transverses qui traversent plusieurs composants et doivent être résolu
    - Outbox pattern persisté (`email_outbox`) — aucun envoi synchrone bloquant
    - Job cron horaire retraite les `pending` + `failed`
    - Template HTML conservé à l'identique (charte orange Epic 1)
-   - Resend comme provider unique V1 (pas de fallback SMTP additionnel V1)
+   - SMTP Infomaniak (via Nodemailer) comme provider unique V1 (pas de fallback secondaire V1)
 
 8. **Intégration ERP maison (push sortant idempotent)**
    - File `erp_push_queue` alimentée à chaque clôture de SAV
@@ -253,7 +253,8 @@ Upgrade mineur/majeur ciblé au démarrage d'Epic 2.1 (« Fondations persistance
 | `pinia` | absent | **Ajouter** (store global pour zones back-office + self-service) |
 | `zod` | absent | **Ajouter** (validation runtime + types partagés API) |
 | `@react-pdf/renderer` | absent | **Ajouter** (génération PDF serverless) |
-| `resend` | absent | **Ajouter** (SDK email transactionnel) |
+| `nodemailer` | absent | **Ajouter** (client SMTP — Infomaniak) |
+| `@types/nodemailer` | absent | **Ajouter** (types dev) |
 | `@vueuse/core` | absent | **Ajouter** (composables utilitaires) |
 | `vitest` | 1.6 | Conserver latest stable |
 | `playwright` | 1.45 | Conserver latest stable |
@@ -281,9 +282,10 @@ npm install \
   pinia \
   zod \
   @react-pdf/renderer \
-  resend \
+  nodemailer \
   @vueuse/core \
   radix-vue
+npm install -D @types/nodemailer
 
 # 4. Setup Supabase CLI (local dev + migrations)
 npm install -D supabase
@@ -313,9 +315,9 @@ npx supabase start   # démarre un Postgres local via Docker
 | ID | Décision | Valeur | Source |
 |----|----------|--------|--------|
 | CAD-001 | Base de données | Supabase Postgres (région UE) | PRD §Décisions techniques #11 |
-| CAD-002 | Email transactionnel | Resend (domaine `sav.fruitstock.fr`, région UE) | PRD §Décisions techniques #12 |
+| CAD-002 | Email transactionnel | Nodemailer + SMTP Infomaniak (compte `noreply@fruitstock.fr`, hébergement CH — décision d'adéquation UE) | PRD §Décisions techniques #12 |
 | CAD-003 | PDF generator serverless | `@react-pdf/renderer` | PRD §Décisions techniques #13 |
-| CAD-004 | Flux email sortant | Direct Resend serveur (Make.com sortie supprimée) | PRD §Décisions techniques #14 |
+| CAD-004 | Flux email sortant | Envoi SMTP direct serveur via Nodemailer (Make.com sortie supprimée) | PRD §Décisions techniques #14 |
 | CAD-005 | Langage | TypeScript strict pour Phase 2 ; `allowJs: true` pour code Epic 1 | PRD §Décisions techniques #15 |
 | CAD-006 | Stockage fichiers | OneDrive via Graph (inchangé Epic 1), BDD = métadonnées seulement | PRD §Executive Summary + brief §Leçon v1 |
 | CAD-007 | Auth back-office | Microsoft MSAL SSO tenant Fruitstock (Azure AD) | PRD §Authentication Model |
@@ -349,7 +351,7 @@ npx supabase start   # démarre un Postgres local via Docker
 | ID | Décision | Quand |
 |----|----------|-------|
 | CAD-D01 | Observabilité avancée (Axiom / Logtail / Datadog) | V1.1 si volume logs Vercel dashboard insuffisant |
-| CAD-D02 | Fallback SMTP additionnel si Resend KO | V1.1 si deliverability FR insuffisante à l'usage |
+| CAD-D02 | Fallback SMTP secondaire si Infomaniak KO | V1.1 si incidents récurrents (p.ex. second compte SMTP Infomaniak sur domaine alternatif ou provider tiers) |
 | CAD-D03 | Bump timeout Vercel 10s → 60s sur `/api/exports/*` et `/api/pdf/*` | Si benchmark shadow run dépasse 8s |
 | CAD-D04 | Intégration Pennylane directe | Si cas d'usage émerge (brief différé) |
 | CAD-D05 | BI externe via API read-only | V2+ (brief Vision) |
@@ -448,7 +450,7 @@ CREATE TABLE rate_limit_buckets (
 1. `POST /api/auth/magic-link/issue` body `{ email }`
 2. Serveur lookup `members WHERE email = ?`
 3. **Toujours répondre 202** (anti-énumération NFR-S5, FR4) après rate limit OK
-4. Si member trouvé : émettre JWT `{ sub, scope, exp: +15min, jti: uuid() }`, insert `magic_link_tokens`, envoyer email via Resend avec lien `{APP_URL}/monespace/auth?token=<jwt>&redirect=...`
+4. Si member trouvé : émettre JWT `{ sub, scope, exp: +15min, jti: uuid() }`, insert `magic_link_tokens`, envoyer email via Nodemailer/SMTP Infomaniak avec lien `{APP_URL}/monespace/auth?token=<jwt>&redirect=...`
 5. Si member non trouvé : rien (ou log `auth_events`)
 6. `POST /api/auth/magic-link/verify` body `{ token }` :
    - Vérifier signature HS256 avec `MAGIC_LINK_SECRET` (env var)
@@ -478,7 +480,12 @@ CREATE TABLE rate_limit_buckets (
   - `MSAL_CLIENT_ID`, `MSAL_CLIENT_SECRET`, `MSAL_TENANT_ID`, `MSAL_REDIRECT_URI`
   - `MAGIC_LINK_SECRET` (256 bits, rotation annuelle)
   - `SESSION_COOKIE_SECRET` (256 bits)
-  - `RESEND_API_KEY`
+  - `SMTP_HOST` (= `mail.infomaniak.com`)
+  - `SMTP_PORT` (= `465` SSL ou `587` STARTTLS)
+  - `SMTP_SECURE` (= `true` pour port 465, `false` pour 587)
+  - `SMTP_USER` (compte Infomaniak, ex `noreply@fruitstock.fr`)
+  - `SMTP_PASSWORD` (mot de passe ou app password Infomaniak)
+  - `SMTP_FROM` (adresse d'expédition par défaut, ex `SAV Fruitstock <noreply@fruitstock.fr>`)
   - `MAKE_WEBHOOK_SECRET` (HMAC signature entrée)
   - `ERP_ENDPOINT_URL`, `ERP_HMAC_SECRET`
   - `GRAPH_CLIENT_ID`, `GRAPH_CLIENT_SECRET`, `GRAPH_TENANT_ID` (déjà Epic 1)
@@ -490,7 +497,7 @@ CREATE TABLE rate_limit_buckets (
 Configurés dans `vercel.json` et/ou headers serverless :
 ```
 Content-Security-Policy: default-src 'self'; script-src 'self' 'nonce-{random}';
-  connect-src 'self' https://*.supabase.co https://api.resend.com https://graph.microsoft.com;
+  connect-src 'self' https://*.supabase.co https://graph.microsoft.com;
   img-src 'self' data: https://*.sharepoint.com https://*.onedrive.com;
   font-src 'self'; frame-ancestors 'none'; base-uri 'self';
 Strict-Transport-Security: max-age=31536000; includeSubDomains
@@ -539,7 +546,7 @@ Permissions-Policy: camera=(), microphone=(), geolocation=()
   - 422 : règle métier violée (ex. transition statut non autorisée)
   - 429 : rate limit
   - 500 : erreur serveur (loggée + alerte)
-  - 503 : dépendance aval (Graph/Resend) KO temporaire
+  - 503 : dépendance aval (Graph/SMTP) KO temporaire
 
 **API documentation**
 
@@ -610,7 +617,7 @@ Permissions-Policy: camera=(), microphone=(), geolocation=()
 
 | Env | Usage | DB | Domaine |
 |-----|-------|------|---------|
-| `local` | `vercel dev` + Supabase local Docker + Resend test mode | Supabase CLI local | `localhost:3000` |
+| `local` | `vercel dev` + Supabase local Docker + SMTP dev (MailHog ou compte Infomaniak test) | Supabase CLI local | `localhost:3000` |
 | `preview` | PRs sur Vercel Preview | Supabase branche `preview` (ou base partagée) | URL Vercel preview dynamique |
 | `production` | `main` merged after shadow run | Supabase prod UE | `sav.fruitstock.fr` |
 
@@ -749,7 +756,7 @@ Sur merge `main` : Vercel déploie automatiquement en prod, avec `supabase db pu
 
 - Frontend : `client/src/shared/utils/` (pas de folder `lib/` qui est trop vague)
 - Backend : `client/api/_lib/` (préfixe `_` = ignoré par Vercel routing)
-- Un sous-dossier par domaine : `_lib/auth/`, `_lib/business/` (calculs), `_lib/clients/` (Supabase, Resend, Graph), `_lib/schemas/` (Zod), `_lib/pdf/`, `_lib/exports/`, `_lib/logger/`, `_lib/rbac/`
+- Un sous-dossier par domaine : `_lib/auth/`, `_lib/business/` (calculs), `_lib/clients/` (Supabase, SMTP Nodemailer, Graph), `_lib/schemas/` (Zod), `_lib/pdf/`, `_lib/exports/`, `_lib/logger/`, `_lib/rbac/`
 
 **Config files**
 
@@ -867,7 +874,7 @@ Erreur (enveloppe déjà au §Core Architectural Decisions CAD-017) :
 **Règle 3 : dégradation propre sur les dépendances tierces**
 
 - OneDrive KO → afficher « Fichiers temporairement indisponibles, réessayez » + retry automatique background + bouton manuel
-- Resend KO → émail mis en outbox `pending`, statut SAV avance quand même, cron reprend plus tard
+- SMTP Infomaniak KO → email mis en outbox `pending`, statut SAV avance quand même, cron reprend plus tard
 - ERP KO → push mis en queue, statut SAV avance, cron reprend + alerte après 3 échecs
 
 **Règle 4 : jamais de fallback silencieux sur données financières**
@@ -1083,7 +1090,7 @@ client/
 │   │   │   ├── supabaseAdmin.ts   # service_role — usage restreint /api/admin/**
 │   │   │   ├── supabaseUser.ts    # authenticated user context (RLS apply)
 │   │   │   ├── graphClient.ts     # existant Epic 1
-│   │   │   └── resend.ts
+│   │   │   └── smtpClient.ts      # Nodemailer + SMTP Infomaniak
 │   │   ├── business/
 │   │   │   ├── creditCalculation.ts   # port moteur Excel
 │   │   │   ├── pieceKgConversion.ts
@@ -1291,7 +1298,7 @@ docs/
     ├── admin-rgpd.md              # export + anonymisation adhérent
     ├── cutover.md                 # procédure bascule
     ├── rollback.md                # procédure reprise Excel
-    ├── token-rotation.md          # MSAL, Resend, magic link secret
+    ├── token-rotation.md          # MSAL, SMTP Infomaniak (password), magic link secret
     └── incident-response.md       # check list incident en prod
 ```
 
@@ -1353,7 +1360,7 @@ Côté serveur :
 └────────┬────────────────────────────────────────┘
          ↓
 ┌─────────────────────────────────────────────────┐
-│  api/_lib/clients (Supabase, Graph, Resend)      │  ← I/O
+│  api/_lib/clients (Supabase, Graph, SMTP)        │  ← I/O
 └────────┬────────────────────────────────────────┘
          ↓
 ┌─────────────────────────────────────────────────┐
@@ -1365,7 +1372,7 @@ Côté serveur :
 
 - Une `feature/<zone-A>` **ne doit pas** importer depuis une `feature/<zone-B>`. Si un besoin émerge, extraire dans `shared/`.
 - `api/<route>.ts` ne doit **jamais** contenir de logique métier > 20 lignes — tout passe par `_lib/business/`.
-- `_lib/business/` ne doit **jamais** importer `supabase/js` ni `resend` ni `graph-client` — fonctions pures testables sans IO.
+- `_lib/business/` ne doit **jamais** importer `supabase/js` ni `nodemailer` ni `graph-client` — fonctions pures testables sans IO.
 - Les schémas Zod dans `_lib/schemas/` sont **la source unique de vérité** des contrats API. FE et BE importent les mêmes types (via alias `@/api/_lib/schemas`).
 - Les types TS générés `shared/types/supabase.d.ts` sont **regénérés à chaque migration** et commités.
 - Les composants `shared/components/ui/*` sont des wrappers minces autour de `radix-vue` — pas de logique métier.
@@ -1383,7 +1390,7 @@ Côté serveur :
 
 | Vérification | Résultat |
 |--------------|----------|
-| Compatibilité technologies (Vue 3.4 + Vite 5 + TS 5 + Supabase-js v2 + Pinia 2 + Tailwind 3 + `@react-pdf/renderer` + Resend) | ✅ Stack cohérente, toutes versions stables et maintenues |
+| Compatibilité technologies (Vue 3.4 + Vite 5 + TS 5 + Supabase-js v2 + Pinia 2 + Tailwind 3 + `@react-pdf/renderer` + Nodemailer) | ✅ Stack cohérente, toutes versions stables et maintenues |
 | Versions compatibles (TypeScript 5 + Vue 3.4 Composition + Pinia 2) | ✅ Aucun conflit connu |
 | Patterns alignés avec le stack (Composition API + `<script setup lang="ts">` + Zod schemas + RLS Postgres) | ✅ Cohérents |
 | Aucune décision contradictoire | ✅ Revue manuelle du doc — RAS |
@@ -1462,7 +1469,7 @@ Un agent dev qui reçoit une story pourra-t-il coder sans ambiguïté ?
 **Deferred / acceptées V1**
 
 - Pas de cache applicatif (CAD-018) — accepté, revoir V1.1 si dashboard lent
-- Pas de fallback SMTP additionnel (CAD-D02) — accepté, revoir V1.1 si Resend KO récurrent
+- Pas de fallback SMTP secondaire (CAD-D02) — accepté, revoir V1.1 si SMTP Infomaniak KO récurrent
 - Pas d'observabilité externe type Axiom/Datadog (CAD-D01) — accepté, revoir V1.1 si volume logs Vercel insuffisant
 
 ### Validation finale

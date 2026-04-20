@@ -159,7 +159,7 @@ validationStatus: VALIDATED
 **Format FR :**
 - ✅ 100 % des FRs suivent le format `[Acteur] peut [capacité]` ou `Système + capacité` (acteur défini : `Opérateur`, `Admin`, `Adhérent`, `Responsable`, `Utilisateur authentifié`, `Système`)
 - ✅ Testables individuellement
-- ✅ Implementation-agnostic : les détails techniques (Supabase, Resend, `@react-pdf/renderer`) restent cantonnés à §Décisions techniques et Project-Type Deep Dive — les FRs parlent capacités
+- ✅ Implementation-agnostic : les détails techniques (Supabase, SMTP Infomaniak/Nodemailer, `@react-pdf/renderer`) restent cantonnés à §Décisions techniques et Project-Type Deep Dive — les FRs parlent capacités
 
 **Adjectifs subjectifs dans FRs :**
 - Occurrences de `easy`, `fast`, `simple`, `intuitive`, `user-friendly` en contexte FR : **0**
@@ -176,7 +176,7 @@ validationStatus: VALIDATED
 - FR50 mentionne « outbox » → terme métier de persistance, pas leakage tech
 - FR35 mentionne « XLSX » → format livrable imposé par le fournisseur Rufino, pertinent au FR
 - FR65 mentionne « webhook Make.com » → intégration externe nommée, pertinent car l'acteur est un système externe identifié
-- Aucune référence explicite à Supabase, Resend, `@react-pdf/renderer` dans les FRs
+- Aucune référence explicite à Supabase, SMTP Infomaniak/Nodemailer, `@react-pdf/renderer` dans les FRs
 - Verdict leakage : **acceptable, justifié par la nature intégrale du système à construire**
 
 **Format NFR :**
@@ -241,7 +241,7 @@ validationStatus: VALIDATED
 
 **Scan spécifique nommes de produits :**
 - Supabase : mentionné dans Décisions techniques, Project-Type, Domain (RLS), NFRs (M7, SC1) — **tous en contexte architecture** ✅
-- Resend : idem ✅
+- SMTP Infomaniak (via Nodemailer) : idem ✅
 - `@react-pdf/renderer` : idem ✅
 - Make.com : mentionné en Executive Summary + Intégrations — **historique Epic 1, justifié** ✅
 - Vercel : contexte infra, justifié ✅

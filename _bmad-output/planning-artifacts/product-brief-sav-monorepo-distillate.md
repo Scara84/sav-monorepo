@@ -175,7 +175,7 @@ M. Y est responsable de Nice Est (12 adhérents). Se connecte via magic link :
 
 ### Technique
 - **Choix DB** : Supabase Postgres candidat probable (RLS native pour multi-tenant). À trancher avec alternatives Neon / Vercel Postgres.
-- **Choix SMTP fallback** : provider à choisir (Resend, Postmark, SendGrid, AWS SES). Critères : simplicité intégration Vercel, coût, deliverability France.
+- **Choix provider email transactionnel** : **tranché — SMTP Infomaniak via Nodemailer** (compte mail existant Fruitstock, hébergement CH adequacy UE, zéro coût supplémentaire). Alternatives écartées : Resend/Postmark/SendGrid/AWS SES.
 - **Choix PDF generator serverless** : `pdfkit`, `puppeteer-core` + `@sparticuz/chromium`, ou service externe (PDFmonkey, DocRaptor, Gotenberg) ? Contrainte : 10s Vercel timeout.
 - **Webhook Make.com sortie — keep or replace** : ok de garder Make.com pour l'email V1, mais une fois la DB en place, envoi direct serveur plus simple. À arbitrer.
 - **Concurrence d'écriture** : `updated_at` version-based optimistic lock ; commentaires append-only.
