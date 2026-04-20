@@ -43,8 +43,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
     version: APP_VERSION,
     timestamp: new Date().toISOString(),
   }
-  // TEMP DEBUG Epic 1 Story 1.7 — à retirer après diagnostic
-  if (dbResult.error) {
+  if (process.env['HEALTH_DEBUG'] === '1' && dbResult.error) {
     body.debug = { dbError: dbResult.error }
   }
   res.status(worst === 'down' ? 503 : 200).json(body)
@@ -52,7 +51,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
 
 async function checkDb(requestId: string): Promise<{ state: CheckState; error?: unknown }> {
   const controller = new AbortController()
-  const timer = setTimeout(() => controller.abort(), 3000)
+  const timer = setTimeout(() => controller.abort(), 8000)
   try {
     const { error } = await supabaseAdmin()
       .from('settings')
