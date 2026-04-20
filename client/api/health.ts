@@ -14,6 +14,7 @@ interface HealthCheck {
   }
   version: string
   timestamp: string
+  debug?: { dbError?: unknown }
 }
 
 const APP_VERSION = process.env['VERCEL_GIT_COMMIT_SHA'] ?? 'local'
@@ -25,8 +26,9 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
     return
   }
 
+  const dbResult = await checkDb(requestId)
   const checks: HealthCheck['checks'] = {
-    db: await checkDb(requestId),
+    db: dbResult.state,
     graph: checkGraph(),
     smtp: checkSmtp(),
   }
@@ -41,10 +43,14 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
     version: APP_VERSION,
     timestamp: new Date().toISOString(),
   }
+  // TEMP DEBUG Epic 1 Story 1.7 — à retirer après diagnostic
+  if (dbResult.error) {
+    body.debug = { dbError: dbResult.error }
+  }
   res.status(worst === 'down' ? 503 : 200).json(body)
 }
 
-async function checkDb(requestId: string): Promise<CheckState> {
+async function checkDb(requestId: string): Promise<{ state: CheckState; error?: unknown }> {
   const controller = new AbortController()
   const timer = setTimeout(() => controller.abort(), 3000)
   try {
@@ -56,20 +62,20 @@ async function checkDb(requestId: string): Promise<CheckState> {
     clearTimeout(timer)
     if (error) {
       const e = error as { message?: string; code?: string; details?: string; hint?: string }
-      // Log en texte brut pour traverser la troncature des logs Vercel
       console.error(
         `[HEALTH-DB-DEGRADED] code=${e.code ?? 'none'} msg=${e.message ?? 'none'} details=${e.details ?? 'none'} hint=${e.hint ?? 'none'}`
       )
-      return 'degraded'
+      return {
+        state: 'degraded',
+        error: { code: e.code, message: e.message, details: e.details, hint: e.hint },
+      }
     }
-    return 'ok'
+    return { state: 'ok' }
   } catch (err) {
     clearTimeout(timer)
-    logger.error('healthcheck db down', {
-      requestId,
-      error: err instanceof Error ? err.message : String(err),
-    })
-    return 'down'
+    const msg = err instanceof Error ? err.message : String(err)
+    logger.error('healthcheck db down', { requestId, error: msg })
+    return { state: 'down', error: { message: msg } }
   }
 }
 
