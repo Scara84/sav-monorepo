@@ -4,6 +4,7 @@ import { mockReq, mockRes } from './_lib/test-helpers'
 const state = vi.hoisted(() => ({
   select: vi.fn(),
   limit: vi.fn(),
+  abortSignal: vi.fn(),
   from: vi.fn(),
 }))
 
@@ -24,10 +25,12 @@ describe('GET /api/health', () => {
   beforeEach(() => {
     state.select.mockReset()
     state.limit.mockReset()
+    state.abortSignal.mockReset()
     state.from.mockReset()
     state.from.mockImplementation(() => ({ select: state.select }))
     state.select.mockImplementation(() => ({ limit: state.limit }))
-    state.limit.mockResolvedValue({ data: [], error: null })
+    state.limit.mockImplementation(() => ({ abortSignal: state.abortSignal }))
+    state.abortSignal.mockResolvedValue({ data: [], error: null })
 
     process.env['MICROSOFT_TENANT_ID'] = 'tenant-id'
     process.env['MICROSOFT_CLIENT_ID'] = 'client-id'
@@ -58,7 +61,7 @@ describe('GET /api/health', () => {
   })
 
   it('retourne 200 status=degraded si DB dégradée (erreur supabase)', async () => {
-    state.limit.mockResolvedValueOnce({ data: null, error: { message: 'pool timeout' } })
+    state.abortSignal.mockResolvedValueOnce({ data: null, error: { message: 'pool timeout' } })
     const res = mockRes()
     await handler(mockReq({ method: 'GET' }), res)
     expect(res.statusCode).toBe(200)
@@ -68,7 +71,7 @@ describe('GET /api/health', () => {
   })
 
   it('retourne 503 si DB down (throw)', async () => {
-    state.limit.mockRejectedValueOnce(new Error('ECONNREFUSED'))
+    state.abortSignal.mockRejectedValueOnce(new Error('ECONNREFUSED'))
     const res = mockRes()
     await handler(mockReq({ method: 'GET' }), res)
     expect(res.statusCode).toBe(503)

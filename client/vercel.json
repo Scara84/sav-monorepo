@@ -6,7 +6,7 @@
   "functions": {
     "api/upload-session.js": { "maxDuration": 10 },
     "api/folder-share-link.js": { "maxDuration": 10 },
-    "api/health.ts": { "maxDuration": 5 },
+    "api/health.ts": { "maxDuration": 10 },
     "api/auth/msal/login.ts": { "maxDuration": 5 },
     "api/auth/msal/callback.ts": { "maxDuration": 10 },
     "api/auth/magic-link/issue.ts": { "maxDuration": 10 },

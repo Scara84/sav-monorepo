@@ -45,14 +45,22 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
 }
 
 async function checkDb(requestId: string): Promise<CheckState> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 3000)
   try {
-    const { error } = await supabaseAdmin().from('settings').select('id').limit(1)
+    const { error } = await supabaseAdmin()
+      .from('settings')
+      .select('id')
+      .limit(1)
+      .abortSignal(controller.signal)
+    clearTimeout(timer)
     if (error) {
       logger.warn('healthcheck db degraded', { requestId, error: error.message })
       return 'degraded'
     }
     return 'ok'
   } catch (err) {
+    clearTimeout(timer)
     logger.error('healthcheck db down', {
       requestId,
       error: err instanceof Error ? err.message : String(err),
