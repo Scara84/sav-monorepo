@@ -89,6 +89,20 @@ jobs:
             psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f "$f"
           done
 
+      - name: Grant Supabase roles permissions on public schema
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+          GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+          GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;
+          GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO service_role;
+          GRANT ALL ON ALL FUNCTIONS IN SCHEMA public TO service_role;
+          GRANT SELECT ON ALL TABLES IN SCHEMA public TO anon, authenticated;
+          ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO service_role;
+          ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO anon, authenticated;
+          SQL
+
       - name: Apply seed
         env:
           PGPASSWORD: postgres
