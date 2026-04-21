@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, timingSafeEqual } from 'node:crypto'
 import { exchangeCode, extractIdentity } from '../../_lib/auth/msal'
 import { clearCookie } from '../../_lib/auth/cookies'
 import { readCookie } from '../../_lib/middleware/with-auth'
@@ -52,7 +52,13 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
     sendError(res, 'UNAUTHENTICATED', 'Cookie PKCE invalide', requestId)
     return
   }
-  if (typeof pkce.state !== 'string' || typeof pkce.verifier !== 'string' || pkce.state !== state) {
+  if (typeof pkce.state !== 'string' || typeof pkce.verifier !== 'string') {
+    sendError(res, 'UNAUTHENTICATED', 'Cookie PKCE invalide', requestId)
+    return
+  }
+  const stateBuf = Buffer.from(state)
+  const pkceStateBuf = Buffer.from(pkce.state)
+  if (stateBuf.length !== pkceStateBuf.length || !timingSafeEqual(stateBuf, pkceStateBuf)) {
     sendError(res, 'UNAUTHENTICATED', 'State OAuth non concordant', requestId)
     return
   }
@@ -125,7 +131,10 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
     })
   )
 
-  res.setHeader('Set-Cookie', [pkceClear, sessionCookie] as unknown as string)
+  // Deux cookies à poser (clear du PKCE + session). appendHeader garantit 2 headers
+  // Set-Cookie distincts sur le runtime Node Vercel (array coerce pouvait en perdre un).
+  res.appendHeader('Set-Cookie', pkceClear)
+  res.appendHeader('Set-Cookie', sessionCookie)
   res.setHeader('Location', '/admin')
   res.status(302).end()
 }

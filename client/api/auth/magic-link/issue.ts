@@ -17,9 +17,15 @@ import { renderMagicLinkEmail } from '../../_lib/auth/magic-link-email'
 import { sendMail } from '../../_lib/clients/smtp'
 import type { ApiHandler, ApiRequest, ApiResponse } from '../../_lib/types'
 
+// Redirect path must start with `/` and NOT with `//` (protocol-relative → open-redirect).
+const safeRedirect = z
+  .string()
+  .max(500)
+  .regex(/^\/(?!\/)/, 'Chemin de redirection invalide')
+
 const bodySchema = z.object({
   email: z.string().email().max(254),
-  redirect: z.string().startsWith('/').max(500).optional(),
+  redirect: safeRedirect.optional(),
 })
 
 /**
@@ -31,7 +37,7 @@ const bodySchema = z.object({
 const coreHandler: ApiHandler = async (req, res) => {
   const requestId = ensureRequestId(req)
   const body = req.body as z.infer<typeof bodySchema>
-  const email = body.email.toLowerCase().trim()
+  const email = body.email.normalize('NFC').toLowerCase().trim()
 
   const magicSecret = process.env['MAGIC_LINK_SECRET']
   const appBase = process.env['APP_BASE_URL']
@@ -96,21 +102,33 @@ const coreHandler: ApiHandler = async (req, res) => {
   }
 }
 
-export default withRateLimit({
-  bucketPrefix: 'mlink:email',
-  keyFrom: (req: ApiRequest) => {
-    const b = req.body as { email?: unknown } | undefined
-    return typeof b?.email === 'string' ? b.email.toLowerCase().trim() : undefined
-  },
-  max: 5,
-  window: '1h',
-})(withValidation({ body: bodySchema })(coreHandler))
+// Order: validation FIRST (reject malformed bodies before creating rate-limit buckets),
+// then rate-limit on the normalized email.
+export default withValidation({ body: bodySchema })(
+  withRateLimit({
+    bucketPrefix: 'mlink:email',
+    keyFrom: (req: ApiRequest) => {
+      const b = req.body as { email?: unknown } | undefined
+      return typeof b?.email === 'string'
+        ? b.email.normalize('NFC').toLowerCase().trim()
+        : undefined
+    },
+    max: 5,
+    window: '1h',
+  })(coreHandler)
+)
 
 // ---- helpers ----
+/**
+ * URL magic link : token dans le fragment (`#token=...`), pas dans la query string.
+ * Raison : les fragments ne sont JAMAIS envoyés dans le header Referer → impossible
+ * pour un script tiers chargé sur /monespace/auth (analytics, monitoring) de voir le token.
+ * Le frontend doit lire `window.location.hash`, extraire `token=`, POST à /verify, puis `history.replaceState`.
+ */
 function buildMagicUrl(base: string, token: string, redirect?: string): string {
   const url = new URL(`${base.replace(/\/$/, '')}/monespace/auth`)
-  url.searchParams.set('token', token)
   if (redirect) url.searchParams.set('redirect', redirect)
+  url.hash = `token=${encodeURIComponent(token)}`
   return url.toString()
 }
 

@@ -32,6 +32,8 @@ export interface ApiResponse {
   status: (code: number) => ApiResponse
   json: (data: unknown) => ApiResponse
   setHeader: (name: string, value: string | number) => ApiResponse
+  /** Append multi-value headers (e.g. two Set-Cookie). Native Node ServerResponse.appendHeader (Node 18+). */
+  appendHeader: (name: string, value: string | readonly string[]) => ApiResponse
   end: (chunk?: string) => void
   getHeader: (name: string) => string | number | string[] | undefined
 }

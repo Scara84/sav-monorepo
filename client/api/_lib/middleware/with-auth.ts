@@ -81,7 +81,13 @@ export function readCookie(req: ApiRequest, name: string): string | undefined {
     const eq = part.indexOf('=')
     if (eq === -1) continue
     const k = part.slice(0, eq).trim()
-    if (k === name) return decodeURIComponent(part.slice(eq + 1))
+    if (k === name) {
+      try {
+        return decodeURIComponent(part.slice(eq + 1))
+      } catch {
+        return undefined
+      }
+    }
   }
   return undefined
 }

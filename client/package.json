@@ -19,7 +19,11 @@
     "prepare": "cd .. && husky client/.husky"
   },
   "lint-staged": {
-    "*.{js,jsx,cjs,mjs,vue,ts,tsx,json,yml,md}": [
+    "*.{js,jsx,cjs,mjs,vue}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{ts,tsx,json,yml,md}": [
       "prettier --write"
     ]
   },

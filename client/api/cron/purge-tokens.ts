@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto'
 import { supabaseAdmin } from '../_lib/_typed-shim'
 import { ensureRequestId } from '../_lib/request-id'
 import { logger } from '../_lib/logger'
@@ -40,5 +41,8 @@ function authorize(req: ApiRequest): boolean {
   const header = req.headers['authorization']
   const raw = Array.isArray(header) ? header[0] : header
   if (!raw || !raw.startsWith('Bearer ')) return false
-  return raw.slice(7) === secret
+  const received = Buffer.from(raw.slice(7))
+  const expected = Buffer.from(secret)
+  if (received.length !== expected.length) return false
+  return timingSafeEqual(received, expected)
 }

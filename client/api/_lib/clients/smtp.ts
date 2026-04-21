@@ -18,7 +18,8 @@ export interface SmtpSendResult {
 
 function buildTransporter(): Transporter {
   const host = process.env['SMTP_HOST']
-  const port = Number(process.env['SMTP_PORT'] ?? '465')
+  const portRaw = Number(process.env['SMTP_PORT'] ?? '465')
+  const port = Number.isFinite(portRaw) && portRaw > 0 ? portRaw : 465
   const secureEnv = (process.env['SMTP_SECURE'] ?? 'true').toLowerCase()
   const user = process.env['SMTP_USER']
   const pass = process.env['SMTP_PASSWORD']

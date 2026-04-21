@@ -3,15 +3,26 @@ import { withValidation } from '../../_lib/middleware/with-validation'
 import { sendError } from '../../_lib/errors'
 import { ensureRequestId } from '../../_lib/request-id'
 import { logger } from '../../_lib/logger'
-import { verifyMagicLink, consumeToken, findTokenByJti } from '../../_lib/auth/magic-link'
+import {
+  verifyMagicLink,
+  consumeToken,
+  findTokenByJti,
+  hashEmail,
+} from '../../_lib/auth/magic-link'
 import { logAuthEvent } from '../../_lib/auth/operator'
 import { issueSessionCookie, MEMBER_SESSION_TTL_SEC } from '../../_lib/auth/session'
 import { supabaseAdmin } from '../../_lib/clients/supabase-admin'
-import type { ApiHandler } from '../../_lib/types'
+import type { ApiHandler, ApiRequest } from '../../_lib/types'
+
+// Redirect path must start with `/` and NOT with `//` (protocol-relative → open-redirect).
+const safeRedirect = z
+  .string()
+  .max(500)
+  .regex(/^\/(?!\/)/, 'Chemin de redirection invalide')
 
 const bodySchema = z.object({
   token: z.string().min(10).max(4096),
-  redirect: z.string().startsWith('/').max(500).optional(),
+  redirect: safeRedirect.optional(),
 })
 
 /**
@@ -37,18 +48,22 @@ const coreHandler: ApiHandler = async (req, res) => {
     return
   }
 
+  const ua = readUserAgent(req)
   const verified = verifyMagicLink(body.token, magicSecret)
   if (!verified.ok) {
     if (verified.reason === 'expired') {
-      await logAuthEvent({ eventType: 'magic_link_failed', metadata: { reason: 'expired' } }).catch(
-        () => undefined
-      )
+      await logAuthEvent({
+        eventType: 'magic_link_failed',
+        metadata: { reason: 'expired' },
+        ...(ua ? { userAgent: ua } : {}),
+      }).catch(() => undefined)
       sendError(res, 'LINK_EXPIRED', 'Lien expiré', requestId)
       return
     }
     await logAuthEvent({
       eventType: 'magic_link_failed',
       metadata: { reason: verified.reason },
+      ...(ua ? { userAgent: ua } : {}),
     }).catch(() => undefined)
     sendError(res, 'UNAUTHENTICATED', 'Lien invalide', requestId)
     return
@@ -107,12 +122,19 @@ const coreHandler: ApiHandler = async (req, res) => {
   await logAuthEvent({
     eventType: 'magic_link_verified',
     memberId: memberRow.id,
+    emailHash: hashEmail(memberRow.email),
+    ...(ua ? { userAgent: ua } : {}),
     metadata: { jti: verified.payload.jti },
   }).catch(() => undefined)
 
   res.setHeader('Set-Cookie', sessionCookie)
   const redirect = body.redirect ?? '/monespace'
   res.status(200).json({ ok: true, redirect })
+}
+
+function readUserAgent(req: ApiRequest): string | undefined {
+  const ua = req.headers['user-agent']
+  return Array.isArray(ua) ? ua[0] : ua
 }
 
 export default withValidation({ body: bodySchema })(coreHandler)

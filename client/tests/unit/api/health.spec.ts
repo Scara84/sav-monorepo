@@ -79,13 +79,13 @@ describe('GET /api/health', () => {
     expect(body.checks.db).toBe('down')
   })
 
-  it('retourne degraded si env Graph ou SMTP absent', async () => {
+  it('retourne 200 degraded si env Graph ou SMTP absent (503 réservé à la DB down)', async () => {
     delete process.env['SMTP_HOST']
     const res = mockRes()
     await handler(mockReq({ method: 'GET' }), res)
     const body = res.jsonBody as { status: string; checks: Record<string, string> }
-    expect(body.checks.smtp).toBe('down')
-    expect(res.statusCode).toBe(503)
+    expect(body.checks.smtp).toBe('degraded')
+    expect(res.statusCode).toBe(200)
     expect(body.status).toBe('degraded')
   })
 

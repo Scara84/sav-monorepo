@@ -43,11 +43,16 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
     version: APP_VERSION,
     timestamp: new Date().toISOString(),
   }
-  // Debug détail d'erreur uniquement si HEALTH_DEBUG=1 (Preview/Staging)
-  if (process.env['HEALTH_DEBUG'] === '1' && dbResult.error) {
+  // Debug détail erreur DB : uniquement hors production ET si HEALTH_DEBUG=1.
+  if (
+    process.env['HEALTH_DEBUG'] === '1' &&
+    process.env['VERCEL_ENV'] !== 'production' &&
+    dbResult.error
+  ) {
     body.debug = { dbError: dbResult.error }
   }
-  res.status(worst === 'down' ? 503 : 200).json(body)
+  // 503 uniquement si la DB est down. Graph/SMTP env manquants → 200 avec status=degraded.
+  res.status(checks.db === 'down' ? 503 : 200).json(body)
 }
 
 async function checkDb(requestId: string): Promise<{ state: CheckState; error?: unknown }> {
@@ -81,12 +86,12 @@ async function checkDb(requestId: string): Promise<{ state: CheckState; error?: 
 
 /** Vérification statique : les env vars Graph sont renseignées. Ping réel en Story 1.7.E2E. */
 function checkGraph(): CheckState {
-  if (!process.env['MICROSOFT_TENANT_ID'] || !process.env['MICROSOFT_CLIENT_ID']) return 'down'
+  if (!process.env['MICROSOFT_TENANT_ID'] || !process.env['MICROSOFT_CLIENT_ID']) return 'degraded'
   return 'ok'
 }
 
 /** Vérification statique : les env vars SMTP sont renseignées. Ping réel en E2E. */
 function checkSmtp(): CheckState {
-  if (!process.env['SMTP_HOST'] || !process.env['SMTP_USER']) return 'down'
+  if (!process.env['SMTP_HOST'] || !process.env['SMTP_USER']) return 'degraded'
   return 'ok'
 }

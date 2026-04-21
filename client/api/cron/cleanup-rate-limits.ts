@@ -1,3 +1,4 @@
+import { timingSafeEqual } from 'node:crypto'
 import { supabaseAdmin } from '../_lib/_typed-shim'
 import { ensureRequestId } from '../_lib/request-id'
 import { logger } from '../_lib/logger'
@@ -9,10 +10,7 @@ import type { ApiRequest, ApiResponse } from '../_lib/types'
  */
 export default async function handler(req: ApiRequest, res: ApiResponse): Promise<void> {
   const requestId = ensureRequestId(req)
-  const secret = process.env['CRON_SECRET']
-  const header = req.headers['authorization']
-  const raw = Array.isArray(header) ? header[0] : header
-  if (!secret || !raw || raw !== `Bearer ${secret}`) {
+  if (!authorize(req)) {
     res
       .status(401)
       .json({ error: { code: 'UNAUTHENTICATED', message: 'Cron non autorisé', requestId } })
@@ -35,4 +33,16 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
     })
     res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Cleanup échoué', requestId } })
   }
+}
+
+function authorize(req: ApiRequest): boolean {
+  const secret = process.env['CRON_SECRET']
+  if (!secret) return false
+  const header = req.headers['authorization']
+  const raw = Array.isArray(header) ? header[0] : header
+  if (!raw || !raw.startsWith('Bearer ')) return false
+  const received = Buffer.from(raw.slice(7))
+  const expected = Buffer.from(secret)
+  if (received.length !== expected.length) return false
+  return timingSafeEqual(received, expected)
 }
