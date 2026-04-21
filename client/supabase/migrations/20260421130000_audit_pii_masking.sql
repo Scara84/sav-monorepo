@@ -93,12 +93,14 @@ BEGIN
   FOREACH v_col IN ARRAY v_pii_cols LOOP
     v_val := v_result ->> v_col;
     IF v_val IS NOT NULL THEN
-      v_result := v_result
+      -- Parenthèses nécessaires : `||` et `-` ont la même précédence jsonb,
+      -- évalués gauche-à-droite — sans parenthèses, `b - c` retirerait v_col
+      -- de l'objet qu'on vient de construire (no-op), pas de v_result.
+      v_result := (v_result - v_col)
         || jsonb_build_object(
              v_col || '__h',
              encode(digest(v_val, 'sha256'), 'hex')
-           )
-        - v_col;
+           );
     END IF;
   END LOOP;
 
