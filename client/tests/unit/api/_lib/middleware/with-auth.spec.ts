@@ -25,7 +25,7 @@ describe('withAuth', () => {
   it('retourne 500 si SESSION_COOKIE_SECRET absent', async () => {
     delete process.env['SESSION_COOKIE_SECRET']
     const handler = vi.fn()
-    const wrapped = withAuth()(handler)
+    const wrapped = withAuth({ types: ['operator', 'member'] })(handler)
     const req = mockReq()
     const res = mockRes()
     await wrapped(req, res)
@@ -35,7 +35,7 @@ describe('withAuth', () => {
 
   it('retourne 401 UNAUTHENTICATED si pas de cookie', async () => {
     const handler = vi.fn()
-    const wrapped = withAuth()(handler)
+    const wrapped = withAuth({ types: ['operator', 'member'] })(handler)
     const res = mockRes()
     await wrapped(mockReq(), res)
     expect(res.statusCode).toBe(401)
@@ -50,7 +50,7 @@ describe('withAuth', () => {
     const [h, , s] = tokenGood.split('.')
     const badToken = `${h}.eyJmYWtlIjoidGFtcGVyZWQifQ.${s}`
     const handler = vi.fn()
-    const wrapped = withAuth()(handler)
+    const wrapped = withAuth({ types: ['operator', 'member'] })(handler)
     const res = mockRes()
     await wrapped(mockReq({ cookies: { sav_session: badToken } }), res)
     expect(res.statusCode).toBe(401)
@@ -61,7 +61,7 @@ describe('withAuth', () => {
     const payload: SessionUser = { sub: 1, type: 'operator', role: 'admin', exp: 1000 /* 1970 */ }
     const token = signJwt(payload, SECRET)
     const handler = vi.fn()
-    const wrapped = withAuth()(handler)
+    const wrapped = withAuth({ types: ['operator', 'member'] })(handler)
     const res = mockRes()
     await wrapped(mockReq({ cookies: { sav_session: token } }), res)
     expect(res.statusCode).toBe(401)
@@ -90,7 +90,7 @@ describe('withAuth', () => {
     }
     const token = signJwt(payload, SECRET)
     const handler = vi.fn()
-    const wrapped = withAuth({ roles: ['admin'] })(handler)
+    const wrapped = withAuth({ types: ['operator'], roles: ['admin'] })(handler)
     const res = mockRes()
     await wrapped(mockReq({ cookies: { sav_session: token } }), res)
     expect(res.statusCode).toBe(403)
@@ -110,7 +110,7 @@ describe('withAuth', () => {
       expect(req.user).toEqual(payload)
       return { ok: true }
     })
-    const wrapped = withAuth({ roles: ['admin'] })(handler)
+    const wrapped = withAuth({ types: ['operator'], roles: ['admin'] })(handler)
     const res = mockRes()
     await wrapped(mockReq({ cookies: { sav_session: token } }), res)
     expect(handler).toHaveBeenCalledOnce()
@@ -120,7 +120,7 @@ describe('withAuth', () => {
     const payload: SessionUser = { sub: 1, type: 'operator', role: 'admin', exp: farFuture() }
     const token = signJwt(payload, SECRET)
     const handler = vi.fn()
-    const wrapped = withAuth()(handler)
+    const wrapped = withAuth({ types: ['operator', 'member'] })(handler)
     const res = mockRes()
     await wrapped(
       mockReq({ cookies: {}, headers: { cookie: `other=foo; sav_session=${token}; bar=baz` } }),

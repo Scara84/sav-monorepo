@@ -5,10 +5,14 @@ import { logger } from '../logger'
 import type { ApiHandler, ApiRequest, ApiResponse, SessionUser } from '../types'
 
 export interface WithAuthOptions {
+  /**
+   * Types de session acceptés — REQUIS (explicite, pas de default).
+   * Exemple : `['operator']` pour une route admin, `['member']` pour self-service adhérent.
+   * Un endpoint accessible aux deux doit lister les deux explicitement.
+   */
+  types: Array<NonNullable<SessionUser['type']>>
   /** Rôles d'opérateurs autorisés. Si absent : tout rôle auth'd est OK (utile pour endpoints self-service). */
   roles?: Array<SessionUser['role']>
-  /** Types de session acceptés. Par défaut : ['operator','member']. */
-  types?: Array<SessionUser['type']>
   /** Nom du cookie de session. Par défaut : `sav_session`. */
   cookieName?: string
 }
@@ -21,8 +25,11 @@ const ALGO = 'HS256'
  * - 401 UNAUTHENTICATED si cookie absent/invalide/expiré.
  * - 403 FORBIDDEN si le `role` ou `type` ne matche pas `roles`/`types` de WithAuthOptions.
  * Attache `req.user` au handler si OK.
+ *
+ * Le champ `types` est REQUIS — pas de default `[operator, member]` (footgun sur les routes admin
+ * qui oublieraient de restreindre aux opérateurs et accepteraient des sessions member).
  */
-export function withAuth(options: WithAuthOptions = {}) {
+export function withAuth(options: WithAuthOptions) {
   return (handler: ApiHandler): ApiHandler =>
     async (req: ApiRequest, res: ApiResponse) => {
       const requestId = ensureRequestId(req)
@@ -52,8 +59,7 @@ export function withAuth(options: WithAuthOptions = {}) {
         return
       }
 
-      const allowedTypes = options.types ?? ['operator', 'member']
-      if (!allowedTypes.includes(user.type)) {
+      if (!options.types.includes(user.type)) {
         sendError(res, 'FORBIDDEN', 'Type de compte non autorisé', requestId)
         return
       }

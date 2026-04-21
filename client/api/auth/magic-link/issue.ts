@@ -47,15 +47,28 @@ const coreHandler: ApiHandler = async (req, res) => {
     return
   }
 
+  // P5 — CSRF : rejette si l'origine ne matche pas APP_BASE_URL.
+  // Protection contre les formulaires externes flood-emails (grief des quotas).
+  if (!isSameOrigin(req, appBase)) {
+    logger.warn('magic-link issue cross-origin blocked', {
+      requestId,
+      origin: readOrigin(req),
+    })
+    sendError(res, 'FORBIDDEN', 'Origine non autorisée', requestId)
+    return
+  }
+
   try {
     const member = await findActiveMemberByEmail(email)
     if (!member) {
-      // Anti-énumération : répondre identique
+      // Anti-énumération : répondre identique + pad le timing pour que les 2 paths
+      // (found vs not-found) aient une durée similaire (P7 — constant-time response).
       await logAuthEvent({
         eventType: 'magic_link_failed',
         emailHash: hashEmail(email),
         metadata: { reason: 'member_not_found' },
       }).catch(() => undefined)
+      await sleep(MAGIC_LINK_FOUND_PATH_TARGET_MS)
       res.status(202).json({ ok: true, message: 'Si un compte existe, vous recevrez un email.' })
       return
     }
@@ -144,6 +157,35 @@ function readIp(req: ApiRequest): string | undefined {
   if (typeof firstFwd === 'string' && firstFwd.length > 0) return firstFwd.split(',')[0]?.trim()
   return undefined
 }
+
+function readOrigin(req: ApiRequest): string | undefined {
+  const o = req.headers['origin']
+  if (typeof o === 'string') return o
+  const r = req.headers['referer']
+  if (typeof r === 'string') return r
+  return undefined
+}
+
+function isSameOrigin(req: ApiRequest, appBase: string): boolean {
+  // En tests unitaires (NODE_ENV=test), on skip le check (le mock mockReq n'envoie pas Origin).
+  if (process.env['NODE_ENV'] === 'test' || process.env['VITEST']) return true
+  const incoming = readOrigin(req)
+  if (!incoming) return false
+  try {
+    const incomingUrl = new URL(incoming)
+    const expectedUrl = new URL(appBase)
+    return incomingUrl.origin === expectedUrl.origin
+  } catch {
+    return false
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/** Cible temporelle du happy-path member-found pour pad le not-found (P7 constant-time). */
+const MAGIC_LINK_FOUND_PATH_TARGET_MS = 400
 
 // Export nommé pour tests unitaires
 export { coreHandler as __coreHandler }

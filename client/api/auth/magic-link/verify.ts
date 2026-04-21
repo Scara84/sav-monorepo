@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { withValidation } from '../../_lib/middleware/with-validation'
+import { withRateLimit } from '../../_lib/middleware/with-rate-limit'
 import { sendError } from '../../_lib/errors'
 import { ensureRequestId } from '../../_lib/request-id'
 import { logger } from '../../_lib/logger'
@@ -137,6 +138,24 @@ function readUserAgent(req: ApiRequest): string | undefined {
   return Array.isArray(ua) ? ua[0] : ua
 }
 
-export default withValidation({ body: bodySchema })(coreHandler)
+function readIp(req: ApiRequest): string | undefined {
+  if (req.ip) return req.ip
+  const fwd = req.headers['x-forwarded-for']
+  const firstFwd = Array.isArray(fwd) ? fwd[0] : fwd
+  if (typeof firstFwd === 'string' && firstFwd.length > 0) return firstFwd.split(',')[0]?.trim()
+  return undefined
+}
+
+// P6 — rate-limit anti-brute-force sur /verify. Clé IP, 20 tentatives/heure.
+// Chaîne : validation → rate-limit → core. La validation passe en premier pour
+// rejeter les bodies malformés sans toucher aux buckets.
+export default withValidation({ body: bodySchema })(
+  withRateLimit({
+    bucketPrefix: 'mlink:verify:ip',
+    keyFrom: (req) => readIp(req) ?? 'unknown',
+    max: 20,
+    window: '1h',
+  })(coreHandler)
+)
 
 export { coreHandler as __coreHandler }

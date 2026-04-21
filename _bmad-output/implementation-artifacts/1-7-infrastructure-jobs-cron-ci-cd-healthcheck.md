@@ -12,10 +12,11 @@ Epic: 1 — Accès authentifié & fondations plateforme
 ## Acceptance Criteria
 
 1. **CI GitHub Actions** (`.github/workflows/ci.yml`) : ESLint + typecheck + Vitest + Vite build + Supabase migrations sur DB vierge + RLS tests.
-2. **Endpoint `GET /api/health`** : retourne 200 JSON `{ status: 'ok' | 'degraded', checks: { db, graph, smtp }, version, timestamp }` sans auth. 503 si DB down.
-3. **Vercel Cron** déclaré dans `vercel.json` avec au moins 2 jobs :
-   - `/api/cron/purge-tokens` (horaire) — supprime `magic_link_tokens` expirés ou consommés > 24 h.
-   - `/api/cron/cleanup-rate-limits` (horaire décalée) — supprime `rate_limit_buckets` dont `window_from` > 2 h.
+2. **Endpoint `GET /api/health`** : retourne 200 JSON `{ status: 'ok' | 'degraded', checks: { db, graph, smtp }, version, timestamp }` sans auth. **503 uniquement si DB down**. Graph/SMTP env manquants → 200 avec `status=degraded` (l'app fonctionne encore en lecture, seules les features dépendantes sont indisponibles).
+3. **Vercel Cron** déclaré dans `vercel.json` avec au moins 2 jobs (**plan Hobby = 2 crons max, cadence minimale = daily**) :
+   - `/api/cron/purge-tokens` (daily, ex. `0 3 * * *`) — supprime `magic_link_tokens` expirés ou consommés > 24 h.
+   - `/api/cron/cleanup-rate-limits` (daily, horaire décalée ex. `30 3 * * *`) — supprime `rate_limit_buckets` dont `window_from` > 2 h.
+   - Amendement review 2026-04-21 : passage horaire → daily suite à la contrainte plan Hobby, accepté côté produit (D1 review Epic 1). Upgrade vers Pro si cadence horaire devient requise.
 4. **Authentification cron** via header `Authorization: Bearer <CRON_SECRET>` (positionné automatiquement par Vercel Cron, vérifié côté endpoint).
 5. **Logs JSON structurés** sur chaque exécution cron : `cron.<job>.success` ou `cron.<job>.error`.
 6. **Tests** : healthcheck unit-testé (5 cas), suite complète 205/205, typecheck 0.
@@ -38,7 +39,7 @@ Epic: 1 — Accès authentifié & fondations plateforme
 
 - [x] **4. `vercel.json`** (AC: #3)
   - [x] 4.1 `functions` : maxDuration par route (5-30s)
-  - [x] 4.2 `crons` : `0 * * * *` (purge-tokens) + `15 * * * *` (cleanup-rate-limits) — schedule décalé pour éviter contention
+  - [x] 4.2 `crons` : `0 3 * * *` (purge-tokens) + `30 3 * * *` (cleanup-rate-limits) — daily décalé (plan Hobby, amendement review D1)
 
 - [x] **5. GitHub Actions CI** (AC: #1)
   - [x] 5.1 Job `quality` : ESLint (if-present) + typecheck + vitest + build, matrice Node 20, cache npm

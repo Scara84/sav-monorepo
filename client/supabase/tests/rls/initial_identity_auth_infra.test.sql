@@ -114,4 +114,46 @@ BEGIN
   RAISE NOTICE 'OK: trigger set_updated_at() actif';
 END $$;
 
+-- ------------------------------------------------------------
+-- Test 5 : masking PII dans audit_trail.diff (migration 20260421130000, D2 review)
+-- Insert d'un member → audit_trail.diff doit contenir email__h (hash) mais PAS email brut.
+-- ------------------------------------------------------------
+DO $$
+DECLARE
+  v_diff jsonb;
+  v_after jsonb;
+BEGIN
+  INSERT INTO members (email, last_name)
+    VALUES ('pii-test@example.com', 'PiiCheck');
+
+  SELECT diff INTO v_diff
+    FROM audit_trail
+    WHERE entity_type = 'members'
+      AND action = 'created'
+      AND (diff -> 'after' ->> 'last_name__h') IS NOT NULL
+    ORDER BY id DESC
+    LIMIT 1;
+
+  IF v_diff IS NULL THEN
+    RAISE EXCEPTION 'FAIL: pas de ligne audit_trail pour l''insert members';
+  END IF;
+
+  v_after := v_diff -> 'after';
+
+  IF (v_after ? 'email') THEN
+    RAISE EXCEPTION 'FAIL: email brut présent dans audit_trail.diff.after (% )', v_after;
+  END IF;
+  IF (v_after ? 'last_name') THEN
+    RAISE EXCEPTION 'FAIL: last_name brut présent dans audit_trail.diff.after';
+  END IF;
+  IF (v_after ->> 'email__h') IS NULL THEN
+    RAISE EXCEPTION 'FAIL: email__h (hash) absent dans audit_trail.diff.after';
+  END IF;
+  IF length(v_after ->> 'email__h') <> 64 THEN
+    RAISE EXCEPTION 'FAIL: email__h n''est pas un SHA-256 hex (64 chars)';
+  END IF;
+
+  RAISE NOTICE 'OK: PII masking actif (email → email__h) dans audit_trail';
+END $$;
+
 ROLLBACK;
