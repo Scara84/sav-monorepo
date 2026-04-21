@@ -9,7 +9,7 @@ export type RateLimitWindow = '1m' | '15m' | '1h' | '24h'
 
 /** Contrat minimal attendu du client Supabase pour les rate limits. Permet l'injection en test. */
 export interface RateLimitClient {
-  from: (table: string) => unknown
+  rpc: (fn: string, args: Record<string, unknown>) => unknown
 }
 
 export interface WithRateLimitOptions {
@@ -95,26 +95,16 @@ interface CheckResult {
   retryAfter: number
 }
 
-interface BucketRow {
-  key: string
-  count: number
-  window_from: string
-}
-
-interface BucketUpsert {
-  key: string
-  count: number
-  window_from: string
-  updated_at: string
-}
-
-interface BucketUpdate {
-  count: number
-  updated_at: string
+/** Shape retour du RPC `increment_rate_limit`. */
+interface RpcRow {
+  allowed: boolean
+  retry_after: number
 }
 
 /**
- * Atomique : upsert du bucket avec reset de la fenêtre si expirée.
+ * Appelle la fonction Postgres `increment_rate_limit(key, max, window_sec)`.
+ * Atomique : ON CONFLICT DO UPDATE acquiert un row lock, pas de race condition.
+ * Le count est incrémenté AVANT le check `<= max` → pas de lost-increment.
  * Exporté pour tests unitaires.
  */
 export async function checkAndIncrement(
@@ -124,59 +114,18 @@ export async function checkAndIncrement(
   windowSec: number
 ): Promise<CheckResult> {
   const supa = client as {
-    from: (t: string) => {
-      select: (cols: string) => {
-        eq: (
-          col: string,
-          val: string
-        ) => {
-          maybeSingle: () => Promise<{ data: BucketRow | null; error: unknown }>
-        }
-      }
-      upsert: (row: BucketUpsert) => Promise<{ error: unknown }>
-      update: (row: BucketUpdate) => {
-        eq: (col: string, val: string) => Promise<{ error: unknown }>
-      }
-    }
+    rpc: (
+      fn: string,
+      args: Record<string, unknown>
+    ) => Promise<{ data: RpcRow[] | RpcRow | null; error: unknown }>
   }
-  const now = new Date()
-
-  // Lecture de l'état courant
-  const { data: existing, error: readErr } = await supa
-    .from('rate_limit_buckets')
-    .select('key, count, window_from')
-    .eq('key', bucketKey)
-    .maybeSingle()
-  if (readErr) throw readErr
-
-  const windowStartMs = existing?.window_from ? new Date(existing.window_from).getTime() : 0
-  const windowElapsedMs = now.getTime() - windowStartMs
-  const inWindow = existing !== null && windowElapsedMs < windowSec * 1000
-
-  if (!inWindow) {
-    // Nouvelle fenêtre : upsert count=1, window_from=now
-    const { error } = await supa.from('rate_limit_buckets').upsert({
-      key: bucketKey,
-      count: 1,
-      window_from: now.toISOString(),
-      updated_at: now.toISOString(),
-    })
-    if (error) throw error
-    return { allowed: true, retryAfter: windowSec }
-  }
-
-  // Même fenêtre : incrément si sous quota
-  if (existing.count >= max) {
-    const retryAfter = Math.max(1, Math.ceil((windowSec * 1000 - windowElapsedMs) / 1000))
-    return { allowed: false, retryAfter }
-  }
-
-  const { error } = await supa
-    .from('rate_limit_buckets')
-    .update({ count: existing.count + 1, updated_at: now.toISOString() })
-    .eq('key', bucketKey)
+  const { data, error } = await supa.rpc('increment_rate_limit', {
+    p_key: bucketKey,
+    p_max: max,
+    p_window_sec: windowSec,
+  })
   if (error) throw error
-
-  const retryAfter = Math.max(1, Math.ceil((windowSec * 1000 - windowElapsedMs) / 1000))
-  return { allowed: true, retryAfter }
+  const row: RpcRow | null = Array.isArray(data) ? (data[0] ?? null) : data
+  if (!row) throw new Error('increment_rate_limit returned empty result')
+  return { allowed: row.allowed, retryAfter: row.retry_after }
 }
