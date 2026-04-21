@@ -1,6 +1,6 @@
 # Story 1.6 : Audit trail et journalisation transverse
 
-Status: review
+Status: done
 Epic: 1 — Accès authentifié & fondations plateforme
 
 ## Story

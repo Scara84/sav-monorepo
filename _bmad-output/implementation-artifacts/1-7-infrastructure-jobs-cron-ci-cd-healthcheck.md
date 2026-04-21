@@ -1,6 +1,6 @@
 # Story 1.7 : Infrastructure jobs cron + CI/CD + healthcheck
 
-Status: review
+Status: done
 Epic: 1 — Accès authentifié & fondations plateforme
 
 ## Story

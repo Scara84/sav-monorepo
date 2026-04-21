@@ -1,6 +1,6 @@
 # Story 1.3 : Middleware serverless unifié
 
-Status: review
+Status: done
 Epic: 1 — Accès authentifié & fondations plateforme
 
 ## Story

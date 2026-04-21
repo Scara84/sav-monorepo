@@ -1,6 +1,6 @@
 # Story 1.4 : Auth MSAL SSO opérateur/admin
 
-Status: review
+Status: done
 Epic: 1 — Accès authentifié & fondations plateforme
 
 ## Story

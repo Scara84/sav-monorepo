@@ -38,8 +38,10 @@
 # - Une story passe par 'review' avant 'done' (via bmad-code-review)
 
 generated: 2026-04-18
-last_updated: 2026-04-19
-# Epic 1 : 7/7 stories en review, prêt pour retrospective
+last_updated: 2026-04-21
+# Epic 1 : 7/7 stories done après code review adversariale (rapport :
+# _bmad-output/implementation-artifacts/epic-1-review-findings.md).
+# Patches P1-P16 + décisions D1-D4 appliqués. 208/208 tests, typecheck 0.
 project: sav-monorepo
 project_key: NOKEY
 tracking_system: file-system
@@ -49,14 +51,14 @@ development_status:
   # ──────────────────────────────────────────────────────────────
   # Epic 1: Accès authentifié & fondations plateforme
   # ──────────────────────────────────────────────────────────────
-  epic-1: in-progress
-  1-1-setup-typescript-strict-migration-dependances: review
-  1-2-migration-bdd-initiale-identites-audit-auth-infra: review
-  1-3-middleware-serverless-unifie: review
-  1-4-auth-msal-sso-operateur-admin: review
-  1-5-auth-magic-link-adherent-et-responsable: review
-  1-6-audit-trail-et-journalisation-transverse: review
-  1-7-infrastructure-jobs-cron-ci-cd-healthcheck: review
+  epic-1: done
+  1-1-setup-typescript-strict-migration-dependances: done
+  1-2-migration-bdd-initiale-identites-audit-auth-infra: done
+  1-3-middleware-serverless-unifie: done
+  1-4-auth-msal-sso-operateur-admin: done
+  1-5-auth-magic-link-adherent-et-responsable: done
+  1-6-audit-trail-et-journalisation-transverse: done
+  1-7-infrastructure-jobs-cron-ci-cd-healthcheck: done
   epic-1-retrospective: optional
 
   # ──────────────────────────────────────────────────────────────

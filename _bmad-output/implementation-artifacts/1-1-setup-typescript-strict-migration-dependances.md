@@ -1,6 +1,6 @@
 # Story 1.1 : Setup TypeScript strict + migration dépendances
 
-Status: review
+Status: done
 Epic: 1 — Accès authentifié & fondations plateforme
 
 ## Story

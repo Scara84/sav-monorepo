@@ -1,6 +1,6 @@
 # Story 1.5 : Auth magic link adhérent et responsable
 
-Status: review
+Status: done
 Epic: 1 — Accès authentifié & fondations plateforme
 
 ## Story

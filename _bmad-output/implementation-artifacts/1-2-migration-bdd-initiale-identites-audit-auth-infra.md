@@ -1,6 +1,6 @@
 # Story 1.2 : Migration BDD initiale (identités + audit + auth + infra)
 
-Status: review
+Status: done
 Epic: 1 — Accès authentifié & fondations plateforme
 
 ## Story
