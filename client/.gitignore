@@ -27,3 +27,4 @@ pnpm-debug.log*
 
 # Local dev tooling (non committé)
 dev-api-server.cjs
+.vercel
