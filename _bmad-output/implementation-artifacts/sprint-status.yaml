@@ -42,6 +42,7 @@ last_updated: 2026-04-21
 # Epic 1 : 7/7 stories done après code review adversariale (rapport :
 # _bmad-output/implementation-artifacts/epic-1-review-findings.md).
 # Patches P1-P16 + décisions D1-D4 appliqués. 208/208 tests, typecheck 0.
+# Epic 2 : 4/4 stories contextées → ready-for-dev (2026-04-21). Epic en in-progress.
 project: sav-monorepo
 project_key: NOKEY
 tracking_system: file-system
@@ -64,11 +65,11 @@ development_status:
   # ──────────────────────────────────────────────────────────────
   # Epic 2: Capture client fiable avec persistance & brouillon
   # ──────────────────────────────────────────────────────────────
-  epic-2: backlog
-  2-1-migration-tables-sav-catalogue-import-initial: backlog
-  2-2-endpoint-webhook-capture-avec-signature-hmac: backlog
-  2-3-brouillon-formulaire-cote-serveur-auto-save: backlog
-  2-4-integration-onedrive-dans-le-flow-capture: backlog
+  epic-2: in-progress
+  2-1-migration-tables-sav-catalogue-import-initial: ready-for-dev
+  2-2-endpoint-webhook-capture-avec-signature-hmac: ready-for-dev
+  2-3-brouillon-formulaire-cote-serveur-auto-save: ready-for-dev
+  2-4-integration-onedrive-dans-le-flow-capture: ready-for-dev
   epic-2-retrospective: optional
 
   # ──────────────────────────────────────────────────────────────
