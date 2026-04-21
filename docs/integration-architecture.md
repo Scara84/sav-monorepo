@@ -138,6 +138,21 @@ Payload JSON incluant :
 | `MICROSOFT_DRIVE_ID` | Drive OneDrive/SharePoint cible |
 | `MICROSOFT_DRIVE_PATH` | Racine des SAV (ex: `SAV_Images`) |
 
+## Base de données — schéma capture SAV (Epic 2 Story 2.1)
+
+Ajouté par la migration [`20260421140000_schema_sav_capture.sql`](../client/supabase/migrations/20260421140000_schema_sav_capture.sql). 5 tables applicatives + 1 table technique trigger.
+
+| Table | Rôle | Triggers | RLS |
+|-------|------|----------|-----|
+| `products` | Catalogue produits (V1 mono-fournisseur Rufino, 864 lignes importées de `_bmad-input/excel-gestion/data.xlsx` onglet `BDD`). Colonnes : `code`, `name_fr/en/es`, `vat_rate_bp`, `default_unit`, `piece_weight_grams`, `tier_prices jsonb`, `supplier_code`, `deleted_at`. Index GIN full-text français sur `code + name_fr`. | `set_updated_at` | SELECT authenticated où `deleted_at IS NULL` ; ALL service_role. Pas d'audit (snapshot initial volumineux). |
+| `sav` | Entête demande SAV. Reference format `SAV-YYYY-NNNNN` générée par trigger via table séquence dédiée `sav_reference_sequence`. Verrou optimiste `version` (Epic 3). `onedrive_folder_id/web_url` rempli en Story 2.4. Index GIN sur `reference + metadata.invoice_ref`. | `set_updated_at`, `generate_sav_reference` (BEFORE INSERT), `audit_changes` | SELECT authenticated scopé : (a) adhérent propriétaire, (b) responsable du même groupe via helper `app_is_group_manager_of(member_id)` SECURITY DEFINER, (c) operator identifié via GUC `app.actor_operator_id`. ALL service_role. |
+| `sav_lines` | Lignes de capture. `product_id` nullable (code libre). Snapshots `product_code_snapshot/name_snapshot` à l'émission. `credit_coefficient_bp` Epic 4. `validation_status` Epic 3. | `set_updated_at`, `audit_changes` | SELECT inlined via sav. ALL service_role. |
+| `sav_files` | Pièces jointes OneDrive (append-only). `size_bytes` CHECK ≤ 25 MiB. `source` ∈ capture/operator-add/member-add. | aucun | SELECT inlined via sav. ALL service_role. |
+| `sav_drafts` | Brouillon formulaire (1 par `member_id` via UNIQUE). `data jsonb`, purge 30 j (cron Epic 7). | `set_updated_at` | ALL authenticated strictement sur son propre `member_id`. ALL service_role. Pas d'audit (éphémère). |
+| `sav_reference_sequence` | Table technique : séquence par année pour `generate_sav_reference` via UPSERT `ON CONFLICT (year) DO UPDATE` (row lock atomique ⇒ safe sous concurrence). Non-transactionnelle (tolère des trous si rollback INSERT SAV). | — | ALL service_role. |
+
+Script de cutover : [`scripts/cutover/import-catalog.ts`](../client/scripts/cutover/import-catalog.ts) — `npx tsx` avec env `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`, lit l'onglet `BDD` d'un `.xlsx`, UPSERT idempotent sur `products.code` en batches de 100.
+
 ## Couplages à surveiller
 
 - **`VITE_API_KEY` ↔ `API_KEY`** (Vercel env) : doivent rester synchronisés lors des rotations.

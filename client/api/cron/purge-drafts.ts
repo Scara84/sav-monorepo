@@ -5,29 +5,28 @@ import type { ApiRequest, ApiResponse } from '../_lib/types'
 import { authorizeCron } from './_authorize'
 
 /**
- * Logique métier : purge les magic_link_tokens expirés ou consommés depuis > 24 h.
- * Exportée pour composition par le dispatcher unique (Story 2.3).
+ * Logique métier : purge les sav_drafts créés depuis > 30 jours (Story 2.3 AC #10).
+ *
+ * Compteur basé sur `created_at` (1er save) et non `updated_at` — un brouillon
+ * ouvert il y a 31 j avec auto-save quotidien est purgé. Soit l'adhérent
+ * soumet, soit il abandonne ; pas de zombie permanent. Cf. Dev Notes Story 2.3.
  */
-export async function runPurgeTokens({
+export async function runPurgeDrafts({
   requestId,
 }: {
   requestId: string
 }): Promise<{ deleted: number }> {
-  const cutoff = new Date(Date.now() - 24 * 3600 * 1000).toISOString()
+  const cutoff = new Date(Date.now() - 30 * 24 * 3600 * 1000).toISOString()
   const { count, error } = await supabaseAdmin()
-    .from('magic_link_tokens')
+    .from('sav_drafts')
     .delete({ count: 'exact' })
-    .or(`expires_at.lt.${new Date().toISOString()},used_at.lt.${cutoff}`)
+    .lt('created_at', cutoff)
   if (error) throw error
   const deleted = count ?? 0
-  logger.info('cron.purge_tokens.success', { requestId, deleted })
+  logger.info('cron.purge_drafts.success', { requestId, deleted })
   return { deleted }
 }
 
-/**
- * Handler HTTP conservé pour test manuel via curl + Bearer CRON_SECRET.
- * Le cron Vercel réel passe désormais par /api/cron/dispatcher (Story 2.3).
- */
 export default async function handler(req: ApiRequest, res: ApiResponse): Promise<void> {
   const requestId = ensureRequestId(req)
   if (!authorizeCron(req)) {
@@ -37,10 +36,10 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
     return
   }
   try {
-    const { deleted } = await runPurgeTokens({ requestId })
+    const { deleted } = await runPurgeDrafts({ requestId })
     res.status(200).json({ ok: true, deleted })
   } catch (err) {
-    logger.error('cron.purge_tokens.error', {
+    logger.error('cron.purge_drafts.error', {
       requestId,
       error: err instanceof Error ? err.message : String(err),
     })

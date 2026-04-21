@@ -12,10 +12,13 @@
     "api/auth/magic-link/issue.ts": { "maxDuration": 10 },
     "api/auth/magic-link/verify.ts": { "maxDuration": 5 },
     "api/cron/purge-tokens.ts": { "maxDuration": 30 },
-    "api/cron/cleanup-rate-limits.ts": { "maxDuration": 30 }
+    "api/cron/cleanup-rate-limits.ts": { "maxDuration": 30 },
+    "api/cron/purge-drafts.ts": { "maxDuration": 30 },
+    "api/cron/dispatcher.ts": { "maxDuration": 60 },
+    "api/webhooks/capture.ts": { "maxDuration": 30 },
+    "api/self-service/draft.ts": { "maxDuration": 10 },
+    "api/self-service/upload-session.ts": { "maxDuration": 10 },
+    "api/self-service/upload-complete.ts": { "maxDuration": 10 }
   },
-  "crons": [
-    { "path": "/api/cron/purge-tokens", "schedule": "0 3 * * *" },
-    { "path": "/api/cron/cleanup-rate-limits", "schedule": "30 3 * * *" }
-  ]
+  "crons": [{ "path": "/api/cron/dispatcher", "schedule": "0 * * * *" }]
 }

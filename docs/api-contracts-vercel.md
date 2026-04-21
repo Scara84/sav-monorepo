@@ -152,6 +152,89 @@ text/csv
 
 ---
 
+## `GET/PUT /api/self-service/draft` (Epic 2 Story 2.3)
+
+Brouillon formulaire adhérent, un par `member_id`. Authentification magic-link requise via cookie `sav_session`.
+
+### `GET /api/self-service/draft`
+
+- **Auth** : `withAuth({ types: ['member'] })`, 401 sans session, 403 si session `operator`.
+- **Response 200** :
+  - `{ "data": null }` si aucun brouillon (vierge).
+  - `{ "data": { "data": {<objet libre>}, "lastSavedAt": "<ISO 8601>" } }` si existant.
+
+### `PUT /api/self-service/draft`
+
+- **Auth** : identique GET.
+- **Rate limit** : 120 PUT / minute / membre (`bucket=draft:save`, key = `member:<id>`).
+- **Request** : `{ "data": <object> }`. Objet libre, serialisé ≤ 256 KiB (AC #7).
+- **Response 200** : `{ "data": { "lastSavedAt": "<ISO 8601>" } }`.
+- **Response 400** : `VALIDATION_FAILED` si body invalide ou `data` > 256 KiB.
+
+### Autosave côté front
+
+Composable [`useDraftAutoSave`](../client/src/features/self-service/composables/useDraftAutoSave.ts) + composant [`DraftStatusBadge`](../client/src/features/self-service/components/DraftStatusBadge.vue). Debounce 800 ms, retry expo 2× sur 5xx, hydratation au mount.
+
+### Purge
+
+Rétention 30 jours depuis `created_at`. Purge via cron dispatcher (voir ci-dessous).
+
+---
+
+## Cron dispatcher unique (Epic 2 Story 2.3)
+
+Vercel Hobby = 2 crons max. Pour rester sous la limite avec 3 jobs (cleanup-rate-limits, purge-tokens, purge-drafts), on centralise derrière un endpoint unique [`/api/cron/dispatcher`](../client/api/cron/dispatcher.ts) planifié `0 * * * *` UTC.
+
+| Heure UTC | Jobs exécutés |
+|-----------|----------------|
+| Chaque heure | `cleanupRateLimits` (`rate_limit_buckets` dont fenêtre > 2 h) |
+| 03:00 | + `purgeTokens` (`magic_link_tokens` expirés/consommés > 24 h) |
+| 03:00 | + `purgeDrafts` (`sav_drafts` créés > 30 jours) |
+
+Résilience : chaque `run*` est try/catch isolé — un job qui plante laisse les suivants s'exécuter. Dispatcher renvoie toujours 200 avec le détail par job (pas de retry Vercel agressif).
+
+Les handlers individuels [`purge-tokens.ts`](../client/api/cron/purge-tokens.ts), [`cleanup-rate-limits.ts`](../client/api/cron/cleanup-rate-limits.ts), [`purge-drafts.ts`](../client/api/cron/purge-drafts.ts) sont conservés pour test manuel via `curl -H "Authorization: Bearer $CRON_SECRET"`.
+
+---
+
+## `POST /api/self-service/upload-session` + `POST /api/self-service/upload-complete` (Epic 2 Story 2.4)
+
+Flow upload OneDrive 3 étapes côté adhérent connecté. Équivalent du `api/upload-session.js` legacy (API-key Make.com) mais scopé à une session magic-link membre.
+
+### Flow front complet
+
+1. **`POST /api/self-service/upload-session`** — Auth `withAuth({ types: ['member'] })` + rate-limit 30/min/membre.
+   - Body : `{ filename, mimeType, size, savReference? }`.
+   - Validations : MIME whitelist (cf. [mime.js](../client/api/_lib/mime.js)), taille ≤ 25 Mo (`shared/file-limits.json`), filename sanitization.
+   - Si `savReference` : scope check `sav.member_id = user.sub` (403 sinon, 404 si introuvable). Dossier = `{MICROSOFT_DRIVE_PATH}/{reference}`.
+   - Sinon : dossier brouillon isolé `{MICROSOFT_DRIVE_PATH}/drafts/{member_id}/{timestamp}-{rand}`.
+   - Response 200 : `{ data: { uploadUrl, expiresAt, storagePath, sanitizedFilename } }`.
+2. **Chunks PUT 4 MiB** directement vers `uploadUrl` (Graph, contourne Vercel body-limit). Header `Content-Range: bytes START-END/TOTAL`.
+3. **`POST /api/self-service/upload-complete`** — Auth identique + rate-limit 30/min.
+   - Body (XOR strict) : `{...fileRefs, savReference}` OU `{...fileRefs, draftAttachmentId (UUID)}`.
+   - Mode SAV : INSERT `sav_files (source='member-add')` + audit `actor_member_id`.
+   - Mode brouillon : append dans `sav_drafts.data.files[]` (dédup par `draftAttachmentId`).
+   - Response 200 : `{ data: { savFileId | draftAttachmentId, createdAt } }`.
+
+Composable [`useOneDriveUpload`](../client/src/features/self-service/composables/useOneDriveUpload.ts) et composant [`FileUploader.vue`](../client/src/features/self-service/components/FileUploader.vue) encapsulent le flow complet avec barre de progression, retry expo 2×, et emit `@uploaded`/`@error`.
+
+Le legacy [`api/upload-session.js`](../client/api/upload-session.js) (API-key Make.com) reste actif pour le flow Phase 1 pendant le shadow run — à déprécier Epic 7.
+
+---
+
+## `POST /api/webhooks/capture` (Epic 2 Story 2.2)
+
+Réception webhook Make.com signé HMAC-SHA256. Cf. [handler](../client/api/webhooks/capture.ts) et section `integration-architecture.md` §Base de données — schéma capture SAV.
+
+- **Auth** : HMAC header `X-Webhook-Signature: sha256=<hex>` sur raw body.
+- **Env requise** : `MAKE_WEBHOOK_HMAC_SECRET` (32 bytes hex, partagé scénario Make.com).
+- **Rate limit** : 60 POST / min / IP.
+- **Idempotence** : côté Make.com (pas côté serveur — 2 POST identiques → 2 SAV distincts).
+- **Persistence** : RPC atomique Postgres `capture_sav_from_webhook(jsonb)` (1 transaction).
+- **Traçabilité** : `webhook_inbox` rempli AVANT vérif signature (401 audités).
+
+---
+
 ## Variables d'environnement Vercel
 
 | Variable | Scope | Rôle |

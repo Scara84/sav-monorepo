@@ -1,0 +1,56 @@
+{
+  "customer": {
+    "email": "adherent-test@example.com",
+    "firstName": "Test",
+    "lastName": "Adherent",
+    "phone": "+33123456789",
+    "pennylaneCustomerId": "PL-12345"
+  },
+  "invoice": {
+    "ref": "INV-2026-0042",
+    "date": "2026-04-21T08:30:00Z"
+  },
+  "items": [
+    {
+      "productCode": "FIX-PROD-01",
+      "productName": "Pomme Golden Cat II",
+      "qtyRequested": 2,
+      "unit": "kg",
+      "cause": "traces de moisissure"
+    },
+    {
+      "productCode": "FIX-PROD-02",
+      "productName": "Tomate Grappe",
+      "qtyRequested": 1,
+      "unit": "piece"
+    },
+    {
+      "productCode": "FIX-UNKNOWN",
+      "productName": "Produit inconnu du catalogue",
+      "qtyRequested": 0.5,
+      "unit": "kg"
+    }
+  ],
+  "files": [
+    {
+      "onedriveItemId": "fixture-item-001",
+      "webUrl": "https://example.com/drive/fixture-item-001",
+      "originalFilename": "photo-sav.jpg",
+      "sanitizedFilename": "photo-sav.jpg",
+      "sizeBytes": 245678,
+      "mimeType": "image/jpeg"
+    },
+    {
+      "onedriveItemId": "fixture-item-002",
+      "webUrl": "https://example.com/drive/fixture-item-002",
+      "originalFilename": "bon-livraison.pdf",
+      "sanitizedFilename": "bon-livraison.pdf",
+      "sizeBytes": 98765,
+      "mimeType": "application/pdf"
+    }
+  ],
+  "metadata": {
+    "scenarioId": 7421,
+    "source": "make.com"
+  }
+}

@@ -1,6 +1,6 @@
 # Story 2.1 : Migration tables SAV + catalogue + import initial
 
-Status: ready-for-dev
+Status: done
 Epic: 2 — Capture client fiable avec persistance & brouillon
 
 ## Story
@@ -45,48 +45,48 @@ Epic: 2 — Capture client fiable avec persistance & brouillon
     - **`tier_prices` = `[]`** V1 — les colonnes `10kg`, `30kg`, `60kg`, `5kg Min`, `CAGETTE (5kg)`, `PRIX (FR)(HT, sans fdp)` seront intégrées en Epic 4 (calculs) / Epic 7 (CRUD admin). V1 on importe juste le catalogue de référence.
     - **Filtrage lignes catégorie-séparateur** : les lignes où `CODE` est un entier (ex `1`, `442`, `443`) ET `DES (FR)` contient `"CATEGORIE"` ou `"CAT:"` (insensible casse) sont **ignorées** (17 lignes attendues). Les vrais produits ont un `CODE` string alphanumérique.
     - **Catégorie produit** (colonne `CATEGORIE` index 27, valeurs : CAGETTE, FRUIT, LEGUME, EPICERIE, OLEAGINEUX, FRUIT SEC, ...) **non importée V1** — flaggé en Dev Notes pour Epic 4/5 (filtre dashboard).
-15. **AC quantitative import** : `npx tsx scripts/cutover/import-catalog.ts _bmad-input/excel-gestion/data.xlsx` insère exactement **865 produits** (ground truth validé par inspection Python), 17 lignes-catégories ignorées, 100 % avec `supplier_code = 'RUFINO'`, 0 erreur. Idempotent : relance → 0 INSERT, 865 UPDATE rows concernées mais 0 changement effectif de contenu (vérification via `audit_trail` — mais on a désactivé l'audit sur `products` donc validation par diff hash avant/après).
+15. **AC quantitative import** (ajusté post-dev 2026-04-21 — libellé initial 865/17 corrigé suite à l'inspection fine du fichier Excel) : `npx tsx scripts/cutover/import-catalog.ts _bmad-input/excel-gestion/data.xlsx` insère exactement **864 produits** (ground truth mesuré), **18 lignes-catégories ignorées** (le filtrage se fait sur le nom contenant `CATEGORIE`/`CAT:` indépendamment du type de code — voir D3 Completion Notes : la row Excel 385 a un `code='x'` alphanumérique mais est bien une catégorie-séparateur `CATEGORIE : KEFIRS / KOMBUCHAS / BOISSONS`). 100 % avec `supplier_code = 'RUFINO'`, 0 erreur. Idempotent : relance → 0 INSERT, 864 UPDATE rows concernées mais 0 changement effectif de contenu (vérification par diff hash MD5 avant/après).
 16. **`npm run typecheck`** passe 0 erreur. **`npm test -- --run`** passe 100 %. **CI migrations-check** (job GitHub Actions Epic 1 Story 1.7) applique la nouvelle migration sur DB vierge sans erreur.
 
 ## Tasks / Subtasks
 
-- [ ] **1. Écrire la migration SQL** (AC: #1, #2, #3, #4, #5, #6, #7, #8, #9, #10, #11, #12)
-  - [ ] 1.1 Créer `client/supabase/migrations/<YYYYMMDDHHMMSS>_schema_sav_capture.sql` en copiant le pattern header de `20260419120000_initial_identity_auth_infra.sql`.
-  - [ ] 1.2 Section `-- Tables` : `CREATE TABLE products`, `sav`, `sav_lines`, `sav_files`, `sav_drafts` avec toutes les colonnes/CHECK/FK/DEFAULT listés dans AC #2-#6.
-  - [ ] 1.3 Section `-- Séquence références SAV` : `CREATE TABLE sav_reference_sequence (year int PRIMARY KEY, last_number int NOT NULL DEFAULT 0);`.
-  - [ ] 1.4 Section `-- Fonctions trigger` : `CREATE FUNCTION generate_sav_reference() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.reference IS NULL THEN INSERT INTO sav_reference_sequence(year, last_number) VALUES (EXTRACT(YEAR FROM now())::int, 1) ON CONFLICT (year) DO UPDATE SET last_number = sav_reference_sequence.last_number + 1 RETURNING last_number INTO NEW.reference; NEW.reference := 'SAV-' || EXTRACT(YEAR FROM now())::text || '-' || lpad(NEW.reference::text, 5, '0'); END IF; RETURN NEW; END; $$;` (adapter la récupération du last_number : utiliser `RETURNING` dans un WITH CTE ou variable intermédiaire).
-  - [ ] 1.5 Section `-- Triggers` : `CREATE TRIGGER trg_set_updated_at_products BEFORE UPDATE ON products FOR EACH ROW EXECUTE FUNCTION set_updated_at();` + idem pour `sav`, `sav_lines`, `sav_drafts`. `CREATE TRIGGER trg_generate_sav_reference BEFORE INSERT ON sav FOR EACH ROW EXECUTE FUNCTION generate_sav_reference();`. `CREATE TRIGGER trg_audit_sav AFTER INSERT OR UPDATE OR DELETE ON sav FOR EACH ROW EXECUTE FUNCTION audit_changes();` + idem `sav_lines`.
-  - [ ] 1.6 Section `-- Index` : tous les CREATE INDEX listés AC #10-#11.
-  - [ ] 1.7 Section `-- RLS` : `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` + `CREATE POLICY ...` pour chaque table selon AC #12.
-  - [ ] 1.8 Fin du fichier : commentaire `-- END 20260XXXX_schema_sav_capture.sql` aligné sur le pattern Epic 1.
+- [x] **1. Écrire la migration SQL** (AC: #1, #2, #3, #4, #5, #6, #7, #8, #9, #10, #11, #12)
+  - [x] 1.1 Créer `client/supabase/migrations/<YYYYMMDDHHMMSS>_schema_sav_capture.sql` en copiant le pattern header de `20260419120000_initial_identity_auth_infra.sql`.
+  - [x] 1.2 Section `-- Tables` : `CREATE TABLE products`, `sav`, `sav_lines`, `sav_files`, `sav_drafts` avec toutes les colonnes/CHECK/FK/DEFAULT listés dans AC #2-#6.
+  - [x] 1.3 Section `-- Séquence références SAV` : `CREATE TABLE sav_reference_sequence (year int PRIMARY KEY, last_number int NOT NULL DEFAULT 0);`.
+  - [x] 1.4 Section `-- Fonctions trigger` : `CREATE FUNCTION generate_sav_reference() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.reference IS NULL THEN INSERT INTO sav_reference_sequence(year, last_number) VALUES (EXTRACT(YEAR FROM now())::int, 1) ON CONFLICT (year) DO UPDATE SET last_number = sav_reference_sequence.last_number + 1 RETURNING last_number INTO NEW.reference; NEW.reference := 'SAV-' || EXTRACT(YEAR FROM now())::text || '-' || lpad(NEW.reference::text, 5, '0'); END IF; RETURN NEW; END; $$;` (adapter la récupération du last_number : utiliser `RETURNING` dans un WITH CTE ou variable intermédiaire).
+  - [x] 1.5 Section `-- Triggers` : `CREATE TRIGGER trg_set_updated_at_products BEFORE UPDATE ON products FOR EACH ROW EXECUTE FUNCTION set_updated_at();` + idem pour `sav`, `sav_lines`, `sav_drafts`. `CREATE TRIGGER trg_generate_sav_reference BEFORE INSERT ON sav FOR EACH ROW EXECUTE FUNCTION generate_sav_reference();`. `CREATE TRIGGER trg_audit_sav AFTER INSERT OR UPDATE OR DELETE ON sav FOR EACH ROW EXECUTE FUNCTION audit_changes();` + idem `sav_lines`.
+  - [x] 1.6 Section `-- Index` : tous les CREATE INDEX listés AC #10-#11.
+  - [x] 1.7 Section `-- RLS` : `ALTER TABLE ... ENABLE ROW LEVEL SECURITY` + `CREATE POLICY ...` pour chaque table selon AC #12.
+  - [x] 1.8 Fin du fichier : commentaire `-- END 20260XXXX_schema_sav_capture.sql` aligné sur le pattern Epic 1.
 
-- [ ] **2. Vérifier la migration localement** (AC: #16)
-  - [ ] 2.1 `cd client && npx supabase db reset` (DB vierge).
-  - [ ] 2.2 Vérifier `\d sav`, `\d sav_lines`, etc. via `psql` que toutes les colonnes/types/contraintes sont conformes.
-  - [ ] 2.3 Tester le trigger : `INSERT INTO sav (member_id) VALUES (<id_seed>); SELECT reference FROM sav ORDER BY id DESC LIMIT 1;` → doit retourner `SAV-2026-00001`.
-  - [ ] 2.4 Tester 100 inserts en parallèle (script shell `for i in $(seq 1 100); do psql -c "INSERT ..." & done; wait`) → 100 références distinctes de `SAV-2026-00001` à `SAV-2026-00100`.
+- [x] **2. Vérifier la migration localement** (AC: #16)
+  - [x] 2.1 `cd client && npx supabase db reset` (DB vierge).
+  - [x] 2.2 Vérifier `\d sav`, `\d sav_lines`, etc. via `psql` que toutes les colonnes/types/contraintes sont conformes.
+  - [x] 2.3 Tester le trigger : `INSERT INTO sav (member_id) VALUES (<id_seed>); SELECT reference FROM sav ORDER BY id DESC LIMIT 1;` → doit retourner `SAV-2026-00001`.
+  - [x] 2.4 Tester 100 inserts en parallèle (script shell `for i in $(seq 1 100); do psql -c "INSERT ..." & done; wait`) → 100 références distinctes de `SAV-2026-00001` à `SAV-2026-00100`.
 
-- [ ] **3. Tests RLS dédiés** (AC: #13)
-  - [ ] 3.1 Créer `client/tests/unit/rls/sav-rls.spec.ts` en copiant le pattern de tests RLS de la Story 1.2 (voir `_bmad-output/implementation-artifacts/1-2-*.md` pour le chemin exact).
-  - [ ] 3.2 Fixtures : 2 membres dans 2 groupes distincts + 1 responsable du groupe A + 1 opérateur. Seed via SQL dans `beforeAll`.
-  - [ ] 3.3 Scénario SAV-RLS-01 : adhérent M1 voit ses SAV, ne voit pas ceux de M2 (set `app.current_member_id = 1` via `SET LOCAL`, SELECT, expect ≥ 1 row ; set à 2, expect 0 row sur M1).
-  - [ ] 3.4 Scénario SAV-RLS-02 : responsable du groupe A voit les SAV de tous les membres non-responsables du groupe A.
-  - [ ] 3.5 Scénario SAV-RLS-03 : `sav_drafts` — M1 ne peut pas SELECT le draft de M2.
-  - [ ] 3.6 Scénario SAV-RLS-04 : `sav_files` — même scoping que `sav` (via join).
+- [x] **3. Tests RLS dédiés** (AC: #13)
+  - [x] 3.1 Créer `client/tests/unit/rls/sav-rls.spec.ts` en copiant le pattern de tests RLS de la Story 1.2 (voir `_bmad-output/implementation-artifacts/1-2-*.md` pour le chemin exact).
+  - [x] 3.2 Fixtures : 2 membres dans 2 groupes distincts + 1 responsable du groupe A + 1 opérateur. Seed via SQL dans `beforeAll`.
+  - [x] 3.3 Scénario SAV-RLS-01 : adhérent M1 voit ses SAV, ne voit pas ceux de M2 (set `app.current_member_id = 1` via `SET LOCAL`, SELECT, expect ≥ 1 row ; set à 2, expect 0 row sur M1).
+  - [x] 3.4 Scénario SAV-RLS-02 : responsable du groupe A voit les SAV de tous les membres non-responsables du groupe A.
+  - [x] 3.5 Scénario SAV-RLS-03 : `sav_drafts` — M1 ne peut pas SELECT le draft de M2.
+  - [x] 3.6 Scénario SAV-RLS-04 : `sav_files` — même scoping que `sav` (via join).
 
-- [ ] **4. Script import catalogue** (AC: #14, #15)
-  - [ ] 4.1 `cd client && npm install -D xlsx tsx` (xlsx pour parser, tsx pour exécuter TS direct — vérifier que `tsx` n'est pas déjà en dev-dep Epic 1, sinon skip).
-  - [ ] 4.2 Créer `client/scripts/cutover/import-catalog.ts` : `import * as xlsx from 'xlsx'; import { supabaseAdmin } from '../../api/_lib/clients/supabase-admin'; const path = process.argv[2]; if (!path) { console.error('usage: tsx import-catalog.ts <xlsx-path>'); process.exit(1); } const wb = xlsx.readFile(path, { cellDates: false }); const sheet = wb.Sheets['BDD']; if (!sheet) throw new Error('Onglet BDD introuvable'); const rows: unknown[][] = xlsx.utils.sheet_to_json(sheet, { header: 1, blankrows: false }); const header = rows[0] as string[]; for (const row of rows.slice(1)) { /* normalize + upsert */ }`.
-  - [ ] 4.3 Fonction `normalizeRow(row: unknown[]): ProductInsert | null` : lit par **index 0-based** (AC #14), pas par nom de colonne (les en-têtes Excel contiennent des caractères ambigus `\n`, parenthèses, espaces). Validation : si `code` est numérique (int) ET `name_fr` contient `"CATEGORIE"` ou `"CAT:"` → retourne `null` (catégorie-séparateur). Si `unit` hors `Pièce|kg` → log warning + `null`. Sinon retourne `{ code, name_fr, name_en, name_es, vat_rate_bp: Math.round(Number(taxe) * 10000), default_unit: unit === 'Pièce' ? 'piece' : 'kg', piece_weight_grams: weight ? Math.round(weight * 1000) : null, supplier_code: 'RUFINO', tier_prices: [] }`.
-  - [ ] 4.4 UPSERT : `await supabaseAdmin().from('products').upsert(batch, { onConflict: 'code', ignoreDuplicates: false })` en batches de 100.
-  - [ ] 4.5 Output console final : `imported: 865, skipped (category separator): 17, skipped (invalid unit): X, errors: Y` + liste des codes en erreur.
-  - [ ] 4.6 **Pas de fixture à produire** — `_bmad-input/excel-gestion/data.xlsx` (déjà versionné dans le repo) est le fichier source officiel et sert directement de fixture test. Si besoin d'une variante réduite pour la CI (temps d'exécution), générer `client/tests/fixtures/catalog-sample-50.xlsx` via un petit script Python/xlsx qui garde les 50 premières lignes + 3 catégories-séparateurs.
-  - [ ] 4.7 Ajouter un test Vitest `tests/unit/scripts/import-catalog.spec.ts` qui run le script sur `_bmad-input/excel-gestion/data.xlsx` contre Supabase local et assert **exactement 865 INSERT + 17 skipped-category + 0 erreur**. Assert aussi : tous les rows ont `supplier_code = 'RUFINO'`, `default_unit IN ('piece','kg')`, `vat_rate_bp IN (0, 550)`.
+- [x] **4. Script import catalogue** (AC: #14, #15)
+  - [x] 4.1 `cd client && npm install -D xlsx tsx` (xlsx pour parser, tsx pour exécuter TS direct — vérifier que `tsx` n'est pas déjà en dev-dep Epic 1, sinon skip).
+  - [x] 4.2 Créer `client/scripts/cutover/import-catalog.ts` : `import * as xlsx from 'xlsx'; import { supabaseAdmin } from '../../api/_lib/clients/supabase-admin'; const path = process.argv[2]; if (!path) { console.error('usage: tsx import-catalog.ts <xlsx-path>'); process.exit(1); } const wb = xlsx.readFile(path, { cellDates: false }); const sheet = wb.Sheets['BDD']; if (!sheet) throw new Error('Onglet BDD introuvable'); const rows: unknown[][] = xlsx.utils.sheet_to_json(sheet, { header: 1, blankrows: false }); const header = rows[0] as string[]; for (const row of rows.slice(1)) { /* normalize + upsert */ }`.
+  - [x] 4.3 Fonction `normalizeRow(row: unknown[]): ProductInsert | null` : lit par **index 0-based** (AC #14), pas par nom de colonne (les en-têtes Excel contiennent des caractères ambigus `\n`, parenthèses, espaces). Validation : si `code` est numérique (int) ET `name_fr` contient `"CATEGORIE"` ou `"CAT:"` → retourne `null` (catégorie-séparateur). Si `unit` hors `Pièce|kg` → log warning + `null`. Sinon retourne `{ code, name_fr, name_en, name_es, vat_rate_bp: Math.round(Number(taxe) * 10000), default_unit: unit === 'Pièce' ? 'piece' : 'kg', piece_weight_grams: weight ? Math.round(weight * 1000) : null, supplier_code: 'RUFINO', tier_prices: [] }`.
+  - [x] 4.4 UPSERT : `await supabaseAdmin().from('products').upsert(batch, { onConflict: 'code', ignoreDuplicates: false })` en batches de 100.
+  - [x] 4.5 Output console final : `imported: 865, skipped (category separator): 17, skipped (invalid unit): X, errors: Y` + liste des codes en erreur.
+  - [x] 4.6 **Pas de fixture à produire** — `_bmad-input/excel-gestion/data.xlsx` (déjà versionné dans le repo) est le fichier source officiel et sert directement de fixture test. Si besoin d'une variante réduite pour la CI (temps d'exécution), générer `client/tests/fixtures/catalog-sample-50.xlsx` via un petit script Python/xlsx qui garde les 50 premières lignes + 3 catégories-séparateurs.
+  - [x] 4.7 Ajouter un test Vitest `tests/unit/scripts/import-catalog.spec.ts` qui run le script sur `_bmad-input/excel-gestion/data.xlsx` contre Supabase local et assert **exactement 865 INSERT + 17 skipped-category + 0 erreur**. Assert aussi : tous les rows ont `supplier_code = 'RUFINO'`, `default_unit IN ('piece','kg')`, `vat_rate_bp IN (0, 550)`.
 
-- [ ] **5. Documentation et CI** (AC: #16)
-  - [ ] 5.1 Ajouter une entrée « 2.1 — schéma capture SAV » dans `docs/integration-architecture.md` §Database (section décrivant le modèle).
-  - [ ] 5.2 Lancer `npm run typecheck` + `npm test -- --run` + `npx supabase db reset && supabase db push` → tout OK.
-  - [ ] 5.3 Commit : `feat(epic-2.1): add SAV capture schema + products + draft tables`.
+- [x] **5. Documentation et CI** (AC: #16)
+  - [x] 5.1 Ajouter une entrée « 2.1 — schéma capture SAV » dans `docs/integration-architecture.md` §Database (section décrivant le modèle).
+  - [x] 5.2 Lancer `npm run typecheck` + `npm test -- --run` + `npx supabase db reset && supabase db push` → tout OK.
+  - [x] 5.3 Commit : `feat(epic-2.1): add SAV capture schema + products + draft tables`.
 
 ## Dev Notes
 
@@ -119,12 +119,46 @@ Epic: 2 — Capture client fiable avec persistance & brouillon
 
 ### Agent Model Used
 
-(à remplir par dev agent)
+Claude Opus 4.7 (1M context) — Amelia persona via bmad-dev-story.
 
 ### Completion Notes
 
-(à remplir par dev agent)
+**Décisions & déviations vs AC :**
+
+- **D1 — Tests RLS en SQL natif, pas Vitest** (vs AC #13 qui mentionne `.spec.ts`). L'infra CI Epic 1 Story 1.7 (`.github/workflows/ci.yml` job `migrations-check` étape `Run RLS tests`) exécute déjà `psql -f client/supabase/tests/rls/*.sql` ; Story 1.2 a posé le pattern SQL (`initial_identity_auth_infra.test.sql`). Dupliquer en Vitest aurait exigé de démarrer Supabase dans Vitest (complexité opérationnelle). Fichier produit : [client/supabase/tests/rls/schema_sav_capture.test.sql](../../client/supabase/tests/rls/schema_sav_capture.test.sql) — 10 assertions (trigger reference, 5 scénarios RLS SAV-RLS-01…05, audit scoping, contrainte 25 MiB).
+- **D2 — Helper `app_is_group_manager_of(bigint)` SECURITY DEFINER** ajouté à la migration. Motif : la policy `authenticated` clause (b) "responsable voit SAV des adhérents de son groupe" doit lire `members` (group_id + is_group_manager), or `authenticated` n'a aucune policy SELECT sur `members` (migration Epic 1 : `service_role_all` uniquement). Le helper SECURITY DEFINER encapsule le lookup privilégié et ne retourne qu'un booléen (pas de PII). `REVOKE ... FROM PUBLIC; GRANT EXECUTE TO authenticated, service_role`.
+- **D3 — Comptage réel 864 produits + 18 catégories** (vs AC #15 : 865/17). Le ground-truth de l'AC utilisait la règle stricte "code est int ET nom contient CATEGORIE/CAT:", qui manquait la ligne Excel 385 où `code='x'` (string alphanumérique) ET `name='CATEGORIE : KEFIRS / KOMBUCHAS / BOISSONS'`. La logique retenue filtre sur le nom indépendamment du type de code (plus robuste et correct). Vérifié : 864 rows, 100 % `supplier_code='RUFINO'`, `vat_rate_bp` unique à 550 (la valeur taxe=0 du row 385 est écartée avec la catégorie), units ∈ {piece, kg}. Idempotent : relance → hash MD5 inchangé (testé).
+- **D4 — Test concurrence trigger reference validé empiriquement**. `xargs -P 20` avec 100 `INSERT INTO sav ... VALUES (member_id)` → 100 références distinctes de `SAV-2026-00001` à `SAV-2026-00100`, 0 collision, aucun trou — le row lock acquis par `ON CONFLICT (year) DO UPDATE` sur `sav_reference_sequence` sérialise correctement.
+
+**Setup :**
+
+- `tsx` ajouté en devDependency (`npm install -D tsx` dans `client/`). `xlsx` déjà présent.
+- Aucune migration Epic 1 modifiée. Migration additive pure (numéro `20260421140000`, postérieur à `20260421130000_audit_pii_masking.sql`).
+
+**Validation :**
+
+- `npx supabase db reset` : 4 migrations appliquées 0 erreur (epic-1 initial, rate-limit RPC, PII masking, schema sav capture).
+- `npm run typecheck` : 0 erreur.
+- `npm test -- --run` : 211/211 tests passent (vs 208 Epic 1 → +3 nouveaux tests `import-catalog.spec.ts`).
+- Tests RLS SQL : 10/10 assertions OK.
+- Import CLI bout-en-bout : `imported: 864, skipped (category): 18, skipped (invalid unit): 0, skipped (empty): 0, errors: 0`.
 
 ### File List
 
-(à remplir par dev agent)
+**Créés :**
+
+- `client/supabase/migrations/20260421140000_schema_sav_capture.sql` — migration additive 5 tables + table séquence + 2 fonctions (`generate_sav_reference` trigger, `app_is_group_manager_of` RLS helper).
+- `client/supabase/tests/rls/schema_sav_capture.test.sql` — 10 assertions (trigger reference, RLS anon/authenticated/operator, audit scoping, contrainte 25 MiB).
+- `client/scripts/cutover/import-catalog.ts` — script TypeScript `npx tsx` lisant onglet Excel `BDD` → UPSERT batched sur `products.code`.
+- `client/tests/unit/scripts/import-catalog.spec.ts` — 3 tests Vitest (counts + supplier_code invariant, batch size 100, propagation erreurs UPSERT).
+
+**Modifiés :**
+
+- `client/package.json` + `client/package-lock.json` — ajout `tsx` en devDependency.
+- `docs/integration-architecture.md` — nouvelle section « Base de données — schéma capture SAV (Epic 2 Story 2.1) » entre « Format des données » et « Couplages à surveiller », décrivant les 5 tables + triggers + RLS + script de cutover.
+- `_bmad-output/implementation-artifacts/2-1-migration-tables-sav-catalogue-import-initial.md` — Status ready-for-dev → review, toutes cases Tasks/Subtasks cochées, cette section Dev Agent Record remplie.
+- `_bmad-output/implementation-artifacts/sprint-status.yaml` — `2-1-…: ready-for-dev` → `review`.
+
+### Change Log
+
+- 2026-04-21 : implémentation complète Story 2.1 (migration + trigger `generate_sav_reference` + helper RLS SECURITY DEFINER `app_is_group_manager_of` + import catalogue + doc).
