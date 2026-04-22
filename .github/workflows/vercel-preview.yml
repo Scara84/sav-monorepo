@@ -18,9 +18,10 @@ jobs:
     name: Deploy preview to Vercel
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    defaults:
-      run:
-        working-directory: client
+
+    # Pas de `working-directory: client` : le Root Directory est configuré au niveau
+    # du projet Vercel (prj_xxx pointe sur `client/`). Le CLI doit être invoqué
+    # depuis la racine du repo pour que Vercel résolve le Root Directory lui-même.
 
     env:
       VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
