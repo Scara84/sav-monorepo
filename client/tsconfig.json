@@ -5,6 +5,7 @@
     "noUncheckedIndexedAccess": true,
     "exactOptionalPropertyTypes": true,
     "allowJs": true,
+    "verbatimModuleSyntax": false,
     "checkJs": false,
     "skipLibCheck": true,
     "moduleResolution": "bundler",
