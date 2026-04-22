@@ -8,17 +8,14 @@ const runs = vi.hoisted(() => ({
   purgeDrafts: vi.fn(async () => ({ deleted: 3 })),
 }))
 
-vi.mock('../../../../api/cron/cleanup-rate-limits', () => ({
+vi.mock('../../../../api/_lib/cron-runners/cleanup-rate-limits', () => ({
   runCleanupRateLimits: runs.cleanupRateLimits,
-  default: () => undefined,
 }))
-vi.mock('../../../../api/cron/purge-tokens', () => ({
+vi.mock('../../../../api/_lib/cron-runners/purge-tokens', () => ({
   runPurgeTokens: runs.purgeTokens,
-  default: () => undefined,
 }))
-vi.mock('../../../../api/cron/purge-drafts', () => ({
+vi.mock('../../../../api/_lib/cron-runners/purge-drafts', () => ({
   runPurgeDrafts: runs.purgeDrafts,
-  default: () => undefined,
 }))
 
 import handler from '../../../../api/cron/dispatcher'

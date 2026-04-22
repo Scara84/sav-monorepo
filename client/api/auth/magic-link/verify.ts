@@ -52,7 +52,11 @@ const coreHandler: ApiHandler = async (req, res) => {
   const ua = readUserAgent(req)
   const verified = verifyMagicLink(body.token, magicSecret)
   if (!verified.ok) {
-    if (verified.reason === 'expired') {
+    // Le build Vercel des Serverless Functions fait parfois un narrowing
+    // défaillant sur les discriminated unions depuis un module importé.
+    // `in` operator est plus portable (Vercel ET vue-tsc OK).
+    const reason = 'reason' in verified ? (verified as { reason: string }).reason : 'unknown'
+    if (reason === 'expired') {
       await logAuthEvent({
         eventType: 'magic_link_failed',
         metadata: { reason: 'expired' },
@@ -63,7 +67,7 @@ const coreHandler: ApiHandler = async (req, res) => {
     }
     await logAuthEvent({
       eventType: 'magic_link_failed',
-      metadata: { reason: verified.reason },
+      metadata: { reason },
       ...(ua ? { userAgent: ua } : {}),
     }).catch(() => undefined)
     sendError(res, 'UNAUTHENTICATED', 'Lien invalide', requestId)

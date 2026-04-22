@@ -2,9 +2,9 @@ import { ensureRequestId } from '../_lib/request-id'
 import { logger } from '../_lib/logger'
 import type { ApiRequest, ApiResponse } from '../_lib/types'
 import { authorizeCron } from './_authorize'
-import { runCleanupRateLimits } from './cleanup-rate-limits'
-import { runPurgeTokens } from './purge-tokens'
-import { runPurgeDrafts } from './purge-drafts'
+import { runCleanupRateLimits } from '../_lib/cron-runners/cleanup-rate-limits'
+import { runPurgeTokens } from '../_lib/cron-runners/purge-tokens'
+import { runPurgeDrafts } from '../_lib/cron-runners/purge-drafts'
 
 /**
  * Cron unique quotidien (Story 2.3 — ajusté 2026-04-22).

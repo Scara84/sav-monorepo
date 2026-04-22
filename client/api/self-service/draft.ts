@@ -35,7 +35,12 @@ const FORBIDDEN_KEY_NAMES = new Set(['__proto__', 'constructor', 'prototype'])
  * interpolation `{{}}` / `v-text`, jamais `v-html`). Le serveur stocke des
  * bytes tels quels — la responsabilité XSS est côté render.
  */
-function validateSafeData(value: unknown, depth = 0): { ok: true } | { ok: false; reason: string } {
+interface SafeDataResult {
+  ok: boolean
+  reason?: string
+}
+
+function validateSafeData(value: unknown, depth = 0): SafeDataResult {
   if (depth > MAX_DATA_DEPTH) return { ok: false, reason: `depth exceeds ${MAX_DATA_DEPTH}` }
   if (value === null || value === undefined) return { ok: true }
   if (typeof value !== 'object') return { ok: true }
@@ -116,7 +121,7 @@ const putCore: ApiHandler = async (req, res) => {
   const safetyCheck = validateSafeData(parse.data.data)
   if (!safetyCheck.ok) {
     sendError(res, 'VALIDATION_FAILED', 'Brouillon contient des clés interdites', requestId, [
-      { field: 'data', message: safetyCheck.reason },
+      { field: 'data', message: safetyCheck.reason ?? 'invalid' },
     ])
     return
   }
