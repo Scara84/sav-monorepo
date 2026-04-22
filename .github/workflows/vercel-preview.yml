@@ -1,9 +1,8 @@
 name: Vercel Preview Deploy
 
-# Bypass du webhook GitHub↔Vercel natif (cassé au niveau projet suite au rename
-# interface-admin → refonte-phase-2 — symptôme : jobs hook en queue PENDING
-# jamais traités, live:false sur get_project). Utilise l'action Amondnet qui
-# wrap le CLI Vercel de manière plus robuste que des appels bruts.
+# Bypass du webhook GitHub↔Vercel natif (resté bloqué après rename branche +
+# cron horaire rejeté Hobby, cf. commit 5aa138f). On déploie via CLI Vercel
+# direct dans un workflow contrôlé.
 
 on:
   push:
@@ -19,28 +18,45 @@ jobs:
     name: Deploy preview to Vercel
     runs-on: ubuntu-latest
     timeout-minutes: 10
+    defaults:
+      run:
+        working-directory: client
+
+    env:
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Deploy to Vercel (preview)
-        id: deploy
-        uses: amondnet/vercel-action@v25
+      - name: Setup Node
+        uses: actions/setup-node@v4
         with:
-          vercel-token: ${{ secrets.VERCEL_TOKEN }}
-          vercel-org-id: ${{ secrets.VERCEL_ORG_ID }}
-          vercel-project-id: ${{ secrets.VERCEL_PROJECT_ID }}
-          # Le projet Vercel a son Root Directory configuré sur `client/`.
-          # On passe donc `working-directory: ./client` pour que l'action y pointe.
-          working-directory: ./client
+          node-version: '22'
+
+      - name: Install Vercel CLI (latest — Vercel API requires ≥ 47.2.2)
+        run: npm install --global vercel@latest
+
+      - name: Pull Vercel preview env
+        run: vercel pull --yes --environment=preview --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Build project
+        run: vercel build --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Deploy prebuilt artifact
+        id: deploy
+        run: |
+          url=$(vercel deploy --prebuilt --token=${{ secrets.VERCEL_TOKEN }})
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "Preview URL: $url"
 
       - name: Comment commit with preview URL
-        if: steps.deploy.outputs.preview-url != ''
+        if: steps.deploy.outputs.url != ''
         uses: actions/github-script@v7
         with:
           script: |
-            const url = '${{ steps.deploy.outputs.preview-url }}';
+            const url = '${{ steps.deploy.outputs.url }}';
             const sha = context.sha.substring(0, 7);
             const branch = context.ref.replace('refs/heads/', '');
             await github.rest.repos.createCommitComment({
