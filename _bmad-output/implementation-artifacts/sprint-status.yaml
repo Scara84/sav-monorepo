@@ -38,13 +38,16 @@
 # - Une story passe par 'review' avant 'done' (via bmad-code-review)
 
 generated: 2026-04-18
-last_updated: 2026-04-21
+last_updated: 2026-04-22
 # Story 2.1 : done (864 produits importés, 18 catégories séparateurs,
 # 10/10 tests RLS OK, 211/211 tests Vitest, typecheck 0).
 # Epic 1 : 7/7 stories done après code review adversariale (rapport :
 # _bmad-output/implementation-artifacts/epic-1-review-findings.md).
 # Patches P1-P16 + décisions D1-D4 appliqués. 208/208 tests, typecheck 0.
-# Epic 2 : 4/4 stories contextées → ready-for-dev (2026-04-21). Epic en in-progress.
+# Epic 2 : 4/4 stories done après code review adversarial (rapport :
+# _bmad-output/implementation-artifacts/epic-2-review-findings.md).
+# F1-F8 patches appliqués, 267/267 tests, typecheck 0, build OK.
+# Epic 3 : 7/7 stories contextées → ready-for-dev (2026-04-22). Epic in-progress.
 project: sav-monorepo
 project_key: NOKEY
 tracking_system: file-system
@@ -77,14 +80,14 @@ development_status:
   # ──────────────────────────────────────────────────────────────
   # Epic 3: Traitement opérationnel des SAV en back-office
   # ──────────────────────────────────────────────────────────────
-  epic-3: backlog
-  3-1-migration-commentaires-sav: backlog
-  3-2-endpoint-liste-sav-filtres-recherche-pagination-cursor: backlog
-  3-3-vue-liste-sav-en-back-office: backlog
-  3-4-vue-detail-sav-en-back-office: backlog
-  3-5-transitions-de-statut-assignation-verrou-optimiste: backlog
-  3-6-edition-lignes-sav-avec-validations-bloquantes: backlog
-  3-7-tags-commentaires-duplication-fichiers-additionnels: backlog
+  epic-3: in-progress
+  3-1-migration-commentaires-sav: ready-for-dev
+  3-2-endpoint-liste-sav-filtres-recherche-pagination-cursor: ready-for-dev
+  3-3-vue-liste-sav-en-back-office: ready-for-dev
+  3-4-vue-detail-sav-en-back-office: ready-for-dev
+  3-5-transitions-de-statut-assignation-verrou-optimiste: ready-for-dev
+  3-6-edition-lignes-sav-avec-validations-bloquantes: ready-for-dev
+  3-7-tags-commentaires-duplication-fichiers-additionnels: ready-for-dev
   epic-3-retrospective: optional
 
   # ──────────────────────────────────────────────────────────────
