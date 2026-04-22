@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mockReq, mockRes } from '../_lib/test-helpers'
 
 // Mock les 3 run* avant import handler
@@ -29,11 +29,6 @@ describe('POST /api/cron/dispatcher', () => {
     runs.purgeTokens.mockClear().mockResolvedValue({ deleted: 2 })
     runs.purgeDrafts.mockClear().mockResolvedValue({ deleted: 3 })
     process.env['CRON_SECRET'] = 'unit-test-secret-12345'
-    vi.useFakeTimers()
-  })
-
-  afterEach(() => {
-    vi.useRealTimers()
   })
 
   it('401 sans bearer', async () => {
@@ -43,28 +38,7 @@ describe('POST /api/cron/dispatcher', () => {
     expect(runs.cleanupRateLimits).not.toHaveBeenCalled()
   })
 
-  it('à 10:00 UTC : seul cleanupRateLimits exécuté', async () => {
-    vi.setSystemTime(new Date('2026-04-21T10:00:00.000Z'))
-    const res = mockRes()
-    await handler(
-      mockReq({
-        method: 'POST',
-        headers: { authorization: 'Bearer unit-test-secret-12345' },
-      }),
-      res
-    )
-    expect(res.statusCode).toBe(200)
-    expect(runs.cleanupRateLimits).toHaveBeenCalledOnce()
-    expect(runs.purgeTokens).not.toHaveBeenCalled()
-    expect(runs.purgeDrafts).not.toHaveBeenCalled()
-    const body = res.jsonBody as { ok: boolean; hour: number; results: Record<string, unknown> }
-    expect(body.hour).toBe(10)
-    expect(body.results).toHaveProperty('cleanupRateLimits', { deleted: 1 })
-    expect(body.results).not.toHaveProperty('purgeTokens')
-  })
-
-  it('à 03:00 UTC : les 3 jobs exécutés', async () => {
-    vi.setSystemTime(new Date('2026-04-21T03:00:00.000Z'))
+  it('exécute les 3 jobs à chaque appel autorisé (schedule quotidien 03:00 UTC)', async () => {
     const res = mockRes()
     await handler(
       mockReq({
@@ -77,8 +51,7 @@ describe('POST /api/cron/dispatcher', () => {
     expect(runs.cleanupRateLimits).toHaveBeenCalledOnce()
     expect(runs.purgeTokens).toHaveBeenCalledOnce()
     expect(runs.purgeDrafts).toHaveBeenCalledOnce()
-    const body = res.jsonBody as { hour: number; results: Record<string, unknown> }
-    expect(body.hour).toBe(3)
+    const body = res.jsonBody as { ok: boolean; results: Record<string, unknown> }
     expect(body.results).toMatchObject({
       cleanupRateLimits: { deleted: 1 },
       purgeTokens: { deleted: 2 },
@@ -87,7 +60,6 @@ describe('POST /api/cron/dispatcher', () => {
   })
 
   it('un job qui throw ne bloque pas les autres', async () => {
-    vi.setSystemTime(new Date('2026-04-21T03:00:00.000Z'))
     runs.purgeTokens.mockRejectedValueOnce(new Error('kaboom'))
     const res = mockRes()
     await handler(

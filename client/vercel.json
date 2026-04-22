@@ -20,5 +20,5 @@
     "api/self-service/upload-session.ts": { "maxDuration": 10 },
     "api/self-service/upload-complete.ts": { "maxDuration": 10 }
   },
-  "crons": [{ "path": "/api/cron/dispatcher", "schedule": "0 * * * *" }]
+  "crons": [{ "path": "/api/cron/dispatcher", "schedule": "0 3 * * *" }]
 }
