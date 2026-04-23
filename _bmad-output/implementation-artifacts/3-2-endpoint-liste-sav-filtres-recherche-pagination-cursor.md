@@ -1,6 +1,6 @@
 # Story 3.2 : Endpoint liste SAV (filtres + recherche + pagination cursor)
 
-Status: ready-for-dev
+Status: review
 Epic: 3 — Traitement opérationnel des SAV en back-office
 
 ## Story
@@ -97,35 +97,40 @@ Epic: 3 — Traitement opérationnel des SAV en back-office
 
 ## Tasks / Subtasks
 
-- [ ] **1. Schéma Zod query + normalisation query-string** (AC: #2)
-  - [ ] 1.1 Créer `client/api/_lib/schemas/sav-list-query.ts`. Exporter `listSavQuerySchema` + `type ListSavQuery = z.infer<typeof listSavQuerySchema>`.
-  - [ ] 1.2 Créer un helper `normalizeListQuery(rawQuery: Record<string, unknown>): unknown` qui transforme `status=a,b` en `['a','b']` avant `safeParse`. Couvrir les 2 formes (`status=a&status=b` ET `status=a,b`) — les tests Vitest couvrent les deux.
+- [x] **0. Migration préalable `sav_schema_prd_target`** (prérequis 3.2 → 3.7, hors AC mais bloquant)
+  - [x] 0.1 `client/supabase/migrations/20260422130000_sav_schema_prd_target.sql` : aligne `sav` sur le schéma cible PRD (12 colonnes ajoutées, rename `assigned_to_operator_id`→`assigned_to`, enum statut `draft/…/cancelled`, tsvector search régénérée avec `tags + notes_internal`, 7 index au design PRD).
+  - [x] 0.2 RPC `capture_sav_from_webhook` patchée (statut explicite `received`, `invoice_ref` + `group_id` + `received_at` explicites) — pas de régression Epic 2.2 webhook.
+  - [x] 0.3 Helper IMMUTABLE `immutable_array_join_space(text[])` créé pour la tsvector GENERATED ALWAYS (le natif `array_to_string` est STABLE).
 
-- [ ] **2. Handler endpoint + construction SQL** (AC: #1, #3, #4, #5, #7, #9)
-  - [ ] 2.1 Créer `client/api/sav/list.ts` avec composition `withAuth({ types: ['operator','admin'] })` → `withRateLimit(...)` → `withValidation({ query: listSavQuerySchema })` → `coreHandler`.
-  - [ ] 2.2 Construire la query Supabase conditionnellement selon les filtres (pattern builder `.from('sav').select(..., { count: 'exact' })` puis chaîner `.eq/.in/.gte/...` selon `req.query`).
-  - [ ] 2.3 Gérer `q` : ajouter `.textSearch(...)` + `.or(...)` regex référence si applicable. Documenter le fallback `members.last_name` dans un commentaire avec note « V1 : si perf KO, déplacer en RPC `search_sav` ».
-  - [ ] 2.4 Gérer `cursor` : décoder, appliquer `.or(`received_at.lt.${rec},and(received_at.eq.${rec},id.lt.${id})`)`. Si décodage échoue → 400 `VALIDATION_FAILED` détail `cursor`.
-  - [ ] 2.5 Tri final `.order('received_at', desc).order('id', desc).limit(limit + 1)`.
+- [x] **1. Schéma Zod query + normalisation query-string** (AC: #2)
+  - [x] 1.1 `client/api/_lib/schemas/sav-list-query.ts` : `listSavQuerySchema` + `type ListSavQuery` + `listSavCursorShape` (shape Zod post-décodage du cursor).
+  - [x] 1.2 `normalizeListQuery` : transforme `status=a,b` en `['a','b']` avant `safeParse`. La forme `status=a&status=b` est déjà array via Vercel routing. Couvert par TS-03 et TS-04.
 
-- [ ] **3. Projection réponse + encodage cursor** (AC: #6)
-  - [ ] 3.1 Fonction `projectSavRow(row): SavListItem` qui mappe snake_case → camelCase et aplanit `member`/`group`/`assignee`.
-  - [ ] 3.2 Fonction `encodeCursor({ received_at, id }): string` base64url.
-  - [ ] 3.3 Si `rows.length > limit` → `nextCursor = encodeCursor(rows[limit-1])`, trim à `limit`. Sinon `nextCursor = null`.
+- [x] **2. Handler endpoint + construction SQL** (AC: #1, #3, #4, #5, #7, #9)
+  - [x] 2.1 `client/api/sav/[[...slug]].ts` (catch-all router, contournement cap 12 fonctions Vercel) → `withAuth({ types: ['operator'] })` → dispatch GET vide → `listSavHandler`. Handlers library dans `client/api/_lib/sav/list-handler.ts` (pas de slot Vercel supplémentaire).
+  - [x] 2.2 `applyFilters` construit la query conditionnellement : `.eq/.in/.gte/.lte/.ilike/.is/.contains/.textSearch` selon `req.query` parsé.
+  - [x] 2.3 `q` : `.textSearch('search', term, { type: 'websearch', config: 'french' })` + OR `reference.ilike` si matche `SAV-YYYY-NNNNN` ou contient ≥5 chiffres. Fallback `members.last_name` reporté en V2 (commentaire Dev Notes : « si perf KO, déplacer en RPC `search_sav` »).
+  - [x] 2.4 Cursor décodé via `decodeCursor` (base64url → JSON → Zod `listSavCursorShape`). Rejet → 400 `VALIDATION_FAILED`. Condition tuple-compare `.or('received_at.lt.${rec},and(received_at.eq.${rec},id.lt.${id})')`.
+  - [x] 2.5 Tri `.order('received_at', desc).order('id', desc).limit(limit + 1)`.
 
-- [ ] **4. Index SQL additionnel si absent** (AC: #8)
-  - [ ] 4.1 Vérifier via `psql -c "\d sav"` si `idx_sav_received_id_desc` existe (ou équivalent fonctionnel). Sinon créer `client/supabase/migrations/<ts>_index_sav_receivedat_id.sql` avec `CREATE INDEX IF NOT EXISTS idx_sav_received_id_desc ON sav(received_at DESC, id DESC);`.
+- [x] **3. Projection réponse + encodage cursor** (AC: #6)
+  - [x] 3.1 `projectSavRow` : snake_case → camelCase, aplanit `member`/`group`/`assignee`.
+  - [x] 3.2 `encodeCursor({received_at, id})` base64url.
+  - [x] 3.3 `hasMore = rows.length > limit` → trim à `limit`, emit `nextCursor`.
 
-- [ ] **5. Tests unitaires** (AC: #10)
-  - [ ] 5.1 Créer `client/tests/unit/api/sav/list.spec.ts`. Mock `supabaseAdmin` via factory pattern Epic 1. Mock `req.user = { sub: 42, type: 'operator' }`.
-  - [ ] 5.2 Implémenter les 16 scénarios TS-01 à TS-16. Utiliser un builder `makeMockSupabase({ rows, count })` pour couvrir variantes.
-  - [ ] 5.3 Pour TS-15 (429) : mock `withRateLimit` qui rejette. Pour TS-16 (injection) : assert que `.textSearch` reçoit la chaîne littérale, aucun exception thrown.
-  - [ ] 5.4 Bench local TS-perf (optionnel, séparé dans `list.perf.spec.ts`) : assert `performance.now()` deltas.
+- [x] **4. Index SQL additionnel si absent** (AC: #8)
+  - [x] 4.1 Index `idx_sav_received_id_desc` + `idx_sav_tags_gin` créés dans la migration préalable `20260422130000` (tâche 0). Pas de micro-migration séparée nécessaire.
 
-- [ ] **6. Documentation + vérifs** (AC: #12, #13)
-  - [ ] 6.1 Ajouter la section `GET /api/sav` dans `docs/api-contracts-vercel.md`.
-  - [ ] 6.2 `npm run typecheck` / `npm test -- --run` / `npm run build` → OK.
-  - [ ] 6.3 Commit : `feat(epic-3.2): add GET /api/sav with filters + full-text search + cursor pagination`.
+- [x] **5. Tests unitaires** (AC: #10)
+  - [x] 5.1 `client/tests/unit/api/sav/list.spec.ts` créé avec mock Supabase via Proxy qui capture tous les appels de builder (eq/in/gte/lte/ilike/is/contains/textSearch/or/order/limit) pour assertions.
+  - [x] 5.2 21 tests verts (16 scénarios TS-01→TS-16 + cursor corrompu + 4 tests helpers `encodeCursor`/`decodeCursor`/`projectSavRow`).
+  - [x] 5.3 TS-15 (429) via mock `increment_rate_limit` qui retourne `allowed=false`. TS-16 (injection) : `.textSearch` reçoit la chaîne littérale verbatim.
+  - [x] 5.4 Bench perf : non implémenté V1 (CI local variable ; la story AC #8 dit « ne pas asserter < 500 ms en test local »). À valider par Antho sur preview + 1 500 SAV seed futurs.
+
+- [x] **6. Documentation + vérifs** (AC: #12, #13)
+  - [x] 6.1 Section `GET /api/sav` ajoutée à `docs/api-contracts-vercel.md` (query, shape réponse, explication cursor, routing catch-all).
+  - [x] 6.2 `npm run typecheck` → 0. `npm test -- --run` → 282/282. `npm run build` → OK 1.46s.
+  - [ ] 6.3 Commit à créer par Antho : `feat(epic-3.2): add GET /api/sav with filters + full-text search + cursor pagination`.
 
 ## Dev Notes
 
@@ -162,10 +167,44 @@ Epic: 3 — Traitement opérationnel des SAV en back-office
 
 ### Agent Model Used
 
-_À remplir par dev agent._
+Claude Opus 4.7 (1M context) — persona Amelia (bmad-agent-dev) — 2026-04-22.
 
 ### Debug Log References
 
+- `npx supabase db reset` → 7 migrations appliquées (Epic 1 × 3, Epic 2 × 2, Epic 3 × 2 : sav_comments + sav_schema_prd_target).
+- Non-régression RLS Epic 2.1 : tous tests `schema_sav_capture.test.sql` OK après refactor sav.
+- Non-régression RLS Epic 3.1 : `OK 8/8 SAV-COMMENTS-RLS`.
+- Typecheck : 0.
+- Vitest : 32 suites / 282 tests (gain +21 tests Story 3.2, 0 régression).
+- Build Vite : OK 1.46s, bundle 457 KB (161 KB gzip).
+
 ### Completion Notes List
 
+- **Décision architecturale** : router catch-all `api/sav/[[...slug]].ts` pour tenir le cap Vercel 12 Serverless Functions (cf. commit `26f31b7` « 12 functions cap »). Stories 3.4 → 3.7 brancheront leurs handlers dans le même router, pas de slot Vercel additionnel.
+- **Migration préalable hors AC** : la story 3.2 telle qu'écrite assume le schéma PRD-target du `sav` (12 colonnes absentes du schéma Story 2.1). J'ai créé en amont la migration `20260422130000_sav_schema_prd_target.sql` (additive, Epic 2 non-régressé) sous option A validée par Antho. Cela prépare aussi 3.3 → 3.7.
+- **Décision GENERATED ALWAYS** : `array_to_string` est STABLE (verrouillé par PG pour raisons de collation). Helper IMMUTABLE `immutable_array_join_space` créé pour permettre l'inclusion de `tags` dans la tsvector search.
+- **Fallback recherche membre non-implémenté V1** : AC-mentionné mais reporté (tsvector actuel = reference + invoice_ref + notes_internal + tags ; `members.last_name` n'est pas inclus). Si perf KO sur « Dubois », V2 via RPC `search_sav` ou colonne générée côté members. Flagué Dev Notes et dans le commentaire du handler.
+- **12-functions cap — ALERTE DÉPLOIEMENT** : le vercel.json passe à 13 functions. Si le plan est Hobby, le build Vercel échouera. À vérifier par Antho : si Pro, ignorer. Si Hobby, retirer un endpoint legacy JS (`api/upload-session.js` ou `api/folder-share-link.js` apparaissent dupliqués avec leurs `.ts` successeurs sous `self-service/`).
+- Rate-limit clé `op:<sub>` utilise `SessionUser.sub` (JWT signé, non-spoofable) — safe vs leçon F2 Epic 2.4 (X-Forwarded-For spoof).
+- Commit à créer manuellement par Antho : `feat(epic-3.2): add GET /api/sav with filters + full-text search + cursor pagination`.
+
 ### File List
+
+- `client/supabase/migrations/20260422130000_sav_schema_prd_target.sql` (créé — migration préalable)
+- `client/api/_lib/schemas/sav-list-query.ts` (créé — Zod schema + normalize)
+- `client/api/_lib/sav/list-handler.ts` (créé — core handler + helpers)
+- `client/api/sav/[[...slug]].ts` (créé — catch-all router, slot Vercel unique Epic 3)
+- `client/vercel.json` (modifié — ajout function entry)
+- `client/tests/unit/api/sav/list.spec.ts` (créé — 21 tests)
+- `docs/api-contracts-vercel.md` (modifié — section `GET /api/sav`)
+- `_bmad-output/implementation-artifacts/3-2-endpoint-liste-sav-filtres-recherche-pagination-cursor.md` (statut → review, Dev Agent Record renseigné)
+
+### Change Log
+
+- 2026-04-22 — Story 3.2 implémentée : `GET /api/sav` avec 9 filtres combinables + recherche full-text tsvector français + cursor pagination stable tuple-compare + 21 tests verts. Migration préalable `sav_schema_prd_target` alignant `sav` sur PRD.
+- 2026-04-22 — Addressed code review findings (CR 3 layers) :
+  - **[H] FK hint `sav_assigned_to_fkey` runtime-invalide** — la FK constraint est renommée explicitement dans la migration (`ALTER TABLE sav RENAME CONSTRAINT sav_assigned_to_operator_id_fkey TO sav_assigned_to_fkey`) via DO-block idempotent. Vérifié : `pg_constraint` liste bien `sav_assigned_to_fkey` après reset.
+  - **[H] Migration non idempotente** — tous les `ADD COLUMN` utilisent `IF NOT EXISTS`, le rename de colonne est guardé par `information_schema.columns`, `DROP CONSTRAINT sav_status_check` utilise `IF EXISTS`. `npx supabase db reset` passe proprement.
+  - **[M] Sémantique AND vs OU** — `.textSearch()` + `.or(reference.ilike)` séparés produisaient `fts AND ilike` au lieu de `fts OR ilike`. Corrigé : quand `q` matche `SAV-YYYY-NNNNN` ou ≥5 chiffres, un **unique** `.or('search.wfts(french).TERM,reference.ilike.%TERM%')` combinant les deux prédicats en un seul OR group. TS-10 mis à jour et vérifie que `.textSearch()` n'est PAS appelé sur ce chemin (sinon AND buggy persistait).
+  - **[M] `q` whitespace-only** — Zod schema renforcé : `z.string().trim().min(1).max(200)`. Nouveau test « 400 si q est whitespace-only » vert.
+  - **Non corrigé (acknowledged deviation AC #4)** : fallback `members.last_name` pas implémenté V1 — AC demande explicitement une 2e requête sur `.ilike('members.last_name', ...)` en cas de 0 résultat full-text. Reporté V2 (RPC `search_sav` ou colonne `search` ajoutée à `members`). Flagué Dev Notes. Non bloquant V1 tant que le volume reste modeste et que l'opérateur peut utiliser la référence ou invoice_ref.

@@ -1,6 +1,6 @@
 # Story 3.1 : Migration commentaires SAV
 
-Status: ready-for-dev
+Status: review
 Epic: 3 — Traitement opérationnel des SAV en back-office
 
 ## Story
@@ -62,27 +62,27 @@ Epic: 3 — Traitement opérationnel des SAV en back-office
 
 ## Tasks / Subtasks
 
-- [ ] **1. Rédiger la migration SQL** (AC: #1, #2, #3, #4, #5)
-  - [ ] 1.1 Créer `client/supabase/migrations/<ts>_schema_sav_comments.sql`. Copier l'en-tête de `20260421140000_schema_sav_comments.sql` (pattern Story 2.1). Sections dans cet ordre : `-- Table`, `-- Index`, `-- Trigger audit`, `-- RLS enable + policies`, `-- END`.
-  - [ ] 1.2 Écrire le `CREATE TABLE sav_comments` avec les deux contraintes `CHECK` nommées de l'AC #2.
-  - [ ] 1.3 Écrire les 3 `CREATE INDEX` de l'AC #3.
-  - [ ] 1.4 Écrire le `CREATE TRIGGER trg_audit_sav_comments` (AFTER INSERT uniquement).
-  - [ ] 1.5 `ALTER TABLE sav_comments ENABLE ROW LEVEL SECURITY;` puis les 6 `CREATE POLICY` nommés (AC #5). Si le helper `app_is_group_manager_of(bigint)` de la migration 2.1 est utilisable, l'invoquer dans la policy `sav_comments_select_group_manager` pour simplifier l'expression (sinon inliner le lookup `members`).
+- [x] **1. Rédiger la migration SQL** (AC: #1, #2, #3, #4, #5)
+  - [x] 1.1 Créer `client/supabase/migrations/20260422120000_schema_sav_comments.sql`. Header du même pattern que Story 2.1, sections `-- Table` → `-- Index` → `-- Trigger audit` → `-- Grants` → `-- RLS enable + policies` → `-- END`.
+  - [x] 1.2 `CREATE TABLE sav_comments` avec les deux contraintes `CHECK` nommées (`sav_comments_author_xor`, `sav_comments_internal_operator_only`).
+  - [x] 1.3 3 `CREATE INDEX` : `idx_sav_comments_sav` (principal), `idx_sav_comments_author_operator` (partiel), `idx_sav_comments_author_member` (partiel).
+  - [x] 1.4 `CREATE TRIGGER trg_audit_sav_comments AFTER INSERT`.
+  - [x] 1.5 RLS activée + 6 policies. Utilisation du helper `app_is_group_manager_of(bigint)` dans `sav_comments_select_group_manager` (plus lisible que l'inline members lookup).
 
-- [ ] **2. Tests RLS SQL** (AC: #6)
-  - [ ] 2.1 Créer `client/supabase/tests/rls/schema_sav_comments.test.sql`. Copier l'ossature des tests `schema_sav_capture.test.sql` (Story 2.1) : `BEGIN; SET LOCAL ...; SELECT 1/0 FROM ... WHERE ...;` pour les assertions (convention de la suite Epic 1).
-  - [ ] 2.2 Fixtures minimales : 2 groupes, 3 membres (M1 groupe A, M2 groupe A, M3 groupe B), 1 responsable (R1 groupe A), 1 opérateur (O1), 2 SAV (S1 de M1, S2 de M2). Créer 4 commentaires : C1 all sur S1 par M1, C2 internal sur S1 par O1, C3 all sur S1 par O1, C4 all sur S2 par M2.
-  - [ ] 2.3 Implémenter les 8 assertions `SAV-COMMENTS-RLS-01` → `08` en basculant le GUC `app.current_member_id` / `app.current_actor_type` / `app.current_operator_id` entre chaque bloc.
-  - [ ] 2.4 Vérifier en local : `cd client && psql "$SUPABASE_DB_URL" -f supabase/tests/rls/schema_sav_comments.test.sql` → 0 exception, output `OK 8/8`.
+- [x] **2. Tests RLS SQL** (AC: #6)
+  - [x] 2.1 `client/supabase/tests/rls/schema_sav_comments.test.sql` créé sur le pattern `schema_sav_capture.test.sql`.
+  - [x] 2.2 Fixtures : 2 groupes (A, B), 4 membres (M1/M2 adhérents A, M3 adhérent B, R1 responsable A), 1 opérateur (O1), 2 SAV (S1 de M1, S2 de M2), 4 commentaires (C1/C3 all sur S1, C2 internal sur S1, C4 all sur S2).
+  - [x] 2.3 8 assertions `SAV-COMMENTS-RLS-01` → `08` implémentées avec bascule GUC `app.current_actor_type` / `app.current_operator_id` / `app.current_member_id` entre blocs.
+  - [x] 2.4 Exécution locale OK — `OK 8/8 SAV-COMMENTS-RLS` en sortie.
 
-- [ ] **3. Documentation** (AC: #10)
-  - [ ] 3.1 Ajouter une section « 3.1 — Table sav_comments » dans `docs/integration-architecture.md` §Database. Utiliser le style concis Story 2.1 (3 paragraphes max + table des policies).
+- [x] **3. Documentation** (AC: #10)
+  - [x] 3.1 Section « Base de données — table sav_comments (Epic 3 Story 3.1) » ajoutée à `docs/integration-architecture.md`, juste après la section Epic 2. Inclut les 2 contraintes CHECK, la table des 6 policies, le rappel des GUC nouvelles, le lien vers le fichier de tests.
 
-- [ ] **4. Vérifications CI** (AC: #11)
-  - [ ] 4.1 `cd client && npx supabase db reset` → ensemble des migrations OK, dont la nouvelle.
-  - [ ] 4.2 `npm run typecheck` → 0 erreur. `npm test -- --run` → 100 % (aucun nouveau test Vitest, inchangé vs baseline Epic 2).
-  - [ ] 4.3 Job CI `migrations-check` (workflow Story 1.7) exécute le nouveau fichier `.test.sql` → assertions vertes.
-  - [ ] 4.4 Commit : `feat(epic-3.1): add sav_comments table + RLS append-only`.
+- [x] **4. Vérifications CI** (AC: #11)
+  - [x] 4.1 `cd client && npx supabase db reset` → 5 migrations Epic 1/2 + nouvelle migration 3.1 appliquées sans erreur.
+  - [x] 4.2 `npm run typecheck` → 0 erreur. `npm test -- --run` → 261/261 tests verts (aucune régression).
+  - [x] 4.3 Le workflow `ci.yml` étape `Run RLS tests` itère `client/supabase/tests/rls/*.sql` — le nouveau fichier est automatiquement inclus (pas de modif YAML nécessaire).
+  - [ ] 4.4 Commit : à faire par Antho — `feat(epic-3.1): add sav_comments table + RLS append-only`.
 
 ## Dev Notes
 
@@ -116,10 +116,42 @@ Epic: 3 — Traitement opérationnel des SAV en back-office
 
 ### Agent Model Used
 
-_À remplir par dev agent._
+Claude Opus 4.7 (1M context) — persona Amelia (bmad-agent-dev) — 2026-04-22.
 
 ### Debug Log References
 
+- `npx supabase db reset` → 6 migrations appliquées sans erreur (Epic 1 × 3, Epic 2 × 2, Epic 3.1 × 1).
+- `psql … -f schema_sav_comments.test.sql` → `OK 8/8 SAV-COMMENTS-RLS`.
+- `psql … -f schema_sav_capture.test.sql` → non-régression Epic 2.1 OK.
+- `npm run typecheck` → 0 erreur.
+- `npm test -- --run` → 261/261 tests (31 suites).
+
 ### Completion Notes List
 
+- Migration datée `20260422120000` (strictement après `20260421150000`, dernière Epic 2).
+- GUC `app.current_actor_type` et `app.current_operator_id` **introduites pour la première fois** en RLS dans ce repo (Story 2.1 n'utilisait que `app.current_member_id` et `app.actor_operator_id`). Les endpoints V1 passent par `supabaseAdmin()` et ne les settent pas — les policies sont uniquement de la défense-en-profondeur pour un futur client Supabase direct.
+- Choix technique : `GRANT SELECT, INSERT ON sav_comments TO authenticated` explicite dans la migration (pas de GRANT UPDATE/DELETE). Requis pour que les tests RLS INSERT-04/05/06 exercent effectivement les policies (sinon l'erreur serait `insufficient_privilege` au niveau GRANT avant même que RLS n'entre en jeu). L'absence de GRANT UPDATE/DELETE redouble l'append-only garanti par l'absence de policy.
+- Test-08 capture `SQLERRM` pour vérifier que le rejet vient bien de la contrainte CHECK `sav_comments_internal_operator_only` (et non d'une autre cause) — défense-en-profondeur prouvée.
+- Pas de tests Vitest créés, conformément à la décision D1 Story 2.1 (tests RLS en SQL natif via psql, runnés par job CI `migrations-check`).
+- Pas d'endpoint HTTP dans cette story — l'exposition arrive en Story 3.7. Cette migration pose uniquement le socle DB.
+- Commit à créer manuellement par Antho : `feat(epic-3.1): add sav_comments table + RLS append-only`.
+
 ### File List
+
+- `client/supabase/migrations/20260422120000_schema_sav_comments.sql` (créé)
+- `client/supabase/tests/rls/schema_sav_comments.test.sql` (créé)
+- `docs/integration-architecture.md` (modifié — ajout section Epic 3 Story 3.1)
+- `_bmad-output/implementation-artifacts/3-1-migration-commentaires-sav.md` (statut → review, Dev Agent Record renseigné)
+
+### Change Log
+
+- 2026-04-22 — Story 3.1 implémentée : table `sav_comments` append-only + 6 policies RLS + trigger audit AFTER INSERT + 8 tests RLS SQL verts.
+- 2026-04-22 — Addressed code review findings (CR adversarial 3-layer) :
+  - **[H]** Test RLS-07 robuste aux deux chemins `42501 insufficient_privilege` (CI minimaliste) et `ROW_COUNT=0` (Supabase local) — simulation CI validée en revoquant UPDATE.
+  - **[M]** Test RLS-06 renforcé : 2e opérateur O2 créé dans les fixtures, assertion vérifie `SQLERRM LIKE '%row-level security%'` (plus de masquage par FK).
+  - **[M]** FK `author_member_id`/`author_operator_id` : `ON DELETE RESTRICT` explicite (incompatible avec XOR en `SET NULL`, aligné `anonymized_at` GDPR).
+  - **[L]** Contraintes CHECK `visibility` et `body` nommées explicitement (`sav_comments_visibility_enum`, `sav_comments_body_bounds`).
+  - **[L]** Commentaire entête migration : provenance `audit_changes` corrigée (Epic 1 `20260419120000` + override PII Epic 2 `20260421130000`).
+  - **[L]** Test RLS-01 passe en assertions d'égalité strictes (`=` au lieu de `<`) pour détecter toute dérive de fixtures.
+  - **[L]** Case 4.4 remise à `[ ]` : le commit est de la responsabilité d'Antho.
+  - **Non corrigés (design V1 acceptable, flagués pour Epic futur)** : self-asserted `app.current_actor_type='operator'` sans check identité (pattern déjà présent Story 2.1, V1 bypass par service_role) ; namespace split `app.actor_*` vs `app.current_*` entre audit_changes et RLS (endpoints V1 settent `app.actor_*`, les `app.current_*` sont du défense-en-profondeur futur).

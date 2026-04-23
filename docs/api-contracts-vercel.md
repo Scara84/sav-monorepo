@@ -250,6 +250,72 @@ Ces variables sont lues **uniquement** par les fonctions serverless ([client/api
 
 ---
 
+## `GET /api/sav` (Epic 3 Story 3.2)
+
+Liste les SAV en back-office avec filtres combinables, recherche plein-texte française (tsvector) et pagination par cursor opaque stable. Utilisé par la vue liste opérateur (Story 3.3).
+
+### Auth
+
+Session opérateur requise (cookie `sav_session` JWT HS256, `type='operator'`). `401` sans cookie, `403` si session membre. Rate-limit `120/minute/opérateur` (clé `op:<sub>`).
+
+### Query string
+
+| Paramètre | Type | Description |
+|-----------|------|-------------|
+| `status` | `enum` ou CSV/array | `draft`/`received`/`in_progress`/`validated`/`closed`/`cancelled`. `status=received,in_progress` ou `status=received&status=in_progress`. |
+| `from` / `to` | ISO 8601 datetime | Encadre `received_at`. |
+| `invoiceRef` | string ≤64 | `.ilike('%...%')` sur `invoice_ref`. |
+| `memberId` | bigint | Filtre par adhérent exact. |
+| `groupId` | bigint | Filtre par groupe exact. |
+| `assignedTo` | bigint \| `'unassigned'` | Filtre opérateur assigné, ou SAV non-assignés. |
+| `tag` | string ≤64 | `@>` sur `tags[]`. |
+| `q` | string ≤200 | Recherche full-text via `websearch_to_tsquery('french', q)` sur `sav.search` (tsvector = reference + invoice_ref + notes_internal + tags). Extension : si `q` matche `SAV-YYYY-NNNNN` ou contient ≥5 chiffres consécutifs, OR avec `reference.ilike.%q%`. |
+| `limit` | int 1-100 | Défaut 50. |
+| `cursor` | opaque base64url | Retourné par l'appel précédent. |
+
+Erreur Zod sur format → `400 VALIDATION_FAILED` avec `details: [{ field, message }]`.
+
+### Réponse 200
+
+```json
+{
+  "data": [
+    {
+      "id": 1234,
+      "reference": "SAV-2026-00042",
+      "status": "in_progress",
+      "receivedAt": "2026-03-01T08:12:00.000Z",
+      "takenAt": "2026-03-01T09:00:00.000Z",
+      "validatedAt": null,
+      "closedAt": null,
+      "cancelledAt": null,
+      "version": 2,
+      "invoiceRef": "FAC-2026-0555",
+      "totalAmountCents": 12400,
+      "tags": ["urgent", "à rappeler"],
+      "member": { "id": 10, "firstName": "Jean", "lastName": "Dubois", "email": "j.dubois@example.com" },
+      "group": { "id": 3, "name": "Groupe Nord" },
+      "assignee": { "id": 42, "displayName": "Amélie Op" }
+    }
+  ],
+  "meta": {
+    "cursor": "eyJyZWMiOiIyMDI2LTAzLTAxVDA4OjEyOjAwLjAwMFoiLCJpZCI6MTIzNH0",
+    "count": 1234,
+    "limit": 50
+  }
+}
+```
+
+`meta.cursor` = `null` quand il n'y a plus de page suivante. `meta.count` = total après application des filtres (obtenu via `count: 'exact'` Supabase). `cursor` est un **blob opaque** : ne pas tenter de le parser côté client, simplement le réinjecter dans la requête suivante (`?cursor=<...>`).
+
+### Pagination cursor stable
+
+Tri : `(received_at DESC, id DESC)`. Cursor = base64url(JSON `{ rec, id }`). Condition SQL : `received_at.lt.${rec} OR (received_at.eq.${rec} AND id.lt.${id})` — tuple-compare qui évite les doublons quand plusieurs SAV partagent la même milliseconde. Index `idx_sav_received_id_desc` (migration `20260422130000`) rend le seek O(log n).
+
+### Routing Vercel
+
+L'endpoint est servi par `client/api/sav/[[...slug]].ts` (catch-all optionnel) qui dispatche vers `listSavHandler` (dans `client/api/_lib/sav/list-handler.ts`) quand `slug` est vide et méthode = `GET`. Ce catch-all sera réutilisé par les Stories 3.4 → 3.7 (détail, transitions, assignation, édition lignes, tags, commentaires, duplication) — un seul slot Vercel pour tout le domaine SAV back-office.
+
 ## Références
 
 - [client/api/_lib/graph.js](../client/api/_lib/graph.js) — MSAL + Graph client singleton
@@ -260,3 +326,84 @@ Ces variables sont lues **uniquement** par les fonctions serverless ([client/api
 - [Microsoft Graph — createUploadSession](https://learn.microsoft.com/en-us/graph/api/driveitem-createuploadsession)
 - [Microsoft Graph — createLink](https://learn.microsoft.com/en-us/graph/api/driveitem-createlink)
 - [VERIFICATION_CARACTERES.md](../VERIFICATION_CARACTERES.md) — règles filename SharePoint
+
+## `GET /api/sav/:id` (Epic 3 Story 3.4)
+
+Détail complet d'un SAV pour back-office : entête + lignes + fichiers + commentaires (both `all` et `internal`) + 100 derniers événements audit. Servi par le même catch-all `api/sav/[[...slug]].ts` (slot Vercel unique).
+
+### Auth
+
+Session opérateur requise. 401 si pas de cookie, 403 si session membre. Rate-limit 240/min/opérateur (clé `op:<sub>`).
+
+### Paramètre
+
+`:id` = bigint positif. Validation regex `/^\d+$/` au router. 400 `VALIDATION_FAILED` si absent ou invalide.
+
+### Réponse 200
+
+```json
+{
+  "data": {
+    "sav": { /* cf. shape liste + lines[], files[], member.phone, member.pennylaneCustomerId */ },
+    "comments": [ { "id", "visibility", "body", "createdAt", "authorMember"?, "authorOperator"? } ],
+    "auditTrail": [ { "id", "action", "actorOperator"?, "actorMember"?, "actorSystem", "diff", "createdAt" } ]
+  }
+}
+```
+
+### Performance
+
+3 requêtes Supabase, les deux annexes en parallèle via `Promise.all`. Aucun appel Graph — l'intermittence OneDrive n'affecte que les vignettes image côté FE (fallback `onerror` + bouton retry).
+
+
+## `PATCH /api/sav/:id/status` + `PATCH /api/sav/:id/assign` (Epic 3 Story 3.5)
+
+Transitions de statut et assignation opérateur, protégées par **verrou optimiste CAS** sur `version`. Les deux endpoints passent par une RPC PL/pgSQL (migration `20260422140000_sav_transitions.sql`) pour garantir l'atomicité `check version + check state-machine + UPDATE + INSERT email_outbox + INSERT sav_comments note`.
+
+### State-machine (Mermaid)
+
+```mermaid
+stateDiagram-v2
+  [*] --> draft
+  draft --> received: webhook capture
+  draft --> cancelled: annulation
+  received --> in_progress: prise en charge op (→ assigned_to + taken_at)
+  received --> cancelled
+  in_progress --> validated: tous sav_lines.validation_status='ok' (→ validated_at)
+  in_progress --> cancelled
+  in_progress --> received: rollback technique
+  validated --> closed: avoir envoyé (→ closed_at)
+  validated --> cancelled
+  closed --> [*]
+  cancelled --> [*]
+```
+
+### Body `PATCH /api/sav/:id/status`
+
+```json
+{ "status": "in_progress", "version": 2, "note": "optionnel (≤500c, → sav_comments internal)" }
+```
+
+### Body `PATCH /api/sav/:id/assign`
+
+```json
+{ "assigneeOperatorId": 42, "version": 2 }
+```
+
+`assigneeOperatorId: null` = désassigner.
+
+### Erreurs métier
+
+| Code HTTP | `error.code` | `details.code` | Signification |
+|-----------|--------------|----------------|---------------|
+| 404 | `NOT_FOUND` | `ASSIGNEE_NOT_FOUND` (si applicable) | SAV ou opérateur destinataire inexistant |
+| 409 | `CONFLICT` | `VERSION_CONFLICT` | `expectedVersion` ≠ `currentVersion` — recharger puis retenter |
+| 422 | `BUSINESS_RULE` | `INVALID_TRANSITION` | Transition hors state-machine (inclut `from`, `to`, `allowed[]`) |
+| 422 | `BUSINESS_RULE` | `LINES_BLOCKED` | Tentative → `validated` avec lignes `validation_status != 'ok'` (inclut `blockedLineIds[]`) |
+
+### Effets de bord DB
+
+- Trigger audit `trg_audit_sav` capture le `diff { before, after }` automatiquement (acteur via GUC `app.actor_operator_id` setté par la RPC).
+- Table `email_outbox` INSERT `status='pending'` pour transitions `in_progress`/`validated`/`closed`/`cancelled` (pas pour rollback `in_progress → received`). Epic 6 matérialise le `html_body` via `kind` à l'envoi.
+- Si `note` fourni : INSERT `sav_comments` `visibility='internal'`, auteur opérateur.
+

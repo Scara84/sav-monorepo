@@ -172,3 +172,53 @@ Voir détail dans [development-guide-client.md](./development-guide-client.md#va
 | `MICROSOFT_CLIENT_ID` / `MICROSOFT_TENANT_ID` / `MICROSOFT_CLIENT_SECRET` | App registration Azure AD |
 | `MICROSOFT_DRIVE_ID` | Drive OneDrive/SharePoint cible |
 | `MICROSOFT_DRIVE_PATH` | Racine des dossiers SAV (ex: `SAV_Images`) |
+
+
+## Back-office SAV (Epic 3 Story 3.3)
+
+La vue `/admin/sav` (route `admin-sav-list`, layout `BackOfficeLayout.vue`) permet à l'opérateur de lister les SAV avec filtres combinables, recherche full-text française (debounce 300 ms), pagination cursor forward-only et URL state sync (bookmark copier-coller reproductible).
+
+### Fichiers
+
+- [`client/src/features/back-office/views/BackOfficeLayout.vue`](../client/src/features/back-office/views/BackOfficeLayout.vue) — layout minimal back-office (header + main slot).
+- [`client/src/features/back-office/views/SavListView.vue`](../client/src/features/back-office/views/SavListView.vue) — vue liste (filtres, table, pagination, chips actifs, skeleton, empty state, role=alert erreur).
+- [`client/src/features/back-office/composables/useSavList.ts`](../client/src/features/back-office/composables/useSavList.ts) — composable avec `AbortController` partagé (la requête précédente est annulée dès qu'une nouvelle part), fetch debounced via `@vueuse/core useDebounceFn(300)`, gestion erreurs 401/403/429/500 avec messages utilisateur.
+- [`client/src/router/index.js`](../client/src/router/index.js) — route `/admin` parent + enfants `/admin/sav` et `/admin/sav/:id`, meta `{ requiresAuth: 'msal', roles: ["admin","sav-operator"] }` (guard à brancher Story 3.5+ ou Epic 7).
+
+### URL state sync
+
+Les filtres (`status`, `q`, `from`, `to`, `invoiceRef`, `assignedTo`, `tag`) sont reflétés dans `route.query` via `router.replace` debounced 300 ms — pas de `push` pour ne pas polluer l'historique navigateur. Le `cursor` n'est **PAS** dans l'URL (pointeur éphémère : 2 opérateurs avec le même lien à 1 minute d'écart verraient des pages différentes sur BDD vivante — comportement indésirable). Bookmark = page 1 filtrée reproductible.
+
+### Accessibilité WCAG AA
+
+- Focus visible `:focus-visible` sur tous les contrôles (outline 2 px).
+- Zone off-screen `aria-live="polite" role="status"` annonce « N résultats trouvés » après chaque update.
+- `role="alert"` sur le panneau erreur serveur.
+- Table : chaque `<tr tabindex="0">` est activable au clavier (Enter/Space → navigate détail).
+- Badges statut : couleur + texte (pas uniquement couleur — daltoniens).
+- Contraste texte ≥ 4.5:1 (palette Tailwind par défaut).
+
+### Dépendances
+
+- Endpoint backend : [`GET /api/sav`](./api-contracts-vercel.md#get-apisav-epic-3-story-32) (Story 3.2).
+- Pagination forward-only V1. Retour arrière via bouton navigateur (cursor non persisté). Feature V1.1 : stack client-side de cursors visités (10 lignes de code) si feedback utilisateur négatif.
+
+## Back-office SAV — vue détail (Epic 3 Story 3.4)
+
+Vue `/admin/sav/:id` (route `admin-sav-detail`) : header + lignes readonly V1 + grille fichiers avec preview image (whitelist OneDrive) + thread commentaires readonly V1 + audit trail.
+
+### Fichiers
+
+- [`client/src/features/back-office/views/SavDetailView.vue`](../client/src/features/back-office/views/SavDetailView.vue) — vue monolithique avec 5 sections (breadcrumb, header card, lines table, files gallery, comments, audit).
+- [`client/src/features/back-office/composables/useSavDetail.ts`](../client/src/features/back-office/composables/useSavDetail.ts) — composable `useSavDetail(id: Ref<number>)` → `{ sav, comments, auditTrail, loading, error, refresh }`. Watch `id` → refetch.
+- [`client/src/features/back-office/utils/format-audit-diff.ts`](../client/src/features/back-office/utils/format-audit-diff.ts) — helper `formatDiff(action, diff)` → `string[]` rendu humain.
+- [`client/src/shared/utils/onedrive-whitelist.ts`](../client/src/shared/utils/onedrive-whitelist.ts) — whitelist domaines OneDrive/Graph pour le rendu direct des vignettes image.
+
+### Dégradation OneDrive KO
+
+Le backend `GET /api/sav/:id` ne fait AUCUN appel Graph → pas de 503 côté endpoint. Les vignettes image (`<img src="webUrl">`) peuvent échouer au chargement → `@error` handler met le fichier en état `imgErrored`, fallback icône + libellé « Aperçu indisponible » + bouton Réessayer (relance le chargement via cache-bust). Le lien `<a href>` reste cliquable.
+
+### Sécurité XSS stockée
+
+`comment.body`, `product_name_snapshot`, `cause_notes`, `notes_internal` sont interpolés via `{{ }}` ou `:text` — JAMAIS `v-html`. La liaison Vue 3 par défaut échappe tout contenu utilisateur. Test TV-XSS à venir.
+

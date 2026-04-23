@@ -153,6 +153,30 @@ Ajouté par la migration [`20260421140000_schema_sav_capture.sql`](../client/sup
 
 Script de cutover : [`scripts/cutover/import-catalog.ts`](../client/scripts/cutover/import-catalog.ts) — `npx tsx` avec env `SUPABASE_URL` + `SUPABASE_SERVICE_ROLE_KEY`, lit l'onglet `BDD` d'un `.xlsx`, UPSERT idempotent sur `products.code` en batches de 100.
 
+## Base de données — table sav_comments (Epic 3 Story 3.1)
+
+Ajoutée par la migration [`20260422120000_schema_sav_comments.sql`](../client/supabase/migrations/20260422120000_schema_sav_comments.sql). Thread de commentaires **append-only** (pas d'`updated_at`, pas de `deleted_at`, pas de policy `UPDATE`/`DELETE` pour `authenticated` — corrections via nouveau commentaire). 2 contraintes `CHECK` verrouillent les invariants métier au niveau DB :
+
+- **`sav_comments_author_xor`** : exactement un des deux champs auteur renseigné (`author_member_id` XOR `author_operator_id`). Un bug endpoint qui oublierait l'un des deux ne passe jamais.
+- **`sav_comments_internal_operator_only`** : un commentaire `visibility='internal'` est forcément écrit par un opérateur — la DB est la dernière ligne de défense si une policy RLS était mal configurée.
+
+Trigger `audit_changes` attaché `AFTER INSERT` uniquement (append-only). 3 index B-tree : `(sav_id, created_at DESC)` pour la lecture chronologique (Story 3.4), + 2 index partiels sur les colonnes auteur pour la traçabilité.
+
+RLS activée avec 6 policies explicites (défense-en-profondeur pour un futur client Supabase direct — V1 les endpoints passent par `supabaseAdmin()` qui bypass) :
+
+| Policy | Rôle | Sémantique |
+|--------|------|------------|
+| `sav_comments_service_role_all` | service_role | `ALL` bypass — endpoints serverless. |
+| `sav_comments_select_operator` | authenticated | `SELECT` si GUC `app.current_actor_type` ∈ (`operator`,`admin`) — voit tout (all + internal). |
+| `sav_comments_select_member` | authenticated | `SELECT` commentaires `visibility='all'` sur les SAV dont `member_id = app.current_member_id`. |
+| `sav_comments_select_group_manager` | authenticated | `SELECT` commentaires `visibility='all'` sur les SAV des adhérents non-responsables de son groupe, via le helper `app_is_group_manager_of(bigint)` (Story 2.1). |
+| `sav_comments_insert_operator` | authenticated | `INSERT` autorisé seulement si `author_operator_id = app.current_operator_id` et `app.current_actor_type` ∈ (`operator`,`admin`). |
+| `sav_comments_insert_member` | authenticated | `INSERT` autorisé uniquement en `visibility='all'`, sur son propre SAV, signé de son `current_member_id` (ceinture+bretelles avec la contrainte CHECK). |
+
+**GUC introduites** (première utilisation RLS côté Epic 3) : `app.current_actor_type`, `app.current_operator_id`. Un futur client Supabase direct opérateur devra faire `SET LOCAL app.current_actor_type = 'operator'` + `SET LOCAL app.current_operator_id = '<id>'` avant requête. Les endpoints serverless V1 via `supabaseAdmin()` n'en ont pas besoin (bypass policy).
+
+Tests RLS : [`client/supabase/tests/rls/schema_sav_comments.test.sql`](../client/supabase/tests/rls/schema_sav_comments.test.sql) — 8 assertions `SAV-COMMENTS-RLS-01` → `08` couvrant les 3 rôles de lecture et les 3 failles d'écriture (internal par adhérent, SAV d'autrui, usurpation opérateur), plus le UPDATE bloqué et la contrainte CHECK DB.
+
 ## Couplages à surveiller
 
 - **`VITE_API_KEY` ↔ `API_KEY`** (Vercel env) : doivent rester synchronisés lors des rotations.

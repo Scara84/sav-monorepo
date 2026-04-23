@@ -8,29 +8,46 @@ const routes = [
   {
     path: '/',
     name: 'Home',
-    component: Home
+    component: Home,
   },
   {
     path: '/invoice-details',
     name: 'InvoiceDetails',
-    component: InvoiceDetails
+    component: InvoiceDetails,
   },
   {
     path: '/sav-confirmation',
     name: 'SavConfirmation',
     component: SavConfirmation,
-    props: true
+    props: true,
   },
   {
     path: '/maintenance',
     name: 'Maintenance',
-    component: Maintenance
-  }
+    component: Maintenance,
+  },
+  {
+    path: '/admin',
+    component: () => import('@/features/back-office/views/BackOfficeLayout.vue'),
+    meta: { requiresAuth: 'msal', roles: ['admin', 'sav-operator'] },
+    children: [
+      {
+        path: 'sav',
+        name: 'admin-sav-list',
+        component: () => import('@/features/back-office/views/SavListView.vue'),
+      },
+      {
+        path: 'sav/:id',
+        name: 'admin-sav-detail',
+        component: () => import('@/features/back-office/views/SavDetailView.vue'),
+      },
+    ],
+  },
 ]
 
 const router = createRouter({
   history: createWebHistory(),
-  routes
+  routes,
 })
 
 const MAINTENANCE_BYPASS_STORAGE_KEY = 'maintenance_bypass_enabled'
@@ -46,20 +63,17 @@ router.beforeEach((to) => {
 
   const queryToken = to.query?.maintenance_bypass
 
-  if (
-    typeof queryToken === 'string' &&
-    bypassToken &&
-    queryToken === bypassToken
-  ) {
+  if (typeof queryToken === 'string' && bypassToken && queryToken === bypassToken) {
     window.localStorage.setItem(MAINTENANCE_BYPASS_STORAGE_KEY, 'true')
 
+    // eslint-disable-next-line no-unused-vars -- destructure pour retirer maintenance_bypass
     const { maintenance_bypass, ...restQuery } = to.query
 
     return {
       name: to.name || undefined,
       params: to.params,
       query: restQuery,
-      hash: to.hash
+      hash: to.hash,
     }
   }
 
