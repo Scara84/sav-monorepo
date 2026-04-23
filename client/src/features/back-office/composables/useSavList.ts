@@ -90,11 +90,16 @@ export function useSavList() {
   const error = ref<string | null>(null)
   const cursor = ref<string | null>(null)
   let currentAbort: AbortController | null = null
+  // F17 (CR Epic 3) : token monotone pour ignorer les réponses out-of-order.
+  // AbortController couvre la majorité des cas mais si une réponse arrive
+  // juste avant l'abort (réseau très lent), items pourrait être écrasé.
+  let requestSeq = 0
 
   async function fetchList(opts: { resetCursor?: boolean } = {}): Promise<void> {
     if (opts.resetCursor) cursor.value = null
     if (currentAbort) currentAbort.abort()
     currentAbort = new AbortController()
+    const seq = ++requestSeq
     loading.value = true
     error.value = null
     try {
@@ -103,8 +108,17 @@ export function useSavList() {
         credentials: 'include',
         signal: currentAbort.signal,
       })
+      if (seq !== requestSeq) return // stale response ignored
       if (res.status === 401) {
+        // F21 (CR Epic 3) : pas de session → redirect MSAL login.
+        // `returnTo` permet au callback MSAL de revenir sur la même page
+        // après succès. Le cookie de session `sav_session` est HttpOnly,
+        // on ne peut pas le détecter en amont dans un router guard.
         error.value = 'Session expirée'
+        if (typeof window !== 'undefined') {
+          const returnTo = encodeURIComponent(window.location.pathname + window.location.search)
+          window.location.href = `/api/auth/msal/login?returnTo=${returnTo}`
+        }
         return
       }
       if (res.status === 403) {
@@ -123,21 +137,28 @@ export function useSavList() {
         data: SavListItem[]
         meta: SavListMeta
       }
+      if (seq !== requestSeq) return // stale response ignored post-parse
       items.value = body.data
       meta.value = body.meta
       initialLoadDone.value = true
     } catch (err) {
       if ((err as { name?: string })?.name === 'AbortError') return
+      if (seq !== requestSeq) return
       error.value = err instanceof Error ? err.message : 'Erreur réseau'
     } finally {
-      loading.value = false
-      currentAbort = null
+      if (seq === requestSeq) {
+        loading.value = false
+        currentAbort = null
+      }
     }
   }
 
   const fetchDebounced = useDebounceFn(() => fetchList({ resetCursor: true }), 300)
 
   async function nextPage(): Promise<void> {
+    // F27 (CR Epic 3) : guard early-return si fetch déjà en cours → évite
+    // les doublons de rows sur double-click « Page suivante ».
+    if (loading.value) return
     if (meta.value.cursor === null) return
     cursor.value = meta.value.cursor
     await fetchList()

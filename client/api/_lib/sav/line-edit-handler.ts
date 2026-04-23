@@ -19,6 +19,12 @@ import type { ApiHandler, ApiRequest, ApiResponse } from '../types'
  * explicitement s'il le souhaite (sinon hérite de l'état actuel).
  */
 
+// Review F52 (CR Epic 3 2026-04-23) — `validationStatus` retiré du wire.
+// Permettre au client de patcher ce champ permet de contourner la garde
+// `LINES_BLOCKED` de `transition_sav_status` en forçant `ok` avant
+// transition vers `validated`. Le champ reste écrit uniquement par le
+// trigger compute (Epic 4). Idem `validationMessages` qui n'est jamais
+// utilisateur-éditable.
 export const lineEditBodySchema = z
   .object({
     qtyRequested: z.number().positive().max(99999).optional(),
@@ -27,7 +33,6 @@ export const lineEditBodySchema = z
     unitPriceHtCents: z.number().int().nonnegative().max(100000000).optional(),
     vatRateBp: z.number().int().min(0).max(10000).optional(),
     creditCoefficientBp: z.number().int().min(0).max(10000).optional(),
-    validationStatus: z.enum(['ok', 'warning', 'error']).optional(),
     position: z.number().int().nonnegative().max(999).optional(),
     version: z.number().int().nonnegative(),
   })
@@ -91,6 +96,24 @@ function lineEditCore(savId: number, lineId: number): ApiHandler {
             expectedVersion: version,
             currentVersion,
           })
+          return
+        }
+        if (code === 'SAV_LOCKED') {
+          // D6 (CR Epic 3) — édition interdite en statut terminal.
+          sendError(res, 'BUSINESS_RULE', 'SAV verrouillé', requestId, {
+            code: 'SAV_LOCKED',
+            status: payload['status'] ?? null,
+          })
+          return
+        }
+        if (code === 'ACTOR_NOT_FOUND') {
+          // F50 (CR Epic 3) — actor id forgé / inconnu.
+          logger.error('sav.line.actor_not_found', {
+            requestId,
+            savId,
+            actorOperatorId: user.sub,
+          })
+          sendError(res, 'FORBIDDEN', 'Acteur inconnu', requestId)
           return
         }
         logger.error('sav.line.rpc_error', {

@@ -1,6 +1,6 @@
 # Story 3.1 : Migration commentaires SAV
 
-Status: review
+Status: done (CR Epic 3 patches appliqués)
 Epic: 3 — Traitement opérationnel des SAV en back-office
 
 ## Story
@@ -146,6 +146,15 @@ Claude Opus 4.7 (1M context) — persona Amelia (bmad-agent-dev) — 2026-04-22.
 ### Change Log
 
 - 2026-04-22 — Story 3.1 implémentée : table `sav_comments` append-only + 6 policies RLS + trigger audit AFTER INSERT + 8 tests RLS SQL verts.
+- 2026-04-23 — CR Epic 3 adversarial (3 couches). 1 finding MEDIUM restant : F2 body avec unicode whitespace passe le CHECK. Voir [epic-3-review-findings.md](epic-3-review-findings.md).
+
+### Review Findings (CR 2026-04-23)
+
+- [x] [Review][Patch] F2 — body unicode whitespace CHECK renforcé via `regexp_replace(body, '\s+', '', 'g')` dans `sav_comments_body_bounds` [20260423120000_epic_3_cr_security_patches.sql] — APPLIQUÉ.
+- [x] [Review][Dismiss] F1 — contraintes CHECK nommées (déviation AC #2 documentée).
+- [x] [Review][Dismiss] F3 — helper `app_is_group_manager_of` (aligné Dev Notes).
+- [x] [Review][Dismiss] F4 — `NULLIF(current_setting(...), '')::bigint` (amélioration défensive).
+
 - 2026-04-22 — Addressed code review findings (CR adversarial 3-layer) :
   - **[H]** Test RLS-07 robuste aux deux chemins `42501 insufficient_privilege` (CI minimaliste) et `ROW_COUNT=0` (Supabase local) — simulation CI validée en revoquant UPDATE.
   - **[M]** Test RLS-06 renforcé : 2e opérateur O2 créé dans les fixtures, assertion vérifie `SQLERRM LIKE '%row-level security%'` (plus de masquage par FK).

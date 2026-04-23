@@ -58,29 +58,51 @@ import type { ApiHandler, ApiRequest, ApiResponse } from './_lib/types'
  *   /api/sav/:id/duplicate                → /api/sav?op=duplicate&id=:id
  *   /api/sav/:id/lines/:lineId            → /api/sav?op=line&id=:id&lineId=:lineId
  */
+// F20 (CR Epic 3) : rejet précoce d'un `id` dépassant MAX_SAFE_INTEGER
+// (précision JS perdue au-delà). Un bigint DB peut être > 2^53 ; on
+// rejette en dessous pour éviter de requêter la mauvaise row.
+function parseBigintId(str: string): number | null {
+  if (!/^\d+$/.test(str) || str.length > 15) return null
+  const n = Number(str)
+  if (!Number.isInteger(n) || n <= 0 || n > Number.MAX_SAFE_INTEGER) return null
+  return n
+}
+
 function parseSavId(req: ApiRequest): number | null {
   const raw = (req.query as Record<string, unknown> | undefined)?.['id']
   if (raw === undefined || raw === null) return null
   const str = Array.isArray(raw) ? String(raw[0]) : String(raw)
-  if (!/^\d+$/.test(str)) return null
-  const n = Number(str)
-  return Number.isInteger(n) && n > 0 ? n : null
+  return parseBigintId(str)
 }
 
 function parseLineId(req: ApiRequest): number | null {
   const raw = (req.query as Record<string, unknown> | undefined)?.['lineId']
   if (raw === undefined || raw === null) return null
   const str = Array.isArray(raw) ? String(raw[0]) : String(raw)
-  if (!/^\d+$/.test(str)) return null
-  const n = Number(str)
-  return Number.isInteger(n) && n > 0 ? n : null
+  return parseBigintId(str)
 }
 
-function parseOp(req: ApiRequest): string {
+// F19/F95 (CR Epic 3) : `op` doit provenir des rewrites vercel.json.
+// Absence = requête directe sur /api/sav (list) — autorisée, défaut `list`.
+// Une valeur inconnue doit retourner 404 explicite au lieu de silently
+// tomber sur `list` (risque : /api/sav/abc/xyz non rewrité retourne la liste).
+const ALLOWED_OPS = new Set([
+  'list',
+  'detail',
+  'status',
+  'assign',
+  'line',
+  'tags',
+  'comments',
+  'duplicate',
+])
+
+function parseOp(req: ApiRequest): string | null {
   const raw = (req.query as Record<string, unknown> | undefined)?.['op']
-  if (typeof raw === 'string') return raw
-  if (Array.isArray(raw) && typeof raw[0] === 'string') return raw[0]
-  return 'list' // défaut si /api/sav sans rewrite
+  if (typeof raw === 'string') return ALLOWED_OPS.has(raw) ? raw : null
+  if (Array.isArray(raw) && typeof raw[0] === 'string')
+    return ALLOWED_OPS.has(raw[0]) ? raw[0] : null
+  return 'list'
 }
 
 const dispatch: ApiHandler = async (req, res) => {
@@ -89,6 +111,12 @@ const dispatch: ApiHandler = async (req, res) => {
 
   // Lecture des params de routing AVANT cleanup — sinon parseSavId retourne null.
   const op = parseOp(req)
+  if (op === null) {
+    // F19/F95 (CR Epic 3) : op inconnu → 404 plutôt que fallback silencieux
+    // sur list (qui masquait toute URL mal-rewrite en retour de liste).
+    sendError(res, 'NOT_FOUND', 'Route non disponible', requestId)
+    return
+  }
   const savId = parseSavId(req)
   const lineId = parseLineId(req)
 

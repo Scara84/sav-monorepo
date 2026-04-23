@@ -1,6 +1,6 @@
 # Story 3.2 : Endpoint liste SAV (filtres + recherche + pagination cursor)
 
-Status: review
+Status: done (CR Epic 3 patches appliqués)
 Epic: 3 — Traitement opérationnel des SAV en back-office
 
 ## Story
@@ -202,6 +202,29 @@ Claude Opus 4.7 (1M context) — persona Amelia (bmad-agent-dev) — 2026-04-22.
 ### Change Log
 
 - 2026-04-22 — Story 3.2 implémentée : `GET /api/sav` avec 9 filtres combinables + recherche full-text tsvector français + cursor pagination stable tuple-compare + 21 tests verts. Migration préalable `sav_schema_prd_target` alignant `sav` sur PRD.
+- 2026-04-23 — CR Epic 3 adversarial (3 couches). Patches P0 appliqués : F5 (cursor regex stricte post-Zod) + F8 (`q` escape étendu `:"\\.`). Findings restants en action items ci-dessous. Voir [epic-3-review-findings.md](epic-3-review-findings.md).
+
+### Review Findings (CR 2026-04-23)
+
+- [x] [Review][Patch] F5 — cursor PostgREST `.or()` injection durci (regex stricte + id check) [list-handler.ts:98-117] — APPLIQUÉ.
+- [x] [Review][Patch] F8 — `q` escape étendu `[,():"\\.]` [list-handler.ts:178-200] — APPLIQUÉ.
+- [x] [Review][Patch] F7/F92 HIGH — `"api/sav.ts": { "maxDuration": 10 }` ajouté [vercel.json] — APPLIQUÉ.
+- [x] [Review][Patch] F9 MEDIUM — escape `%`/`_`/`\` avant ilike [list-handler.ts:168] — APPLIQUÉ.
+- [x] [Review][Patch] F10 MEDIUM — Zod regex `/^[^,{}"\\]+$/` sur tag [sav-list-query.ts:30] — APPLIQUÉ.
+- [x] [Review][Patch] F11 MEDIUM — Zod refine `from <= to` [sav-list-query.ts] — APPLIQUÉ.
+- [x] [Review][Patch] F14 HIGH — `DROP COLUMN IF EXISTS search` [20260422130000:130] — APPLIQUÉ.
+- [x] [Review][Patch] F16 MEDIUM — tags unicode overrides (U+200E/200F/202A-E) + trim [productivity-handlers.ts:35] — APPLIQUÉ.
+- [x] [Review][Patch] F17 MEDIUM — `requestSeq` token anti-stale-response [useSavList.ts] — APPLIQUÉ.
+- [x] [Review][Patch] F19/F95 LOW — `ALLOWED_OPS` whitelist → 404 si op inconnu [sav.ts] — APPLIQUÉ.
+- [x] [Review][Patch] F20 MEDIUM — rejet `id` > MAX_SAFE_INTEGER + str.length > 15 [sav.ts] — APPLIQUÉ.
+- [x] [Review][Patch] F97 MEDIUM — `user.type !== 'operator'` check défensif [list-handler + detail-handler] — APPLIQUÉ.
+- [x] [Review][Defer] F96 MEDIUM — `keyFrom` fallback — withAuth au router garantit déjà operator (faible risque).
+- [x] [Review][Defer] F6 — fallback `members.last_name/email` [list-handler.ts] — V1.1, Dev Notes ack.
+- [x] [Review][Defer] F12 — `count: 'exact'` non capé — V2 plan B `count: 'planned'` documenté.
+- [x] [Review][Defer] F13 — pagination non-déterministe `received_at` identiques — limite cursor naïf V1, snapshot meta en V2.
+- [x] [Review][Defer] F15 — `immutable_array_join_space` IMMUTABLE wrapper — accepté V1, TODO revisit si collation change.
+- [x] [Review][Defer] F18 LOW — `sav.list.start` log ordering middleware — acceptable.
+
 - 2026-04-22 — Addressed code review findings (CR 3 layers) :
   - **[H] FK hint `sav_assigned_to_fkey` runtime-invalide** — la FK constraint est renommée explicitement dans la migration (`ALTER TABLE sav RENAME CONSTRAINT sav_assigned_to_operator_id_fkey TO sav_assigned_to_fkey`) via DO-block idempotent. Vérifié : `pg_constraint` liste bien `sav_assigned_to_fkey` après reset.
   - **[H] Migration non idempotente** — tous les `ADD COLUMN` utilisent `IF NOT EXISTS`, le rename de colonne est guardé par `information_schema.columns`, `DROP CONSTRAINT sav_status_check` utilise `IF EXISTS`. `npx supabase db reset` passe proprement.

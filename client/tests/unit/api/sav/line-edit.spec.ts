@@ -122,13 +122,45 @@ describe('PATCH /api/sav/:id/lines/:lineId (Story 3.6)', () => {
     expect(res.statusCode).toBe(429)
   })
 
-  it('200 avec validationStatus=warning propagé', async () => {
+  it('validationStatus propagé depuis la RPC (jamais depuis le wire — F52)', async () => {
+    // Le client envoie un patch légitime ; la RPC retourne `warning` via
+    // le trigger compute (Epic 4). Le `validationStatus` dans le body est
+    // stripped par Zod (retiré du schéma depuis F52) — tentative de bypass
+    // LINES_BLOCKED impossible.
     rpcMock.data = [{ sav_id: 1, line_id: 5, new_version: 2, validation_status: 'warning' }]
     const res = mockRes()
-    await handler(lineReq(1, 5, { validationStatus: 'warning', version: 1 }), res)
+    await handler(lineReq(1, 5, { qtyRequested: 7.5, version: 1 }), res)
     expect(res.statusCode).toBe(200)
     const body = res.jsonBody as { data: { validationStatus: string } }
     expect(body.data.validationStatus).toBe('warning')
+  })
+
+  it('F52 : validationStatus dans body → stripped (400 si seul champ, ignoré sinon)', async () => {
+    // Seul `validationStatus` + `version` → stripped Zod, refine « au moins
+    // un champ » échoue → 400 VALIDATION_FAILED.
+    const res = mockRes()
+    await handler(
+      lineReq(1, 5, { validationStatus: 'ok', version: 1 } as Record<string, unknown>),
+      res
+    )
+    expect(res.statusCode).toBe(400)
+  })
+
+  it('D6 : SAV_LOCKED (statut terminal) → 422 BUSINESS_RULE', async () => {
+    rpcMock.error = { code: 'P0001', message: 'SAV_LOCKED|status=validated' }
+    const res = mockRes()
+    await handler(lineReq(1, 5, { qtyRequested: 7.5, version: 1 }), res)
+    expect(res.statusCode).toBe(422)
+    const body = res.jsonBody as { error: { details: { code: string; status: string } } }
+    expect(body.error.details.code).toBe('SAV_LOCKED')
+    expect(body.error.details.status).toBe('validated')
+  })
+
+  it('F50 : ACTOR_NOT_FOUND (actor forgé) → 403 FORBIDDEN', async () => {
+    rpcMock.error = { code: 'P0001', message: 'ACTOR_NOT_FOUND|id=9999' }
+    const res = mockRes()
+    await handler(lineReq(1, 5, { qtyRequested: 7.5, version: 1 }), res)
+    expect(res.statusCode).toBe(403)
   })
 
   it('400 unit invalide', async () => {

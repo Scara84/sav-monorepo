@@ -17,11 +17,17 @@ import type { ApiHandler, ApiRequest, ApiResponse } from '../types'
  * l'intermittence OneDrive.
  */
 
+// Review F36/F37 (CR Epic 3 2026-04-23) — principe de moindre donnée :
+// `notes_internal`, `member.phone`, `member.pennylane_customer_id` sont retirés
+// du SELECT tant qu'aucune surface UI ne les consomme (aucune référence dans
+// SavDetailView.vue). Ils seront réintroduits via un endpoint dédié si / quand
+// la vue d'édition Story 3.6 V2 en aura besoin. Le label « Notes internes »
+// reste dans `format-audit-diff.ts` pour gérer les events d'audit historiques.
 const SAV_SELECT = `
   id, reference, status, version, member_id, group_id, invoice_ref, invoice_fdp_cents,
-  total_amount_cents, tags, assigned_to, notes_internal,
+  total_amount_cents, tags, assigned_to,
   received_at, taken_at, validated_at, closed_at, cancelled_at, created_at, updated_at,
-  member:members!inner ( id, first_name, last_name, email, phone, pennylane_customer_id ),
+  member:members!inner ( id, first_name, last_name, email ),
   group:groups ( id, name ),
   assignee:operators!sav_assigned_to_fkey ( id, display_name, email ),
   lines:sav_lines ( id, product_id, product_code_snapshot, product_name_snapshot,
@@ -36,7 +42,7 @@ const SAV_SELECT = `
 const COMMENTS_SELECT = `
   id, visibility, body, created_at, author_member_id, author_operator_id,
   author_member:members ( first_name, last_name ),
-  author_operator:operators ( display_name )
+  author_operator:operators ( id, display_name )
 `.trim()
 
 const AUDIT_SELECT = `
@@ -53,7 +59,7 @@ interface CommentRow {
   author_member_id: number | null
   author_operator_id: number | null
   author_member: { first_name: string | null; last_name: string } | null
-  author_operator: { display_name: string } | null
+  author_operator: { id: number; display_name: string } | null
 }
 
 interface AuditRow {
@@ -81,10 +87,19 @@ function buildCoreHandler(savId: number): ApiHandler {
       sendError(res, 'UNAUTHENTICATED', 'Session requise', requestId)
       return
     }
+    // F97 (CR Epic 3) : defense-in-depth — withAuth garantit déjà le type,
+    // re-check ici pour fermer la porte en cas de régression du router.
+    if (user.type !== 'operator') {
+      sendError(res, 'FORBIDDEN', 'Session opérateur requise', requestId)
+      return
+    }
 
     try {
       const admin = supabaseAdmin()
-      const [savResult, commentsResult, auditResult] = await Promise.all([
+      // F48 (CR Epic 3) : Promise.allSettled pour dégrader proprement si
+      // l'une des 2 queries annexes échoue (ex. `audit_trail` RLS misconfig).
+      // Le SAV principal reste KO bloquant (sans sav, rien à afficher).
+      const [savResult, commentsResult, auditResult] = await Promise.allSettled([
         admin.from('sav').select(SAV_SELECT).eq('id', savId).maybeSingle(),
         admin
           .from('sav_comments')
@@ -100,59 +115,98 @@ function buildCoreHandler(savId: number): ApiHandler {
           .limit(100),
       ])
 
-      if (savResult.error) {
-        logger.error('sav.detail.sav_error', { requestId, savId, message: savResult.error.message })
+      // SAV principal : fail ou reject → 500 (pas de rendu partiel possible).
+      if (savResult.status === 'rejected') {
+        logger.error('sav.detail.sav_rejected', {
+          requestId,
+          savId,
+          error:
+            savResult.reason instanceof Error ? savResult.reason.message : String(savResult.reason),
+        })
         sendError(res, 'SERVER_ERROR', 'Lecture SAV échouée', requestId)
         return
       }
-      if (!savResult.data) {
+      if (savResult.value.error) {
+        logger.error('sav.detail.sav_error', {
+          requestId,
+          savId,
+          message: savResult.value.error.message,
+        })
+        sendError(res, 'SERVER_ERROR', 'Lecture SAV échouée', requestId)
+        return
+      }
+      if (!savResult.value.data) {
         sendError(res, 'NOT_FOUND', 'SAV introuvable', requestId)
         return
       }
-      if (commentsResult.error) {
-        logger.error('sav.detail.comments_error', {
+
+      // Commentaires / audit : dégradation propre — log warning + array vide.
+      let comments: ReturnType<typeof projectComment>[] = []
+      let commentsDegraded = false
+      if (commentsResult.status === 'fulfilled' && !commentsResult.value.error) {
+        comments = (commentsResult.value.data ?? []).map((c: unknown) =>
+          projectComment(c as CommentRow)
+        )
+      } else {
+        commentsDegraded = true
+        logger.warn('sav.detail.comments_degraded', {
           requestId,
           savId,
-          message: commentsResult.error.message,
+          reason:
+            commentsResult.status === 'rejected'
+              ? String(commentsResult.reason)
+              : commentsResult.value.error?.message,
         })
-        sendError(res, 'SERVER_ERROR', 'Lecture commentaires échouée', requestId)
-        return
-      }
-      if (auditResult.error) {
-        logger.error('sav.detail.audit_error', {
-          requestId,
-          savId,
-          message: auditResult.error.message,
-        })
-        sendError(res, 'SERVER_ERROR', 'Lecture audit échouée', requestId)
-        return
       }
 
-      const comments = (commentsResult.data ?? []).map((c: unknown) =>
-        projectComment(c as CommentRow)
-      )
-      const auditTrail = (auditResult.data ?? []).map((a: unknown) => projectAudit(a as AuditRow))
+      let auditTrail: ReturnType<typeof projectAudit>[] = []
+      let auditDegraded = false
+      let auditTruncated = false
+      if (auditResult.status === 'fulfilled' && !auditResult.value.error) {
+        const rows = auditResult.value.data ?? []
+        auditTrail = rows.map((a: unknown) => projectAudit(a as AuditRow))
+        // F38 (CR Epic 3) : flag truncation si on atteint la limite 100.
+        auditTruncated = rows.length === 100
+      } else {
+        auditDegraded = true
+        logger.warn('sav.detail.audit_degraded', {
+          requestId,
+          savId,
+          reason:
+            auditResult.status === 'rejected'
+              ? String(auditResult.reason)
+              : auditResult.value.error?.message,
+        })
+      }
 
       const durationMs = Date.now() - startedAt
       logger.info('sav.detail.success', {
         requestId,
         savId,
-        lineCount: Array.isArray((savResult.data as unknown as { lines?: unknown[] }).lines)
-          ? (savResult.data as unknown as { lines: unknown[] }).lines.length
+        lineCount: Array.isArray((savResult.value.data as unknown as { lines?: unknown[] }).lines)
+          ? (savResult.value.data as unknown as { lines: unknown[] }).lines.length
           : 0,
-        fileCount: Array.isArray((savResult.data as unknown as { files?: unknown[] }).files)
-          ? (savResult.data as unknown as { files: unknown[] }).files.length
+        fileCount: Array.isArray((savResult.value.data as unknown as { files?: unknown[] }).files)
+          ? (savResult.value.data as unknown as { files: unknown[] }).files.length
           : 0,
         commentCount: comments.length,
         auditCount: auditTrail.length,
+        commentsDegraded,
+        auditDegraded,
+        auditTruncated,
         durationMs,
       })
 
       res.status(200).json({
         data: {
-          sav: projectSav(savResult.data as unknown as Record<string, unknown>),
+          sav: projectSav(savResult.value.data as unknown as Record<string, unknown>),
           comments,
           auditTrail,
+        },
+        meta: {
+          commentsDegraded,
+          auditDegraded,
+          auditTruncated,
         },
       })
     } catch (err) {
@@ -181,7 +235,6 @@ function projectSav(row: Record<string, unknown>): Record<string, unknown> {
     total_amount_cents: number | null
     tags: string[] | null
     assigned_to: number | null
-    notes_internal: string | null
     received_at: string
     taken_at: string | null
     validated_at: string | null
@@ -194,8 +247,6 @@ function projectSav(row: Record<string, unknown>): Record<string, unknown> {
       first_name: string | null
       last_name: string
       email: string
-      phone: string | null
-      pennylane_customer_id: string | null
     } | null
     group: { id: number; name: string } | null
     assignee: { id: number; display_name: string; email: string } | null
@@ -214,7 +265,6 @@ function projectSav(row: Record<string, unknown>): Record<string, unknown> {
     totalAmountCents: r.total_amount_cents,
     tags: r.tags ?? [],
     assignedTo: r.assigned_to,
-    notesInternal: r.notes_internal,
     receivedAt: r.received_at,
     takenAt: r.taken_at,
     validatedAt: r.validated_at,
@@ -228,8 +278,6 @@ function projectSav(row: Record<string, unknown>): Record<string, unknown> {
           firstName: r.member.first_name,
           lastName: r.member.last_name,
           email: r.member.email,
-          phone: r.member.phone,
-          pennylaneCustomerId: r.member.pennylane_customer_id,
         }
       : null,
     group: r.group,
@@ -316,7 +364,11 @@ function projectComment(c: CommentRow): Record<string, unknown> {
     authorMember: c.author_member
       ? { firstName: c.author_member.first_name, lastName: c.author_member.last_name }
       : null,
-    authorOperator: c.author_operator ? { displayName: c.author_operator.display_name } : null,
+    // F47 (CR Epic 3) : shape `{ id, displayName }` aligné sur POST comment
+    // (productivity-handlers.ts). Évite l'asymétrie pour le consommateur FE.
+    authorOperator: c.author_operator
+      ? { id: c.author_operator.id, displayName: c.author_operator.display_name }
+      : null,
   }
 }
 

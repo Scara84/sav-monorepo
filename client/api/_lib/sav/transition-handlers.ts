@@ -155,12 +155,13 @@ function mapRpcError(
     return
   }
   if (code === 'LINES_BLOCKED') {
+    // F62 (CR Epic 3) : parsing via regex `/\d+/g` — extrait tout entier
+    // positif du payload, quelle que soit la forme (`{1,2,3}`, `1,2,3`,
+    // nested braces, espaces). Plus robuste que `replace+split`.
     const idsRaw = payload['ids'] ?? ''
-    const blockedLineIds = idsRaw
-      .replace(/[{}]/g, '')
-      .split(',')
-      .map((s) => Number(s.trim()))
-      .filter((n) => Number.isFinite(n))
+    const blockedLineIds = Array.from(idsRaw.matchAll(/\d+/g))
+      .map((m) => Number(m[0]))
+      .filter((n) => Number.isFinite(n) && n > 0)
     sendError(res, 'BUSINESS_RULE', 'Lignes bloquantes pour valider', requestId, {
       code: 'LINES_BLOCKED',
       blockedLineIds,

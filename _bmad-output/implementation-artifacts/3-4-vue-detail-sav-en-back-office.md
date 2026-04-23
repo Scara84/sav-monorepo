@@ -1,6 +1,6 @@
 # Story 3.4 : Vue détail SAV en back-office
 
-Status: review
+Status: done (CR Epic 3 patches appliqués — D2 reporté Epic 4)
 Epic: 3 — Traitement opérationnel des SAV en back-office
 
 ## Story
@@ -197,3 +197,24 @@ Claude Opus 4.7 (1M context) — Amelia — 2026-04-22.
   - **[M] `formatDiff` vs PII-masking** — guard `isPlainRecord` ajouté ; si `before`/`after` n'est pas un plain object → retourne `['Modification (données masquées)']`.
   - **Non corrigés (design V1, déviation documentée)** : AC #8 sous-composants restent inlinés (cohérent 3.3) ; 4 TS endpoint tests restants (TS-06 tri chronologique, TS-07 audit desc+limit, TS-08 join sanity, TS-09 no-Graph) peuvent être ajoutés en suivi — les cas critiques (auth, 404, rate-limit, projection) sont couverts.
 - 2026-04-22 — Tests finaux 323/323 (+6 via CR), bundle 459.33 KB, build OK.
+- 2026-04-23 — CR Epic 3 adversarial (3 couches). Patches P0 appliqués : F36/F37 PII leak — `notes_internal`, `member.phone`, `member.pennylane_customer_id` retirés du SELECT/projection/composable types (principe moindre donnée, FE ne les consomme pas). Findings restants en action items ci-dessous. Voir [epic-3-review-findings.md](epic-3-review-findings.md).
+
+### Review Findings (CR 2026-04-23)
+
+- [x] [Review][Patch] F36/F37 HIGH — PII leak `notes_internal`/`phone`/`pennylane_customer_id` retirés [detail-handler.ts:20-40] — APPLIQUÉ.
+- [x] [Review][Decision] F32 / F89 BLOCKER — schéma `sav_lines` legacy vs PRD-target — D2 tranché : Option B (amender Dev Notes, aligner Epic 4 avec moteur calcul).
+- [x] [Review][Patch] F33 MAJOR — 3 tests endpoint ajoutés : TS-06 (tri comments), TS-07 (auditTruncated + F38), TS-09 (no-Graph) [detail.spec.ts] — APPLIQUÉ.
+- [x] [Review][Patch] F34 MAJOR — 3 tests vue ajoutés : TV-03 (whitelist img), TV-04 (hors whitelist), TV-05 (onerror + retry F39) [SavDetailView.spec.ts] — APPLIQUÉ.
+- [x] [Review][Patch] F38 HIGH — `meta.auditTruncated = rows.length === 100` exposé + `commentsDegraded`/`auditDegraded` (F48) [detail-handler.ts] — APPLIQUÉ.
+- [x] [Review][Patch] F39 HIGH — cache-bust via `URL.searchParams.set('_r', key)` + fallback concat [SavDetailView.vue:65] — APPLIQUÉ.
+- [x] [Review][Patch] F41 MEDIUM — `safeStringify` try/catch circular ref [format-audit-diff.ts] — APPLIQUÉ.
+- [x] [Review][Patch] F42 MEDIUM — BigInt handling dans formatValue + safeStringify replacer [format-audit-diff.ts] — APPLIQUÉ.
+- [x] [Review][Patch] F43 MEDIUM — `timeZone: 'Europe/Paris'` dans `formatDateTime` [SavDetailView.vue:82] — APPLIQUÉ.
+- [x] [Review][Patch] F44 MEDIUM — `if (delta < 0) return "à l'instant"` [SavDetailView.vue:97] — APPLIQUÉ.
+- [x] [Review][Patch] F45 LOW — tooltip bouton « M'assigner » mis à jour (carry-over 3.7b) [SavDetailView.vue] — APPLIQUÉ partiellement (wire UI complet = 3.7b car endpoint whoami absent).
+- [x] [Review][Patch] F47 INFO — shape `authorOperator: { id, displayName }` aligné projection + type composable [detail-handler.ts + useSavDetail.ts] — APPLIQUÉ.
+- [x] [Review][Patch] F48 MEDIUM — `Promise.allSettled` + graceful degrade + `commentsDegraded`/`auditDegraded` flags [detail-handler.ts] — APPLIQUÉ.
+- [x] [Review][Patch] F49 MEDIUM — AbortController + requestSeq + seenId check [useSavDetail.ts] — APPLIQUÉ.
+- [x] [Review][Defer] F40 MEDIUM — TV-07 élargi unicode + filename XSS : XSS de base OK, élargissements reportés V1.1 (non critique).
+- [x] [Review][Defer] F46 LOW — breadcrumb `/admin/sav` perd filtres liste — V1.1 sessionStorage hand-off.
+- [x] [Review][Defer] AC #8 sub-components — F20 D1 V1 acceptée (YAGNI cohérent 3.3).

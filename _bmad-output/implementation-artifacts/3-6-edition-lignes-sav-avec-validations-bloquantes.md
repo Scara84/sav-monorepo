@@ -1,7 +1,26 @@
 # Story 3.6 : Édition lignes SAV avec validations bloquantes
 
-Status: review
+Status: done (V1 minimal — carry-over 3.6b vers Epic 4)
 Epic: 3 — Traitement opérationnel des SAV en back-office
+
+> **Scope réduit V1 (acté 2026-04-23 via CR Option C)** — cette story livre
+> uniquement `PATCH /api/sav/:id/lines/:lineId` + verrou optimiste (durci par
+> patches P0 F50/F52/D6 post-CR). Les items ci-dessous sont **carry-over
+> Story 3.6b** (à créer en backlog Epic 4 couplé au moteur calcul avoir) :
+>
+> - AC #4 : triggers `compute_sav_line_credit` + `recompute_sav_total`
+> - AC #6 : endpoint POST `/api/sav/:id/lines`
+> - AC #7 : endpoint DELETE `/api/sav/:id/lines/:lineId`
+> - AC #8 : UI édition inline `SavLinesTable` + `AddLineDialog`
+> - AC #9 : bouton « Valider » wired côté UI
+> - AC #10 : composable `useSavLineEdit`
+> - AC #11 : tests TL-07/09/10/11/12 (dépendent endpoints POST/DELETE)
+> - AC #12 : tests SQL RPC `update_sav_line.test.sql` + `trigger_compute...`
+> - AC #13 : tests Vue `SavLinesTable.edit.spec.ts`
+>
+> Décision D2/D3 (CR Epic 3) : alignement schéma `sav_lines` PRD-target
+> (`unit_requested`/`unit_invoiced`, `credit_coefficient` numeric, enum
+> `validation_status` strict) reporté en Epic 4 avec le moteur calcul.
 
 ## Story
 
@@ -191,3 +210,4 @@ Claude Opus 4.7 (1M context) — Amelia — 2026-04-22.
 ### Change Log
 
 - 2026-04-22 — Story 3.6 V1 minimale : RPC `update_sav_line` + endpoint PATCH + 8 tests. Trigger compute + endpoints POST/DELETE + UI édition reportés à Epic 4 / V1.1.
+- 2026-04-23 — CR Epic 3 adversarial (3 couches). Patches P0 appliqués : F50 `ACTOR_NOT_FOUND` guard dans RPC (migration `20260423120000`), F52 `validation_status`/`validation_messages` retirés du wire (Zod + RPC whitelist) — bypass `LINES_BLOCKED` fermé. D6 garde `SAV_LOCKED` ajoutée : édition ligne interdite sur SAV `validated`/`closed`/`cancelled`. +2 tests (F50 ACTOR_NOT_FOUND, D6 SAV_LOCKED). Statut → `done (V1 minimal)` post Option C split. Carry-over 3.6b listé dans le bandeau en-tête. Rapport complet : [epic-3-review-findings.md](epic-3-review-findings.md).

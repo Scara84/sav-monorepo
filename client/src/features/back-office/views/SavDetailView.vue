@@ -62,9 +62,25 @@ function retryImg(id: number): void {
   delete imgErrored.value[id]
 }
 
+// F39 (CR Epic 3) : cache-bust via URL.searchParams.set pour préserver le
+// fragment `#` et les tokens signés SharePoint (`tempauth`, `guestaccesstoken`).
+// Fallback string concat si le parser URL échoue (URL exotique).
 function imgSrc(file: { id: number; webUrl: string }): string {
   const key = retryKey.value[file.id] ?? 0
-  return key > 0 ? `${file.webUrl}${file.webUrl.includes('?') ? '&' : '?'}_r=${key}` : file.webUrl
+  if (key === 0) return file.webUrl
+  if (typeof URL === 'undefined') {
+    return `${file.webUrl}${file.webUrl.includes('?') ? '&' : '?'}_r=${key}`
+  }
+  try {
+    const url = new URL(
+      file.webUrl,
+      typeof window !== 'undefined' ? window.location.href : undefined
+    )
+    url.searchParams.set('_r', String(key))
+    return url.toString()
+  } catch {
+    return `${file.webUrl}${file.webUrl.includes('?') ? '&' : '?'}_r=${key}`
+  }
 }
 
 function formatEur(cents: number | null | undefined): string {
@@ -82,12 +98,15 @@ function formatBytes(b: number | null | undefined): string {
 function formatDateTime(iso: string | null | undefined): string {
   if (!iso) return '—'
   try {
+    // F43 (CR Epic 3) : force Europe/Paris pour éviter que 23:30 UTC
+    // n'affiche le lendemain côté utilisateur (server stocke UTC).
     return new Date(iso).toLocaleString('fr-FR', {
       day: '2-digit',
       month: '2-digit',
       year: 'numeric',
       hour: '2-digit',
       minute: '2-digit',
+      timeZone: 'Europe/Paris',
     })
   } catch {
     return iso
@@ -96,6 +115,9 @@ function formatDateTime(iso: string | null | undefined): string {
 
 function timeRelative(iso: string): string {
   const delta = Date.now() - new Date(iso).getTime()
+  // F44 (CR Epic 3) : timestamp futur (clock drift) → « à l'instant » plutôt
+  // que « il y a 0 min » ou delta négatif absurde.
+  if (delta < 0) return "à l'instant"
   const minutes = Math.floor(delta / 60000)
   if (minutes < 1) return "à l'instant"
   if (minutes < 60) return `il y a ${minutes} min`
@@ -211,11 +233,16 @@ function backToList(): void {
             <dt>Assigné à</dt>
             <dd>
               {{ sav.assignee?.displayName ?? 'Non assigné' }}
+              <!--
+                F45 (CR Epic 3) : tooltip stale « Story 3.5 » mis à jour.
+                Le handler PATCH /assign existe mais l'UI wiring dépend
+                d'un endpoint whoami absent V1 — carry-over Story 3.7b.
+              -->
               <button
                 v-if="!sav.assignee"
                 type="button"
                 disabled
-                title="Disponible après Story 3.5"
+                title="Bouton opérationnel avec l'UI back-office complète (Story 3.7b — Epic 6)"
                 class="assign-me"
               >
                 M'assigner

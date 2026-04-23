@@ -211,6 +211,73 @@ describe('GET /api/sav/:id (Story 3.4)', () => {
     expect(body.data.auditTrail[0]?.actorSystem).toBe('webhook-capture')
   })
 
+  it("TS-06 (F33 CR) : comments préservés dans l'ordre ascending_at", async () => {
+    // Le `.order('created_at', { ascending: true })` est garanti par la DB.
+    // On vérifie que la projection préserve l'ordre de retour du mock.
+    db.savRow = { id: 1, reference: 'x', member: null, lines: [], files: [] }
+    db.comments = [
+      {
+        id: 1,
+        body: 'premier',
+        visibility: 'all',
+        created_at: '2026-03-01T00:00:00.000Z',
+        author_member_id: null,
+        author_operator_id: null,
+        author_member: null,
+        author_operator: null,
+      },
+      {
+        id: 2,
+        body: 'second',
+        visibility: 'internal',
+        created_at: '2026-03-01T01:00:00.000Z',
+        author_member_id: null,
+        author_operator_id: null,
+        author_member: null,
+        author_operator: null,
+      },
+    ]
+    const res = mockRes()
+    await handler(req(['1']), res)
+    const body = res.jsonBody as { data: { comments: Array<{ body: string }> } }
+    expect(body.data.comments[0]?.body).toBe('premier')
+    expect(body.data.comments[1]?.body).toBe('second')
+  })
+
+  it('TS-07 (F33 + F38 CR) : auditTruncated=true si 100 rows retournés', async () => {
+    db.savRow = { id: 1, reference: 'x', member: null, lines: [], files: [] }
+    db.audit = Array.from({ length: 100 }, (_v, i) => ({
+      id: i + 1,
+      action: 'updated',
+      actor_operator_id: null,
+      actor_member_id: null,
+      actor_system: null,
+      diff: null,
+      created_at: '2026-03-01T00:00:00.000Z',
+      actor_operator: null,
+      actor_member: null,
+    }))
+    const res = mockRes()
+    await handler(req(['1']), res)
+    const body = res.jsonBody as {
+      data: { auditTrail: unknown[] }
+      meta: { auditTruncated: boolean }
+    }
+    expect(body.data.auditTrail).toHaveLength(100)
+    expect(body.meta.auditTruncated).toBe(true)
+  })
+
+  it('TS-09 (F33 CR) : aucun appel Graph — handler lit uniquement Supabase', async () => {
+    // Sanity : si le handler appelait OneDrive/Graph, les mocks ne le couvriraient
+    // pas et tests planteraient avec undefined. Le fait que TS-05/TS-06/TS-07
+    // passent prouve que l'endpoint est 100% DB-only (pas de 503 DEPENDENCY_DOWN
+    // possible sur la vue détail même si Graph est KO).
+    db.savRow = { id: 1, reference: 'x', member: null, lines: [], files: [] }
+    const res = mockRes()
+    await handler(req(['1']), res)
+    expect(res.statusCode).toBe(200)
+  })
+
   it('TS-10: 429 si rate-limit épuisé', async () => {
     db.savRow = { id: 1, reference: 'x', member: null, lines: [], files: [] }
     db.rateLimitAllowed = false

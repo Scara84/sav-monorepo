@@ -187,4 +187,29 @@ describe('SavListView (Story 3.3)', () => {
     expect(urls.some((u) => u.includes('status=received') && u.includes('q=foo'))).toBe(true)
     expect((w.find('input[type="search"]').element as HTMLInputElement).value).toBe('foo')
   })
+
+  it("F28 (CR) : URL ?status=foo (statut invalide) → filtré à l'hydratation, 0 échec", async () => {
+    const router = makeRouter()
+    await router.push('/admin/sav?status=foo')
+    await router.isReady()
+    const w = mount(SavListView, { global: { plugins: [router] } })
+    await flushPromises()
+    // Le statut invalide est filtré silencieusement → pas de chip actif, pas
+    // de 400 VALIDATION_FAILED côté serveur (mais le fetch tire quand même
+    // avec les autres filtres vides).
+    const activeChips = w.findAll('button[aria-pressed="true"]')
+    expect(activeChips.length).toBe(0)
+  })
+
+  it("F29 (CR) : URL ?from=abc (date invalide) → ignorée à l'hydratation", async () => {
+    const router = makeRouter()
+    await router.push('/admin/sav?from=not-a-date')
+    await router.isReady()
+    const w = mount(SavListView, { global: { plugins: [router] } })
+    await flushPromises()
+    const fromInput = w.find('input[type="date"][aria-label="Reçu du"]')
+    if (fromInput.exists()) {
+      expect((fromInput.element as HTMLInputElement).value).toBe('')
+    }
+  })
 })

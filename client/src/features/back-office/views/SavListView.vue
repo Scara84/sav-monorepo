@@ -36,16 +36,36 @@ const route = useRoute()
 const router = useRouter()
 const list = useSavList()
 
+// F28 (CR Epic 3) : whitelist statuts acceptés à l'hydratation URL.
+// Un bookmark avec `?status=foo` ne doit pas crasher le premier fetch avec
+// 400 VALIDATION_FAILED — on filtre silencieusement les valeurs inconnues.
+const VALID_STATUSES = new Set([
+  'draft',
+  'received',
+  'in_progress',
+  'validated',
+  'closed',
+  'cancelled',
+])
+
+// F29 (CR Epic 3) : accepte `from`/`to` au format `YYYY-MM-DD` (natif HTML
+// `<input type="date">`) OU ISO datetime complet. Autre → ignoré silencieusement.
+const DATE_RE = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(\.\d+)?Z)?$/
+
 // --- Initialisation depuis URL ---
 function hydrateFiltersFromRoute(): void {
   const q = route.query
   const f = list.filters
   const statusRaw = q['status']
-  if (Array.isArray(statusRaw)) f.status = statusRaw.map(String)
-  else if (typeof statusRaw === 'string' && statusRaw.length > 0) f.status = [statusRaw]
+  const statusCandidates = Array.isArray(statusRaw)
+    ? statusRaw.map(String)
+    : typeof statusRaw === 'string' && statusRaw.length > 0
+      ? [statusRaw]
+      : []
+  f.status = statusCandidates.filter((s) => VALID_STATUSES.has(s))
   f.q = typeof q['q'] === 'string' ? q['q'] : ''
-  f.from = typeof q['from'] === 'string' ? q['from'] : ''
-  f.to = typeof q['to'] === 'string' ? q['to'] : ''
+  f.from = typeof q['from'] === 'string' && DATE_RE.test(q['from']) ? q['from'] : ''
+  f.to = typeof q['to'] === 'string' && DATE_RE.test(q['to']) ? q['to'] : ''
   f.invoiceRef = typeof q['invoiceRef'] === 'string' ? q['invoiceRef'] : ''
   f.assignedTo = typeof q['assignedTo'] === 'string' ? q['assignedTo'] : ''
   f.tag = typeof q['tag'] === 'string' ? q['tag'] : ''
@@ -97,6 +117,19 @@ function toggleStatus(s: string): void {
 
 function onRowActivate(id: number): void {
   void router.push({ name: 'admin-sav-detail', params: { id } })
+}
+
+// F26 (CR Epic 3) : ne navigue pas si l'utilisateur sélectionne du texte
+// dans une cellule (drag de selection → mouseup ≠ click intentionnel).
+// On laisse aussi passer les clics sur contrôles interactifs enfants.
+function onRowClick(e: MouseEvent, id: number): void {
+  if (typeof window !== 'undefined') {
+    const selection = window.getSelection()
+    if (selection && selection.toString().length > 0) return
+  }
+  const target = e.target as HTMLElement | null
+  if (target && target.closest('a, button, input, select, textarea')) return
+  onRowActivate(id)
 }
 
 function onRowKeydown(e: KeyboardEvent, id: number): void {
@@ -327,8 +360,10 @@ function fullName(m: { firstName: string | null; lastName: string } | null): str
             v-for="row in list.items.value"
             :key="row.id"
             tabindex="0"
+            role="button"
+            :aria-label="`Ouvrir le SAV ${row.reference}`"
             class="sav-row"
-            @click="onRowActivate(row.id)"
+            @click="onRowClick($event, row.id)"
             @keydown="onRowKeydown($event, row.id)"
           >
             <td>{{ row.reference }}</td>

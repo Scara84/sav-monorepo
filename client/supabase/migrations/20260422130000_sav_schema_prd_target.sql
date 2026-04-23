@@ -127,7 +127,11 @@ PARALLEL SAFE
 AS $$ SELECT array_to_string($1, ' ') $$;
 
 DROP INDEX IF EXISTS idx_sav_search;
-ALTER TABLE sav DROP COLUMN search;
+-- F14 (CR Epic 3) : DROP IF EXISTS pour idempotence sur re-run (fresh DB
+-- ou recovery partial failure) où la colonne `search` aurait pu ne pas
+-- exister. Dev Notes : exécuter la migration hors fenêtre trafic (lock
+-- `sav` non-concurrent sur ALTER ADD STORED column).
+ALTER TABLE sav DROP COLUMN IF EXISTS search;
 ALTER TABLE sav ADD COLUMN search tsvector GENERATED ALWAYS AS (
   to_tsvector('french',
     coalesce(reference,'')      || ' ' ||

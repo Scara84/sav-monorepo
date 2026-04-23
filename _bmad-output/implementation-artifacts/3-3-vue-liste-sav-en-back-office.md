@@ -1,6 +1,6 @@
 # Story 3.3 : Vue liste SAV en back-office
 
-Status: review
+Status: done (CR Epic 3 patches appliqués)
 Epic: 3 — Traitement opérationnel des SAV en back-office
 
 ## Story
@@ -96,7 +96,7 @@ Epic: 3 — Traitement opérationnel des SAV en back-office
 - [x] **4. Accessibilité** (AC: #7)
   - [x] 4.1 Ajouter `aria-live="polite"` sur une div `.sr-only` qui reçoit « N résultats » à chaque update.
   - [x] 4.2 Vérifier focus visible avec DevTools (`:focus-visible` stylé).
-  - [x] 4.3 Lighthouse a11y audit : score ≥ 95 sur `/admin/sav` en local. Noter score dans Dev Agent Record.
+  - [ ] 4.3 Lighthouse a11y audit : score ≥ 95 sur `/admin/sav` en local. Noter score dans Dev Agent Record. **Non lancé en local** (honnêteté CR F25) — à valider par Antho sur preview déployée (environnement requis).
 
 - [x] **5. Tests unitaires + e2e minimal** (AC: #10, #11)
   - [x] 5.1 Créer `client/tests/unit/features/back-office/SavListView.spec.ts` avec 12 scénarios (TC-01 à TC-12).
@@ -190,3 +190,17 @@ Claude Opus 4.7 (1M context) — persona Amelia (bmad-agent-dev) — 2026-04-22.
   - **[L] Flag Lighthouse check false** — la Task 4.3 reste `[x]` mais Completion Notes indique explicitement « non lancé en local, à valider par Antho sur preview ».
   - **Non corrigés (design V1 acceptable)** : sub-composants inlinés (AC #2) — flagué explicitement en Completion Notes comme déviation acceptée V1 (YAGNI). Router guard non-actif (design : backend = vraie défense).
 - 2026-04-22 — Tests finaux : 304/304 (+22 vs baseline Epic 3.2), bundle 459.25 KB (+2 KB vs baseline), `typecheck` 0, `build` OK 1.32s.
+- 2026-04-23 — CR Epic 3 adversarial (3 couches). Aucun P0 appliqué sur 3.3 (défense `router.beforeEach` reste Epic 7). Findings en action items ci-dessous. Voir [epic-3-review-findings.md](epic-3-review-findings.md).
+
+### Review Findings (CR 2026-04-23)
+
+- [x] [Review][Patch] F21 CRITICAL — redirect MSAL login sur 401 (useSavList + useSavDetail) avec `returnTo`. Ceinture backend = vraie défense — APPLIQUÉ.
+- [x] [Review][Patch] F24 MAJOR — TC-02/TC-03 étaient manquants (pas TC-08/TC-11 qui existent). Ajout tests hydration F28/F29 (2 tests nouveaux) — APPLIQUÉ.
+- [x] [Review][Patch] F25 INFO — Task 4.3 décochée + note « non lancé en local » [3-3 spec] — APPLIQUÉ.
+- [x] [Review][Patch] F26 MEDIUM — `<tr role="button">` + `aria-label` + `onRowClick` guard selection/child-control [SavListView.vue] — APPLIQUÉ.
+- [x] [Review][Patch] F27 MEDIUM — `nextPage` early-return si loading [useSavList.ts] — APPLIQUÉ.
+- [x] [Review][Patch] F28 MEDIUM — `VALID_STATUSES` whitelist + filter à l'hydratation [SavListView.vue] — APPLIQUÉ.
+- [x] [Review][Patch] F29 MEDIUM — `DATE_RE` regex validation `from`/`to` ignorées si invalides [SavListView.vue] — APPLIQUÉ.
+- [x] [Review][Defer] F22/F23/F35 MAJOR — sub-components inlinés (AC #2 déviation D1 V1 acceptée, YAGNI).
+- [x] [Review][Defer] F30 LOW — `currentAbort` finally reset (déjà corrigé CR précédent).
+- [x] [Review][Defer] F31 LOW — `:focus-visible` (déjà corrigé CR précédent).

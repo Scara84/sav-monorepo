@@ -11,8 +11,6 @@ export interface SavDetailMember {
   firstName: string | null
   lastName: string
   email: string
-  phone: string | null
-  pennylaneCustomerId: string | null
 }
 
 export interface SavDetailLine {
@@ -56,7 +54,6 @@ export interface SavDetailSav {
   totalAmountCents: number | null
   tags: string[]
   assignedTo: number | null
-  notesInternal: string | null
   receivedAt: string
   takenAt: string | null
   validatedAt: string | null
@@ -75,7 +72,7 @@ export interface SavDetailComment {
   body: string
   createdAt: string
   authorMember: { firstName: string | null; lastName: string } | null
-  authorOperator: { displayName: string } | null
+  authorOperator: { id: number; displayName: string } | null
 }
 
 export interface SavDetailAudit {
@@ -113,6 +110,11 @@ export function useSavDetail(id: Ref<number>) {
   const auditTrail = ref<SavDetailAudit[]>([])
   const loading = ref(false)
   const error = ref<SavDetailErrorKind | null>(null)
+  // F49 (CR Epic 3) : AbortController + check id-at-resolution pour éviter
+  // qu'une réponse ancienne écrase une navigation plus récente (rapid detail
+  // to detail navigation).
+  let currentAbort: AbortController | null = null
+  let requestSeq = 0
 
   async function fetchDetail(): Promise<void> {
     if (!Number.isFinite(id.value) || id.value <= 0) {
@@ -121,12 +123,25 @@ export function useSavDetail(id: Ref<number>) {
       loading.value = false
       return
     }
+    if (currentAbort) currentAbort.abort()
+    currentAbort = new AbortController()
+    const seq = ++requestSeq
+    const seenId = id.value
     loading.value = true
     error.value = null
     try {
-      const res = await fetch(`/api/sav/${id.value}`, { credentials: 'include' })
+      const res = await fetch(`/api/sav/${seenId}`, {
+        credentials: 'include',
+        signal: currentAbort.signal,
+      })
+      if (seq !== requestSeq || seenId !== id.value) return
       if (res.status === 401) {
+        // F21 (CR Epic 3) : redirect MSAL login avec returnTo.
         error.value = 'unauthenticated'
+        if (typeof window !== 'undefined') {
+          const returnTo = encodeURIComponent(window.location.pathname + window.location.search)
+          window.location.href = `/api/auth/msal/login?returnTo=${returnTo}`
+        }
         return
       }
       if (res.status === 403) {
@@ -146,13 +161,19 @@ export function useSavDetail(id: Ref<number>) {
         return
       }
       const body = (await res.json()) as { data: SavDetailPayload }
+      if (seq !== requestSeq || seenId !== id.value) return
       sav.value = body.data.sav
       comments.value = body.data.comments
       auditTrail.value = body.data.auditTrail
-    } catch {
+    } catch (err) {
+      if ((err as { name?: string })?.name === 'AbortError') return
+      if (seq !== requestSeq || seenId !== id.value) return
       error.value = 'network'
     } finally {
-      loading.value = false
+      if (seq === requestSeq) {
+        loading.value = false
+        currentAbort = null
+      }
     }
   }
 

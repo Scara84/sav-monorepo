@@ -1,6 +1,6 @@
 # Story 3.5 : Transitions de statut + assignation + verrou optimiste
 
-Status: review
+Status: done (CR Epic 3 patches appliqués)
 Epic: 3 — Traitement opérationnel des SAV en back-office
 
 ## Story
@@ -210,3 +210,20 @@ Claude Opus 4.7 (1M context) — Amelia — 2026-04-22.
 
 - 2026-04-22 — Story 3.5 : PATCH status + PATCH assign avec verrou optimiste CAS, RPCs atomiques, queue email_outbox, garde LINES_BLOCKED, 21 nouveaux tests verts.
 - 2026-04-22 — CR fixes : tests additionnels TA-02 (assign autre op) + TA-05 (404) ajoutés → 346 tests au total. Mermaid state-machine ajouté à `docs/api-contracts-vercel.md`. Task integrity : les tâches 1.3 (SQL RPC tests transition), 3.2 (SQL RPC tests assign), 5.1/5.2 (script concurrence) ont été **décochées** — non livrées V1, signalées explicitement comme déviations documentées. Les gaps de couverture AC #10/11 (5+2 scenarios indirectement couverts par RPC DB mais non unit-testés côté TS) acceptés V1 — à combler si la préview révèle un comportement inattendu.
+- 2026-04-23 — CR Epic 3 adversarial (3 couches). Patches P0 appliqués : F50 `ACTOR_NOT_FOUND` guard sur `transition_sav_status` + `assign_sav` + 3 autres RPCs (migration `20260423120000`). D6 garde `SAV_LOCKED` sur `update_sav_line` (couplée RPC Epic 3.6) — ferme la back-door rollback `validated → in_progress → validated` avec qty corrompu. Voir [epic-3-review-findings.md](epic-3-review-findings.md).
+
+### Review Findings (CR 2026-04-23)
+
+- [x] [Review][Patch] F50 CRITICAL — `ACTOR_NOT_FOUND` guard ajouté aux 5 RPCs [20260423120000_epic_3_cr_security_patches.sql] — APPLIQUÉ.
+- [x] [Review][Decision] D6 — `SAV_LOCKED` guard édition ligne sur statut terminal — APPLIQUÉ dans `update_sav_line`.
+- [x] [Review][Patch] F51 HIGH — `UNIQUE INDEX idx_email_outbox_dedup_pending (sav_id, kind) WHERE status='pending'` + `ON CONFLICT DO NOTHING` dans RPC [20260423120000] — APPLIQUÉ.
+- [x] [Review][Patch] F57 MAJOR — tests TS-09 (taken_at idempotence) + TS-14 (rollback no email) ajoutés ; TA-06/TA-07 existaient déjà [status.spec.ts] — APPLIQUÉ.
+- [x] [Review][Patch] F58 MEDIUM — `LEFT JOIN members` au lieu d'INNER dans `transition_sav_status` [20260423120000] — APPLIQUÉ.
+- [x] [Review][Patch] F59 MEDIUM — skip INSERT email_outbox si `v_member_email IS NULL OR length(trim(...)) = 0` [20260423120000] — APPLIQUÉ.
+- [x] [Review][Patch] F61 MEDIUM — `GET DIAGNOSTICS v_rows_affected = ROW_COUNT; IF = 0 RAISE VERSION_CONFLICT` [20260423120000] — APPLIQUÉ.
+- [x] [Review][Patch] F62 LOW — parsing `blockedLineIds` via regex `/\d+/g` robuste aux formats PG [transition-handlers.ts:157] — APPLIQUÉ.
+- [x] [Review][Defer] F53 MAJOR — tests SQL RPC `transition_sav_status.test.sql` + `assign_sav.test.sql` — documenté Completion Notes V1, tasks `[ ]` honnêtes.
+- [x] [Review][Defer] F54 MAJOR — `scripts/test/concurrent-transitions.sh` — Antho valide en preview.
+- [x] [Review][Defer] F55 MAJOR — `assign_sav` pas de check `is_active` (colonne inexistante V1) — TODO Epic 7.
+- [x] [Review][Defer] F56 MAJOR — `subject` email en anglais technique — Epic 6 matérialise via `kind`.
+- [x] [Review][Defer] F60 MEDIUM — `validated_at` persiste après rollback — comportement historique V1 acceptable.

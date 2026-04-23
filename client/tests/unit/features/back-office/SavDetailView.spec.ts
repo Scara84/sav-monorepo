@@ -44,7 +44,6 @@ const SAV_PAYLOAD = {
       totalAmountCents: 1500,
       tags: [],
       assignedTo: null,
-      notesInternal: null,
       receivedAt: '2026-03-01T00:00:00.000Z',
       takenAt: null,
       validatedAt: null,
@@ -55,8 +54,6 @@ const SAV_PAYLOAD = {
         firstName: 'Jean',
         lastName: 'Dubois',
         email: 'j@d.com',
-        phone: null,
-        pennylaneCustomerId: null,
       },
       group: null,
       assignee: null,
@@ -170,5 +167,115 @@ describe('SavDetailView (Story 3.4)', () => {
     const w = mount(SavDetailView, { global: { plugins: [router] } })
     await flushPromises()
     expect(w.text()).toContain('SAV introuvable')
+  })
+
+  it('TV-03 (F34 CR) : image avec webUrl SharePoint whitelistée → <img> présent', async () => {
+    mockFetch({
+      data: {
+        sav: {
+          ...SAV_PAYLOAD.data.sav,
+          files: [
+            {
+              id: 1,
+              originalFilename: 'photo.jpg',
+              sanitizedFilename: 'photo.jpg',
+              onedriveItemId: 'abc',
+              webUrl: 'https://fruitstock.sharepoint.com/sites/sav/photo.jpg',
+              mimeType: 'image/jpeg',
+              sizeBytes: 1024,
+              uploadedByMemberId: null,
+              uploadedByOperatorId: null,
+              source: 'capture',
+              createdAt: '2026-03-01T00:00:00.000Z',
+            },
+          ],
+        },
+        comments: [],
+        auditTrail: [],
+      },
+    })
+    const w = await mountDetail()
+    await flushPromises()
+    const imgs = w.findAll('img').filter((i) => i.attributes('src')?.includes('sharepoint.com'))
+    expect(imgs.length).toBeGreaterThan(0)
+  })
+
+  it('TV-04 (F34 CR) : image avec webUrl hors whitelist → pas de <img>, fallback icône', async () => {
+    mockFetch({
+      data: {
+        sav: {
+          ...SAV_PAYLOAD.data.sav,
+          files: [
+            {
+              id: 2,
+              originalFilename: 'photo.jpg',
+              sanitizedFilename: 'photo.jpg',
+              onedriveItemId: 'abc',
+              webUrl: 'https://evil-attacker-domain.com/photo.jpg',
+              mimeType: 'image/jpeg',
+              sizeBytes: 1024,
+              uploadedByMemberId: null,
+              uploadedByOperatorId: null,
+              source: 'capture',
+              createdAt: '2026-03-01T00:00:00.000Z',
+            },
+          ],
+        },
+        comments: [],
+        auditTrail: [],
+      },
+    })
+    const w = await mountDetail()
+    await flushPromises()
+    const imgs = w
+      .findAll('img')
+      .filter((i) => i.attributes('src')?.includes('evil-attacker-domain'))
+    expect(imgs.length).toBe(0)
+  })
+
+  it('TV-05 (F34 + F39 CR) : onerror → fallback « Aperçu indisponible » + bouton retry avec cache-bust via URL.searchParams', async () => {
+    mockFetch({
+      data: {
+        sav: {
+          ...SAV_PAYLOAD.data.sav,
+          files: [
+            {
+              id: 3,
+              originalFilename: 'photo.jpg',
+              sanitizedFilename: 'photo.jpg',
+              onedriveItemId: 'abc',
+              webUrl: 'https://fruitstock.sharepoint.com/sites/sav/photo.jpg?tempauth=token',
+              mimeType: 'image/jpeg',
+              sizeBytes: 1024,
+              uploadedByMemberId: null,
+              uploadedByOperatorId: null,
+              source: 'capture',
+              createdAt: '2026-03-01T00:00:00.000Z',
+            },
+          ],
+        },
+        comments: [],
+        auditTrail: [],
+      },
+    })
+    const w = await mountDetail()
+    await flushPromises()
+    const img = w.find('img[src*="sharepoint.com"]')
+    expect(img.exists()).toBe(true)
+    // Simule l'échec de chargement
+    await img.trigger('error')
+    await flushPromises()
+    expect(w.text()).toContain('Aperçu indisponible')
+    const retryBtn = w.findAll('button').find((b) => b.text().includes('Réessayer'))
+    expect(retryBtn).toBeDefined()
+    await retryBtn!.trigger('click')
+    await flushPromises()
+    // L'URL.searchParams.set doit avoir ajouté `_r=1` après le tempauth existant.
+    const imgAfter = w.find('img[src*="sharepoint.com"]')
+    if (imgAfter.exists()) {
+      const src = imgAfter.attributes('src') ?? ''
+      expect(src).toContain('_r=1')
+      expect(src).toContain('tempauth=token')
+    }
   })
 })

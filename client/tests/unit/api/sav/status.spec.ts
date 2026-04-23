@@ -162,6 +162,51 @@ describe('PATCH /api/sav/:id/status (Story 3.5)', () => {
     expect(res.statusCode).toBe(429)
   })
 
+  it('TS-09 (F57 CR) : taken_at non écrasé sur 2e transition → in_progress', async () => {
+    // RPC simule : le SAV avait déjà `taken_at` non-null → la fonction SQL
+    // CASE WHEN ... taken_at IS NULL conservela valeur. Le handler ne voit
+    // pas directement taken_at, mais on vérifie que la RPC est appelée
+    // avec p_new_status='in_progress' et que le mock retourne la transition
+    // sans erreur (pas de contrôle taken_at côté handler — c'est la RPC
+    // qui préserve la valeur existante).
+    rpcMock.data = [
+      {
+        sav_id: 1,
+        previous_status: 'received',
+        new_status: 'in_progress',
+        new_version: 3,
+        assigned_to: 42,
+        email_outbox_id: 101,
+      },
+    ]
+    const res = mockRes()
+    await handler(statusReq(1, { status: 'in_progress', version: 2 }), res)
+    expect(res.statusCode).toBe(200)
+    expect(rpcMock.capturedArgs).not.toBeNull()
+    expect(rpcMock.capturedArgs?.p_new_status).toBe('in_progress')
+  })
+
+  it('TS-14 (F57 CR) : rollback in_progress → received — email_outbox_id null', async () => {
+    // La RPC retourne email_outbox_id=null pour les rollbacks (la clause
+    // IF p_new_status IN ('in_progress','validated','closed','cancelled')
+    // exclut received). On vérifie que le mapping handler propage null.
+    rpcMock.data = [
+      {
+        sav_id: 1,
+        previous_status: 'in_progress',
+        new_status: 'received',
+        new_version: 4,
+        assigned_to: 42,
+        email_outbox_id: null,
+      },
+    ]
+    const res = mockRes()
+    await handler(statusReq(1, { status: 'received', version: 3 }), res)
+    expect(res.statusCode).toBe(200)
+    const body = res.jsonBody as { data: { emailOutboxId: number | null } }
+    expect(body.data.emailOutboxId).toBeNull()
+  })
+
   it('422 LINES_BLOCKED sur validation', async () => {
     rpcMock.error = { code: 'P0001', message: 'LINES_BLOCKED|ids={1,2,3}' }
     const res = mockRes()

@@ -26,10 +26,21 @@ function labelFor(key: string): string {
   return LABELS[key] ?? key
 }
 
+// F42 (CR Epic 3) : BigInt support — JSON.stringify jette par défaut sur bigint.
+function safeStringify(v: unknown): string {
+  try {
+    return JSON.stringify(v, (_k, val) => (typeof val === 'bigint' ? String(val) : val))
+  } catch {
+    // F41 (CR Epic 3) : circular refs → fallback silencieux plutôt que crash.
+    return '[non-sérialisable]'
+  }
+}
+
 function formatValue(v: unknown): string {
   if (v === null || v === undefined) return '∅'
+  if (typeof v === 'bigint') return String(v)
   if (Array.isArray(v)) return `[${v.map(formatValue).join(', ')}]`
-  if (typeof v === 'object') return JSON.stringify(v)
+  if (typeof v === 'object') return safeStringify(v)
   return String(v)
 }
 
@@ -54,7 +65,8 @@ export function formatDiff(action: string, diff: AuditDiff | null | undefined): 
   for (const key of keys) {
     const b = diff.before[key]
     const a = diff.after[key]
-    if (JSON.stringify(b) === JSON.stringify(a)) continue
+    // F41/F42 (CR Epic 3) : comparaison via safeStringify (bigint/circular-safe).
+    if (safeStringify(b) === safeStringify(a)) continue
     changes.push(`${labelFor(key)} : ${formatValue(b)} → ${formatValue(a)}`)
   }
   if (changes.length === 0) return ['Modification mineure']

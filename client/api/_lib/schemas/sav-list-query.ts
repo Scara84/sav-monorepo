@@ -16,19 +16,32 @@ export const savStatusEnum = z.enum([
   'cancelled',
 ])
 
-export const listSavQuerySchema = z.object({
-  status: z.union([savStatusEnum, z.array(savStatusEnum).min(1).max(6)]).optional(),
-  from: z.string().datetime().optional(), // ISO 8601, received_at >=
-  to: z.string().datetime().optional(), // ISO 8601, received_at <=
-  invoiceRef: z.string().min(1).max(64).optional(),
-  memberId: z.coerce.number().int().positive().optional(),
-  groupId: z.coerce.number().int().positive().optional(),
-  assignedTo: z.union([z.coerce.number().int().positive(), z.literal('unassigned')]).optional(),
-  tag: z.string().min(1).max(64).optional(),
-  q: z.string().trim().min(1).max(200).optional(), // `.trim()` bloque les variantes whitespace-only
-  limit: z.coerce.number().int().min(1).max(100).default(50),
-  cursor: z.string().min(1).max(256).optional(),
-})
+export const listSavQuerySchema = z
+  .object({
+    status: z.union([savStatusEnum, z.array(savStatusEnum).min(1).max(6)]).optional(),
+    from: z.string().datetime().optional(), // ISO 8601, received_at >=
+    to: z.string().datetime().optional(), // ISO 8601, received_at <=
+    invoiceRef: z.string().min(1).max(64).optional(),
+    memberId: z.coerce.number().int().positive().optional(),
+    groupId: z.coerce.number().int().positive().optional(),
+    assignedTo: z.union([z.coerce.number().int().positive(), z.literal('unassigned')]).optional(),
+    // F10 (CR Epic 3) : rejet des métacaractères array-literal PostgREST
+    // pour éviter de casser le parser sur `.contains('tags', [...])`.
+    tag: z
+      .string()
+      .min(1)
+      .max(64)
+      .regex(/^[^,{}"\\]+$/, 'Tag contient un caractère réservé')
+      .optional(),
+    q: z.string().trim().min(1).max(200).optional(), // `.trim()` bloque les variantes whitespace-only
+    limit: z.coerce.number().int().min(1).max(100).default(50),
+    cursor: z.string().min(1).max(256).optional(),
+  })
+  // F11 (CR Epic 3) : plage `from`/`to` cohérente.
+  .refine((d) => !d.from || !d.to || d.from <= d.to, {
+    message: 'Plage de dates invalide (from > to)',
+    path: ['from'],
+  })
 
 export type ListSavQuery = z.infer<typeof listSavQuerySchema>
 

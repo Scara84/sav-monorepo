@@ -1,7 +1,25 @@
 # Story 3.7 : Tags + commentaires + duplication + fichiers additionnels
 
-Status: review
+Status: done (V1 minimal — carry-over 3.7b vers Epic 6)
 Epic: 3 — Traitement opérationnel des SAV en back-office
+
+> **Scope réduit V1 (acté 2026-04-23 via CR Option C)** — cette story livre
+> uniquement les 3 endpoints backend tags/comments/duplicate (durcis par
+> F50 actor check post-CR). Les items ci-dessous sont **carry-over Story
+> 3.7b** (à créer en backlog Epic 6 couplé self-service + notifications) :
+>
+> - AC #5 : upload opérateur (`/api/admin/sav-files/upload-session`, `/upload-complete`)
+>   + refactor composable `useOneDriveUpload` + composant `OperatorFileUploader.vue`
+> - AC #6 : UI back-office — `SavTagsBar.vue`, `ComposeCommentForm`,
+>   `DuplicateButton.vue` intégrés dans `SavDetailView.vue`
+> - AC #7 : endpoint `GET /api/sav/tags/suggestions`
+> - AC #12 : tests upload opérateur
+> - AC #13 : tests suggestions tags
+> - AC #14 : tests composants FE (`SavTagsBar.spec`, `Compose*.spec`, `Duplicate*.spec`)
+>
+> Les 3 endpoints livrés V1 (tags/comments/duplicate) sont consommables via
+> `curl`/tests e2e mais la vue détail `SavDetailView.vue` reste readonly
+> jusqu'à 3.7b.
 
 ## Story
 
@@ -232,3 +250,4 @@ Claude Opus 4.7 (1M context) — Amelia — 2026-04-22.
 ### Change Log
 
 - 2026-04-22 — Story 3.7 V1 : tags + comments + duplicate backend livrés (17 tests). Upload opérateur et UI reportés V1.1 / Epic 6.
+- 2026-04-23 — CR Epic 3 adversarial (3 couches). Patch P0 appliqué : F50 `ACTOR_NOT_FOUND` guard dans les 2 RPCs `update_sav_tags` et `duplicate_sav` (migration `20260423120000`). Statut → `done (V1 minimal)` post Option C split. Carry-over 3.7b listé dans le bandeau en-tête (UI + upload opérateur + suggestions tags). Rapport complet : [epic-3-review-findings.md](epic-3-review-findings.md).

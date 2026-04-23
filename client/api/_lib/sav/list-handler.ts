@@ -95,12 +95,22 @@ const SAV_REF_REGEX = /^SAV-\d{4}-\d{5}$/
 /** Un `q` contenant ≥5 chiffres consécutifs est probablement un fragment de référence. */
 const HAS_5_DIGITS = /\d{5,}/
 
+/**
+ * Regex stricte pour `cursor.rec` — double ceinture au-dessus de Zod `datetime()`.
+ * L'injection de métacaractères PostgREST (`,()`) dans un `.or()` raw literal
+ * est le vecteur d'attaque ; on force ici un format canonique ISO UTC sans
+ * offset hors `Z`. Review F5 (CR Epic 3 2026-04-23).
+ */
+const CURSOR_REC_REGEX = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?Z$/
+
 function decodeCursor(raw: string): ListSavCursor | null {
   try {
     const json = Buffer.from(raw, 'base64url').toString('utf8')
     const parsed = JSON.parse(json) as unknown
     const check = listSavCursorShape.safeParse(parsed)
     if (!check.success) return null
+    if (!CURSOR_REC_REGEX.test(check.data.rec)) return null
+    if (!Number.isInteger(check.data.id) || check.data.id <= 0) return null
     return check.data
   } catch {
     return null
@@ -166,7 +176,10 @@ function applyFilters(builder: SavQueryBuilder, q: ListSavQuery): SavQueryBuilde
   if (q.from !== undefined) b = b.gte('received_at', q.from)
   if (q.to !== undefined) b = b.lte('received_at', q.to)
   if (q.invoiceRef !== undefined) {
-    b = b.ilike('invoice_ref', `%${q.invoiceRef}%`)
+    // F9 (CR Epic 3) : escape `%`/`_`/`\` avant injection dans ilike pour que
+    // le filtre matche sur la sous-chaîne littérale saisie par l'opérateur.
+    const safe = q.invoiceRef.replace(/[\\%_]/g, '\\$&')
+    b = b.ilike('invoice_ref', `%${safe}%`)
   }
   if (q.memberId !== undefined) b = b.eq('member_id', q.memberId)
   if (q.groupId !== undefined) b = b.eq('group_id', q.groupId)
@@ -180,11 +193,20 @@ function applyFilters(builder: SavQueryBuilder, q: ListSavQuery): SavQueryBuilde
     if (SAV_REF_REGEX.test(term) || HAS_5_DIGITS.test(term)) {
       // `q` ressemble à une référence SAV → combine full-text ET fragment reference
       // dans un **unique** OR group PostgREST (`(wfts OU ilike) AND autres filtres`).
-      // Un .textSearch() séparé + .or(reference.ilike) donnerait un AND au lieu
-      // d'un OR — semantic bug corrigé CR #2.
-      // Échappement conservateur pour le séparateur `,()` de PostgREST.
-      const safe = term.replace(/[,()]/g, ' ').replace(/\s+/g, ' ').trim()
-      b = b.or(`search.wfts(french).${encodeURIComponent(safe)},reference.ilike.%${safe}%`)
+      // Échappement strict : virgule/parenthèses = séparateurs `.or()`, `:` =
+      // modifier PostgREST, `"` `\` `.` peuvent casser le parser ou wfts config.
+      // Review F8 (CR Epic 3 2026-04-23) — ancienne whitelist trop laxe.
+      const safe = term
+        .replace(/[,():"\\.]/g, ' ')
+        .replace(/\s+/g, ' ')
+        .trim()
+      if (safe.length === 0) {
+        // Le `q` ne contient QUE des métacaractères → fall back textSearch pur
+        // (websearch_to_tsquery tolère une chaîne vide, retournera 0 rows).
+        b = b.textSearch('search', term, { type: 'websearch', config: 'french' })
+      } else {
+        b = b.or(`search.wfts(french).${encodeURIComponent(safe)},reference.ilike.%${safe}%`)
+      }
     } else {
       b = b.textSearch('search', term, { type: 'websearch', config: 'french' })
     }
@@ -199,6 +221,13 @@ const coreHandler: ApiHandler = async (req: ApiRequest, res: ApiResponse) => {
   const user = req.user
   if (!user) {
     sendError(res, 'UNAUTHENTICATED', 'Session requise', requestId)
+    return
+  }
+  // F97 (CR Epic 3) : defense-in-depth — withAuth au router garantit déjà
+  // `type === 'operator'`, mais on re-check ici pour fermer la porte si le
+  // handler était un jour monté sur un router moins strict.
+  if (user.type !== 'operator') {
+    sendError(res, 'FORBIDDEN', 'Session opérateur requise', requestId)
     return
   }
 

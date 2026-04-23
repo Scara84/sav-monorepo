@@ -32,19 +32,20 @@ function parseExc(msg: string): { code: string; payload: Record<string, string> 
 
 // ---- Tags ----
 
+// F16 (CR Epic 3) : regex étendue pour rejeter les unicode directional
+// overrides (U+200E/200F/202A-E) — vecteurs de display-spoofing dans les
+// chips/URL — en plus des control chars et `<>`. Normalisation `trim()`
+// + `toLowerCase()` appliquée côté handler avant RPC pour éviter la
+// fragmentation de taxonomie (`Urgent` vs `urgent`).
+const TAG_FORBIDDEN_RE = /^[^\x00-\x1f<>\u200E\u200F\u202A-\u202E]+$/
+
 export const tagsBodySchema = z
   .object({
     add: z
-      .array(
-        z
-          .string()
-          .min(1)
-          .max(64)
-          .regex(/^[^\x00-\x1f<>]+$/, 'Caractères interdits')
-      )
+      .array(z.string().trim().min(1).max(64).regex(TAG_FORBIDDEN_RE, 'Caractères interdits'))
       .max(10)
       .default([]),
-    remove: z.array(z.string().min(1).max(64)).max(10).default([]),
+    remove: z.array(z.string().trim().min(1).max(64)).max(10).default([]),
     version: z.number().int().nonnegative(),
   })
   .refine((d) => d.add.length + d.remove.length > 0, { message: 'Aucun tag à modifier' })
