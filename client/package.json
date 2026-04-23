@@ -14,6 +14,7 @@
     "test:watch": "vitest watch",
     "test:update": "vitest -u",
     "lint": "eslint . --ext .vue,.js,.jsx,.cjs,.mjs --fix --ignore-path .gitignore",
+    "lint:business": "eslint api/_lib/business/ --ext .ts --max-warnings 0",
     "format": "prettier --write src/",
     "typecheck": "vue-tsc --noEmit",
     "prepare": "cd .. && husky client/.husky"
@@ -123,6 +124,122 @@
         "rules": {
           "no-unused-vars": "off",
           "no-undef": "off"
+        }
+      },
+      {
+        "files": [
+          "api/_lib/business/**/*.ts"
+        ],
+        "excludedFiles": [
+          "api/_lib/business/**/*.test.ts",
+          "api/_lib/business/**/*.spec.ts"
+        ],
+        "rules": {
+          "no-restricted-imports": [
+            "error",
+            {
+              "paths": [
+                {
+                  "name": "fs",
+                  "message": "Modules _lib/business doivent rester purs (no-io)."
+                },
+                {
+                  "name": "fs/promises",
+                  "message": "Modules _lib/business doivent rester purs (no-io)."
+                },
+                {
+                  "name": "node:fs",
+                  "message": "Modules _lib/business doivent rester purs (no-io)."
+                },
+                {
+                  "name": "node:fs/promises",
+                  "message": "Modules _lib/business doivent rester purs (no-io)."
+                },
+                {
+                  "name": "node:child_process",
+                  "message": "Modules _lib/business doivent rester purs (no-io)."
+                },
+                {
+                  "name": "node:http",
+                  "message": "Modules _lib/business doivent rester purs (no-io)."
+                },
+                {
+                  "name": "node:https",
+                  "message": "Modules _lib/business doivent rester purs (no-io)."
+                },
+                {
+                  "name": "node:net",
+                  "message": "Modules _lib/business doivent rester purs (no-io)."
+                },
+                {
+                  "name": "node:dns",
+                  "message": "Modules _lib/business doivent rester purs (no-io)."
+                },
+                {
+                  "name": "axios",
+                  "message": "Modules _lib/business doivent rester purs (no-io)."
+                },
+                {
+                  "name": "undici",
+                  "message": "Modules _lib/business doivent rester purs (no-io)."
+                },
+                {
+                  "name": "node-fetch",
+                  "message": "Modules _lib/business doivent rester purs (no-io)."
+                },
+                {
+                  "name": "nodemailer",
+                  "message": "Modules _lib/business doivent rester purs (no-io)."
+                },
+                {
+                  "name": "ioredis",
+                  "message": "Modules _lib/business doivent rester purs (no-io)."
+                },
+                {
+                  "name": "redis",
+                  "message": "Modules _lib/business doivent rester purs (no-io)."
+                },
+                {
+                  "name": "pg",
+                  "message": "Modules _lib/business doivent rester purs (no-io)."
+                },
+                {
+                  "name": "pg-promise",
+                  "message": "Modules _lib/business doivent rester purs (no-io)."
+                },
+                {
+                  "name": "drizzle-orm",
+                  "message": "Modules _lib/business doivent rester purs (no-io)."
+                }
+              ],
+              "patterns": [
+                {
+                  "group": [
+                    "@supabase/*"
+                  ],
+                  "message": "Modules _lib/business doivent rester purs (no-io)."
+                },
+                {
+                  "group": [
+                    "@microsoft/*"
+                  ],
+                  "message": "Modules _lib/business doivent rester purs (no-io)."
+                },
+                {
+                  "group": [
+                    "@azure/*"
+                  ],
+                  "message": "Modules _lib/business doivent rester purs (no-io)."
+                },
+                {
+                  "group": [
+                    "@prisma/*"
+                  ],
+                  "message": "Modules _lib/business doivent rester purs (no-io)."
+                }
+              ]
+            }
+          ]
         }
       }
     ]

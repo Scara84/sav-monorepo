@@ -1,0 +1,495 @@
+{
+  "version": 1,
+  "generated_at": "2026-04-25",
+  "provenance": "synthetic-prd-derived",
+  "note": "V1 = 20+ cas synthétiques dérivés PRD §FR21-FR28. V1.1 = remplacement par cas réels Excel historique au shadow run Epic 7. NE PAS modifier le 'version' sans mettre à jour scripts/fixtures/gen-sql-fixture-cases.ts + trigger PG compute_sav_line_credit + step CI check-fixture-sql-sync.",
+  "schema_lock": {
+    "$comment": "Changer version en 2 nécessite nouveau pipeline miroir CI + review schéma SavLineInput/SavLineComputed"
+  },
+  "cases": [
+    {
+      "id": "V1-01",
+      "label": "Happy path kg coefficient TOTAL",
+      "ac_covered": ["AC#2.5"],
+      "mirror_sql": true,
+      "comment": "10 kg × 250 c × 1.0 = 2500 c",
+      "input": {
+        "qty_requested": 10,
+        "unit_requested": "kg",
+        "qty_invoiced": 10,
+        "unit_invoiced": "kg",
+        "unit_price_ht_cents": 250,
+        "vat_rate_bp_snapshot": 550,
+        "credit_coefficient": 1,
+        "piece_to_kg_weight_g": null
+      },
+      "expected": {
+        "credit_amount_cents": 2500,
+        "validation_status": "ok",
+        "validation_message": null
+      }
+    },
+    {
+      "id": "V1-02",
+      "label": "Happy path kg coefficient 50%",
+      "ac_covered": ["AC#2.5"],
+      "mirror_sql": false,
+      "comment": "5 kg × 800 c × 0.5 = 2000 c",
+      "input": {
+        "qty_requested": 5,
+        "unit_requested": "kg",
+        "qty_invoiced": 5,
+        "unit_invoiced": "kg",
+        "unit_price_ht_cents": 800,
+        "vat_rate_bp_snapshot": 550,
+        "credit_coefficient": 0.5,
+        "piece_to_kg_weight_g": null
+      },
+      "expected": {
+        "credit_amount_cents": 2000,
+        "validation_status": "ok",
+        "validation_message": null
+      }
+    },
+    {
+      "id": "V1-03",
+      "label": "Happy path piece coefficient libre 0.35",
+      "ac_covered": ["AC#2.5"],
+      "mirror_sql": true,
+      "comment": "12 pcs × 150 c × 0.35 = 630 c",
+      "input": {
+        "qty_requested": 12,
+        "unit_requested": "piece",
+        "qty_invoiced": 12,
+        "unit_invoiced": "piece",
+        "unit_price_ht_cents": 150,
+        "vat_rate_bp_snapshot": 550,
+        "credit_coefficient": 0.35,
+        "piece_to_kg_weight_g": null
+      },
+      "expected": {
+        "credit_amount_cents": 630,
+        "validation_status": "ok",
+        "validation_message": null
+      }
+    },
+    {
+      "id": "V1-04",
+      "label": "to_calculate — unit_price NULL",
+      "ac_covered": ["AC#2.1"],
+      "mirror_sql": false,
+      "comment": "prix absent → bloc neutre en attendant saisie opérateur",
+      "input": {
+        "qty_requested": 5,
+        "unit_requested": "kg",
+        "qty_invoiced": 5,
+        "unit_invoiced": "kg",
+        "unit_price_ht_cents": null,
+        "vat_rate_bp_snapshot": 550,
+        "credit_coefficient": 1,
+        "piece_to_kg_weight_g": null
+      },
+      "expected": {
+        "credit_amount_cents": null,
+        "validation_status": "to_calculate",
+        "validation_message": "Données facture incomplètes (prix, TVA ou quantité/unité facturée manquants)"
+      }
+    },
+    {
+      "id": "V1-05",
+      "label": "to_calculate — vat_rate_bp_snapshot NULL",
+      "ac_covered": ["AC#2.1"],
+      "mirror_sql": false,
+      "comment": "TVA snapshot non renseignée (capture incomplète)",
+      "input": {
+        "qty_requested": 3,
+        "unit_requested": "kg",
+        "qty_invoiced": 3,
+        "unit_invoiced": "kg",
+        "unit_price_ht_cents": 400,
+        "vat_rate_bp_snapshot": null,
+        "credit_coefficient": 1,
+        "piece_to_kg_weight_g": null
+      },
+      "expected": {
+        "credit_amount_cents": null,
+        "validation_status": "to_calculate",
+        "validation_message": "Données facture incomplètes (prix, TVA ou quantité/unité facturée manquants)"
+      }
+    },
+    {
+      "id": "V1-06",
+      "label": "qty_exceeds_invoice strict",
+      "ac_covered": ["AC#2.2"],
+      "mirror_sql": false,
+      "comment": "10 demandés > 5 facturés → bloquant FR24",
+      "input": {
+        "qty_requested": 10,
+        "unit_requested": "kg",
+        "qty_invoiced": 5,
+        "unit_invoiced": "kg",
+        "unit_price_ht_cents": 200,
+        "vat_rate_bp_snapshot": 550,
+        "credit_coefficient": 1,
+        "piece_to_kg_weight_g": null
+      },
+      "expected": {
+        "credit_amount_cents": null,
+        "validation_status": "qty_exceeds_invoice",
+        "validation_message": "Quantité demandée (10) > quantité facturée (5)"
+      }
+    },
+    {
+      "id": "V1-07",
+      "label": "qty_invoiced = qty_requested → ok (limite non-stricte)",
+      "ac_covered": ["AC#2.2", "AC#2.5"],
+      "mirror_sql": false,
+      "comment": "Cas limite : égalité passe, seul `>` strict bloque",
+      "input": {
+        "qty_requested": 7,
+        "unit_requested": "kg",
+        "qty_invoiced": 7,
+        "unit_invoiced": "kg",
+        "unit_price_ht_cents": 100,
+        "vat_rate_bp_snapshot": 550,
+        "credit_coefficient": 1,
+        "piece_to_kg_weight_g": null
+      },
+      "expected": {
+        "credit_amount_cents": 700,
+        "validation_status": "ok",
+        "validation_message": null
+      }
+    },
+    {
+      "id": "V1-08",
+      "label": "Conversion kg demandé / piece facturé (weight 200g)",
+      "ac_covered": ["AC#2.4"],
+      "mirror_sql": true,
+      "comment": "5 kg demandé, 30c/pièce, weight 200g → price_per_kg = round(30*1000/200)=150c → 5*150*1 = 750c",
+      "input": {
+        "qty_requested": 5,
+        "unit_requested": "kg",
+        "qty_invoiced": 25,
+        "unit_invoiced": "piece",
+        "unit_price_ht_cents": 30,
+        "vat_rate_bp_snapshot": 550,
+        "credit_coefficient": 1,
+        "piece_to_kg_weight_g": 200
+      },
+      "expected": {
+        "credit_amount_cents": 750,
+        "validation_status": "ok",
+        "validation_message": null
+      }
+    },
+    {
+      "id": "V1-09",
+      "label": "Conversion piece demandé / kg facturé (weight 150g)",
+      "ac_covered": ["AC#2.4"],
+      "mirror_sql": false,
+      "comment": "20 pcs demandé, 400c/kg, weight 150g → price_per_piece = round(400*150/1000)=60c → 20*60*1 = 1200c",
+      "input": {
+        "qty_requested": 20,
+        "unit_requested": "piece",
+        "qty_invoiced": 3,
+        "unit_invoiced": "kg",
+        "unit_price_ht_cents": 400,
+        "vat_rate_bp_snapshot": 550,
+        "credit_coefficient": 1,
+        "piece_to_kg_weight_g": 150
+      },
+      "expected": {
+        "credit_amount_cents": 1200,
+        "validation_status": "ok",
+        "validation_message": null
+      }
+    },
+    {
+      "id": "V1-10",
+      "label": "Conversion + coefficient 0.5 post-conversion",
+      "ac_covered": ["AC#2.4", "AC#2.5"],
+      "mirror_sql": false,
+      "comment": "4 kg, 50c/pièce, weight 250g → price_per_kg=200c → 4*200*0.5 = 400c",
+      "input": {
+        "qty_requested": 4,
+        "unit_requested": "kg",
+        "qty_invoiced": 16,
+        "unit_invoiced": "piece",
+        "unit_price_ht_cents": 50,
+        "vat_rate_bp_snapshot": 550,
+        "credit_coefficient": 0.5,
+        "piece_to_kg_weight_g": 250
+      },
+      "expected": {
+        "credit_amount_cents": 400,
+        "validation_status": "ok",
+        "validation_message": null
+      }
+    },
+    {
+      "id": "V1-11",
+      "label": "unit_mismatch — kg ↔ liter non convertible",
+      "ac_covered": ["AC#2.3"],
+      "mirror_sql": false,
+      "comment": "Pas de conversion kg↔liter (pas de règle V1)",
+      "input": {
+        "qty_requested": 3,
+        "unit_requested": "kg",
+        "qty_invoiced": 3,
+        "unit_invoiced": "liter",
+        "unit_price_ht_cents": 500,
+        "vat_rate_bp_snapshot": 550,
+        "credit_coefficient": 1,
+        "piece_to_kg_weight_g": 1000
+      },
+      "expected": {
+        "credit_amount_cents": null,
+        "validation_status": "unit_mismatch",
+        "validation_message": "Unité demandée (kg) ≠ unité facturée (liter) — conversion indisponible"
+      }
+    },
+    {
+      "id": "V1-12",
+      "label": "unit_mismatch — piece ↔ liter",
+      "ac_covered": ["AC#2.3"],
+      "mirror_sql": true,
+      "comment": "Cas symétrique, pas de poids conversion applicable",
+      "input": {
+        "qty_requested": 2,
+        "unit_requested": "piece",
+        "qty_invoiced": 2,
+        "unit_invoiced": "liter",
+        "unit_price_ht_cents": 120,
+        "vat_rate_bp_snapshot": 550,
+        "credit_coefficient": 1,
+        "piece_to_kg_weight_g": null
+      },
+      "expected": {
+        "credit_amount_cents": null,
+        "validation_status": "unit_mismatch",
+        "validation_message": "Unité demandée (piece) ≠ unité facturée (liter) — conversion indisponible"
+      }
+    },
+    {
+      "id": "V1-13",
+      "label": "blocked — coefficient négatif",
+      "ac_covered": ["AC#2.6"],
+      "mirror_sql": false,
+      "comment": "Défense en profondeur : Zod+CHECK attrapent avant, mais moteur reste safe",
+      "input": {
+        "qty_requested": 5,
+        "unit_requested": "kg",
+        "qty_invoiced": 5,
+        "unit_invoiced": "kg",
+        "unit_price_ht_cents": 100,
+        "vat_rate_bp_snapshot": 550,
+        "credit_coefficient": -0.1,
+        "piece_to_kg_weight_g": null
+      },
+      "expected": {
+        "credit_amount_cents": null,
+        "validation_status": "blocked",
+        "validation_message": "Coefficient avoir hors plage [0,1]"
+      }
+    },
+    {
+      "id": "V1-14",
+      "label": "blocked — coefficient > 1",
+      "ac_covered": ["AC#2.6"],
+      "mirror_sql": false,
+      "comment": "1.01 : 1 % de dépassement rejeté",
+      "input": {
+        "qty_requested": 2,
+        "unit_requested": "kg",
+        "qty_invoiced": 2,
+        "unit_invoiced": "kg",
+        "unit_price_ht_cents": 500,
+        "vat_rate_bp_snapshot": 550,
+        "credit_coefficient": 1.01,
+        "piece_to_kg_weight_g": null
+      },
+      "expected": {
+        "credit_amount_cents": null,
+        "validation_status": "blocked",
+        "validation_message": "Coefficient avoir hors plage [0,1]"
+      }
+    },
+    {
+      "id": "V1-15",
+      "label": "TVA multi-taux — 2000 bp (20 %) produit non-agricole",
+      "ac_covered": ["AC#2.5"],
+      "mirror_sql": true,
+      "comment": "Calcul avoir ligne = qty*price*coef (TVA snapshot utilisé seulement en totaux avoir Story 4.4)",
+      "input": {
+        "qty_requested": 6,
+        "unit_requested": "piece",
+        "qty_invoiced": 6,
+        "unit_invoiced": "piece",
+        "unit_price_ht_cents": 999,
+        "vat_rate_bp_snapshot": 2000,
+        "credit_coefficient": 1,
+        "piece_to_kg_weight_g": null
+      },
+      "expected": {
+        "credit_amount_cents": 5994,
+        "validation_status": "ok",
+        "validation_message": null
+      }
+    },
+    {
+      "id": "V1-16",
+      "label": "TVA multi-taux — 550 bp (5.5 % agricole nominal)",
+      "ac_covered": ["AC#2.5"],
+      "mirror_sql": false,
+      "comment": "Le taux snapshot n'influence pas le credit_amount_cents",
+      "input": {
+        "qty_requested": 8,
+        "unit_requested": "kg",
+        "qty_invoiced": 8,
+        "unit_invoiced": "kg",
+        "unit_price_ht_cents": 125,
+        "vat_rate_bp_snapshot": 550,
+        "credit_coefficient": 1,
+        "piece_to_kg_weight_g": null
+      },
+      "expected": {
+        "credit_amount_cents": 1000,
+        "validation_status": "ok",
+        "validation_message": null
+      }
+    },
+    {
+      "id": "V1-17",
+      "label": "Gel snapshot vs settings courant (snapshot 550 utilisé même si settings=600)",
+      "ac_covered": ["AC#2.5", "NFR-D2"],
+      "mirror_sql": false,
+      "comment": "Le trigger et le moteur n'ont QUE accès au snapshot de la ligne — jamais settings.",
+      "input": {
+        "qty_requested": 10,
+        "unit_requested": "kg",
+        "qty_invoiced": 10,
+        "unit_invoiced": "kg",
+        "unit_price_ht_cents": 200,
+        "vat_rate_bp_snapshot": 550,
+        "credit_coefficient": 1,
+        "piece_to_kg_weight_g": null
+      },
+      "expected": {
+        "credit_amount_cents": 2000,
+        "validation_status": "ok",
+        "validation_message": null
+      }
+    },
+    {
+      "id": "V1-18",
+      "label": "Arrondi au cent (333 × 3 × 0.33 = 329.67 → 330)",
+      "ac_covered": ["AC#2.5"],
+      "mirror_sql": false,
+      "comment": "Math.round standard (half-away-from-zero pour positifs)",
+      "input": {
+        "qty_requested": 3,
+        "unit_requested": "kg",
+        "qty_invoiced": 3,
+        "unit_invoiced": "kg",
+        "unit_price_ht_cents": 333,
+        "vat_rate_bp_snapshot": 550,
+        "credit_coefficient": 0.33,
+        "piece_to_kg_weight_g": null
+      },
+      "expected": {
+        "credit_amount_cents": 330,
+        "validation_status": "ok",
+        "validation_message": null
+      }
+    },
+    {
+      "id": "V1-19",
+      "label": "Arrondi — descente (199 × 7 × 0.5 = 696.5 → 697)",
+      "ac_covered": ["AC#2.5"],
+      "mirror_sql": false,
+      "comment": "0.5 pur → round vers le haut (half-away-from-zero)",
+      "input": {
+        "qty_requested": 7,
+        "unit_requested": "kg",
+        "qty_invoiced": 7,
+        "unit_invoiced": "kg",
+        "unit_price_ht_cents": 199,
+        "vat_rate_bp_snapshot": 550,
+        "credit_coefficient": 0.5,
+        "piece_to_kg_weight_g": null
+      },
+      "expected": {
+        "credit_amount_cents": 697,
+        "validation_status": "ok",
+        "validation_message": null
+      }
+    },
+    {
+      "id": "V1-20",
+      "label": "Coefficient 0 (avoir nul mais ligne OK)",
+      "ac_covered": ["AC#2.5"],
+      "mirror_sql": false,
+      "comment": "UX : opérateur peut refuser un avoir sans bloquer la ligne",
+      "input": {
+        "qty_requested": 5,
+        "unit_requested": "kg",
+        "qty_invoiced": 5,
+        "unit_invoiced": "kg",
+        "unit_price_ht_cents": 1000,
+        "vat_rate_bp_snapshot": 550,
+        "credit_coefficient": 0,
+        "piece_to_kg_weight_g": null
+      },
+      "expected": {
+        "credit_amount_cents": 0,
+        "validation_status": "ok",
+        "validation_message": null
+      }
+    },
+    {
+      "id": "V1-21",
+      "label": "qty_invoiced NULL → to_calculate (capture avant webhook facture)",
+      "ac_covered": ["AC#2.1", "D1"],
+      "mirror_sql": false,
+      "comment": "D1 CR 4.2 : sans qty_invoiced, FR24 non-évaluable → bloque validation jusqu'à réception du webhook facture Make.com. Cohérent avec flow double-webhook (capture SAV puis facture Fruitstock).",
+      "input": {
+        "qty_requested": 4,
+        "unit_requested": "kg",
+        "qty_invoiced": null,
+        "unit_invoiced": null,
+        "unit_price_ht_cents": 250,
+        "vat_rate_bp_snapshot": 550,
+        "credit_coefficient": 1,
+        "piece_to_kg_weight_g": null
+      },
+      "expected": {
+        "credit_amount_cents": null,
+        "validation_status": "to_calculate",
+        "validation_message": "Données facture incomplètes (prix, TVA ou quantité/unité facturée manquants)"
+      }
+    },
+    {
+      "id": "V1-22",
+      "label": "Conversion mais weight = NULL → unit_mismatch (pas de fallback)",
+      "ac_covered": ["AC#2.3", "AC#2.4"],
+      "mirror_sql": false,
+      "comment": "kg↔piece sans weight → mismatch bloquant",
+      "input": {
+        "qty_requested": 5,
+        "unit_requested": "kg",
+        "qty_invoiced": 20,
+        "unit_invoiced": "piece",
+        "unit_price_ht_cents": 40,
+        "vat_rate_bp_snapshot": 550,
+        "credit_coefficient": 1,
+        "piece_to_kg_weight_g": null
+      },
+      "expected": {
+        "credit_amount_cents": null,
+        "validation_status": "unit_mismatch",
+        "validation_message": "Unité demandée (kg) ≠ unité facturée (piece) — conversion indisponible"
+      }
+    }
+  ]
+}

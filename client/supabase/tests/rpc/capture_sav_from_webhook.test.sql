@@ -204,13 +204,29 @@ BEGIN
 
   SELECT sav_id INTO v_sav_id FROM capture_sav_from_webhook(v_payload);
 
+  -- Epic 4.2 CR P10 : le trigger compute_sav_line_credit synchronise désormais
+  -- validation_messages (plural legacy) avec validation_message (singulier).
+  -- validation_messages = '[]' UNIQUEMENT si validation_status='ok' et
+  -- validation_message IS NULL. Comme capture_sav_from_webhook produit des
+  -- lignes sans unit_price_ht_cents → trigger pose 'to_calculate' + message,
+  -- donc validation_messages contient le message. On vérifie la COHÉRENCE
+  -- (plural aligné avec singulier) plutôt que l'ancienne attente d'un tableau
+  -- vide systématique.
   SELECT count(*) INTO v_non_empty_count
-    FROM sav_lines WHERE sav_id = v_sav_id AND validation_messages <> '[]'::jsonb;
+    FROM sav_lines
+   WHERE sav_id = v_sav_id
+     AND (
+       -- incohérence : plural non vide alors que singulier NULL
+       (validation_message IS NULL AND validation_messages <> '[]'::jsonb)
+       -- incohérence : plural vide alors que singulier non NULL
+       OR (validation_message IS NOT NULL AND validation_messages = '[]'::jsonb)
+     );
   IF v_non_empty_count <> 0 THEN
-    RAISE EXCEPTION 'FAIL T5 : % ligne(s) avec validation_messages != "[]" (attendu 0 — CR 4.0 D2)', v_non_empty_count;
+    RAISE EXCEPTION 'FAIL T5 : % ligne(s) incohérente(s) entre validation_message (singulier) et validation_messages (plural) — Epic 4.2 P10',
+                    v_non_empty_count;
   END IF;
 
-  RAISE NOTICE 'OK Test 5 (AC #5.5, CR 4.0 D2) : validation_messages = "[]" (plus d''écriture cause)';
+  RAISE NOTICE 'OK Test 5 (AC #5.5, Epic 4.2 P10) : validation_message singulier synchronisé avec validation_messages plural';
 END $$;
 
 -- ------------------------------------------------------------

@@ -171,12 +171,21 @@ BEGIN
   INSERT INTO sav (member_id, status) VALUES (v_mem, 'in_progress')
   RETURNING id INTO v_src_sav;
 
+  -- Epic 4.2 note : le trigger compute_sav_line_credit (BEFORE INSERT, livré
+  -- par la migration 20260426120000) écrase désormais validation_status /
+  -- validation_message / credit_amount_cents en fonction des inputs. La
+  -- RPC duplicate_sav passe bien 'ok' + NULL dans son INSERT (cf. migration
+  -- 20260424130000 §duplicate_sav), mais c'est le trigger qui détermine le
+  -- résultat final. Pour valider que duplicate_sav produit bien des lignes
+  -- **cohérentes** dans la copie, on fournit des inputs VALIDES (prix + TVA
+  -- snapshot + unités cohérentes, coef ∈ [0,1]) → trigger posera 'ok' partout.
   INSERT INTO sav_lines (sav_id, product_code_snapshot, product_name_snapshot,
-    qty_requested, unit_requested, validation_status, validation_message)
+    qty_requested, unit_requested, qty_invoiced, unit_invoiced,
+    unit_price_ht_cents, vat_rate_bp_snapshot, credit_coefficient)
   VALUES
-    (v_src_sav, 'BLOCK-A', 'Bloqué A', 1.0, 'kg',    'blocked',      'Unité facturée ≠ unité demandée'),
-    (v_src_sav, 'BLOCK-B', 'Bloqué B', 1.0, 'piece', 'unit_mismatch', 'mismatch msg'),
-    (v_src_sav, 'OK-A',    'OK A',     1.0, 'kg',    'ok',            NULL);
+    (v_src_sav, 'OK-A', 'OK A', 1.0, 'kg',    1.0, 'kg',    200, 550, 1),
+    (v_src_sav, 'OK-B', 'OK B', 2.0, 'kg',    2.0, 'kg',    300, 550, 0.5),
+    (v_src_sav, 'OK-C', 'OK C', 3.0, 'piece', 3.0, 'piece', 150, 2000, 1);
 
   SELECT new_sav_id INTO v_new_sav FROM duplicate_sav(v_src_sav, v_op);
 
@@ -192,7 +201,7 @@ BEGIN
     RAISE EXCEPTION 'FAIL T3 : % ligne(s) copiée(s) avec validation_message NOT NULL (attendu 0)', v_non_null_msg_count;
   END IF;
 
-  RAISE NOTICE 'OK Test 3 (AC #4.3) : validation_status reset ok + validation_message NULL sur copie';
+  RAISE NOTICE 'OK Test 3 (AC #4.3) : copie + trigger 4.2 ⇒ 3 lignes ok, 0 message';
 END $$;
 
 -- ------------------------------------------------------------

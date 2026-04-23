@@ -281,3 +281,110 @@ Ces colonnes ne doivent plus être lues ni écrites par le code nouveau.
 - Story créatrice : `_bmad-output/implementation-artifacts/4-0-dette-schema-sav-lines-prd-target.md`.
 - PRD : `_bmad-output/planning-artifacts/prd.md` §Database Schema (lignes 761-791).
 
+## Schéma `credit_notes` + séquence transactionnelle (Epic 4.1)
+
+Migrations `client/supabase/migrations/20260425120000_credit_notes_sequence.sql` (tables) + `20260425130000_rpc_issue_credit_number.sql` (RPC) posent la brique comptable de l'Epic 4. Pré-requis direct Story 4.4 (émission bon SAV atomique) et Story 4.6 (load test 10 000 émissions concurrentes).
+
+### Tables livrées
+
+- **`credit_number_sequence`** : séquence applicative single-row (`CHECK (id = 1)`) — compteur global des numéros d'avoirs. Seed `last_number = 0` ; écrasé au cutover Epic 7 via `scripts/cutover/seed-credit-sequence.sql`.
+- **`credit_notes`** : ligne comptable append-only (append-only par convention — pas de trigger DELETE bloqué V1, mais aucun flux applicatif ne DELETE). `number bigint UNIQUE NOT NULL` = filet ultime. `number_formatted text GENERATED STORED = 'AV-<year>-<5digits>'`. FK `sav/member` **sans** `ON DELETE CASCADE` (NFR-D4 rétention 10 ans, NFR-D10 anonymisation préserve les avoirs).
+
+### RPC `issue_credit_number(sav_id, bon_type, total_ht_cents, discount_cents, vat_cents, total_ttc_cents, actor_operator_id) RETURNS credit_notes`
+
+Contrat transactionnel — tout se fait en une transaction PostgreSQL :
+
+1. F50 : `ACTOR_NOT_FOUND|id=X` si `p_actor_operator_id` inconnu.
+2. `SELECT sav.member_id FOR UPDATE` : pose un lock ligne sur le SAV cible → sérialise les émissions concurrentes (base pour `CREDIT_NOTE_ALREADY_ISSUED` Story 4.4).
+3. `SAV_NOT_FOUND|id=X` si sav inexistant ; `INVALID_BON_TYPE|value=X` si hors whitelist.
+4. `UPDATE credit_number_sequence SET last_number = last_number + 1 WHERE id=1 RETURNING last_number` : pose un `RowExclusiveLock` sur la ligne id=1 → toute émission concurrente attend le commit.
+5. `INSERT credit_notes RETURNING *` dans la même transaction.
+
+**Garantie NFR-D3** (zéro collision, zéro trou) : si l'INSERT échoue (contrainte CHECK, NOT NULL…), le UPDATE séquence rollback aussi → `last_number` revient à sa valeur d'avant l'appel. Signature `SECURITY DEFINER` + `SET search_path = public, pg_temp` + `#variable_conflict use_column` (prévient le bug latent Story 4.0b sur RETURNS composite). Appelable uniquement via service_role (pattern Epic 3).
+
+### Divergence signature documentée vs `epics.md`
+
+`epics.md` ligne 800 propose `issue_credit_number(sav_id)` (1 arg). Mais `credit_notes` impose `total_*_cents`, `bon_type` en `NOT NULL`. Signature étendue à 7 paramètres : les totaux sont calculés par Story 4.2 (moteur TS) + Story 4.3 (preview) et passés par Story 4.4 (endpoint `POST /api/sav/:id/credit-notes`). La sémantique transactionnelle reste strictement identique.
+
+### Preuve empirique — Story 4.6
+
+La garantie structurelle (UPDATE RETURNING + transaction unique) tient théoriquement. Story 4.6 la **valide empiriquement** par un load test `scripts/load-test/credit-sequence.ts` : 10 000 émissions parallèles → `SELECT COUNT(DISTINCT number) = 10000` et `MAX(number) - MIN(number) + 1 = 10000`.
+
+### Tests
+
+- `client/supabase/tests/rpc/issue_credit_number.test.sql` — 11 tests SQL : happy path séquentiel (3 émissions → 1, 2, 3), `number_formatted` GENERATED, F50 ACTOR_NOT_FOUND, SAV_NOT_FOUND, INVALID_BON_TYPE, **rollback atomique post-UPDATE séquence** (test 6 — cœur de la garantie NFR-D3, `p_total_ht_cents=NULL` déclenche `not_null_violation` après le UPDATE), UNIQUE(number) filet, UPDATE RETURNING linéaire via SAVEPOINT, FOR UPDATE réentrant mono-session, audit_trail avec actor_operator_id, CHECK `id=1` single-row.
+
+### Référence
+
+- Spec : `_bmad-output/planning-artifacts/epics.md:797-813`, `_bmad-output/planning-artifacts/prd.md:834-861` (Database Schema).
+- Story créatrice : `_bmad-output/implementation-artifacts/4-1-migration-avoirs-sequence-transactionnelle-rpc.md`.
+- NFRs : NFR-D3 (zéro collision/trou), NFR-P4 (p95 < 1 s émission), NFR-SC2 (10 émissions simultanées sans collision).
+
+
+## Moteur calcul avoir (Epic 4.2)
+
+Le moteur comptable est implémenté en **double couche miroir** : un module TypeScript pur côté serverless (`api/_lib/business/creditCalculation.ts`) + un trigger PostgreSQL identique côté DB (`compute_sav_line_credit`). La cohérence entre les 2 implémentations est garantie par une fixture partagée + une step CI `check-fixture-sql-sync`.
+
+### Architecture 5 couches (défense en profondeur — NFR-D2 / Error Handling Rule 4)
+
+```
+[Couche 1: UI Vue]                       Story 4.3 — preview live + disable bouton si status != ok
+[Couche 2: Zod API Schema]               Story 3.6 / 4.3 — rejet 400 si coefficient hors plage
+[Couche 3: CHECK DB sav_lines]           Story 4.2 — CHECK credit_coefficient ∈ [0,1] + enum validation_status
+[Couche 4: Trigger PG BEFORE INSERT/UPDATE] Story 4.2 — recalcul forcé, ignore toute valeur user-posted
+[Couche 5: Moteur TS serverless]         Story 4.2 — même logique, consommé par preview UI + totaux avoir
+```
+
+Le **trigger PG est la source de vérité**. Le TS est un miroir pour (a) preview UI instantanée sans round-trip DB, (b) calcul des 4 totaux passés à la RPC `issue_credit_number` (Story 4.1), (c) diff à l'euro près en shadow run vs Excel historique.
+
+### Modules TS livrés (`client/api/_lib/business/`)
+
+| Module | Rôle |
+|---|---|
+| `creditCalculation.ts` | `computeSavLineCredit(input)` + `computeSavTotal(lines)` — cœur moteur |
+| `pieceKgConversion.ts` | Helpers `price/qty` pièce↔kg (lève TypeError si weight ≤ 0) |
+| `vatRemise.ts` | `computeTtcCents`, `computeGroupManagerDiscountCents`, `computeCreditNoteTotals` (remise avant TVA) |
+| `settingsResolver.ts` | Résolution settings versionnés au timestamp T — stateless, l'appelant fetch les rows |
+
+Ces 4 modules sont **purs** (aucun import IO : `@supabase/*`, `nodemailer`, `@microsoft/*`, `fs`, `axios`, `ioredis`, `pg`). Règle ESLint `no-restricted-imports` enforce dans `package.json > eslintConfig > overrides > files: ['api/_lib/business/**/*.ts']`. Script npm dédié `lint:business` actif en CI (step bloquant).
+
+### Triggers PostgreSQL (migration `20260426120000_triggers_compute_sav_line_credit.sql`)
+
+- **`trg_compute_sav_line_credit`** : BEFORE INSERT OR UPDATE OF (8 colonnes d'input watchées). Écrit exclusivement `NEW.credit_amount_cents`, `NEW.validation_status`, `NEW.validation_message`. Ne touche JAMAIS aux colonnes snapshot (`unit_price_ht_cents`, `vat_rate_bp_snapshot`) — NFR-D2.
+- **`trg_recompute_sav_total`** : AFTER INSERT OR UPDATE OR DELETE → `UPDATE sav SET total_amount_cents = SUM(credit_amount_cents WHERE validation_status='ok')`. Pas de cascade sav_lines (update sav ≠ update sav_lines). Accepte 1 entry audit_trail par mutation (traçabilité légale, volume négligeable V1).
+- **CHECK** : `credit_coefficient ∈ [0, 1]` (défense en profondeur vs Zod + moteur TS `blocked`).
+
+### Ordre de résolution `validation_status`
+
+Strictement identique côté TS et côté PL/pgSQL :
+
+1. `to_calculate` — `unit_price_ht_cents` OU `vat_rate_bp_snapshot` manquant
+2. `blocked` — `credit_coefficient < 0` ou `> 1` (défense vs CHECK DB contourné)
+3. `unit_mismatch` — unités différentes ET pas de conversion pièce↔kg possible
+4. Conversion pièce↔kg si applicable (calcul du `price_effective` + `qty_invoiced_converted` dans l'unité demandée)
+5. `qty_exceeds_invoice` — `qty_requested > qty_invoiced_converted` (strict, **dans l'unité demandée** après conversion)
+6. `ok` — calcul `round(qty_effective × price_effective × credit_coefficient)` au cent
+
+### Fixture partagée TS↔SQL
+
+- **Source** : `client/tests/fixtures/excel-calculations.json` (≥ 20 cas, `version=1`, `provenance=synthetic-prd-derived`)
+- **Consommation TS** : `creditCalculation.test.ts` via `it.each(fixture.cases)` — 100 % des cas passent
+- **Consommation SQL** : 5 cas marqués `mirror_sql: true` sont générés en SQL via `scripts/fixtures/gen-sql-fixture-cases.ts` → `client/supabase/tests/rpc/_generated_fixture_cases.sql` (inclus via `\ir` dans `trigger_compute_sav_line_credit.test.sql`)
+- **Garde-fou CI** : step `Check fixture SQL sync` diff-check le fichier généré. Commit qui modifie le JSON sans régénérer le SQL → fail CI avec message actionnable.
+- **V1.1 shadow run** : remplacement de la fixture synthétique par ≥ 30 cas réels extraits du fichier Excel historique Fruitstock + macro VBA (Epic 7 cutover).
+
+### Gel snapshot (NFR-D2 / FR28)
+
+Le trigger ne lit que les colonnes de la ligne (`unit_price_ht_cents`, `vat_rate_bp_snapshot`). Une modification de `settings.vat_rate_default` (ex: 550 → 600) n'affecte PAS les lignes SAV pré-existantes — leur `credit_amount_cents` reste calculé sur le snapshot gelé. Test #11 `trigger_compute_sav_line_credit.test.sql` démontre cette propriété empiriquement.
+
+### Tests
+
+- **TS Vitest** : 81 tests (`creditCalculation.test.ts` 37, `vatRemise.test.ts` 18, `pieceKgConversion.test.ts` 14, `settingsResolver.test.ts` 12). Couverture ≥ 80 % sur `_lib/business/`.
+- **SQL** : 16 DO blocs dans `trigger_compute_sav_line_credit.test.sql` + 5 cas miroir fixture dans `_generated_fixture_cases.sql`.
+- **Total assertions cumulées `tests/rpc/`** après 4.2 : ~77 (61 baseline 4.1 + 16 Story 4.2).
+
+### Référence
+
+- Spec : `_bmad-output/planning-artifacts/epics.md:814-836`, `_bmad-output/planning-artifacts/prd.md:222-228` + `1209-1217` (FR21-FR28) + `1331` (NFR-D2).
+- Story créatrice : `_bmad-output/implementation-artifacts/4-2-moteur-calculs-metier-typescript-triggers-miroirs-fixture-excel.md`.
+- Débloque : Story 3.6b (UI édition ligne), Story 4.3 (preview live), Story 4.4 (émission atomique).

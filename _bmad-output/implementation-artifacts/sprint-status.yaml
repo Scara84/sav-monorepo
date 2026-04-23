@@ -38,7 +38,38 @@
 # - Une story passe par 'review' avant 'done' (via bmad-code-review)
 
 generated: 2026-04-18
-last_updated: 2026-04-23
+last_updated: 2026-04-26
+# 2026-04-25 : Story 4.2 done après CR adversarial 3 couches (Blind+Edge+Auditor).
+# 1 BLOCKER résolu, 14 patches P1-P14 appliqués, 2 decisions tranchées (D1 NULL
+# qty_invoiced → to_calculate cohérent flow double-webhook Make.com ; D2 pas
+# de bump sav.version — verrou social via assignation opérateur). 13 defers
+# W16-W28 ajoutés dans deferred-work.md, 18 dismissed. Migration CR patches
+# 20260426130000 ajoutée (D1 + P3 trigger immutability snapshot + P4
+# recompute FOR UPDATE + IS DISTINCT FROM + P10 validation_messages sync).
+# Tests : 81 TS (coverage 91.74%) + 25 SQL trigger + 5 SQL miroir fixture +
+# 10 SQL sav_lines + 7 SQL duplicate + 5 autres RPC = 133 assertions. Vitest
+# 450/450, typecheck 0, lint:business 0, build 459 KB stable. 7/8 tests SQL
+# OK local (transition_sav_status superuser pré-existant passe CI).
+# 2026-04-25 : Story 4.2 créée (ready-for-dev). Moteur calcul avoir TS pur
+# (creditCalculation + pieceKgConversion + vatRemise + settingsResolver) +
+# triggers PG miroirs (compute_sav_line_credit BEFORE, recompute_sav_total
+# AFTER) + fixture partagée ≥ 20 cas synthétiques PRD-dérivés + script gen
+# SQL miroir 5 cas + step CI check-fixture-sql-sync + ESLint no-io-in-business
+# + CHECK credit_coefficient ∈ [0,1]. 18 AC, 11 tasks, estimation 2-3j dev.
+# Défense-en-profondeur 5 couches (UI/Zod/CHECK/trigger/moteur TS). Débloque
+# 3.6b carry-over + 4.3 UI preview + 4.4 émission atomique.
+# 2026-04-24 : Story 4.1 done après CR adversarial 3 couches (Blind+Edge+Auditor).
+# 0 BLOCKER, 2 decisions tranchées (D1 RLS operator wildcard accepté V1 durcissement
+# Epic 6, D2 séquence mondiale conservée + trigger immutability pour protéger
+# number_formatted post-UPDATE), 3 patches appliqués (P1 trigger immutability
+# 10 colonnes gelées, P2 CHECK last_number>=0, P3 normalisation bon_type
+# upper+trim), 6 defers (W10-W15 dans deferred-work.md), 5 dismissed.
+# Tests : 14/14 (11 initiaux + 3 CR patches). Migration 20260425140000 CR patches
+# ajoutée. 369/369 Vitest, typecheck 0, build 459 KB stable.
+# 2026-04-24 : Story 4.1 créée (migration credit_notes + credit_number_sequence
+# + RPC issue_credit_number atomique + test SQL concurrence). 0 code TS,
+# signature RPC étendue à 7 args (divergence epics documentée). 2 migrations
+# SQL + 1 test SQL + 1 README update. Ready-for-dev.
 # 2026-04-23 late evening : Story 4.0b créée (dette tests SQL RPC Epic 3
 # + wiring CI). Pattern 4.0 à réutiliser, 0 impact code TS. 5 fichiers SQL
 # + 1 step CI + 1 update tracker README. Ready-for-dev.
@@ -132,8 +163,8 @@ development_status:
   # (transition_sav_status, assign_sav, update_sav_tags, duplicate_sav,
   # capture_sav_from_webhook) + wiring CI migrations-check.
   4-0b-dette-tests-sql-rpc-epic-3: done
-  4-1-migration-avoirs-sequence-transactionnelle-rpc: backlog
-  4-2-moteur-calculs-metier-typescript-triggers-miroirs-fixture-excel: backlog
+  4-1-migration-avoirs-sequence-transactionnelle-rpc: done
+  4-2-moteur-calculs-metier-typescript-triggers-miroirs-fixture-excel: done
   4-3-integration-moteur-dans-la-vue-detail-preview-live: backlog
   4-4-emission-atomique-n-avoir-bon-sav: backlog
   4-5-template-pdf-charte-fruitstock-generation-serverless: backlog

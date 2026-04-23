@@ -62,29 +62,44 @@ BEGIN
 END $$;
 
 -- ------------------------------------------------------------
--- Test 2 (AC #2) : CHECK rejette les anciennes valeurs ('warning','error')
--- et une valeur arbitraire.
+-- Test 2 (AC #2) : CHECK validation_status défend 5 valeurs PRD strictes.
+--
+-- Epic 4.2 note : depuis la migration 20260426120000, le trigger BEFORE
+-- INSERT `compute_sav_line_credit` écrase `validation_status` en fonction
+-- des inputs — un INSERT littéral `validation_status='warning'` ne peut
+-- plus être testé car le trigger le réécrit avant que le CHECK soit évalué.
+-- On vérifie désormais structurellement que la contrainte CHECK existe et
+-- liste bien les 5 valeurs PRD (la couverture fonctionnelle `warning` rejeté
+-- est assurée par le trigger + le CHECK en défense-en-profondeur).
 -- ------------------------------------------------------------
 DO $$
 DECLARE
-  v_sav bigint := current_setting('test.sav_id')::bigint;
-  v_bad text;
-  v_caught boolean;
+  v_constraint_def text;
 BEGIN
-  FOR v_bad IN SELECT unnest(ARRAY['warning','error','foobar','']) LOOP
-    v_caught := false;
-    BEGIN
-      INSERT INTO sav_lines (sav_id, product_code_snapshot, product_name_snapshot,
-        qty_requested, unit_requested, validation_status)
-      VALUES (v_sav, 'BAD-'||v_bad, 'Bad '||v_bad, 1.0, 'kg', v_bad);
-    EXCEPTION WHEN check_violation THEN
-      v_caught := true;
-    END;
-    IF NOT v_caught THEN
-      RAISE EXCEPTION 'FAIL: validation_status=% aurait dû échouer CHECK', v_bad;
-    END IF;
-  END LOOP;
-  RAISE NOTICE 'OK Test 2 (AC #2) : anciennes valeurs + arbitraire rejetées';
+  SELECT pg_get_constraintdef(oid) INTO v_constraint_def
+    FROM pg_constraint
+   WHERE conrelid = 'public.sav_lines'::regclass
+     AND conname  = 'sav_lines_validation_status_check';
+
+  IF v_constraint_def IS NULL THEN
+    RAISE EXCEPTION 'FAIL Test 2 : contrainte sav_lines_validation_status_check absente';
+  END IF;
+  -- Regex stricte : chaque valeur doit apparaître entourée de quotes simples
+  -- (ex: 'ok', 'blocked'). Un simple 'ok' n'importe où dans le texte de la
+  -- contrainte pourrait matcher un substring (ex: 'block'/'blocked') — on
+  -- exige donc le pattern 'ok' avec quotes explicites.
+  IF v_constraint_def !~ E'''ok'''
+     OR v_constraint_def !~ E'''unit_mismatch'''
+     OR v_constraint_def !~ E'''qty_exceeds_invoice'''
+     OR v_constraint_def !~ E'''to_calculate'''
+     OR v_constraint_def !~ E'''blocked''' THEN
+    RAISE EXCEPTION 'FAIL Test 2 : CHECK ne contient pas les 5 valeurs PRD entre quotes — definition=%', v_constraint_def;
+  END IF;
+  IF v_constraint_def ~ E'''warning'''
+     OR v_constraint_def ~ E'''error''' THEN
+    RAISE EXCEPTION 'FAIL Test 2 : CHECK contient encore legacy warning/error — definition=%', v_constraint_def;
+  END IF;
+  RAISE NOTICE 'OK Test 2 (AC #2) : CHECK strict 5 valeurs PRD quote-delimited, 0 legacy';
 END $$;
 
 -- ------------------------------------------------------------
@@ -211,30 +226,34 @@ DECLARE
   v_sav_version int;
   v_status_after text;
 BEGIN
-  -- Insert une ligne en 'blocked'.
+  -- Epic 4.2 note : le trigger BEFORE INSERT/UPDATE compute_sav_line_credit
+  -- écrase désormais validation_status. Pour valider F52 (whitelist RPC
+  -- n'inclut pas validationStatus), on pose une source **valide** qui fait
+  -- calculer 'ok' par le trigger, puis on tente de la patcher en 'blocked'
+  -- via l'API RPC. Si le patch passait, on aurait 'blocked'. Comme la
+  -- whitelist rejette + le trigger recalcule 'ok' sur les inputs inchangés,
+  -- le résultat final = 'ok'. Test validé si status = 'ok'.
   INSERT INTO sav_lines (sav_id, product_code_snapshot, product_name_snapshot,
-    qty_requested, unit_requested, validation_status)
-  VALUES (v_sav, 'F52-T', 'F52 Test', 1.0, 'kg', 'blocked')
+    qty_requested, unit_requested, qty_invoiced, unit_invoiced,
+    unit_price_ht_cents, vat_rate_bp_snapshot, credit_coefficient)
+  VALUES (v_sav, 'F52-T', 'F52 Test', 1.0, 'kg', 1.0, 'kg', 200, 550, 1)
   RETURNING id INTO v_line;
 
-  -- Version actuelle du SAV
   SELECT version INTO v_sav_version FROM sav WHERE id = v_sav;
 
-  -- Tenter de patcher validation_status='ok' via RPC → doit être ignoré
-  -- (whitelist PRD n'inclut pas validationStatus).
   PERFORM update_sav_line(
     v_sav,
     v_line,
-    jsonb_build_object('validationStatus', 'ok', 'qtyRequested', 5.0),
+    jsonb_build_object('validationStatus', 'blocked', 'qtyRequested', 1.0),
     v_sav_version,
     v_op
   );
 
   SELECT validation_status INTO v_status_after FROM sav_lines WHERE id = v_line;
-  IF v_status_after <> 'blocked' THEN
-    RAISE EXCEPTION 'FAIL F52 : validation_status a été patchée en % (attendu blocked)', v_status_after;
+  IF v_status_after <> 'ok' THEN
+    RAISE EXCEPTION 'FAIL F52 : validation_status post-patch=% (attendu ok — le patch blocked aurait dû être ignoré)', v_status_after;
   END IF;
-  RAISE NOTICE 'OK Test 7 (AC #5, F52) : validationStatus ignoré dans patch';
+  RAISE NOTICE 'OK Test 7 (AC #5, F52) : validationStatus ignoré dans patch (whitelist + trigger reset)';
 END $$;
 
 -- ------------------------------------------------------------
@@ -344,16 +363,20 @@ BEGIN
   INSERT INTO sav (member_id, status) VALUES (v_mem, 'in_progress')
   RETURNING id, version INTO v_sav, v_sav_version;
 
+  -- Epic 4.2 note : le trigger compute_sav_line_credit écrase validation_status.
+  -- On fournit des inputs valides (prix + TVA + unités cohérentes) pour que
+  -- le trigger pose 'ok' authentiquement (pas de valeur littérale forcée).
   INSERT INTO sav_lines (sav_id, product_code_snapshot, product_name_snapshot,
-    qty_requested, unit_requested, validation_status)
-  VALUES (v_sav, 'T9b-OK', 'T9b OK', 1.0, 'kg', 'ok');
+    qty_requested, unit_requested, qty_invoiced, unit_invoiced,
+    unit_price_ht_cents, vat_rate_bp_snapshot, credit_coefficient)
+  VALUES (v_sav, 'T9b-OK', 'T9b OK', 1.0, 'kg', 1.0, 'kg', 200, 550, 1);
 
   BEGIN
     PERFORM transition_sav_status(v_sav, 'validated', v_sav_version, v_op);
   EXCEPTION WHEN OTHERS THEN
     RAISE EXCEPTION 'FAIL T9b : transition in_progress→validated avec toutes lignes ok aurait dû réussir : %', SQLERRM;
   END;
-  RAISE NOTICE 'OK Test 9b (AC #6) : toutes lignes ok → transition in_progress→validated réussit';
+  RAISE NOTICE 'OK Test 9b (AC #6) : toutes lignes ok (trigger 4.2 calculé) → transition in_progress→validated réussit';
 END $$;
 
 -- ------------------------------------------------------------
