@@ -17,5 +17,10 @@
     "api/sav/[[...slug]].ts": { "maxDuration": 10 }
   },
   "crons": [{ "path": "/api/cron/dispatcher", "schedule": "0 3 * * *" }],
-  "rewrites": [{ "source": "/((?!api/).*)", "destination": "/index.html" }]
+  "rewrites": [
+    {
+      "source": "/((?!api/|assets/|favicon\\.ico|robots\\.txt|.*\\.(?:js|css|png|jpg|jpeg|svg|ico|webp|woff2?)).*)",
+      "destination": "/index.html"
+    }
+  ]
 }
