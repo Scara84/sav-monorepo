@@ -31,7 +31,7 @@ vi.mock('../../../../api/_lib/clients/supabase-admin', () => ({
   __resetSupabaseAdminForTests: () => undefined,
 }))
 
-import handler from '../../../../api/sav/[...slug]'
+import handler from '../../../../api/sav'
 
 function opCookie(): string {
   const p: SessionUser = {
@@ -51,7 +51,7 @@ function statusReq(id: number, body: unknown, cookie = opCookie()) {
   return mockReq({
     method: 'PATCH',
     headers: { cookie, 'content-type': 'application/json' },
-    query: { slug: [String(id), 'status'] } as Record<string, string | string[] | undefined>,
+    query: { op: 'status', id: String(id) } as Record<string, string | string[] | undefined>,
     body: body as Record<string, unknown>,
   })
 }
@@ -73,7 +73,7 @@ describe('PATCH /api/sav/:id/status (Story 3.5)', () => {
       mockReq({
         method: 'PATCH',
         headers: {},
-        query: { slug: ['1', 'status'] },
+        query: { op: 'status', id: '1' },
         body: { status: 'received', version: 0 },
       }),
       res
@@ -177,7 +177,7 @@ describe('PATCH /api/sav/:id/assign (Story 3.5)', () => {
     return mockReq({
       method: 'PATCH',
       headers: { cookie, 'content-type': 'application/json' },
-      query: { slug: [String(id), 'assign'] } as Record<string, string | string[] | undefined>,
+      query: { op: 'assign', id: String(id) } as Record<string, string | string[] | undefined>,
       body: body as Record<string, unknown>,
     })
   }

@@ -71,7 +71,7 @@ vi.mock('../../../../api/_lib/clients/supabase-admin', () => {
   }
 })
 
-import handler from '../../../../api/sav/[...slug]'
+import handler from '../../../../api/sav'
 
 function operatorCookie(): string {
   const payload: SessionUser = {
@@ -93,13 +93,13 @@ function memberCookie(): string {
 }
 
 function req(slug: string[] | string, cookie = operatorCookie()) {
+  // slug[0] = id (validé côté router via parseSavId). Pour tester 400 "id non-numérique"
+  // on injecte l'id tel quel — le handler valide via regex /^\d+$/.
+  const id = Array.isArray(slug) ? slug[0] : slug
   return mockReq({
     method: 'GET',
     headers: { cookie },
-    query: { slug: slug as unknown as string[] | string } as Record<
-      string,
-      string | string[] | undefined
-    >,
+    query: { op: 'detail', id } as Record<string, string | string[] | undefined>,
   })
 }
 
@@ -113,7 +113,7 @@ beforeEach(() => {
 describe('GET /api/sav/:id (Story 3.4)', () => {
   it('TS-01: 401 sans cookie', async () => {
     const res = mockRes()
-    await handler(mockReq({ method: 'GET', headers: {}, query: { slug: ['1'] } }), res)
+    await handler(mockReq({ method: 'GET', headers: {}, query: { op: 'detail', id: '1' } }), res)
     expect(res.statusCode).toBe(401)
   })
 

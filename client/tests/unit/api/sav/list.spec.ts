@@ -77,7 +77,7 @@ vi.mock('../../../../api/_lib/clients/supabase-admin', () => {
   }
 })
 
-import handler from '../../../../api/sav/[...slug]'
+import handler from '../../../../api/sav'
 import { __testables } from '../../../../api/_lib/sav/list-handler'
 
 function operatorToken(): string {
@@ -104,7 +104,7 @@ function listReq(query: Record<string, unknown> = {}, cookie = `sav_session=${op
   return mockReq({
     method: 'GET',
     headers: { cookie },
-    query: { ...query, slug: ['list'] } as Record<string, string | string[] | undefined>,
+    query: { ...query, op: 'list' } as Record<string, string | string[] | undefined>,
   })
 }
 
@@ -118,7 +118,7 @@ beforeEach(() => {
 describe('GET /api/sav (Story 3.2 — list SAV)', () => {
   it('TS-01: 401 sans cookie', async () => {
     const res = mockRes()
-    const req = mockReq({ method: 'GET', headers: {}, query: { slug: ['list'] } })
+    const req = mockReq({ method: 'GET', headers: {}, query: { op: 'list' } })
     await handler(req, res)
     expect(res.statusCode).toBe(401)
   })

@@ -37,7 +37,7 @@ vi.mock('../../../../api/_lib/clients/supabase-admin', () => ({
   __resetSupabaseAdminForTests: () => undefined,
 }))
 
-import handler from '../../../../api/sav/[...slug]'
+import handler from '../../../../api/sav'
 
 function opCookie(): string {
   const p: SessionUser = {
@@ -54,10 +54,16 @@ function memberCookie(): string {
 }
 
 function req(method: string, slug: string[], body: unknown, cookie = opCookie()) {
+  // slug = [id, op] ou [id, op, lineId] — on extrait vers query object.
+  const query: Record<string, string | string[] | undefined> = {
+    id: slug[0],
+    op: slug[1] ?? 'list',
+  }
+  if (slug[2] !== undefined) query['lineId'] = slug[2]
   return mockReq({
     method,
     headers: { cookie, 'content-type': 'application/json' },
-    query: { slug } as Record<string, string | string[] | undefined>,
+    query,
     body: body as Record<string, unknown>,
   })
 }
@@ -81,7 +87,7 @@ describe('PATCH /api/sav/:id/tags (Story 3.7)', () => {
       mockReq({
         method: 'PATCH',
         headers: {},
-        query: { slug: ['1', 'tags'] },
+        query: { op: 'tags', id: '1' },
         body: { add: ['foo'], version: 0 },
       }),
       res
@@ -141,7 +147,7 @@ describe('POST /api/sav/:id/comments (Story 3.7)', () => {
       mockReq({
         method: 'POST',
         headers: {},
-        query: { slug: ['1', 'comments'] },
+        query: { op: 'comments', id: '1' },
         body: { body: 'hi', visibility: 'all' },
       }),
       res
@@ -207,7 +213,7 @@ describe('POST /api/sav/:id/duplicate (Story 3.7)', () => {
       mockReq({
         method: 'POST',
         headers: {},
-        query: { slug: ['1', 'duplicate'] },
+        query: { op: 'duplicate', id: '1' },
       }),
       res
     )

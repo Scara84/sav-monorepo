@@ -17,7 +17,17 @@
   },
   "crons": [{ "path": "/api/cron/dispatcher", "schedule": "0 3 * * *" }],
   "rewrites": [
-    { "source": "/api/sav", "destination": "/api/sav/list" },
+    { "source": "/api/sav", "destination": "/api/sav?op=list" },
+    { "source": "/api/sav/:id/status", "destination": "/api/sav?op=status&id=:id" },
+    { "source": "/api/sav/:id/assign", "destination": "/api/sav?op=assign&id=:id" },
+    { "source": "/api/sav/:id/tags", "destination": "/api/sav?op=tags&id=:id" },
+    { "source": "/api/sav/:id/comments", "destination": "/api/sav?op=comments&id=:id" },
+    { "source": "/api/sav/:id/duplicate", "destination": "/api/sav?op=duplicate&id=:id" },
+    {
+      "source": "/api/sav/:id/lines/:lineId",
+      "destination": "/api/sav?op=line&id=:id&lineId=:lineId"
+    },
+    { "source": "/api/sav/:id", "destination": "/api/sav?op=detail&id=:id" },
     {
       "source": "/((?!api/|assets/|favicon\\.ico|robots\\.txt|.*\\.(?:js|css|png|jpg|jpeg|svg|ico|webp|woff2?)).*)",
       "destination": "/index.html"

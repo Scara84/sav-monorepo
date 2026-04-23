@@ -31,7 +31,7 @@ vi.mock('../../../../api/_lib/clients/supabase-admin', () => ({
   __resetSupabaseAdminForTests: () => undefined,
 }))
 
-import handler from '../../../../api/sav/[...slug]'
+import handler from '../../../../api/sav'
 
 function opCookie(): string {
   const p: SessionUser = {
@@ -47,7 +47,7 @@ function lineReq(savId: number, lineId: number, body: unknown, cookie = opCookie
   return mockReq({
     method: 'PATCH',
     headers: { cookie, 'content-type': 'application/json' },
-    query: { slug: [String(savId), 'lines', String(lineId)] } as Record<
+    query: { op: 'line', id: String(savId), lineId: String(lineId) } as Record<
       string,
       string | string[] | undefined
     >,
@@ -72,7 +72,7 @@ describe('PATCH /api/sav/:id/lines/:lineId (Story 3.6)', () => {
       mockReq({
         method: 'PATCH',
         headers: {},
-        query: { slug: ['1', 'lines', '5'] },
+        query: { op: 'line', id: '1', lineId: '5' },
         body: { qtyRequested: 10, version: 0 },
       }),
       res
