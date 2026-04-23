@@ -28,18 +28,24 @@
       </div>
 
       <!-- Display Parsing Error -->
-      <div v-if="parsingError" class="p-4 mb-4 text-sm text-red-800 rounded-lg bg-red-50 dark:bg-gray-800 dark:text-red-400" role="alert">
+      <div
+        v-if="parsingError"
+        class="p-4 mb-4 text-sm text-red-800 rounded-lg bg-red-50 dark:bg-gray-800 dark:text-red-400"
+        role="alert"
+      >
         {{ parsingError }}
       </div>
 
       <div class="mb-4">
-        <WebhookItemsList 
-          :items="invoiceItems" 
+        <WebhookItemsList
+          :items="invoiceItems"
           :facture="facture"
           @sav-submitted="handleSavSubmission"
         />
       </div>
-      <router-link to="/" class="btn-main w-full block text-center text-[1.1em] mt-8">Retour</router-link>
+      <router-link to="/" class="btn-main w-full block text-center text-[1.1em] mt-8"
+        >Retour</router-link
+      >
     </div>
   </div>
 </template>
@@ -49,7 +55,7 @@ import WebhookItemsList from '../components/WebhookItemsList.vue'
 
 export default {
   components: {
-    WebhookItemsList
+    WebhookItemsList,
   },
   data() {
     return {
@@ -64,57 +70,63 @@ export default {
       customerName: '',
       specialMention: '',
       // Full invoice data object to pass to child component
-      facture: {}
+      facture: {},
     }
   },
   methods: {
     handleSavSubmission() {
-      console.log('Demande SAV soumise avec succès.');
-      this.$router.push({ name: 'SavConfirmation' });
-    }
+      console.log('Demande SAV soumise avec succès.')
+      this.$router.push({ name: 'SavConfirmation' })
+    },
   },
   created() {
-    const webhookResponseString = this.$route.query.webhookResponse;
+    const webhookResponseString = this.$route.query.webhookResponse
 
     if (webhookResponseString) {
       try {
-        const invoiceData = JSON.parse(webhookResponseString);
+        const invoiceData = JSON.parse(webhookResponseString)
 
         // Pass the full invoice object to the child component
-        this.facture = invoiceData;
+        this.facture = invoiceData
 
         // Assign details for display in this component's template
-        this.invoiceNumber = invoiceData.invoice_number || 'N/A';
-        this.customerId = invoiceData.customer?.source_id || 'N/A';
-        this.paidStatus = invoiceData.paid || false;
-        this.customerName = invoiceData.customer?.name || 'N/A';
-        this.specialMention = invoiceData.special_mention || '';
-        this.email = this.$route.query.email || invoiceData.customer?.emails?.[0] || '';
+        this.invoiceNumber = invoiceData.invoice_number || 'N/A'
+        this.customerId = invoiceData.customer?.source_id || 'N/A'
+        this.paidStatus = invoiceData.paid || false
+        this.customerName = invoiceData.customer?.name || 'N/A'
+        this.specialMention = invoiceData.special_mention || ''
+        this.email = this.$route.query.email || invoiceData.customer?.emails?.[0] || ''
 
         if (invoiceData && invoiceData.line_items) {
-          const filteredItems = invoiceData.line_items.filter(item =>
-            !item.label.includes('Participation préparation commande') &&
-            !item.label.includes('Remise commande précédente') &&
-            !item.label.includes('Remise responsable') &&
-            !item.label.includes('Remise préparation commande')
-          );
-          this.invoiceItems = filteredItems;
+          const filteredItems = invoiceData.line_items.filter(
+            (item) =>
+              !item.label.includes('Participation préparation commande') &&
+              !item.label.includes('Remise commande précédente') &&
+              !item.label.includes('Remise responsable') &&
+              !item.label.includes('Remise préparation commande')
+          )
+          this.invoiceItems = filteredItems
         } else {
-          console.error('line_items not found in the parsed response:', invoiceData);
-          this.invoiceItems = [];
-          this.parsingError = 'Les articles de la facture n\'ont pas pu être chargés.';
+          console.error('line_items not found in the parsed response:', invoiceData)
+          this.invoiceItems = []
+          this.parsingError = "Les articles de la facture n'ont pas pu être chargés."
         }
       } catch (error) {
-        console.error('Error parsing webhook response:', error, 'Raw response:', webhookResponseString);
-        this.parsingError = 'Erreur lors de la récupération des détails de la facture.';
+        console.error(
+          'Error parsing webhook response:',
+          error,
+          'Raw response:',
+          webhookResponseString
+        )
+        this.parsingError = 'Erreur lors de la récupération des détails de la facture.'
       }
     } else {
-      console.warn('No webhook response found in query parameters.');
-      this.parsingError = 'Aucune donnée de facture reçue.';
+      console.warn('No webhook response found in query parameters.')
+      this.parsingError = 'Aucune donnée de facture reçue.'
     }
 
     this.transformedReference = this.$route.query.transformedReference || ''
-  }
+  },
 }
 </script>
 

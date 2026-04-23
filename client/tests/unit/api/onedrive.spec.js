@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach, vi } from 'vitest'
+import { describe, it, expect, vi } from 'vitest'
 import {
   ensureFolderExists,
   createUploadSession,
@@ -24,21 +24,24 @@ describe('ensureFolderExists', () => {
     expect(await ensureFolderExists('   ', deps(client))).toBe('root')
   })
 
-  it('retourne l\'id du dernier segment si tous les dossiers existent', async () => {
-    let call = 0
+  it("retourne l'id du dernier segment si tous les dossiers existent", async () => {
     const client = makeGraphClient(({ method, url }) => {
-      if (method === 'GET' && url.includes(':/SAV_Images')) return Promise.resolve({ id: 'id-root' })
-      if (method === 'GET' && url.includes(':/dossier1')) return Promise.resolve({ id: 'id-dossier1' })
+      if (method === 'GET' && url.includes(':/SAV_Images'))
+        return Promise.resolve({ id: 'id-root' })
+      if (method === 'GET' && url.includes(':/dossier1'))
+        return Promise.resolve({ id: 'id-dossier1' })
       return Promise.reject({ statusCode: 500 })
     })
     const id = await ensureFolderExists('SAV_Images/dossier1', deps(client))
     expect(id).toBe('id-dossier1')
   })
 
-  it('crée le dossier s\'il n\'existe pas (404 → POST children)', async () => {
+  it("crée le dossier s'il n'existe pas (404 → POST children)", async () => {
     const client = makeGraphClient(({ method, url }) => {
-      if (method === 'GET' && url.includes(':/SAV_Images')) return Promise.reject({ statusCode: 404 })
-      if (method === 'POST' && url.includes('/items/root/children')) return Promise.resolve({ id: 'id-new' })
+      if (method === 'GET' && url.includes(':/SAV_Images'))
+        return Promise.reject({ statusCode: 404 })
+      if (method === 'POST' && url.includes('/items/root/children'))
+        return Promise.resolve({ id: 'id-new' })
       return Promise.reject({ statusCode: 500 })
     })
     const id = await ensureFolderExists('SAV_Images', deps(client))
@@ -62,7 +65,9 @@ describe('ensureFolderExists', () => {
 
   it('propage une erreur autre que 404/409', async () => {
     const client = makeGraphClient(() => Promise.reject({ statusCode: 500, message: 'boom' }))
-    await expect(ensureFolderExists('SAV_Images', deps(client))).rejects.toMatchObject({ statusCode: 500 })
+    await expect(ensureFolderExists('SAV_Images', deps(client))).rejects.toMatchObject({
+      statusCode: 500,
+    })
   })
 })
 
@@ -130,14 +135,11 @@ describe('createShareLink', () => {
     }
     const result = await createShareLink('ITEM-1', {}, deps(client))
     expect(result.link.webUrl).toBe('https://share/x')
-    expect(postBody).toHaveBeenCalledWith(
-      expect.stringContaining('/items/ITEM-1/createLink'),
-      {
-        type: 'view',
-        scope: 'anonymous',
-        retainInheritedPermissions: false,
-      }
-    )
+    expect(postBody).toHaveBeenCalledWith(expect.stringContaining('/items/ITEM-1/createLink'), {
+      type: 'view',
+      scope: 'anonymous',
+      retainInheritedPermissions: false,
+    })
   })
 })
 
@@ -151,7 +153,10 @@ describe('getShareLinkForFolderPath', () => {
         if (url.includes('/items/FOLDER-1/createLink')) {
           return { post: () => Promise.resolve({ link: { webUrl: 'https://share/x' } }) }
         }
-        return { get: () => Promise.reject({ statusCode: 500 }), post: () => Promise.reject({ statusCode: 500 }) }
+        return {
+          get: () => Promise.reject({ statusCode: 500 }),
+          post: () => Promise.reject({ statusCode: 500 }),
+        }
       }),
     }
     const result = await getShareLinkForFolderPath('SAV_Images/SAV_TEST', deps(client))
@@ -169,6 +174,8 @@ describe('getShareLinkForFolderPath', () => {
 
   it('rejette si path vide', async () => {
     const client = { api: () => ({}) }
-    await expect(getShareLinkForFolderPath('', deps(client))).rejects.toThrow(/ne peut pas être vide/)
+    await expect(getShareLinkForFolderPath('', deps(client))).rejects.toThrow(
+      /ne peut pas être vide/
+    )
   })
 })

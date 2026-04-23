@@ -12,7 +12,7 @@ function getMsalClient() {
   const { MICROSOFT_CLIENT_ID, MICROSOFT_TENANT_ID, MICROSOFT_CLIENT_SECRET } = process.env
   if (!MICROSOFT_CLIENT_ID || !MICROSOFT_TENANT_ID || !MICROSOFT_CLIENT_SECRET) {
     throw new Error(
-      'Variables d\'environnement Microsoft manquantes (MICROSOFT_CLIENT_ID, MICROSOFT_TENANT_ID, MICROSOFT_CLIENT_SECRET)'
+      "Variables d'environnement Microsoft manquantes (MICROSOFT_CLIENT_ID, MICROSOFT_TENANT_ID, MICROSOFT_CLIENT_SECRET)"
     )
   }
 
@@ -31,7 +31,7 @@ async function getAccessToken() {
   const msal = getMsalClient()
   const response = await msal.acquireTokenByClientCredential({ scopes: GRAPH_SCOPES })
   if (!response || !response.accessToken) {
-    throw new Error('Aucun token d\'accès reçu de MSAL')
+    throw new Error("Aucun token d'accès reçu de MSAL")
   }
   return response.accessToken
 }

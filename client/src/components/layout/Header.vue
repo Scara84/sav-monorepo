@@ -3,7 +3,11 @@
     <nav class="nav-wrapper">
       <div class="logo">
         <!-- Remplacer par le logo image si dispo -->
-        <img src="@/assets/logo_FRUITSTOCK_2022.png" alt="Fruitstock Logo" style="height:52px;display:block;" />
+        <img
+          src="@/assets/logo_FRUITSTOCK_2022.png"
+          alt="Fruitstock Logo"
+          style="height: 52px; display: block"
+        />
       </div>
       <ul class="nav-links">
         <li :class="{ active: isActive('/') }"><router-link to="/">Accueil</router-link></li>
@@ -17,9 +21,9 @@ export default {
   name: 'Header',
   methods: {
     isActive(route) {
-      return this.$route.path === route;
-    }
-  }
+      return this.$route.path === route
+    },
+  },
 }
 </script>
 
@@ -62,7 +66,9 @@ export default {
   text-decoration: none;
   padding: 0.4em 0.7em;
   border-radius: 18px;
-  transition: background 0.2s, color 0.2s;
+  transition:
+    background 0.2s,
+    color 0.2s;
 }
 .nav-links li.active a,
 .nav-links li a:hover {

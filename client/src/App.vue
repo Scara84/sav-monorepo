@@ -3,18 +3,17 @@
   <router-view />
 </template>
 
-
 <script>
-import Header from './components/layout/Header.vue';
+import Header from './components/layout/Header.vue'
 
 export default {
   name: 'App',
   components: {
-    Header
-  }
+    Header,
+  },
 }
 </script>
 
 <style>
-@import "./styles/fruitstock-theme.css";
+@import './styles/fruitstock-theme.css';
 </style>

@@ -4,9 +4,9 @@ export const supabase = {
   // Add any necessary mock implementations here
   storage: {
     from: () => ({
-      upload: () => Promise.resolve({ data: { Key: 'mocked-file-path.jpg' }, error: null })
-    })
-  }
-};
+      upload: () => Promise.resolve({ data: { Key: 'mocked-file-path.jpg' }, error: null }),
+    }),
+  },
+}
 
-export default supabase;
+export default supabase

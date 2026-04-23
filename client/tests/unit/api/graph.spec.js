@@ -59,9 +59,7 @@ describe('graph lib', () => {
 
   it('getAccessToken lève si MSAL retourne une réponse sans accessToken', async () => {
     const msalClient = graphLib.getMsalClient()
-    const spy = vi
-      .spyOn(msalClient, 'acquireTokenByClientCredential')
-      .mockResolvedValue(null)
+    const spy = vi.spyOn(msalClient, 'acquireTokenByClientCredential').mockResolvedValue(null)
 
     await expect(graphLib.getAccessToken()).rejects.toThrow(/Aucun token/)
     spy.mockRestore()

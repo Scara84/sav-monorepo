@@ -196,11 +196,7 @@
       demande SAV.
     </div>
     <ul class="space-y-6">
-      <li
-        v-for="(item, index) in items"
-        :key="index"
-        class="bg-white p-4 rounded-lg shadow"
-      >
+      <li v-for="(item, index) in items" :key="index" class="bg-white p-4 rounded-lg shadow">
         <!-- Nom du produit sur toute la largeur -->
         <h3 class="text-xl mb-4">
           {{ item.label }}
@@ -240,10 +236,7 @@
         </div>
 
         <!-- Formulaire SAV -->
-        <div
-          v-if="getSavForm(index).showForm"
-          class="mt-4 p-4 bg-gray-50 rounded-2xl"
-        >
+        <div v-if="getSavForm(index).showForm" class="mt-4 p-4 bg-gray-50 rounded-2xl">
           <form
             class="space-y-4"
             :class="{ 'opacity-75': getSavForm(index).filled }"
@@ -268,7 +261,9 @@
                 </p>
               </div>
               <div>
-                <label class="block text-[color:var(--text-dark)] font-semibold text-base">Unité</label>
+                <label class="block text-[color:var(--text-dark)] font-semibold text-base"
+                  >Unité</label
+                >
                 <select
                   v-model="getSavForm(index).unit"
                   :disabled="getSavForm(index).filled"
@@ -286,7 +281,9 @@
                 </p>
               </div>
               <div>
-                <label class="block text-[color:var(--text-dark)] font-semibold text-base">Motif</label>
+                <label class="block text-[color:var(--text-dark)] font-semibold text-base"
+                  >Motif</label
+                >
                 <select
                   v-model="getSavForm(index).reason"
                   :disabled="getSavForm(index).filled"
@@ -333,7 +330,8 @@
                 Photos
                 <span class="text-xs text-gray-500"
                   >({{ getSavForm(index).reason === 'abime' ? 'obligatoire' : 'optionnel' }} -
-                  formats acceptés: JPEG, PNG, GIF, WebP, SVG, HEIC - max {{ maxFileSizeMb }}Mo par image)</span
+                  formats acceptés: JPEG, PNG, GIF, WebP, SVG, HEIC - max {{ maxFileSizeMb }}Mo par
+                  image)</span
                 >
               </label>
 
@@ -384,7 +382,9 @@
                   </p>
 
                   <!-- Texte secondaire -->
-                  <p class="text-xs text-gray-500">JPEG, PNG, GIF, WebP, SVG, HEIC (max {{ maxFileSizeMb }}Mo)</p>
+                  <p class="text-xs text-gray-500">
+                    JPEG, PNG, GIF, WebP, SVG, HEIC (max {{ maxFileSizeMb }}Mo)
+                  </p>
                 </div>
               </div>
               <!-- Prévisualisation des images -->
@@ -529,8 +529,11 @@ export default {
       removeImage: removeImageBase,
       maxFileSizeMb,
     } = useImageUpload()
-    const { uploadToBackend: uploadToBackendApi, getFolderShareLink, submitSavWebhook } =
-      useApiClient()
+    const {
+      uploadToBackend: uploadToBackendApi,
+      getFolderShareLink,
+      submitSavWebhook,
+    } = useApiClient()
     const { generateExcelFile } = useExcelGenerator()
     const toastMessage = ref('')
 

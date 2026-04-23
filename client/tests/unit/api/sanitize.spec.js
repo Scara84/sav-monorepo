@@ -41,7 +41,7 @@ describe('sanitizeFilename', () => {
     expect(sanitizeFilename('ma   photo    de   vacances.jpg')).toBe('ma photo de vacances.jpg')
   })
 
-  it('limite à 200 caractères en préservant l\'extension', () => {
+  it("limite à 200 caractères en préservant l'extension", () => {
     const longName = 'a'.repeat(300) + '.jpg'
     const result = sanitizeFilename(longName)
     expect(result.length).toBeLessThanOrEqual(200)
@@ -53,7 +53,7 @@ describe('sanitizeFilename', () => {
     expect(result).toMatch(/^_+\.jpg$|^fichier_\d+\.jpg$/)
   })
 
-  it('normalise l\'Unicode NFC (accents)', () => {
+  it("normalise l'Unicode NFC (accents)", () => {
     const composed = 'café.jpg'
     const decomposed = 'cafe\u0301.jpg'
     expect(sanitizeFilename(decomposed)).toBe(composed)

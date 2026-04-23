@@ -1,4 +1,4 @@
-import fileLimits from '@shared/file-limits.json';
+import fileLimits from '@shared/file-limits.json'
 
 /**
  * Composable pour gérer l'upload d'images
@@ -12,90 +12,88 @@ export function useImageUpload() {
     'image/webp',
     'image/svg+xml',
     'image/heic',
-    'image/heif'
-  ];
-  const maxFileSize = fileLimits.maxFileSizeBytes;
-  const maxFileSizeMb = fileLimits.maxFileSizeMb;
+    'image/heif',
+  ]
+  const maxFileSize = fileLimits.maxFileSizeBytes
+  const maxFileSizeMb = fileLimits.maxFileSizeMb
 
   /**
    * Renomme un fichier avec la mention spéciale
    */
   const renameFileWithSpecialMention = (file, specialMention) => {
-    const ext = file.name.split('.').pop();
-    const baseName = file.name.substring(0, file.name.lastIndexOf('.'));
-    const newName = `${specialMention}_${baseName}.${ext}`;
-    return new File([file], newName, { type: file.type });
-  };
+    const ext = file.name.split('.').pop()
+    const baseName = file.name.substring(0, file.name.lastIndexOf('.'))
+    const newName = `${specialMention}_${baseName}.${ext}`
+    return new File([file], newName, { type: file.type })
+  }
 
   /**
    * Gère l'upload d'images
    */
   const handleImageUpload = (event, form, options = {}) => {
-    const { specialMention = '', showToast } = options;
-    const files = Array.from(event?.target?.files || []);
-    form.errors.images = '';
-    form.isDragging = false;
+    const { specialMention = '', showToast } = options
+    const files = Array.from(event?.target?.files || [])
+    form.errors.images = ''
+    form.isDragging = false
 
     if (files.length === 0) {
-      return;
+      return
     }
 
     // Vérification des fichiers
     const invalidFiles = files.filter((file) => {
-      const isValidType = acceptedTypes.includes(file.type);
-      const isValidSize = file.size <= maxFileSize;
-      return !isValidType || !isValidSize;
-    });
+      const isValidType = acceptedTypes.includes(file.type)
+      const isValidSize = file.size <= maxFileSize
+      return !isValidType || !isValidSize
+    })
 
     if (invalidFiles.length > 0) {
-      form.errors.images = `Certains fichiers ne sont pas valides (formats acceptés: JPEG, PNG, GIF, WebP, SVG, HEIC - taille max ${maxFileSizeMb}Mo)`;
+      form.errors.images = `Certains fichiers ne sont pas valides (formats acceptés: JPEG, PNG, GIF, WebP, SVG, HEIC - taille max ${maxFileSizeMb}Mo)`
       if (showToast) {
-        showToast('Certains fichiers ne sont pas valides', 'error');
+        showToast('Certains fichiers ne sont pas valides', 'error')
       }
-      return;
+      return
     }
 
     // Création des previews avec renommage
-    files.forEach(file => {
-      const renamedFile = specialMention
-        ? renameFileWithSpecialMention(file, specialMention)
-        : file;
-      const reader = new FileReader();
+    files.forEach((file) => {
+      const renamedFile = specialMention ? renameFileWithSpecialMention(file, specialMention) : file
+      const reader = new FileReader()
       reader.onload = (e) => {
         form.images.push({
           file: renamedFile,
           preview: e.target.result,
           type: file.type,
-          name: file.name
-        });
-      };
-      reader.readAsDataURL(renamedFile);
-    });
-  };
+          name: file.name,
+        })
+      }
+      reader.readAsDataURL(renamedFile)
+    })
+  }
 
   /**
    * Gère le drop d'images
    */
   const handleDrop = (event, form, options = {}) => {
-    if (form.filled) return;
+    if (form.filled) return
 
-    form.isDragging = false;
-    const files = event?.dataTransfer?.files;
+    form.isDragging = false
+    const files = event?.dataTransfer?.files
 
     if (files && files.length > 0) {
       const syntheticEvent = {
-        target: { files }
-      };
-      handleImageUpload(syntheticEvent, form, options);
+        target: { files },
+      }
+      handleImageUpload(syntheticEvent, form, options)
     }
-  };
+  }
 
   /**
    * Supprime une image
    */
   const removeImage = (form, imageIndex) => {
-    form.images.splice(imageIndex, 1);
-  };
+    form.images.splice(imageIndex, 1)
+  }
 
   return {
     acceptedTypes,
@@ -104,6 +102,6 @@ export function useImageUpload() {
     handleImageUpload,
     handleDrop,
     removeImage,
-    renameFileWithSpecialMention
-  };
+    renameFileWithSpecialMention,
+  }
 }

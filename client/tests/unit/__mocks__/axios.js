@@ -1,13 +1,17 @@
-// Mock pour axios
+// Mock pour axios (Vitest)
+import { vi } from 'vitest'
+
 export default {
-  get: jest.fn(() => Promise.resolve({ data: {} })),
-  post: jest.fn(() => Promise.resolve({ data: {} })),
-  put: jest.fn(() => Promise.resolve({ data: {} })),
-  delete: jest.fn(() => Promise.resolve({ data: {} })),
-  create: jest.fn(() => this),
+  get: vi.fn(() => Promise.resolve({ data: {} })),
+  post: vi.fn(() => Promise.resolve({ data: {} })),
+  put: vi.fn(() => Promise.resolve({ data: {} })),
+  delete: vi.fn(() => Promise.resolve({ data: {} })),
+  create: vi.fn(function () {
+    return this
+  }),
   defaults: {
     headers: {
-      common: {}
-    }
-  }
-};
+      common: {},
+    },
+  },
+}

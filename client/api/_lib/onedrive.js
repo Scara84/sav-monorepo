@@ -4,7 +4,7 @@ const GRAPH_BASE = 'https://graph.microsoft.com/v1.0/drives'
 
 function getDriveId() {
   const id = process.env.MICROSOFT_DRIVE_ID
-  if (!id) throw new Error('Variable d\'environnement MICROSOFT_DRIVE_ID manquante')
+  if (!id) throw new Error("Variable d'environnement MICROSOFT_DRIVE_ID manquante")
   return id
 }
 
@@ -80,12 +80,7 @@ async function createShareLink(itemId, options = {}, deps = {}) {
   const client = deps.graphClient || getGraphClient()
   const driveId = deps.driveId || getDriveId()
 
-  const {
-    type = 'view',
-    scope = 'anonymous',
-    password = null,
-    expirationDateTime = null,
-  } = options
+  const { type = 'view', scope = 'anonymous', password = null, expirationDateTime = null } = options
 
   const payload = {
     type,
@@ -111,9 +106,7 @@ async function getShareLinkForFolderPath(path, deps = {}) {
 
   let folder
   try {
-    folder = await client
-      .api(`${GRAPH_BASE}/${driveId}/root:/${encodeURIComponent(path)}`)
-      .get()
+    folder = await client.api(`${GRAPH_BASE}/${driveId}/root:/${encodeURIComponent(path)}`).get()
   } catch (error) {
     if (error.statusCode === 404) {
       throw new Error(`Dossier non trouvé au chemin : ${path}`)

@@ -37,6 +37,7 @@ function parseExc(msg: string): { code: string; payload: Record<string, string> 
 // chips/URL — en plus des control chars et `<>`. Normalisation `trim()`
 // + `toLowerCase()` appliquée côté handler avant RPC pour éviter la
 // fragmentation de taxonomie (`Urgent` vs `urgent`).
+// eslint-disable-next-line no-control-regex -- intentionnel, F16 sécurité
 const TAG_FORBIDDEN_RE = /^[^\x00-\x1f<>\u200E\u200F\u202A-\u202E]+$/
 
 export const tagsBodySchema = z

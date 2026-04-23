@@ -52,6 +52,7 @@ class MockXHR {
 
 describe('useApiClient', () => {
   let apiClient
+  /* global globalThis */
   let originalXHR
 
   beforeEach(() => {

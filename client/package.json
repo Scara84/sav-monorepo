@@ -128,6 +128,18 @@
       },
       {
         "files": [
+          "src/App.vue",
+          "src/components/layout/Header.vue",
+          "src/views/Home.vue",
+          "src/features/sav/views/Home.vue"
+        ],
+        "rules": {
+          "vue/multi-word-component-names": "off",
+          "vue/no-reserved-component-names": "off"
+        }
+      },
+      {
+        "files": [
           "api/_lib/business/**/*.ts"
         ],
         "excludedFiles": [

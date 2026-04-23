@@ -14,9 +14,13 @@ describe('isMimeAllowed', () => {
 
   it('accepte les MIME explicitement whitelistés', () => {
     expect(isMimeAllowed('application/pdf')).toBe(true)
-    expect(isMimeAllowed('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')).toBe(true)
+    expect(isMimeAllowed('application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')).toBe(
+      true
+    )
     expect(isMimeAllowed('application/vnd.ms-excel')).toBe(true)
-    expect(isMimeAllowed('application/vnd.openxmlformats-officedocument.wordprocessingml.document')).toBe(true)
+    expect(
+      isMimeAllowed('application/vnd.openxmlformats-officedocument.wordprocessingml.document')
+    ).toBe(true)
     expect(isMimeAllowed('application/msword')).toBe(true)
     expect(isMimeAllowed('application/zip')).toBe(true)
     expect(isMimeAllowed('application/x-zip-compressed')).toBe(true)
