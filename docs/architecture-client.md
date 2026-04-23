@@ -222,3 +222,62 @@ Le backend `GET /api/sav/:id` ne fait AUCUN appel Graph → pas de 503 côté en
 
 `comment.body`, `product_name_snapshot`, `cause_notes`, `notes_internal` sont interpolés via `{{ }}` ou `:text` — JAMAIS `v-html`. La liaison Vue 3 par défaut échappe tout contenu utilisateur. Test TV-XSS à venir.
 
+## Schéma `sav_lines` PRD-target (Epic 4.0 dette D2/D3)
+
+Migration `client/supabase/migrations/20260424120000_sav_lines_prd_target.sql` aligne le schéma `sav_lines` sur le PRD §Database Schema (lignes 761-791). Pré-requis Story 4.2 (moteur calcul + triggers `compute_sav_line_credit` / `recompute_sav_total`).
+
+### Colonnes PRD-target livrées
+
+| Colonne | Type | Source |
+|---|---|---|
+| `unit_requested` | `text NOT NULL` | RENAME de `unit` |
+| `unit_invoiced` | `text NULL` | ADD — rempli en édition ou trigger Epic 4.2 |
+| `qty_invoiced` | `numeric(12,3) NULL` | RENAME de `qty_billed` |
+| `credit_coefficient` | `numeric(5,4) NOT NULL DEFAULT 1` | ADD (0..1, remplace basis points) |
+| `credit_coefficient_label` | `text NULL` | ADD (`TOTAL`, `50%`, `COEF`…) |
+| `piece_to_kg_weight_g` | `integer NULL CHECK (> 0)` | ADD (conversion FR26) |
+| `credit_amount_cents` | `bigint NULL` | RENAME de `credit_cents` |
+| `vat_rate_bp_snapshot` | `integer NULL` | RENAME de `vat_rate_bp` |
+| `validation_message` | `text NULL` | ADD (singulier PRD) |
+| `line_number` | `integer` + `UNIQUE(sav_id, line_number)` | ADD + trigger auto-assign |
+
+### Enum `validation_status` (D3)
+
+Avant : `CHECK (validation_status IN ('ok','warning','error'))` — legacy Story 2.1.
+
+Après (migration 20260424120000) : `CHECK (validation_status IN ('ok','unit_mismatch','qty_exceeds_invoice','to_calculate','blocked'))` — enum PRD strict.
+
+La garde `LINES_BLOCKED` de `transition_sav_status` (clause `WHERE validation_status != 'ok'`) reste valide : tout ce qui n'est pas `'ok'` continue de bloquer la transition `in_progress → validated`. Le nouveau CHECK ajoute la défense en profondeur côté DB — même en bypass RPC service_role, une valeur hors enum PRD échoue.
+
+### Colonnes legacy conservées V1 (DEPRECATED, DROP Epic 4.2)
+
+- `credit_coefficient_bp` (backfillé vers `credit_coefficient`)
+- `validation_messages jsonb` (remplacé par `validation_message text`)
+- `total_ht_cents`, `total_ttc_cents` (sera calculé par trigger `compute_sav_line_credit`)
+- `position` (conservé — utilisé par Story 3.4 ordering V1)
+
+Ces colonnes ne doivent plus être lues ni écrites par le code nouveau.
+
+### Impact RPCs — migration 20260424130000_rpc_sav_lines_prd_target_updates.sql
+
+- `update_sav_line` : whitelist patch jsonb PRD (`qtyRequested`, `unitRequested`, `qtyInvoiced`, `unitInvoiced`, `unitPriceHtCents`, `vatRateBpSnapshot`, `creditCoefficient`, `creditCoefficientLabel`, `pieceToKgWeightG`, `position`, `lineNumber`). F52 maintenu : `validation_status`/`validation_message` exclus.
+- `capture_sav_from_webhook` : mapping webhook `items[].unit` → `sav_lines.unit_requested`. Contrat Zod public inchangé.
+- `duplicate_sav` : copie les colonnes PRD, reset `validation_status='ok'` + `validation_message=NULL` sur la nouvelle ligne, `credit_amount_cents=NULL` (recalcul Epic 4.2).
+
+### Impact handlers TS
+
+- `client/api/_lib/sav/detail-handler.ts` : SELECT + mapping ligne PRD (lignes 34-40, 292-340).
+- `client/api/_lib/sav/line-edit-handler.ts` : Zod `.strict()` rejette les clés legacy, accepte les clés PRD.
+
+### Tests
+
+- `client/supabase/tests/rpc/sav_lines_prd_target.test.sql` — 9 tests SQL (CHECK, UNIQUE, trigger, whitelist patch, LINES_BLOCKED enum-aware).
+- `client/supabase/tests/rls/schema_sav_capture.test.sql` — ligne 61 amendée `unit` → `unit_requested`.
+- `client/tests/unit/api/sav/line-edit.spec.ts` + `detail.spec.ts` — mocks Supabase response avec colonnes PRD.
+
+### Référence
+
+- Décisions CR Epic 3 : `_bmad-output/implementation-artifacts/epic-3-review-findings.md` §D2-D3.
+- Story créatrice : `_bmad-output/implementation-artifacts/4-0-dette-schema-sav-lines-prd-target.md`.
+- PRD : `_bmad-output/planning-artifacts/prd.md` §Database Schema (lignes 761-791).
+

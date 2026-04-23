@@ -118,3 +118,13 @@ jobs:
             echo "Running RLS test $f"
             psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f "$f"
           done
+
+      - name: Run RPC tests
+        env:
+          PGPASSWORD: postgres
+        if: hashFiles('client/supabase/tests/rpc/*.sql') != ''
+        run: |
+          for f in client/supabase/tests/rpc/*.sql; do
+            echo "Running RPC test $f"
+            psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f "$f"
+          done

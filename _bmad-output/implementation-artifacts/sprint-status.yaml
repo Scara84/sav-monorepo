@@ -39,6 +39,18 @@
 
 generated: 2026-04-18
 last_updated: 2026-04-23
+# 2026-04-23 late evening : Story 4.0b créée (dette tests SQL RPC Epic 3
+# + wiring CI). Pattern 4.0 à réutiliser, 0 impact code TS. 5 fichiers SQL
+# + 1 step CI + 1 update tracker README. Ready-for-dev.
+# 2026-04-23 CR adversarial Story 4.0 : 3 decisions (D1 défer, D2+D3 patchés),
+# 4 patches (P1 unique_violation handler, P2 mock unit_mismatch, P3 Test 9b,
+# P4 credit_coefficient type), 4 défers, ~22 dismissed. Story 4.0 → done.
+# 2026-04-23 late : Story 4.0 dette créée (alignement sav_lines PRD-target
+# + enum validation_status CHECK strict). Epic 4 passe in-progress.
+# 2026-04-23 evening : Story 4.0 implémentée → review. 369/369 tests Vitest
+# (+5 vs baseline 364), typecheck 0, build 459 KB (stable). Migrations
+# 20260424120000 (schéma) + 20260424130000 (RPCs) + test SQL RPC
+# sav_lines_prd_target.test.sql (9 scénarios).
 # Story 2.1 : done (864 produits importés, 18 catégories séparateurs,
 # 10/10 tests RLS OK, 211/211 tests Vitest, typecheck 0).
 # Epic 1 : 7/7 stories done après code review adversariale (rapport :
@@ -112,7 +124,14 @@ development_status:
   # ──────────────────────────────────────────────────────────────
   # Epic 4: Moteur comptable fidèle (calculs, avoirs, bons SAV PDF)
   # ──────────────────────────────────────────────────────────────
-  epic-4: backlog
+  epic-4: in-progress
+  # Story 4.0 dette Epic 4 prep : alignement schéma sav_lines PRD-target (D2)
+  # + enum validation_status CHECK strict (D3). Pré-requis Story 4.2 moteur calcul.
+  4-0-dette-schema-sav-lines-prd-target: done
+  # Story 4.0b dette Epic 4 prep #2 : convention + 5 tests SQL RPC Epic 3
+  # (transition_sav_status, assign_sav, update_sav_tags, duplicate_sav,
+  # capture_sav_from_webhook) + wiring CI migrations-check.
+  4-0b-dette-tests-sql-rpc-epic-3: done
   4-1-migration-avoirs-sequence-transactionnelle-rpc: backlog
   4-2-moteur-calculs-metier-typescript-triggers-miroirs-fixture-excel: backlog
   4-3-integration-moteur-dans-la-vue-detail-preview-live: backlog

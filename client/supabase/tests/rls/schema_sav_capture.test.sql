@@ -58,7 +58,9 @@ BEGIN
   SELECT id INTO v_m1a FROM members WHERE email = 'rls-s21-m1a@example.com';
   SELECT id INTO v_sav_id FROM sav WHERE member_id = v_m1a ORDER BY id DESC LIMIT 1;
 
-  INSERT INTO sav_lines (sav_id, product_code_snapshot, product_name_snapshot, qty_requested, unit)
+  -- Epic 4.0 D2 : colonne renommée `unit` → `unit_requested` (migration
+  -- 20260424120000). line_number auto-assigné par trigger.
+  INSERT INTO sav_lines (sav_id, product_code_snapshot, product_name_snapshot, qty_requested, unit_requested)
   VALUES (v_sav_id, 'RLS-S21-PROD', 'Produit RLS', 1.000, 'piece');
 
   INSERT INTO sav_files (sav_id, original_filename, sanitized_filename, onedrive_item_id, web_url, size_bytes, mime_type)

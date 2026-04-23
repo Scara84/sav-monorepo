@@ -285,4 +285,90 @@ describe('GET /api/sav/:id (Story 3.4)', () => {
     await handler(req(['1']), res)
     expect(res.statusCode).toBe(429)
   })
+
+  it('Story 4.0 D2 : projection lignes PRD-target (unitRequested, qtyInvoiced, creditCoefficient…)', async () => {
+    db.savRow = {
+      id: 1,
+      reference: 'SAV-2026-00002',
+      status: 'in_progress',
+      version: 1,
+      member_id: 10,
+      group_id: null,
+      invoice_ref: 'FAC-2',
+      invoice_fdp_cents: 0,
+      total_amount_cents: 0,
+      tags: [],
+      assigned_to: null,
+      received_at: '2026-03-01T00:00:00.000Z',
+      taken_at: null,
+      validated_at: null,
+      closed_at: null,
+      cancelled_at: null,
+      created_at: '2026-03-01T00:00:00.000Z',
+      updated_at: '2026-03-01T00:00:00.000Z',
+      member: { id: 10, first_name: null, last_name: 'X', email: 'x@x.com' },
+      group: null,
+      assignee: null,
+      lines: [
+        {
+          id: 100,
+          product_id: 5,
+          product_code_snapshot: 'POM-01',
+          product_name_snapshot: 'Pommes Gala',
+          qty_requested: 10,
+          unit_requested: 'kg',
+          qty_invoiced: 8,
+          unit_invoiced: 'kg',
+          unit_price_ht_cents: 250,
+          vat_rate_bp_snapshot: 550,
+          credit_coefficient: 0.5,
+          credit_coefficient_label: '50%',
+          piece_to_kg_weight_g: null,
+          credit_amount_cents: null,
+          validation_status: 'ok',
+          validation_message: null,
+          position: 0,
+          line_number: 1,
+        },
+      ],
+      files: [],
+    }
+    const res = mockRes()
+    await handler(req(['1']), res)
+    expect(res.statusCode).toBe(200)
+    const body = res.jsonBody as {
+      data: {
+        sav: {
+          lines: Array<{
+            unitRequested: string
+            qtyInvoiced: number | null
+            unitInvoiced: string | null
+            creditCoefficient: number | null
+            creditCoefficientLabel: string | null
+            validationStatus: string
+            validationMessage: string | null
+            lineNumber: number | null
+          }>
+        }
+      }
+    }
+    const line = body.data.sav.lines[0]
+    expect(line).toBeDefined()
+    if (!line) return
+    expect(line.unitRequested).toBe('kg')
+    expect(line.qtyInvoiced).toBe(8)
+    expect(line.unitInvoiced).toBe('kg')
+    expect(line.creditCoefficient).toBe(0.5)
+    expect(line.creditCoefficientLabel).toBe('50%')
+    expect(line.validationStatus).toBe('ok')
+    expect(line.validationMessage).toBeNull()
+    expect(line.lineNumber).toBe(1)
+    // Clés legacy absentes de la projection.
+    expect(line).not.toHaveProperty('unit')
+    expect(line).not.toHaveProperty('qtyBilled')
+    expect(line).not.toHaveProperty('creditCoefficientBp')
+    expect(line).not.toHaveProperty('vatRateBp')
+    expect(line).not.toHaveProperty('creditCents')
+    expect(line).not.toHaveProperty('validationMessages')
+  })
 })

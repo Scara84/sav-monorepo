@@ -31,9 +31,11 @@ const SAV_SELECT = `
   group:groups ( id, name ),
   assignee:operators!sav_assigned_to_fkey ( id, display_name, email ),
   lines:sav_lines ( id, product_id, product_code_snapshot, product_name_snapshot,
-    qty_requested, unit, qty_billed, unit_price_ht_cents, vat_rate_bp,
-    credit_coefficient_bp, credit_cents, validation_status, validation_messages,
-    position ),
+    qty_requested, unit_requested, qty_invoiced, unit_invoiced,
+    unit_price_ht_cents, vat_rate_bp_snapshot,
+    credit_coefficient, credit_coefficient_label, piece_to_kg_weight_g,
+    credit_amount_cents, validation_status, validation_message,
+    position, line_number ),
   files:sav_files ( id, original_filename, sanitized_filename, onedrive_item_id,
     web_url, mime_type, size_bytes, uploaded_by_member_id, uploaded_by_operator_id,
     source, created_at )
@@ -290,21 +292,29 @@ function projectSav(row: Record<string, unknown>): Record<string, unknown> {
 }
 
 function projectLine(row: Record<string, unknown>): Record<string, unknown> {
+  // Story 4.0 D2 — schéma `sav_lines` PRD-target.
+  // Les colonnes legacy (qty_billed, credit_cents, vat_rate_bp,
+  // credit_coefficient_bp, validation_messages) ont été remplacées dans la
+  // migration 20260424120000. Aucune projection legacy ici.
   const r = row as {
     id: number
     product_id: number | null
     product_code_snapshot: string
     product_name_snapshot: string
     qty_requested: number
-    unit: string
-    qty_billed: number | null
+    unit_requested: string
+    qty_invoiced: number | null
+    unit_invoiced: string | null
     unit_price_ht_cents: number | null
-    vat_rate_bp: number | null
-    credit_coefficient_bp: number | null
-    credit_cents: number | null
+    vat_rate_bp_snapshot: number | null
+    credit_coefficient: number
+    credit_coefficient_label: string | null
+    piece_to_kg_weight_g: number | null
+    credit_amount_cents: number | null
     validation_status: string
-    validation_messages: unknown
+    validation_message: string | null
     position: number
+    line_number: number | null
   }
   return {
     id: r.id,
@@ -312,15 +322,19 @@ function projectLine(row: Record<string, unknown>): Record<string, unknown> {
     productCodeSnapshot: r.product_code_snapshot,
     productNameSnapshot: r.product_name_snapshot,
     qtyRequested: r.qty_requested,
-    unit: r.unit,
-    qtyBilled: r.qty_billed,
+    unitRequested: r.unit_requested,
+    qtyInvoiced: r.qty_invoiced,
+    unitInvoiced: r.unit_invoiced,
     unitPriceHtCents: r.unit_price_ht_cents,
-    vatRateBp: r.vat_rate_bp,
-    creditCoefficientBp: r.credit_coefficient_bp,
-    creditCents: r.credit_cents,
+    vatRateBpSnapshot: r.vat_rate_bp_snapshot,
+    creditCoefficient: r.credit_coefficient,
+    creditCoefficientLabel: r.credit_coefficient_label,
+    pieceToKgWeightG: r.piece_to_kg_weight_g,
+    creditAmountCents: r.credit_amount_cents,
     validationStatus: r.validation_status,
-    validationMessages: r.validation_messages,
+    validationMessage: r.validation_message,
     position: r.position,
+    lineNumber: r.line_number,
   }
 }
 

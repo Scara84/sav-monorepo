@@ -8,34 +8,45 @@ import { supabaseAdmin } from '../clients/supabase-admin'
 import type { ApiHandler, ApiRequest, ApiResponse } from '../types'
 
 /**
- * Story 3.6 V1 — `PATCH /api/sav/:id/lines/:lineId`.
+ * Story 3.6 V1 + Story 4.0 D2 — `PATCH /api/sav/:id/lines/:lineId`.
  *
  * Édite partiellement une ligne SAV via RPC atomique `update_sav_line` qui
  * applique CAS sur `sav.version` et incrémente. Les colonnes éditables sont
- * whitelistées côté RPC.
+ * whitelistées côté RPC (migration 20260424130000).
  *
- * Le compute `credit_amount_cents` + validation_status sont la responsabilité
- * d'Epic 4 (moteur avoir). V1 laisse l'opérateur remplir `validation_status`
- * explicitement s'il le souhaite (sinon hérite de l'état actuel).
+ * Story 4.0 D2 : schéma `sav_lines` aligné PRD-target — le wire utilise
+ * désormais `qtyInvoiced`, `unitRequested`, `unitInvoiced`, `creditCoefficient`
+ * (numeric 0..1) + `creditCoefficientLabel` + `pieceToKgWeightG` +
+ * `vatRateBpSnapshot`. Les anciennes clés (`qtyBilled`, `unit`, `vatRateBp`,
+ * `creditCoefficientBp`) sont strippées par Zod — les consommateurs V1 qui
+ * émettent ces clés obtiendront une erreur refine « au moins un champ ».
+ *
+ * Le compute `credit_amount_cents` + `validation_status` + `validation_message`
+ * restent la responsabilité d'Epic 4.2 (trigger `compute_sav_line_credit`).
  */
 
 // Review F52 (CR Epic 3 2026-04-23) — `validationStatus` retiré du wire.
 // Permettre au client de patcher ce champ permet de contourner la garde
 // `LINES_BLOCKED` de `transition_sav_status` en forçant `ok` avant
 // transition vers `validated`. Le champ reste écrit uniquement par le
-// trigger compute (Epic 4). Idem `validationMessages` qui n'est jamais
-// utilisateur-éditable.
+// trigger compute (Epic 4.2). Idem `validationMessage`/`validationMessages`
+// et `creditAmountCents` qui ne sont jamais utilisateur-éditables.
 export const lineEditBodySchema = z
   .object({
     qtyRequested: z.number().positive().max(99999).optional(),
-    unit: z.enum(['kg', 'piece', 'liter']).optional(),
-    qtyBilled: z.number().nonnegative().max(99999).optional(),
+    unitRequested: z.enum(['kg', 'piece', 'liter']).optional(),
+    qtyInvoiced: z.number().nonnegative().max(99999).optional(),
+    unitInvoiced: z.enum(['kg', 'piece', 'liter']).optional(),
     unitPriceHtCents: z.number().int().nonnegative().max(100000000).optional(),
-    vatRateBp: z.number().int().min(0).max(10000).optional(),
-    creditCoefficientBp: z.number().int().min(0).max(10000).optional(),
+    vatRateBpSnapshot: z.number().int().min(0).max(10000).optional(),
+    creditCoefficient: z.number().min(0).max(1).optional(),
+    creditCoefficientLabel: z.string().max(32).optional(),
+    pieceToKgWeightG: z.number().int().positive().max(100000).optional(),
     position: z.number().int().nonnegative().max(999).optional(),
+    lineNumber: z.number().int().positive().max(999).optional(),
     version: z.number().int().nonnegative(),
   })
+  .strict()
   .refine((d) => Object.keys(d).length > 1, {
     message: 'Au moins un champ à modifier (hors version)',
   })
@@ -77,6 +88,14 @@ function lineEditCore(savId: number, lineId: number): ApiHandler {
       })
 
       if (error) {
+        // P1 (CR 4.0) : UNIQUE violation native PG (23505) quand lineNumber patché
+        // crée un doublon → 409 métier plutôt que 500 générique.
+        if ((error as PgRpcError).code === '23505') {
+          sendError(res, 'CONFLICT', 'Numéro de ligne déjà utilisé', requestId, {
+            code: 'UNIQUE_VIOLATION',
+          })
+          return
+        }
         const { code, payload } = parseExceptionMessage((error as PgRpcError).message ?? '')
         if (code === 'NOT_FOUND') {
           sendError(res, 'NOT_FOUND', 'SAV ou ligne introuvable', requestId)

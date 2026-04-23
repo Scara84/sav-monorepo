@@ -123,26 +123,87 @@ describe('PATCH /api/sav/:id/lines/:lineId (Story 3.6)', () => {
   })
 
   it('validationStatus propagé depuis la RPC (jamais depuis le wire — F52)', async () => {
-    // Le client envoie un patch légitime ; la RPC retourne `warning` via
+    // Le client envoie un patch légitime ; la RPC retourne `unit_mismatch` via
     // le trigger compute (Epic 4). Le `validationStatus` dans le body est
     // stripped par Zod (retiré du schéma depuis F52) — tentative de bypass
     // LINES_BLOCKED impossible.
-    rpcMock.data = [{ sav_id: 1, line_id: 5, new_version: 2, validation_status: 'warning' }]
+    // P2 (CR 4.0) : 'warning' remplacé par 'unit_mismatch' — valeur PRD valide
+    // ('warning' rejeté par le nouveau CHECK sav_lines_validation_status_check).
+    rpcMock.data = [{ sav_id: 1, line_id: 5, new_version: 2, validation_status: 'unit_mismatch' }]
     const res = mockRes()
     await handler(lineReq(1, 5, { qtyRequested: 7.5, version: 1 }), res)
     expect(res.statusCode).toBe(200)
     const body = res.jsonBody as { data: { validationStatus: string } }
-    expect(body.data.validationStatus).toBe('warning')
+    expect(body.data.validationStatus).toBe('unit_mismatch')
   })
 
-  it('F52 : validationStatus dans body → stripped (400 si seul champ, ignoré sinon)', async () => {
-    // Seul `validationStatus` + `version` → stripped Zod, refine « au moins
-    // un champ » échoue → 400 VALIDATION_FAILED.
+  it('F52 : validationStatus dans body → rejeté par Zod strict (400)', async () => {
+    // Story 4.0 : Zod .strict() rejette toute clé inconnue incluant
+    // validationStatus. Même si combiné avec d'autres champs, le body est
+    // invalidé (400 VALIDATION_FAILED). Défense en amont du whitelist RPC.
     const res = mockRes()
     await handler(
       lineReq(1, 5, { validationStatus: 'ok', version: 1 } as Record<string, unknown>),
       res
     )
+    expect(res.statusCode).toBe(400)
+  })
+
+  it('Story 4.0 D2 : clés legacy (unit, qtyBilled, vatRateBp, creditCoefficientBp) → 400 strict', async () => {
+    // Zod .strict() rejette les anciennes clés du schéma 2.1. Défense contre
+    // un client V1 qui n'aurait pas migré.
+    const res = mockRes()
+    await handler(
+      lineReq(1, 5, { unit: 'kg', qtyBilled: 5, version: 1 } as Record<string, unknown>),
+      res
+    )
+    expect(res.statusCode).toBe(400)
+  })
+
+  it('Story 4.0 D2 : patch PRD-target (unitRequested + qtyInvoiced + creditCoefficient)', async () => {
+    rpcMock.data = [{ sav_id: 1, line_id: 5, new_version: 2, validation_status: 'ok' }]
+    const res = mockRes()
+    await handler(
+      lineReq(
+        1,
+        5,
+        {
+          unitRequested: 'kg',
+          unitInvoiced: 'kg',
+          qtyInvoiced: 4.2,
+          creditCoefficient: 0.5,
+          creditCoefficientLabel: '50%',
+          version: 1,
+        },
+        opCookie()
+      ),
+      res
+    )
+    expect(res.statusCode).toBe(200)
+    expect(rpcMock.capturedArgs).toMatchObject({
+      p_patch: {
+        unitRequested: 'kg',
+        unitInvoiced: 'kg',
+        qtyInvoiced: 4.2,
+        creditCoefficient: 0.5,
+        creditCoefficientLabel: '50%',
+      },
+    })
+  })
+
+  it('Story 4.0 D2 : pieceToKgWeightG (conversion FR26) accepté', async () => {
+    rpcMock.data = [{ sav_id: 1, line_id: 5, new_version: 2, validation_status: 'ok' }]
+    const res = mockRes()
+    await handler(lineReq(1, 5, { pieceToKgWeightG: 180, version: 1 }), res)
+    expect(res.statusCode).toBe(200)
+    expect(rpcMock.capturedArgs).toMatchObject({
+      p_patch: { pieceToKgWeightG: 180 },
+    })
+  })
+
+  it('Story 4.0 D2 : creditCoefficient > 1 → 400 (range 0..1 PRD)', async () => {
+    const res = mockRes()
+    await handler(lineReq(1, 5, { creditCoefficient: 1.5, version: 1 }), res)
     expect(res.statusCode).toBe(400)
   })
 
@@ -163,9 +224,9 @@ describe('PATCH /api/sav/:id/lines/:lineId (Story 3.6)', () => {
     expect(res.statusCode).toBe(403)
   })
 
-  it('400 unit invalide', async () => {
+  it('400 unitRequested invalide (hors enum PRD)', async () => {
     const res = mockRes()
-    await handler(lineReq(1, 5, { unit: 'tonne', version: 0 }), res)
+    await handler(lineReq(1, 5, { unitRequested: 'tonne', version: 0 }), res)
     expect(res.statusCode).toBe(400)
   })
 })
