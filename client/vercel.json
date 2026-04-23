@@ -16,5 +16,6 @@
     "api/self-service/upload-complete.ts": { "maxDuration": 10 },
     "api/sav/[[...slug]].ts": { "maxDuration": 10 }
   },
-  "crons": [{ "path": "/api/cron/dispatcher", "schedule": "0 3 * * *" }]
+  "crons": [{ "path": "/api/cron/dispatcher", "schedule": "0 3 * * *" }],
+  "rewrites": [{ "source": "/((?!api/).*)", "destination": "/index.html" }]
 }
