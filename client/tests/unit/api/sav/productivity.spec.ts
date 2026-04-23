@@ -37,7 +37,7 @@ vi.mock('../../../../api/_lib/clients/supabase-admin', () => ({
   __resetSupabaseAdminForTests: () => undefined,
 }))
 
-import handler from '../../../../api/sav/[[...slug]]'
+import handler from '../../../../api/sav/[...slug]'
 
 function opCookie(): string {
   const p: SessionUser = {

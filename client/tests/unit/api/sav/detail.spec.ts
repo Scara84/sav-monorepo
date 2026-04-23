@@ -71,7 +71,7 @@ vi.mock('../../../../api/_lib/clients/supabase-admin', () => {
   }
 })
 
-import handler from '../../../../api/sav/[[...slug]]'
+import handler from '../../../../api/sav/[...slug]'
 
 function operatorCookie(): string {
   const payload: SessionUser = {

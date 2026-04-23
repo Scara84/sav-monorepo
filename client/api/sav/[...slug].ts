@@ -40,9 +40,13 @@ import type { ApiHandler, ApiRequest, ApiResponse } from '../_lib/types'
 
 /**
  * Normalise Vercel's `req.query.slug` (catch-all param) en tableau stable.
- * `/api/sav` → slug = undefined → []
+ * `/api/sav/list` → slug = ['list'] (via vercel.json rewrite depuis /api/sav)
  * `/api/sav/42` → slug = '42' → ['42']
  * `/api/sav/42/status` → slug = ['42','status'] → ['42','status']
+ *
+ * NOTE : Vercel required catch-all `[...slug]` exige AU MOINS un segment.
+ * Le rewrite vercel.json `/api/sav → /api/sav/list` permet d'exposer la
+ * racine REST tout en restant sur une seule Serverless Function.
  */
 function parseSlug(req: ApiRequest): string[] {
   const raw = (req.query as Record<string, unknown> | undefined)?.['slug']
@@ -64,7 +68,8 @@ const dispatch: ApiHandler = async (req, res) => {
   }
 
   // Route dispatch
-  if (slug.length === 0) {
+  // /api/sav/list → list handler (rewrite vercel.json depuis /api/sav)
+  if (slug.length === 1 && slug[0] === 'list') {
     if (method === 'GET') {
       return listSavHandler(req, res)
     }
