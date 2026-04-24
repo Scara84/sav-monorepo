@@ -39,6 +39,7 @@ const SAV_PAYLOAD = {
       reference: 'SAV-2026-00001',
       status: 'in_progress',
       version: 2,
+      groupId: null,
       invoiceRef: 'FAC-1',
       invoiceFdpCents: 0,
       totalAmountCents: 1500,
@@ -54,6 +55,8 @@ const SAV_PAYLOAD = {
         firstName: 'Jean',
         lastName: 'Dubois',
         email: 'j@d.com',
+        isGroupManager: false,
+        groupId: null,
       },
       group: null,
       assignee: null,
@@ -62,6 +65,7 @@ const SAV_PAYLOAD = {
     },
     comments: [],
     auditTrail: [],
+    settingsSnapshot: { vat_rate_default_bp: 550, group_manager_discount_bp: 400 },
   },
 }
 

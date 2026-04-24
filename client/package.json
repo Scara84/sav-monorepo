@@ -253,6 +253,39 @@
             }
           ]
         }
+      },
+      {
+        "files": [
+          "src/features/back-office/composables/useSavLinePreview.ts"
+        ],
+        "rules": {
+          "no-restricted-globals": [
+            "error",
+            {
+              "name": "fetch",
+              "message": "Composable preview doit rester pur (no-io). Utiliser uniquement api/_lib/business/*."
+            }
+          ],
+          "no-restricted-imports": [
+            "error",
+            {
+              "paths": [
+                {
+                  "name": "axios",
+                  "message": "Composable preview doit rester pur (no-io)."
+                }
+              ],
+              "patterns": [
+                {
+                  "group": [
+                    "@supabase/*"
+                  ],
+                  "message": "Composable preview doit rester pur (no-io)."
+                }
+              ]
+            }
+          ]
+        }
       }
     ]
   },

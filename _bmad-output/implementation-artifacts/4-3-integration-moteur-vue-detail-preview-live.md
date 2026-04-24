@@ -1,6 +1,6 @@
 # Story 4.3: Intégration moteur dans la vue détail (preview live)
 
-Status: ready-for-dev
+Status: done
 
 <!-- Couche UI de consommation du moteur TS 4.2. L'opérateur voit en temps réel
      les montants (HT / remise 4 % responsable / TVA / TTC) recalculés quand il
@@ -186,41 +186,56 @@ Aucun fichier `docs/architecture-client.md` à amender V1 (la feature est locali
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — Composable `useSavLinePreview.ts` (AC #1, #5, #9, #10)**
-  - [ ] 1.1 Créer `client/src/features/back-office/composables/useSavLinePreview.ts` avec `PreviewInput` / `PreviewOutput` + `useSavLinePreview()`
-  - [ ] 1.2 Implémenter `linesComputed` (`computed(() => lines.value.map(injectVatFallback).map(computeSavLineCredit))`)
-  - [ ] 1.3 Implémenter `totalHtCents` / `discountCents` / `vatCents` / `totalTtcCents` via `computeCreditNoteTotals` (4.2 `vatRemise.ts`)
-  - [ ] 1.4 Implémenter `anyLineBlocking` / `blockingCount` / `blockingMessages`
-  - [ ] 1.5 Bloc JSDoc de tête (AC #10)
-  - [ ] 1.6 Ajouter override ESLint `no-restricted-imports` / `no-restricted-globals` pour ce fichier (AC #9)
+- [x] **Task 1 — Composable `useSavLinePreview.ts` (AC #1, #5, #9, #10)**
+  - [x] 1.1 Créer `client/src/features/back-office/composables/useSavLinePreview.ts` avec `PreviewInput` / `PreviewOutput` + `useSavLinePreview()`
+  - [x] 1.2 Implémenter `linesComputed` (`computed(() => lines.value.map(injectVatFallback).map(computeSavLineCredit))`)
+  - [x] 1.3 Implémenter `totalHtCents` / `discountCents` / `vatCents` / `totalTtcCents` via `computeCreditNoteTotals` (4.2 `vatRemise.ts`)
+  - [x] 1.4 Implémenter `anyLineBlocking` / `blockingCount` / `blockingMessages`
+  - [x] 1.5 Bloc JSDoc de tête (AC #10)
+  - [x] 1.6 Ajouter override ESLint `no-restricted-imports` / `no-restricted-globals` pour ce fichier (AC #9)
 
-- [ ] **Task 2 — Extension `detail-handler.ts` (AC #3, #4)**
-  - [ ] 2.1 Étendre `SAV_SELECT` pour inclure `member.is_group_manager` + `member.groupe_id`
-  - [ ] 2.2 Ajouter 4e requête parallèle `settings` (filtrée par clés + active now)
-  - [ ] 2.3 Appeler `resolveDefaultVatRateBp()` + `resolveGroupManagerDiscountBp()` et sérialiser `settings_snapshot`
-  - [ ] 2.4 Mettre à jour la signature du DTO `SavDetailResponseBody` (type partagé Epic 3)
-  - [ ] 2.5 Mettre à jour `useSavDetail.ts` composable pour typer `member.is_group_manager` + `member.groupe_id` + `settings_snapshot`
+- [x] **Task 2 — Extension `detail-handler.ts` (AC #3, #4)**
+  - [x] 2.1 Étendre `SAV_SELECT` pour inclure `member.is_group_manager` + `member.group_id` (nom réel colonne, cf. Dev Notes)
+  - [x] 2.2 Ajouter 4e requête parallèle `settings` (filtrée par clés + active now)
+  - [x] 2.3 Appeler `resolveDefaultVatRateBp()` + `resolveGroupManagerDiscountBp()` et sérialiser `settingsSnapshot` (camelCase côté DTO, clés internes `vat_rate_default_bp` / `group_manager_discount_bp`)
+  - [x] 2.4 Mettre à jour la signature du DTO `SavDetailResponseBody` (type partagé Epic 3) — via `SavDetailPayload` dans `useSavDetail.ts`
+  - [x] 2.5 Mettre à jour `useSavDetail.ts` composable pour typer `member.isGroupManager` + `member.groupId` + `settingsSnapshot`
 
-- [ ] **Task 3 — UI `SavDetailView.vue` (AC #2)**
-  - [ ] 3.1 Calculer `isGroupManager` computed (match groupe_id + is_group_manager)
-  - [ ] 3.2 Instancier `useSavLinePreview(...)` avec refs dérivés
-  - [ ] 3.3 Ajouter bloc `<section class="preview-credit-note" v-if="sav.status === 'in_progress' || sav.status === 'validated'">` avec 4 lignes (HT, remise conditionnelle, TVA, TTC)
-  - [ ] 3.4 Ajouter badge `Remise responsable 4 % appliquée` conditionnel
-  - [ ] 3.5 Ajouter bandeau rouge `aria-live` si `anyLineBlocking`
-  - [ ] 3.6 Styles CSS (bloc HT/remise/TVA/TTC, total gras ≥ 1.25em, badge info couleur claire)
+- [x] **Task 3 — UI `SavDetailView.vue` (AC #2)**
+  - [x] 3.1 Calculer `isGroupManager` computed (match `sav.groupId` + `member.isGroupManager` + `member.groupId`)
+  - [x] 3.2 Instancier `useSavLinePreview(...)` avec refs dérivés (ref mutable `previewLines` synchronisé via watch pour signature conforme AC #1 `Ref<SavLineInput[]>`)
+  - [x] 3.3 Ajouter bloc `<section class="preview-credit-note" v-if="sav.status === 'in_progress' || sav.status === 'validated'">` avec 4 lignes (HT, remise conditionnelle, TVA, TTC)
+  - [x] 3.4 Ajouter badge `Remise responsable 4 % appliquée` conditionnel
+  - [x] 3.5 Ajouter bandeau rouge `aria-live` si `anyLineBlocking`
+  - [x] 3.6 Styles CSS (bloc HT/remise/TVA/TTC, total gras ≥ 1.25em, badge info couleur claire)
 
-- [ ] **Task 4 — Tests (AC #6, #7, #8)**
-  - [ ] 4.1 Créer `useSavLinePreview.test.ts` (≥ 10 cas, utilise fixture `tests/fixtures/excel-calculations.json`)
-  - [ ] 4.2 Créer `SavDetailView.preview.test.ts` (6 cas render + mock composable)
-  - [ ] 4.3 Test spy-fetch : 0 appel API pendant édition preview
-  - [ ] 4.4 Test cross-stack (optionnel V1, dev-note si skippé) : INSERT via RPC, fetch détail, assert DB credit_amount_cents === TS `linesComputed[i].credit_amount_cents`
+- [x] **Task 4 — Tests (AC #6, #7, #8)**
+  - [x] 4.1 Créer `useSavLinePreview.test.ts` (12 cas, utilise fixture `tests/fixtures/excel-calculations.json`)
+  - [x] 4.2 Créer `SavDetailView.preview.test.ts` (8 cas render sur vue réelle, pas de mock composable — décision documentée dev-note)
+  - [x] 4.3 Test spy-fetch : 0 appel API preview (cas 12 composable + cas 8 vue)
+  - [ ] 4.4 Test cross-stack (optionnel V1) : **skip** documenté — prévu W22/W29 follow-up, nécessite environnement Supabase + RPC INSERT disponible en CI
 
-- [ ] **Task 5 — Vérifications CI (non-régression)**
-  - [ ] 5.1 `npm test` tous tests verts (369+ tests baseline Epic 3, +20+ nouveaux)
-  - [ ] 5.2 `npm run typecheck` 0 erreur
-  - [ ] 5.3 `npm run lint:business` 0 erreur (AC #9 ESLint override)
-  - [ ] 5.4 `npm run build` 459 KB ± 5 % (impact composable + computed minimal)
-  - [ ] 5.5 Preview Vercel — ouvrir un SAV `in_progress` réel, vérifier rendu encart + badge + recalcul live (shadow manuel)
+- [x] **Task 5 — Vérifications CI (non-régression)**
+  - [x] 5.1 `npx vitest run` → 472 tests passent (45 fichiers) — baseline Epic 3 369+, +103 tests cumulés Epic 4
+  - [x] 5.2 `npx vue-tsc --noEmit` → 0 erreur
+  - [x] 5.3 `npm run lint:business` 0 erreur + override AC #9 vérifié manuellement (imports `axios`/`@supabase/*`/`fetch` bloqués)
+  - [x] 5.4 `npm run build` → 459.16 KB (`dist/assets/index-*.js`) dans cible ± 5 %
+  - [ ] 5.5 Preview Vercel — **non exécutée** (étape shadow manuel, à valider sur PR preview)
+
+### Review Findings
+
+- [x] [Review][Patch] AC #2 bandeau bloquant sans lien/ancre vers la 1re ligne non-ok — résolu : `<a data-testid="sav-preview-blocking-jump">` + `id="sav-line-<id>"` sur chaque row + handler scroll doux
+- [x] [Review][Patch] AC #3 `isGroupManager` doit être un `computed`, pas un `ref` + `watch` — résolu : refactoré en `computed<boolean>` pur
+- [x] [Review][Patch] Libellé « Remise responsable 4 % » hardcodé — résolu : libellé dérivé via `discountLabel` computed (400 bp → « 4 % », 450 bp → « 4,5 % »)
+- [x] [Review][Patch] `settingsSnapshot` côté front — normaliser champs manquants à `null` — résolu dans `useSavDetail.ts` (typeof-check explicite)
+- [x] [Review][Patch] Deux `new Date().toISOString()` dans la même requête `settings` — résolu : variable `nowIso` unique partagée
+- [x] [Review][Patch] `computeCreditNoteTotals` peut throw — résolu : try/catch dans le composable, fallback `ZERO_TOTALS` + `console.warn` + test dédié (case 14)
+- [x] [Review][Patch] AC #8 test perf `performance.now()` — résolu : case 13 du composable (5 recomputes × 10 lignes < 80 ms, seuil indicatif)
+- [x] [Review][Patch] Clamp défensif du `vat_rate_default_bp` + `group_manager_discount_bp` dans le handler — résolu : validation `>= 0 && <= 10000` avant sérialisation
+- [x] [Review][Defer] Log `dev-warn` si la shape jsonb settings est inconnue (ni number ni {bp:number}) pour catcher les drifts seed → reporté (non bloquant V1, preview affiche `—`)
+- [x] [Review][Defer] Override ESLint `useSavLinePreview.ts` n'interdit pas les imports relatifs vers `clients/supabase-admin` → defense-in-depth additionnelle, reporté
+- [x] [Review][Defer] Test cross-stack DB↔TS (Task 4.4) — carry-over déjà tracé W22/W29 dans Dev Agent Record
+- [x] [Review][Defer] `settingsResolver.ts` ne gère pas les timestamps ISO malformés (pre-existing Story 4.2, hors scope 4.3)
 
 ## Dev Notes
 
@@ -307,10 +322,49 @@ Aucune migration DB requise (schéma sav_lines 4.0 + settings Epic 1 + members E
 
 ### Agent Model Used
 
-{{agent_model_name_version}}
+Claude Opus 4.7 (1M context) — bmad-dev-story skill, persona Amelia (Senior Software Engineer).
 
 ### Debug Log References
 
+- Test 4 (réactivité) initialement écrit avec mutation `qty_requested` uniquement → échec (credit = 2500 inchangé). Cause : le moteur `computeSavLineCredit` utilise `qty_effective = qty_invoiced_converted ?? qty_requested` (comportement Epic 4.2 — FR24). Fix : muter `qty_requested` ET `qty_invoiced` ensemble pour observer un delta en preview.
+- Déviation AC #3 (`groupe_id`) : la colonne DB réelle est `members.group_id` (schéma Epic 1 `20260419120000_initial_identity_auth_infra.sql` L128). Le AC utilise l'orthographe française (spec typo). Code et tests s'alignent sur le nom DB ; le DTO camelCase reste `groupId`.
+- Déviation AC #4 (clés settings `_bp` suffix) : le AC mentionne `vat_rate_default_bp` et `group_manager_discount_bp`, mais le seed Epic 1 + le resolver `settingsResolver.ts` utilisent `vat_rate_default` et `group_manager_discount` sans suffixe. J'ai gardé les clés réelles dans la requête `IN (...)`. Les noms `_bp` sont préservés dans la **réponse JSON** (`settingsSnapshot.vat_rate_default_bp`) pour expliciter l'unité côté consommateur (basis points).
+- Découverte out-of-scope : le seed `client/supabase/seed.sql` stocke les valeurs settings sous forme `{"bp": 550}::jsonb`, alors que `settingsResolver.test.ts` passe des entiers bruts. Pour rester rétro-compatible avec les tests existants **et** fonctionner avec le seed réel, le handler `detail-handler.ts` déballe `.bp` avant d'appeler le resolver (normalisation locale, pas de modification de `settingsResolver.ts`). Flag : si d'autres handlers consomment settings, le même unwrap devra être répliqué — ou le resolver refactoré en une itération ultérieure.
+
 ### Completion Notes List
 
+- **AC #1** ✅ — `useSavLinePreview` expose la signature exacte du story (4 refs in / 8 computed out). Aucun appel IO ; tests verifient `fetch` spy à 0. Ordre d'évaluation : `linesComputed` → `totals` (via `computeCreditNoteTotals`) → dérivés. Fallback VAT injecté AVANT appel moteur (cohérent trigger PG 4.2).
+- **AC #2** ✅ — Encart « Aperçu avoir » dans `SavDetailView.vue` avec 4 lignes HT/Remise conditionnelle/TVA/TTC, badge `Remise responsable 4 % appliquée`, bandeau rouge `aria-live="polite"` si blocking. Affichage `v-if="status === 'in_progress' || 'validated'"` — test composant couvre draft/closed/received/cancelled masqués.
+- **AC #3** ✅ — `isGroupManager` calculé côté front via `computed`, match `sav.groupId === member.groupId && member.isGroupManager`. Faux si flag KO OU si groupes ne matchent pas.
+- **AC #4** ✅ — 4e requête `settings` ajoutée en `Promise.allSettled` (dégradation propre : si KO → snapshot à null, `meta.settingsDegraded=true`). `SAV_SELECT` étendu avec `is_group_manager, group_id`. Projection camelCase.
+- **AC #5** ✅ — Gel TVA respecté : le composable utilise `vat_rate_bp_snapshot` ligne prioritairement, fallback `settings_snapshot` UNIQUEMENT si snapshot NULL. Remise responsable prise sur settings live (pas de snapshot par ligne, PRD §F&A L418).
+- **AC #6** ✅ — 12 cas unitaires (> 10 requis) couvrant happy path, remise, réactivité, fallback VAT, qty_exceeds, pièce↔kg, blocking, immutabilité, spy-fetch 0.
+- **AC #7** ✅ — 8 cas composant (> 6 requis) couvrant rendu HT/TVA/TTC, badge remise, bandeau blocking, masquage draft/closed/received/cancelled, 0 appel API supplémentaire.
+- **AC #8** ✅ — Spy-fetch vérifie un seul appel (`GET /api/sav/:id`) lors du mount ; aucun appel supplémentaire déclenché par la preview (test composable + test composant).
+- **AC #9** ✅ — Override ESLint ajouté dans `client/package.json` sur `src/features/back-office/composables/useSavLinePreview.ts` : bloque `fetch` (no-restricted-globals), `axios`, `@supabase/*` (no-restricted-imports). Validé manuellement en injectant un fichier bannis → 5 erreurs ESLint remontées.
+- **AC #10** ✅ — JSDoc de tête (20 lignes) dans le composable : but, invariants, contrat entrée, réactivité, tests. Aucun `docs/*.md` amendé (alignement V1 : doc localisée suffit).
+- **CI gates** ✅ — `vitest run` 472 verts, `vue-tsc` 0 erreur, `lint:business` 0 erreur, `build` 459 KB dans cible ± 5 %.
+- **Carry-over W22/W29** : test cross-stack (Task 4.4) non exécuté V1 — requiert setup Supabase + RPC INSERT en CI (non disponible en boîte Epic 3). À planifier quand l'environnement d'intégration DB sera prêt.
+- **Carry-over — seed jsonb shape** : `client/supabase/seed.sql` stocke les settings sous `{"bp": N}` ; le handler déballe localement. À consolider si d'autres consommateurs settings émergent → normaliser soit le seed, soit le resolver en V1.1.
+
 ### File List
+
+**Créés**
+
+- `client/src/features/back-office/composables/useSavLinePreview.ts`
+- `client/src/features/back-office/composables/useSavLinePreview.test.ts`
+- `client/src/features/back-office/views/SavDetailView.preview.test.ts`
+
+**Modifiés**
+
+- `client/src/features/back-office/composables/useSavDetail.ts` — types lignes Epic 4 alignés, ajout `member.isGroupManager` + `member.groupId`, ajout `settingsSnapshot` dans le payload et le retour du composable.
+- `client/src/features/back-office/views/SavDetailView.vue` — instanciation `useSavLinePreview`, encart « Aperçu avoir », bandeau blocking, badge remise, CSS, refactor du tableau lignes vers nouveaux champs (`qtyInvoiced`, `unitRequested`, `creditAmountCents`).
+- `client/api/_lib/sav/detail-handler.ts` — `SAV_SELECT` étendu (member flags), 4e requête parallèle `settings`, projection `settingsSnapshot` + `meta.settingsDegraded`, unwrap `.bp` local pour compat seed jsonb.
+- `client/package.json` — override ESLint AC #9 pour `useSavLinePreview.ts`.
+- `client/tests/unit/api/sav/detail.spec.ts` — mock `settings` table, 2 nouveaux cas : Story 4.3 member flags + settings shape `{bp}` + dégradation settings absents.
+- `client/tests/unit/features/back-office/SavDetailView.spec.ts` — SAV_PAYLOAD mis à jour (member.isGroupManager, member.groupId, sav.groupId, settingsSnapshot) pour compat nouveau contrat.
+
+### Change Log
+
+- 2026-04-24 — Story 4.3 implementée. 12 tests composable + 8 tests composant ajoutés ; 2 tests détail handler ajoutés. Baseline 472 tests verts. Build 459 KB. `vue-tsc` 0 erreur. `lint:business` 0 erreur. AC #9 ESLint override validé manuellement. Status → review.
+- 2026-04-24 — Code review (3 reviewers // Blind Hunter + Edge Case Hunter + Acceptance Auditor) → 8 patches appliqués (AC #2 ancre, AC #3 computed, libellé remise dynamique, null-normalization settingsSnapshot, `nowIso` unifié, try/catch defensive totaux, test perf AC #8, clamp bp handler) + 4 defers tracés dans `deferred-work.md` W29–W32 + 18 findings dismissed. Re-validation CI : 474 tests verts, `vue-tsc` 0 erreur, `lint:business` 0 erreur, build 459 KB. Status → done.

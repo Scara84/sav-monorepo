@@ -1,24 +1,128 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useSavDetail } from '../composables/useSavDetail'
+import { useSavLinePreview } from '../composables/useSavLinePreview'
+import type { SavLineInput } from '../../../../api/_lib/business/creditCalculation'
 import { formatDiff } from '../utils/format-audit-diff'
 import { isOneDriveWebUrlTrusted } from '../../../shared/utils/onedrive-whitelist'
 
 /**
  * Story 3.4 — Vue détail SAV back-office.
+ * Story 4.3 — Encart « Aperçu avoir » (preview live sans IO).
  *
- * Sections : header + lignes (readonly V1) + fichiers (preview images si webUrl
- * whitelist) + thread commentaires (compose arrive Story 3.7, readonly V1) +
- * audit trail. Dégradation propre si vignette image KO.
+ * Sections : header + lignes (readonly V1) + preview avoir + fichiers +
+ * commentaires + audit. Dégradation propre si vignette image KO.
  */
 
 const route = useRoute()
 const router = useRouter()
 const savId = computed(() => Number(route.params['id']))
-const { sav, comments, auditTrail, loading, error, refresh } = useSavDetail(savId)
+const { sav, comments, auditTrail, settingsSnapshot, loading, error, refresh } = useSavDetail(savId)
 const isNotFound = computed(() => (error.value as string | null) === 'not_found')
 const hasOtherError = computed(() => error.value !== null && !isNotFound.value)
+
+// --- Story 4.3 : preview avoir live -----------------------------------------
+const UNITS = new Set(['kg', 'piece', 'liter'])
+
+// `previewLines` = Ref mutable. V1 readonly (sync auto depuis `sav.lines`) ;
+// Story 3.6b branchera l'édition inline directement sur ce ref pour que la
+// preview réagisse au keystroke sans re-fetch.
+const previewLines = ref<SavLineInput[]>([])
+const vatRateDefaultBp = computed(() => settingsSnapshot.value.vat_rate_default_bp)
+const groupManagerDiscountBp = computed(() => settingsSnapshot.value.group_manager_discount_bp)
+
+// Review AC #3 — `isGroupManager` doit être un computed (vs ref+watch).
+const isGroupManager = computed<boolean>(() => {
+  const s = sav.value
+  if (!s || !s.member) return false
+  return !!s.member.isGroupManager && s.member.groupId !== null && s.member.groupId === s.groupId
+})
+
+// Review P3 — libellé remise dérivé des settings. Ex: 400 bp → « 4 % », 450 bp → « 4,5 % ».
+function formatBp(bp: number | null | undefined): string {
+  if (bp === null || bp === undefined || !Number.isFinite(bp)) return '—'
+  const pct = bp / 100
+  const formatted = (Math.round(pct * 100) / 100).toString().replace('.', ',')
+  return `${formatted} %`
+}
+const discountLabel = computed(() => formatBp(groupManagerDiscountBp.value))
+
+function toSavLineInput(l: {
+  qtyRequested: number
+  unitRequested: string
+  qtyInvoiced: number | null
+  unitInvoiced: string | null
+  unitPriceHtCents: number | null
+  vatRateBpSnapshot: number | null
+  creditCoefficient: number
+  pieceToKgWeightG: number | null
+}): SavLineInput {
+  return {
+    qty_requested: l.qtyRequested,
+    unit_requested: (UNITS.has(l.unitRequested)
+      ? l.unitRequested
+      : 'kg') as SavLineInput['unit_requested'],
+    qty_invoiced: l.qtyInvoiced,
+    unit_invoiced: (l.unitInvoiced && UNITS.has(l.unitInvoiced)
+      ? l.unitInvoiced
+      : null) as SavLineInput['unit_invoiced'],
+    unit_price_ht_cents: l.unitPriceHtCents,
+    vat_rate_bp_snapshot: l.vatRateBpSnapshot,
+    credit_coefficient: l.creditCoefficient,
+    piece_to_kg_weight_g: l.pieceToKgWeightG,
+  }
+}
+
+watch(
+  () => sav.value,
+  (s) => {
+    previewLines.value = (s?.lines ?? []).map(toSavLineInput)
+  },
+  { immediate: true }
+)
+
+// Review P4 — le composable attend `Ref<number | null>` / `Ref<boolean>` ;
+// on les adapte depuis les computed via des refs sync-one-way.
+const vatRateDefaultBpRef = ref<number | null>(vatRateDefaultBp.value)
+const groupManagerDiscountBpRef = ref<number | null>(groupManagerDiscountBp.value)
+const isGroupManagerRef = ref<boolean>(isGroupManager.value)
+watch(vatRateDefaultBp, (v) => {
+  vatRateDefaultBpRef.value = v
+})
+watch(groupManagerDiscountBp, (v) => {
+  groupManagerDiscountBpRef.value = v
+})
+watch(isGroupManager, (v) => {
+  isGroupManagerRef.value = v
+})
+
+const preview = useSavLinePreview({
+  lines: previewLines,
+  vatRateDefaultBp: vatRateDefaultBpRef,
+  groupManagerDiscountBp: groupManagerDiscountBpRef,
+  isGroupManager: isGroupManagerRef,
+})
+
+// Review P1 — cible de l'ancre « lien vers la 1re ligne bloquante »
+const firstBlockingLineId = computed<number | null>(() => {
+  const lines = sav.value?.lines ?? []
+  for (const l of lines) {
+    if (l.validationStatus !== 'ok') return l.id
+  }
+  return null
+})
+function scrollToFirstBlocking(event: Event): void {
+  const id = firstBlockingLineId.value
+  if (id === null) return
+  event.preventDefault()
+  const el = document.getElementById(`sav-line-${id}`)
+  if (el) el.scrollIntoView({ behavior: 'smooth', block: 'center' })
+}
+
+const showPreview = computed(
+  () => sav.value?.status === 'in_progress' || sav.value?.status === 'validated'
+)
 
 onMounted(() => {
   void refresh()
@@ -276,14 +380,22 @@ function backToList(): void {
             </tr>
           </thead>
           <tbody>
-            <tr v-for="l in sav.lines" :key="l.id">
+            <tr
+              v-for="l in sav.lines"
+              :key="l.id"
+              :id="`sav-line-${l.id}`"
+              :data-blocking="l.validationStatus !== 'ok' ? 'true' : 'false'"
+            >
               <td>{{ l.position }}</td>
               <td>{{ l.productCodeSnapshot }}</td>
               <td>{{ l.productNameSnapshot }}</td>
-              <td>{{ l.qtyRequested }} {{ l.unit }}</td>
-              <td>{{ l.qtyBilled ?? '—' }} {{ l.qtyBilled ? l.unit : '' }}</td>
+              <td>{{ l.qtyRequested }} {{ l.unitRequested }}</td>
+              <td>
+                {{ l.qtyInvoiced ?? '—' }}
+                {{ l.qtyInvoiced !== null ? (l.unitInvoiced ?? l.unitRequested) : '' }}
+              </td>
               <td>{{ formatEur(l.unitPriceHtCents) }}</td>
-              <td>{{ formatEur(l.creditCents) }}</td>
+              <td>{{ formatEur(l.creditAmountCents) }}</td>
               <td>
                 <span
                   :class="[
@@ -300,6 +412,56 @@ function backToList(): void {
             </tr>
           </tbody>
         </table>
+      </section>
+
+      <!-- Story 4.3 — Aperçu avoir (preview live, AC #2) -->
+      <section
+        v-if="showPreview"
+        class="card preview-credit-note"
+        aria-labelledby="preview-title"
+        data-testid="sav-preview-credit-note"
+      >
+        <h2 id="preview-title">Aperçu avoir</h2>
+        <div
+          v-if="preview.anyLineBlocking.value"
+          class="preview-blocking"
+          role="alert"
+          aria-live="polite"
+          data-testid="sav-preview-blocking"
+        >
+          {{ preview.blockingCount.value }} ligne(s) bloquante(s) — aucun avoir ne peut être émis
+          <a
+            v-if="firstBlockingLineId !== null"
+            :href="`#sav-line-${firstBlockingLineId}`"
+            class="preview-blocking-jump"
+            data-testid="sav-preview-blocking-jump"
+            @click="scrollToFirstBlocking"
+            >Voir la 1re ligne bloquante</a
+          >
+        </div>
+        <dl class="preview-totals">
+          <div>
+            <dt>Sous-total HT</dt>
+            <dd data-testid="preview-ht">{{ formatEur(preview.totalHtCents.value) }}</dd>
+          </div>
+          <div v-if="isGroupManager" data-testid="preview-discount-row">
+            <dt>
+              Remise responsable {{ discountLabel }}
+              <span class="badge-info" data-testid="preview-discount-badge"
+                >Remise responsable {{ discountLabel }} appliquée</span
+              >
+            </dt>
+            <dd data-testid="preview-discount">-{{ formatEur(preview.discountCents.value) }}</dd>
+          </div>
+          <div>
+            <dt>TVA</dt>
+            <dd data-testid="preview-vat">{{ formatEur(preview.vatCents.value) }}</dd>
+          </div>
+          <div class="preview-total-ttc">
+            <dt>Total TTC</dt>
+            <dd data-testid="preview-ttc">{{ formatEur(preview.totalTtcCents.value) }}</dd>
+          </div>
+        </dl>
       </section>
 
       <!-- Fichiers -->
@@ -697,5 +859,73 @@ a:focus-visible {
   background: #fee;
   border: 1px solid #c00;
   border-radius: 4px;
+}
+
+/* Story 4.3 — preview avoir */
+.preview-credit-note {
+  max-width: 480px;
+  margin-left: auto;
+}
+.preview-blocking {
+  background: #fee2e2;
+  color: #991b1b;
+  border: 1px solid #fca5a5;
+  border-radius: 4px;
+  padding: 0.5rem 0.75rem;
+  margin-bottom: 0.75rem;
+  font-size: 0.875rem;
+}
+.preview-blocking-jump {
+  display: inline-block;
+  margin-left: 0.5rem;
+  color: #991b1b;
+  text-decoration: underline;
+  font-weight: 600;
+}
+.preview-blocking-jump:hover {
+  text-decoration: none;
+}
+.preview-totals {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.preview-totals div {
+  display: flex;
+  justify-content: space-between;
+  align-items: baseline;
+  padding: 0.25rem 0;
+  border-bottom: 1px dashed #e5e7eb;
+}
+.preview-totals dt {
+  color: #374151;
+  font-size: 0.9375rem;
+}
+.preview-totals dd {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+  font-size: 0.9375rem;
+}
+.preview-total-ttc {
+  border-bottom: none !important;
+  border-top: 2px solid #111827;
+  margin-top: 0.25rem;
+  padding-top: 0.5rem !important;
+}
+.preview-total-ttc dt,
+.preview-total-ttc dd {
+  font-weight: 700;
+  font-size: 1.25em;
+}
+.badge-info {
+  background: #dbeafe;
+  color: #1e40af;
+  border: 1px solid #93c5fd;
+  padding: 0 0.375rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+  margin-left: 0.5rem;
+  font-weight: 400;
 }
 </style>

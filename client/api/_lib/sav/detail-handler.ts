@@ -3,6 +3,11 @@ import { ensureRequestId } from '../request-id'
 import { sendError } from '../errors'
 import { logger } from '../logger'
 import { supabaseAdmin } from '../clients/supabase-admin'
+import {
+  resolveDefaultVatRateBp,
+  resolveGroupManagerDiscountBp,
+  type SettingRow,
+} from '../business/settingsResolver'
 import type { ApiHandler, ApiRequest, ApiResponse } from '../types'
 
 /**
@@ -27,7 +32,7 @@ const SAV_SELECT = `
   id, reference, status, version, member_id, group_id, invoice_ref, invoice_fdp_cents,
   total_amount_cents, tags, assigned_to,
   received_at, taken_at, validated_at, closed_at, cancelled_at, created_at, updated_at,
-  member:members!inner ( id, first_name, last_name, email ),
+  member:members!inner ( id, first_name, last_name, email, is_group_manager, group_id ),
   group:groups ( id, name ),
   assignee:operators!sav_assigned_to_fkey ( id, display_name, email ),
   lines:sav_lines ( id, product_id, product_code_snapshot, product_name_snapshot,
@@ -101,7 +106,13 @@ function buildCoreHandler(savId: number): ApiHandler {
       // F48 (CR Epic 3) : Promise.allSettled pour dégrader proprement si
       // l'une des 2 queries annexes échoue (ex. `audit_trail` RLS misconfig).
       // Le SAV principal reste KO bloquant (sans sav, rien à afficher).
-      const [savResult, commentsResult, auditResult] = await Promise.allSettled([
+      // Story 4.3 — 4e parallèle : settings versionnés (TVA + remise
+      // responsable) actifs à now(), consommés côté front pour fallback ligne
+      // NULL + badge remise.
+      // Review P5 — un seul `nowIso` partagé pour la fenêtre de validité
+      // (évite le drift sub-ms entre `.lte(valid_from)` et `.or(valid_to)`).
+      const nowIso = new Date().toISOString()
+      const [savResult, commentsResult, auditResult, settingsResult] = await Promise.allSettled([
         admin.from('sav').select(SAV_SELECT).eq('id', savId).maybeSingle(),
         admin
           .from('sav_comments')
@@ -115,6 +126,12 @@ function buildCoreHandler(savId: number): ApiHandler {
           .eq('entity_id', savId)
           .order('created_at', { ascending: false })
           .limit(100),
+        admin
+          .from('settings')
+          .select('key, value, valid_from, valid_to')
+          .in('key', ['vat_rate_default', 'group_manager_discount'])
+          .lte('valid_from', nowIso)
+          .or(`valid_to.is.null,valid_to.gt.${nowIso}`),
       ])
 
       // SAV principal : fail ou reject → 500 (pas de rendu partiel possible).
@@ -181,6 +198,60 @@ function buildCoreHandler(savId: number): ApiHandler {
         })
       }
 
+      // Story 4.3 — settings_snapshot : non bloquant. Si la query échoue, on
+      // sert les snapshots à null et le composable preview affichera '—' sans
+      // fatal error (AC #4 : valeur null acceptable, la preview reste robuste).
+      let settingsSnapshot: {
+        vat_rate_default_bp: number | null
+        group_manager_discount_bp: number | null
+      } = { vat_rate_default_bp: null, group_manager_discount_bp: null }
+      let settingsDegraded = false
+      if (settingsResult.status === 'fulfilled' && !settingsResult.value.error) {
+        const rawRows = (settingsResult.value.data ?? []) as Array<{
+          key: string
+          value: unknown
+          valid_from: string
+          valid_to: string | null
+        }>
+        // Seed Epic 1 stocke `{"bp": N}` en jsonb ; resolver attend un nombre.
+        // Normalisation : on extrait .bp si présent, sinon on passe la valeur
+        // brute (compat backward avec tests settingsResolver).
+        const rows: SettingRow[] = rawRows.map((r) => ({
+          key: r.key,
+          value:
+            r.value !== null &&
+            typeof r.value === 'object' &&
+            'bp' in (r.value as Record<string, unknown>)
+              ? (r.value as { bp: unknown }).bp
+              : r.value,
+          valid_from: r.valid_from,
+          valid_to: r.valid_to,
+        }))
+        // Review P8 — clamp défensif côté source : si un admin insère une
+        // valeur hors plage (ex: bp=-100 ou bp=12000), on renvoie null
+        // plutôt que laisser la valeur polluer la preview. Le resolver
+        // clamp déjà ([0, 10000]) pour `group_manager_discount`, on ajoute
+        // le même garde-fou sur `vat_rate_default` (0 accepté, max 10000 =
+        // 100 % pour laisser la marge mais refuser les valeurs absurdes).
+        const vatBp = resolveDefaultVatRateBp(rows)
+        const discountBp = resolveGroupManagerDiscountBp(rows)
+        settingsSnapshot = {
+          vat_rate_default_bp: vatBp !== null && vatBp >= 0 && vatBp <= 10000 ? vatBp : null,
+          group_manager_discount_bp:
+            discountBp !== null && discountBp >= 0 && discountBp <= 10000 ? discountBp : null,
+        }
+      } else {
+        settingsDegraded = true
+        logger.warn('sav.detail.settings_degraded', {
+          requestId,
+          savId,
+          reason:
+            settingsResult.status === 'rejected'
+              ? String(settingsResult.reason)
+              : settingsResult.value.error?.message,
+        })
+      }
+
       const durationMs = Date.now() - startedAt
       logger.info('sav.detail.success', {
         requestId,
@@ -196,6 +267,7 @@ function buildCoreHandler(savId: number): ApiHandler {
         commentsDegraded,
         auditDegraded,
         auditTruncated,
+        settingsDegraded,
         durationMs,
       })
 
@@ -204,11 +276,13 @@ function buildCoreHandler(savId: number): ApiHandler {
           sav: projectSav(savResult.value.data as unknown as Record<string, unknown>),
           comments,
           auditTrail,
+          settingsSnapshot,
         },
         meta: {
           commentsDegraded,
           auditDegraded,
           auditTruncated,
+          settingsDegraded,
         },
       })
     } catch (err) {
@@ -249,6 +323,8 @@ function projectSav(row: Record<string, unknown>): Record<string, unknown> {
       first_name: string | null
       last_name: string
       email: string
+      is_group_manager: boolean | null
+      group_id: number | null
     } | null
     group: { id: number; name: string } | null
     assignee: { id: number; display_name: string; email: string } | null
@@ -280,6 +356,8 @@ function projectSav(row: Record<string, unknown>): Record<string, unknown> {
           firstName: r.member.first_name,
           lastName: r.member.last_name,
           email: r.member.email,
+          isGroupManager: r.member.is_group_manager === true,
+          groupId: r.member.group_id,
         }
       : null,
     group: r.group,

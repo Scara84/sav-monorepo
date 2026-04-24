@@ -9,6 +9,7 @@ const db = vi.hoisted(() => ({
   savRow: null as Record<string, unknown> | null,
   comments: [] as Array<Record<string, unknown>>,
   audit: [] as Array<Record<string, unknown>>,
+  settings: [] as Array<Record<string, unknown>>,
   rateLimitAllowed: true,
 }))
 
@@ -16,6 +17,7 @@ function resetDb(): void {
   db.savRow = null
   db.comments = []
   db.audit = []
+  db.settings = []
   db.rateLimitAllowed = true
 }
 
@@ -48,6 +50,18 @@ vi.mock('../../../../api/_lib/clients/supabase-admin', () => {
                 order: () => ({
                   limit: () => Promise.resolve({ data: db.audit, error: null }),
                 }),
+              }),
+            }),
+          }),
+        }
+      }
+      if (table === 'settings') {
+        // Chain `.select(...).in(...).lte(...).or(...)` → { data, error }
+        return {
+          select: () => ({
+            in: () => ({
+              lte: () => ({
+                or: () => Promise.resolve({ data: db.settings, error: null }),
               }),
             }),
           }),
@@ -370,5 +384,105 @@ describe('GET /api/sav/:id (Story 3.4)', () => {
     expect(line).not.toHaveProperty('vatRateBp')
     expect(line).not.toHaveProperty('creditCents')
     expect(line).not.toHaveProperty('validationMessages')
+  })
+
+  it('Story 4.3 : member.isGroupManager + member.groupId + settingsSnapshot dans la réponse', async () => {
+    db.savRow = {
+      id: 1,
+      reference: 'SAV-2026-00003',
+      status: 'in_progress',
+      version: 1,
+      member_id: 10,
+      group_id: 42,
+      invoice_ref: 'FAC-3',
+      invoice_fdp_cents: 0,
+      total_amount_cents: 0,
+      tags: [],
+      assigned_to: null,
+      received_at: '2026-03-01T00:00:00.000Z',
+      taken_at: null,
+      validated_at: null,
+      closed_at: null,
+      cancelled_at: null,
+      created_at: '2026-03-01T00:00:00.000Z',
+      updated_at: '2026-03-01T00:00:00.000Z',
+      member: {
+        id: 10,
+        first_name: 'Marie',
+        last_name: 'Durand',
+        email: 'm@d.com',
+        is_group_manager: true,
+        group_id: 42,
+      },
+      group: null,
+      assignee: null,
+      lines: [],
+      files: [],
+    }
+    // settings jsonb seed shape : { "bp": N } → le handler déballe .bp pour
+    // passer un nombre au resolver (AC #4).
+    db.settings = [
+      {
+        key: 'vat_rate_default',
+        value: { bp: 550 },
+        valid_from: '2020-01-01T00:00:00Z',
+        valid_to: null,
+      },
+      {
+        key: 'group_manager_discount',
+        value: { bp: 400 },
+        valid_from: '2020-01-01T00:00:00Z',
+        valid_to: null,
+      },
+    ]
+    const res = mockRes()
+    await handler(req(['1']), res)
+    expect(res.statusCode).toBe(200)
+    const body = res.jsonBody as {
+      data: {
+        sav: { member: { isGroupManager: boolean; groupId: number | null } | null }
+        settingsSnapshot: {
+          vat_rate_default_bp: number | null
+          group_manager_discount_bp: number | null
+        }
+      }
+      meta: { settingsDegraded: boolean }
+    }
+    expect(body.data.sav.member?.isGroupManager).toBe(true)
+    expect(body.data.sav.member?.groupId).toBe(42)
+    expect(body.data.settingsSnapshot.vat_rate_default_bp).toBe(550)
+    expect(body.data.settingsSnapshot.group_manager_discount_bp).toBe(400)
+    expect(body.meta.settingsDegraded).toBe(false)
+  })
+
+  it('Story 4.3 : settings absents → snapshot null, pas de 500', async () => {
+    db.savRow = {
+      id: 1,
+      reference: 'x',
+      member: {
+        id: 1,
+        first_name: null,
+        last_name: 'X',
+        email: 'x@x.com',
+        is_group_manager: false,
+        group_id: null,
+      },
+      lines: [],
+      files: [],
+    }
+    db.settings = [] // aucune ligne settings
+    const res = mockRes()
+    await handler(req(['1']), res)
+    expect(res.statusCode).toBe(200)
+    const body = res.jsonBody as {
+      data: {
+        settingsSnapshot: {
+          vat_rate_default_bp: number | null
+          group_manager_discount_bp: number | null
+        }
+      }
+    }
+    expect(body.data.settingsSnapshot.vat_rate_default_bp).toBeNull()
+    expect(body.data.settingsSnapshot.group_manager_discount_bp).toBeNull()
   })
 })

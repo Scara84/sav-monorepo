@@ -4,6 +4,13 @@ import { ref, watch, type Ref } from 'vue'
  * Story 3.4 — composable pour la vue détail SAV.
  *
  * Consomme `GET /api/sav/:id`. Refetch automatique si `id` change.
+ *
+ * Story 4.3 :
+ *   - Ajout champs `member.isGroupManager` + `member.groupId` pour détection
+ *     responsable.
+ *   - Ajout `settingsSnapshot` (TVA par défaut + remise responsable) pour
+ *     fallback ligne + badge remise.
+ *   - Types de ligne alignés sur le schéma `sav_lines` PRD-target (Story 4.0).
  */
 
 export interface SavDetailMember {
@@ -11,6 +18,8 @@ export interface SavDetailMember {
   firstName: string | null
   lastName: string
   email: string
+  isGroupManager: boolean
+  groupId: number | null
 }
 
 export interface SavDetailLine {
@@ -19,15 +28,19 @@ export interface SavDetailLine {
   productCodeSnapshot: string
   productNameSnapshot: string
   qtyRequested: number
-  unit: string
-  qtyBilled: number | null
+  unitRequested: string
+  qtyInvoiced: number | null
+  unitInvoiced: string | null
   unitPriceHtCents: number | null
-  vatRateBp: number | null
-  creditCoefficientBp: number | null
-  creditCents: number | null
+  vatRateBpSnapshot: number | null
+  creditCoefficient: number
+  creditCoefficientLabel: string | null
+  pieceToKgWeightG: number | null
+  creditAmountCents: number | null
   validationStatus: string
-  validationMessages: unknown
+  validationMessage: string | null
   position: number
+  lineNumber: number | null
 }
 
 export interface SavDetailFile {
@@ -49,6 +62,7 @@ export interface SavDetailSav {
   reference: string
   status: string
   version: number
+  groupId: number | null
   invoiceRef: string
   invoiceFdpCents: number | null
   totalAmountCents: number | null
@@ -85,10 +99,16 @@ export interface SavDetailAudit {
   diff: { before?: Record<string, unknown> | null; after?: Record<string, unknown> | null } | null
 }
 
+export interface SettingsSnapshot {
+  vat_rate_default_bp: number | null
+  group_manager_discount_bp: number | null
+}
+
 export interface SavDetailPayload {
   sav: SavDetailSav
   comments: SavDetailComment[]
   auditTrail: SavDetailAudit[]
+  settingsSnapshot: SettingsSnapshot
 }
 
 export type SavDetailErrorKind =
@@ -104,10 +124,16 @@ export function isNotFoundError(e: SavDetailErrorKind | null): boolean {
   return e === 'not_found'
 }
 
+const EMPTY_SETTINGS: SettingsSnapshot = {
+  vat_rate_default_bp: null,
+  group_manager_discount_bp: null,
+}
+
 export function useSavDetail(id: Ref<number>) {
   const sav = ref<SavDetailSav | null>(null)
   const comments = ref<SavDetailComment[]>([])
   const auditTrail = ref<SavDetailAudit[]>([])
+  const settingsSnapshot = ref<SettingsSnapshot>({ ...EMPTY_SETTINGS })
   const loading = ref(false)
   const error = ref<SavDetailErrorKind | null>(null)
   // F49 (CR Epic 3) : AbortController + check id-at-resolution pour éviter
@@ -165,6 +191,17 @@ export function useSavDetail(id: Ref<number>) {
       sav.value = body.data.sav
       comments.value = body.data.comments
       auditTrail.value = body.data.auditTrail
+      // Review P4 — normalise tout champ absent/undefined à null pour que les
+      // checks `=== null` en aval (composables, computed) soient fiables.
+      const incoming = body.data.settingsSnapshot
+      settingsSnapshot.value = {
+        vat_rate_default_bp:
+          typeof incoming?.vat_rate_default_bp === 'number' ? incoming.vat_rate_default_bp : null,
+        group_manager_discount_bp:
+          typeof incoming?.group_manager_discount_bp === 'number'
+            ? incoming.group_manager_discount_bp
+            : null,
+      }
     } catch (err) {
       if ((err as { name?: string })?.name === 'AbortError') return
       if (seq !== requestSeq || seenId !== id.value) return
@@ -185,5 +222,13 @@ export function useSavDetail(id: Ref<number>) {
     { immediate: false }
   )
 
-  return { sav, comments, auditTrail, loading, error, refresh: fetchDetail }
+  return {
+    sav,
+    comments,
+    auditTrail,
+    settingsSnapshot,
+    loading,
+    error,
+    refresh: fetchDetail,
+  }
 }

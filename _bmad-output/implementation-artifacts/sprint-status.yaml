@@ -38,7 +38,7 @@
 # - Une story passe par 'review' avant 'done' (via bmad-code-review)
 
 generated: 2026-04-18
-last_updated: 2026-04-27
+last_updated: 2026-04-24
 # 2026-04-27 : Stories 4.3 / 4.4 / 4.5 / 4.6 créées (ready-for-dev) — fin
 # contextualisation Epic 4. 4.3 preview live (composable useSavLinePreview +
 # extension detail-handler settings_snapshot + bloc UI Aperçu avoir + remise
@@ -182,7 +182,7 @@ development_status:
   4-0b-dette-tests-sql-rpc-epic-3: done
   4-1-migration-avoirs-sequence-transactionnelle-rpc: done
   4-2-moteur-calculs-metier-typescript-triggers-miroirs-fixture-excel: done
-  4-3-integration-moteur-vue-detail-preview-live: ready-for-dev
+  4-3-integration-moteur-vue-detail-preview-live: done
   4-4-emission-atomique-n-avoir-bon-sav: ready-for-dev
   4-5-template-pdf-charte-fruitstock-generation-serverless: ready-for-dev
   4-6-test-de-charge-sequence-d-avoir: ready-for-dev
