@@ -39,6 +39,28 @@
 
 generated: 2026-04-18
 last_updated: 2026-04-24
+# 2026-04-24 : Story 4.4 done après CR adversarial 3 couches (Blind+Edge+Auditor).
+# 24 findings bruts → triage 10 patches (2 High P1/P2, 5 Medium P3-P7, 3 Low
+# P8-P10) + 1 defer (W33 clock drift settings cross-4.3/4.4) + 10 dismissed.
+# Patches : P1 cap :number 15 digits (MAX_SAFE_INTEGER), P2 regex format
+# \d{5,} (lpad ne tronque pas ≥100k), P3 settings error → 500 bloquant
+# (no silent financial fallback), P4 allowlist https:// sur pdf_web_url
+# (defense-in-depth open redirect), P5 gate order credit_note existant
+# AVANT status check, P6 log warn group_manager + sav.group_id null,
+# P7 SQL test 2 RPC back-to-back sav_id → last_number +1, P8 body Array
+# rejeté 400 INVALID_BODY, P9 normalizeMember log warn array>1 + 500 si
+# null, P10 race 23505 re-SELECT pour inclure number_formatted. Vitest
+# 519/519 (+10 CR), typecheck 0, lint:business 0, build 459.16 KB stable.
+# 2026-04-24 : Story 4.4 émission atomique → review. Migration UNIQUE(sav_id)
+# + handler emit-handler.ts (24 tests Vitest AC #1-7,#10) + handler pdf-
+# redirect-handler.ts (8 tests AC #8) + stub generate-pdf-async.ts (Story
+# 4.5 override) + dispatcher dédié api/credit-notes.ts (12/12 Vercel Hobby
+# functions, plafond atteint) + rewrite vercel.json /api/sav/:id/credit-
+# notes + /api/credit-notes/:number/pdf + test SQL issue_credit_number_
+# emit.test.sql (3 tests AC #11) + docs api-contracts-vercel.md sections
+# émission + re-download. Vitest 509/509 (+59 vs baseline), typecheck 0,
+# lint:business 0, build 459.16 KB stable. Stub PDF documenté dégradé
+# (Story 4.5 remplacera par @react-pdf + upload OneDrive).
 # 2026-04-27 : Stories 4.3 / 4.4 / 4.5 / 4.6 créées (ready-for-dev) — fin
 # contextualisation Epic 4. 4.3 preview live (composable useSavLinePreview +
 # extension detail-handler settings_snapshot + bloc UI Aperçu avoir + remise
@@ -183,7 +205,7 @@ development_status:
   4-1-migration-avoirs-sequence-transactionnelle-rpc: done
   4-2-moteur-calculs-metier-typescript-triggers-miroirs-fixture-excel: done
   4-3-integration-moteur-vue-detail-preview-live: done
-  4-4-emission-atomique-n-avoir-bon-sav: ready-for-dev
+  4-4-emission-atomique-n-avoir-bon-sav: done
   4-5-template-pdf-charte-fruitstock-generation-serverless: ready-for-dev
   4-6-test-de-charge-sequence-d-avoir: ready-for-dev
   epic-4-retrospective: optional

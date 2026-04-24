@@ -1,6 +1,6 @@
 # Story 4.4: Émission atomique n° avoir + bon SAV
 
-Status: ready-for-dev
+Status: done
 
 <!-- Endpoint opérateur qui finalise le cycle SAV : calcule totaux via moteur 4.2,
      appelle RPC `issue_credit_number` (4.1) = numéro séquentiel sans collision,
@@ -194,52 +194,99 @@ COMMENT ON CONSTRAINT uniq_credit_notes_sav_id ON credit_notes IS
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — Migration contrainte UNIQUE (AC #9)**
-  - [ ] 1.1 Créer `client/supabase/migrations/20260427120000_credit_notes_unique_sav.sql`
-  - [ ] 1.2 Vérifier l'application locale (`supabase db reset` ou `db push` préview)
-  - [ ] 1.3 Test SQL validation contrainte (intégré AC #11)
+- [x] **Task 1 — Migration contrainte UNIQUE (AC #9)**
+  - [x] 1.1 Créer `client/supabase/migrations/20260427120000_credit_notes_unique_sav.sql`
+  - [x] 1.2 Vérifier l'application locale (`supabase db reset` ou `db push` préview)
+  - [x] 1.3 Test SQL validation contrainte (intégré AC #11)
 
-- [ ] **Task 2 — Handler `emit-handler.ts` (AC #1-7, #10)**
-  - [ ] 2.1 Créer `client/api/_lib/credit-notes/emit-handler.ts` — signature `ApiHandler`
-  - [ ] 2.2 Zod schema `EmitCreditNoteBody` + parse body
-  - [ ] 2.3 Extraction & validation `:id` (regex bigint)
-  - [ ] 2.4 Fetch SAV + lignes + member + settings (4 requêtes, parallèles quand possible)
-  - [ ] 2.5 Gate statut SAV + credit_note existant
-  - [ ] 2.6 Gate lignes bloquantes
-  - [ ] 2.7 Résolution `settings_snapshot` via `settingsResolver.ts` + flag `isGroupManager`
-  - [ ] 2.8 Calcul totaux via `computeCreditNoteTotals` (4.2)
-  - [ ] 2.9 Appel RPC `issue_credit_number` + gestion erreurs typées
-  - [ ] 2.10 Enqueue async génération PDF (stub `generateCreditNotePdfAsync` V1 si 4.5 pas livré)
-  - [ ] 2.11 Réponse 200 + `pdf_status='pending'`
+- [x] **Task 2 — Handler `emit-handler.ts` (AC #1-7, #10)**
+  - [x] 2.1 Créer `client/api/_lib/credit-notes/emit-handler.ts` — signature `ApiHandler`
+  - [x] 2.2 Zod schema `EmitCreditNoteBody` + parse body
+  - [x] 2.3 Extraction & validation `:id` (regex bigint — via dispatcher `sav.ts`)
+  - [x] 2.4 Fetch SAV + lignes + member + settings (4 requêtes `Promise.all`)
+  - [x] 2.5 Gate statut SAV + credit_note existant
+  - [x] 2.6 Gate lignes bloquantes
+  - [x] 2.7 Résolution `settings_snapshot` via `settingsResolver.ts` + flag `isGroupManager`
+  - [x] 2.8 Calcul totaux via `computeCreditNoteTotals` (4.2)
+  - [x] 2.9 Appel RPC `issue_credit_number` + gestion erreurs typées (ACTOR/SAV/INVALID_BON_TYPE/23505)
+  - [x] 2.10 Enqueue async génération PDF (stub `generateCreditNotePdfAsync` — Story 4.5 livre la pipeline réelle)
+  - [x] 2.11 Réponse 200 + `pdf_status='pending'`
 
-- [ ] **Task 3 — Handler re-download PDF (AC #8)**
-  - [ ] 3.1 Créer `client/api/_lib/credit-notes/pdf-redirect-handler.ts`
-  - [ ] 3.2 Parse `:number` (regex `/^(\d+|AV-\d{4}-\d{5})$/`) + SELECT credit_notes
-  - [ ] 3.3 Branches 404 / 202 pending / 302 redirect (header `Location`)
-  - [ ] 3.4 Dispatcher : créer `client/api/credit-notes.ts` ou ajouter au dispatcher existant (décider selon quota Vercel)
+- [x] **Task 3 — Handler re-download PDF (AC #8)**
+  - [x] 3.1 Créer `client/api/_lib/credit-notes/pdf-redirect-handler.ts`
+  - [x] 3.2 Parse `:number` (regex `/^(\d+|AV-\d{4}-\d{5})$/`) + SELECT credit_notes
+  - [x] 3.3 Branches 404 / 202 pending / 302 redirect (header `Location` + `Cache-Control: no-store`)
+  - [x] 3.4 Dispatcher : créer `client/api/credit-notes.ts` (12/12 serverless functions — plafond Hobby atteint)
 
-- [ ] **Task 4 — Dispatcher `sav.ts` étendu (AC #1)**
-  - [ ] 4.1 Importer `emitCreditNoteHandler` dans `client/api/sav.ts`
-  - [ ] 4.2 Ajouter branche `method=POST + segments=[:id, 'credit-notes']` → dispatch
-  - [ ] 4.3 Tests dispatcher mise à jour (pattern Epic 3)
+- [x] **Task 4 — Dispatcher `sav.ts` étendu (AC #1)**
+  - [x] 4.1 Importer `emitCreditNoteHandler` dans `client/api/sav.ts`
+  - [x] 4.2 Ajouter branche `op='credit-notes'` avec method=POST → dispatch
+  - [x] 4.3 Rewrite `vercel.json` `/api/sav/:id/credit-notes` → `/api/sav?op=credit-notes&id=:id`
 
-- [ ] **Task 5 — Tests (AC #10, #11)**
-  - [ ] 5.1 `emit-handler.test.ts` ≥ 15 cas Vitest
-  - [ ] 5.2 `pdf-redirect-handler.test.ts` ≥ 5 cas (404, pending, redirect, id invalide, formats dual)
-  - [ ] 5.3 `issue_credit_number_emit.test.sql` (3 tests SQL)
-  - [ ] 5.4 Wire new SQL test dans CI `migrations-check` (pattern Story 4.0b)
+- [x] **Task 5 — Tests (AC #10, #11)**
+  - [x] 5.1 `emit.spec.ts` — 24 cas Vitest (happy 3 bon_types, strict fail, tous gates, race UNIQUE, remise responsable, fallback TVA, totaux 3 lignes, PDF enqueue, rate limit, no cookie, méthode, null anomaly)
+  - [x] 5.2 `pdf-redirect.spec.ts` — 8 cas (404, 202 pending, 302 redirect, dual formats, invalid, 401, method)
+  - [x] 5.3 `issue_credit_number_emit.test.sql` (3 tests SQL : UNIQUE constraint, cascade read, audit_trail)
+  - [x] 5.4 Wire SQL test dans CI `migrations-check` (glob `tests/rpc/*.sql` déjà pris en charge par Story 4.0b — aucun changement workflow requis)
 
-- [ ] **Task 6 — Documentation + Tracker (AC #12)**
-  - [ ] 6.1 Amender `docs/api-contracts-vercel.md` (section Avoirs)
-  - [ ] 6.2 Amender `client/supabase/tests/rpc/README.md` (liste tests SQL)
-  - [ ] 6.3 Note header `emit-handler.ts` (≤ 30 lignes : but, invariants, dépendances 4.1/4.2/4.5)
+- [x] **Task 6 — Documentation + Tracker (AC #12)**
+  - [x] 6.1 Amender `docs/api-contracts-vercel.md` (sections `POST /api/sav/:id/credit-notes` + `GET /api/credit-notes/:number/pdf`)
+  - [x] 6.2 Amender `client/supabase/tests/rpc/README.md` (ligne `issue_credit_number_emit.test.sql`)
+  - [x] 6.3 Note header `emit-handler.ts` + `pdf-redirect-handler.ts` + `generate-pdf-async.ts` (but, invariants, dépendances 4.1/4.2/4.5)
 
-- [ ] **Task 7 — Vérifications CI**
-  - [ ] 7.1 `npm test` tous verts (+20 tests)
-  - [ ] 7.2 `npm run typecheck` 0 erreur
-  - [ ] 7.3 `npm run lint:business` 0 erreur
-  - [ ] 7.4 `npm run build` 459 KB ± 5 %
-  - [ ] 7.5 Preview Vercel : émettre un avoir réel bout-en-bout, vérifier row en DB + audit_trail + response JSON
+- [x] **Task 7 — Vérifications CI**
+  - [x] 7.1 `npm test` 509/509 verts (+59 vs baseline 450 — inclut 24 emit + 8 pdf-redirect)
+  - [x] 7.2 `npm run typecheck` 0 erreur
+  - [x] 7.3 `npm run lint:business` 0 erreur (handler hors couche business — IO autorisée)
+  - [x] 7.4 `npm run build` 459.16 KB (stable, -6 B vs baseline 459 KB)
+  - [ ] 7.5 Preview Vercel : émettre un avoir réel bout-en-bout, vérifier row en DB + audit_trail + response JSON (à faire manuellement post-merge — stub PDF dégradé documenté AC #7)
+
+### Review Findings
+
+Code review adversarial 3 couches (Blind Hunter + Edge Case Hunter + Acceptance Auditor) — 2026-04-24.
+
+**Patches appliqués**
+
+- [x] [Review][Patch][HIGH] P1 — Cap `:number` à 15 chiffres (`MAX_SAFE_INTEGER`) dans le dispatcher + handler PDF [client/api/_lib/credit-notes/pdf-redirect-handler.ts:NUMBER_BIGINT_RE + client/api/credit-notes.ts:parseNumber]
+- [x] [Review][Patch][HIGH] P2 — `NUMBER_FORMATTED_RE` accepte `\d{5,}` — le GENERATED `lpad(5)` ne tronque pas [client/api/_lib/credit-notes/pdf-redirect-handler.ts + client/api/credit-notes.ts]
+- [x] [Review][Patch][MEDIUM] P3 — `settingsResult.error` → 500 `CREDIT_NOTE_ISSUE_FAILED` (plus de fallback silencieux sur données financières) [client/api/_lib/credit-notes/emit-handler.ts]
+- [x] [Review][Patch][MEDIUM] P4 — Validation `pdf_web_url` commence par `https://` avant 302 ; sinon 500 `PDF_URL_INVALID` + log [client/api/_lib/credit-notes/pdf-redirect-handler.ts]
+- [x] [Review][Patch][MEDIUM] P5 — Gates réordonnés : existing credit_note check AVANT status check [client/api/_lib/credit-notes/emit-handler.ts]
+- [x] [Review][Patch][MEDIUM] P6 — Log warning `credit_note.emit.group_manager_without_sav_group` si responsable + sav.group_id null [client/api/_lib/credit-notes/emit-handler.ts]
+- [x] [Review][Patch][MEDIUM] P7 — Test SQL Test 4 ajouté : 2 RPC back-to-back → `last_number` avance de +1 [client/supabase/tests/rpc/issue_credit_number_emit.test.sql]
+- [x] [Review][Patch][LOW] P8 — Body Array rejeté avec 400 `INVALID_BODY` [client/api/_lib/credit-notes/emit-handler.ts]
+- [x] [Review][Patch][LOW] P9 — `normalizeMember` log warn si array>1, 500 `CREDIT_NOTE_ISSUE_FAILED` si null [client/api/_lib/credit-notes/emit-handler.ts]
+- [x] [Review][Patch][LOW] P10 — Race 23505 : re-SELECT `number_formatted` pour inclusion dans `details` [client/api/_lib/credit-notes/emit-handler.ts]
+
+**Deferred (pre-existing)**
+
+- [x] [Review][Defer][MEDIUM] D1 — Clock drift fenêtre settings (`valid_from <= now AND (valid_to IS NULL OR valid_to > now)`) : pattern identique à Story 4.3 `detail-handler.ts`, risque de 0 row match sur transition exacte — à traiter globalement avec 4.3 [client/api/_lib/credit-notes/emit-handler.ts + client/api/_lib/sav/detail-handler.ts]
+
+**Dismissed (noise / false-positive / Epic 3 convention aligned)**
+
+- L2 : `sav_lines ORDER BY position` sans `position` SELECTé — SQL/PostgREST accepte trier par colonne non projetée.
+- L4 : `user.sub` typing — `SessionUser.sub: number` dans `types.ts`, pré-existant Epic 3.
+- L5 : test SQL 3 `ORDER BY created_at DESC LIMIT 1` — les 2 rows audit_trail de la txn ont le même `actor_operator_id`, l'assertion reste vraie.
+- L6 : `Location` CRLF sanitization — Node `setHeader` valide natif (throw `ERR_INVALID_CHAR`) → 500 propre via catch.
+- L7 : leading zeros `:number` — deux chemins équivalents, noise audit uniquement.
+- L8 : trim / case sur `number_formatted` — REST norm, comportement acceptable + documenté.
+- AC #2 `INVALID_ID` : convention Epic 3 (tous les handlers utilisent `VALIDATION_FAILED` + `details[{field}]`), doc alignée ; pas de divergence de comportement.
+- AC #4 SELECT narrower : les 7 colonnes omises sont inutilisées par le handler, équivalent fonctionnel.
+- AC #7 réponse imbriquée `data` : convention Epic 3, doc alignée.
+- AC #10 T17 vat=34 vs spec 33 : erreur d'arithmétique dans la spec (Story 4.2 rounding per-line = 6+11+17 = 34), test correct.
+
+**Bilan** : 10 patches (2 High, 5 Medium, 3 Low) + 1 defer + 10 dismissed.
+
+**Post-CR CI** :
+- Vitest **519/519** verts (+10 vs post-implementation 509 : 5 tests CR dans `emit.spec.ts` + 5 tests CR dans `pdf-redirect.spec.ts`)
+- `npm run typecheck` 0 erreur
+- `npm run lint:business` 0 erreur
+- `npm run build` 459.16 KB (stable)
+
+## Change Log
+
+- 2026-04-24 : Story 4.4 implémentée (24 tests Vitest emit + 8 tests pdf + 3 tests SQL) + review.
+- 2026-04-24 : CR adversarial 3 couches (Blind + Edge + Auditor) → 10 patches appliqués (P1 cap 15 digits number, P2 regex `\d{5,}`, P3 settings error 500, P4 allowlist https pdf_web_url, P5 gate order, P6 group_id null warn, P7 SQL test séquence, P8 body array, P9 normalizeMember strict, P10 race 23505 number_formatted) + 1 defer W33 clock drift settings cross-4.3/4.4. Tests +10 (519/519). Status → done.
 
 ## Dev Notes
 
@@ -346,10 +393,49 @@ Côté 4.4, l'appel est **fire-and-forget** : le handler ne bloque pas, les erre
 
 ### Agent Model Used
 
-{{agent_model_name_version}}
+claude-opus-4-7[1m] (Amelia / bmad-agent-dev)
 
 ### Debug Log References
 
+- Erreur typecheck transitoire sur `pdf-redirect-handler.ts` : ré-assignation d'un `PostgrestFilterBuilder` à une variable typée `PostgrestQueryBuilder` — résolu en déterminant `lookupColumn`/`lookupValue` en amont puis en chaînant `.eq(col, val).limit(1).maybeSingle()` sur un seul builder.
+- Baseline tests : 450/450 (Story 4.2 done 2026-04-25). Post-4.3 + 4.4 : 509/509 (+59 tests, dont 24 emit + 8 pdf-redirect pour 4.4).
+
 ### Completion Notes List
 
+- **AC #1** (endpoint + dispatcher) : handler servi par `api/sav.ts` via `op='credit-notes'`, pas de nouvelle serverless function ; `api/credit-notes.ts` créé pour le re-download PDF uniquement (budget Hobby 12/12).
+- **AC #2** (Zod strict) : validation inline (pas `withValidation`) pour distinguer 400 `INVALID_BODY` (body absent / non-objet / clé inconnue) de 422 `INVALID_BON_TYPE` (enum invalide).
+- **AC #3** (gate + UNIQUE) : check app-level `credit_notes WHERE sav_id = :id` en `Promise.all` avec les autres fetch, + contrainte `uniq_credit_notes_sav_id` pour le filet race. Le handler traduit `pg.code === '23505'` en 409 `CREDIT_NOTE_ALREADY_ISSUED`.
+- **AC #4** (lignes ok) : lecture une seule fois, filtre `validation_status !== 'ok'` → 422 `NO_VALID_LINES` avec les 10 premières lignes bloquantes (incl. `line_number`, `validation_message`).
+- **AC #5** (totaux) : délègue à `computeCreditNoteTotals` (Story 4.2, pur, ligne-par-ligne). Remise responsable résolue identiquement à Story 4.3 AC #3 (`member.is_group_manager && member.group_id === sav.group_id`). Fallback TVA par `settings.vat_rate_default` si `vat_rate_bp_snapshot IS NULL`.
+- **AC #6** (RPC) : 5 branches erreur typées (`SAV_NOT_FOUND`, `ACTOR_NOT_FOUND`, `INVALID_BON_TYPE`, `unique_violation` 23505, autre). Mapping HTTP cohérent Epic 3 : code spécifique dans `details.code`, status via `httpStatus()`.
+- **AC #7** (PDF async) : stub `generateCreditNotePdfAsync` créé dans `api/_lib/credit-notes/generate-pdf-async.ts` — Story 4.5 remplace le corps par la pipeline réelle @react-pdf + OneDrive. `void ... .catch(err => logger.error(...))` protège l'event loop Node.
+- **AC #8** (re-download) : nouveau dispatcher `api/credit-notes.ts` dédié — sémantique redirect OneDrive + RLS future adhérent (Story 6.4). Accepte `:number` bigint ou `AV-YYYY-NNNNN` avec regex validée côté dispatcher et handler (defense-in-depth). `Cache-Control: no-store` pour éviter la mise en cache du redirect par CDN.
+- **AC #9** (migration UNIQUE) : additive, `ADD CONSTRAINT uniq_credit_notes_sav_id UNIQUE (sav_id)`. Commentaire SQL documente la divergence V1.1 potentielle.
+- **AC #10** (Vitest) : 24 cas dans `emit.spec.ts` — dépasse la cible ≥ 15 (+ cas supplémentaires T14b group_id ≠ sav.group_id, T16b/c races RPC, T19 fallback TVA, T20 null anomaly, T22 401, T23 méthode GET, T24 body absent).
+- **AC #11** (SQL) : 3 tests dans `issue_credit_number_emit.test.sql` — UNIQUE empêche doublon, cascade lecture cohérente, trigger audit_trail avec actor.
+- **AC #12** (docs) : `api-contracts-vercel.md` + 2 nouvelles sections complètes avec table d'erreurs ; `tests/rpc/README.md` ligne ajoutée.
+- Budget Vercel Hobby : compteur serverless passe à **12/12** (plafond). Tout nouvel endpoint Epic 5+ devra soit réutiliser ce dispatcher, soit fusionner avec un existant.
+- **Décision V1 maintenue** : l'émission d'un avoir n'auto-transitionne PAS `sav.status`. L'opérateur clôture manuellement après vérification PDF (cf. Dev Notes §Décisions V1 tranchées, point 5).
+- **AC #7.5 deferred** : test bout-en-bout preview Vercel reporté post-merge — stub PDF rend la validation UI partielle pour l'instant, la vraie pipeline arrive Story 4.5.
+
 ### File List
+
+**Créés**
+
+- `client/supabase/migrations/20260427120000_credit_notes_unique_sav.sql` — migration UNIQUE(sav_id)
+- `client/api/_lib/credit-notes/emit-handler.ts` — handler émission atomique (AC #1-7)
+- `client/api/_lib/credit-notes/pdf-redirect-handler.ts` — handler re-download PDF (AC #8)
+- `client/api/_lib/credit-notes/generate-pdf-async.ts` — stub enqueue PDF (Story 4.5 override)
+- `client/api/credit-notes.ts` — dispatcher dédié `/api/credit-notes/*`
+- `client/tests/unit/api/credit-notes/emit.spec.ts` — 24 cas Vitest (AC #10)
+- `client/tests/unit/api/credit-notes/pdf-redirect.spec.ts` — 8 cas Vitest
+- `client/supabase/tests/rpc/issue_credit_number_emit.test.sql` — 3 tests SQL (AC #11)
+
+**Modifiés**
+
+- `client/api/sav.ts` — ajout dispatch `op='credit-notes'` POST → `emitCreditNoteHandler`
+- `client/vercel.json` — nouvelles rewrites + nouvelle function `api/credit-notes.ts` (12/12)
+- `client/supabase/tests/rpc/README.md` — ligne `issue_credit_number_emit.test.sql`
+- `docs/api-contracts-vercel.md` — sections `POST /api/sav/:id/credit-notes` + `GET /api/credit-notes/:number/pdf`
+- `_bmad-output/implementation-artifacts/4-4-emission-atomique-n-avoir-bon-sav.md` — Status, Tasks [x], Dev Agent Record, File List
+- `_bmad-output/implementation-artifacts/sprint-status.yaml` — `4-4-*` → `review`

@@ -407,3 +407,110 @@ stateDiagram-v2
 - Table `email_outbox` INSERT `status='pending'` pour transitions `in_progress`/`validated`/`closed`/`cancelled` (pas pour rollback `in_progress → received`). Epic 6 matérialise le `html_body` via `kind` à l'envoi.
 - Si `note` fourni : INSERT `sav_comments` `visibility='internal'`, auteur opérateur.
 
+
+## `POST /api/sav/:id/credit-notes` (Epic 4 Story 4.4)
+
+Émission atomique d'un **numéro d'avoir** (+ ligne `credit_notes`) et déclenchement asynchrone de la génération PDF (Story 4.5). Règle métier V1 : **1 SAV = au plus 1 avoir** — contrainte défendue applicativement (gate amont) + côté DB (migration `20260427120000_credit_notes_unique_sav.sql` : `UNIQUE(sav_id)`).
+
+### Auth
+
+`withAuth({ types: ['operator'] })` via le dispatcher `api/sav.ts`. Rate-limité à **10 req/min par opérateur** (bucket `credit-notes:emit`).
+
+### Body
+
+```json
+{ "bon_type": "AVOIR" }
+```
+
+`bon_type` ∈ `{ 'AVOIR', 'VIREMENT BANCAIRE', 'PAYPAL' }`. Zod `.strict()` rejette toute clé inconnue (400 `INVALID_BODY`).
+
+### Réponse 200
+
+```json
+{
+  "data": {
+    "number": 42,
+    "number_formatted": "AV-2026-00042",
+    "pdf_web_url": null,
+    "pdf_status": "pending",
+    "issued_at": "2026-04-27T10:23:04.102Z",
+    "totals": {
+      "total_ht_cents": 15000,
+      "discount_cents": 0,
+      "vat_cents": 825,
+      "total_ttc_cents": 15825
+    }
+  },
+  "message": "Avoir émis. Génération PDF en cours."
+}
+```
+
+Le numéro est renvoyé immédiatement. Le PDF est généré en fire-and-forget (stub Story 4.4, pipeline réelle Story 4.5). L'UI poll `GET /api/credit-notes/:number/pdf` (202 → 302).
+
+### Erreurs
+
+| HTTP | `error.code` | `details.code` | Signification |
+|------|--------------|----------------|---------------|
+| 400 | `VALIDATION_FAILED` | — | `:id` non-bigint (dispatcher `sav.ts`) |
+| 400 | `VALIDATION_FAILED` | `INVALID_BODY` | Body non-JSON ou clé inconnue (`.strict()`) |
+| 404 | `NOT_FOUND` | `SAV_NOT_FOUND` | SAV absent (gate ou RPC race) |
+| 409 | `CONFLICT` | `INVALID_SAV_STATUS` | Statut ≠ `in_progress` ou `validated` — inclut `current_status` |
+| 409 | `CONFLICT` | `CREDIT_NOTE_ALREADY_ISSUED` | App-level check **ou** `unique_violation` race — inclut `number_formatted` |
+| 422 | `BUSINESS_RULE` | `INVALID_BON_TYPE` | Enum invalide |
+| 422 | `BUSINESS_RULE` | `NO_LINES` | SAV sans ligne |
+| 422 | `BUSINESS_RULE` | `NO_VALID_LINES` | ≥1 ligne `validation_status != 'ok'` — inclut `blocking_lines[{ id, line_number, validation_status, validation_message }]` (max 10) |
+| 429 | `RATE_LIMITED` | — | Bucket `credit-notes:emit` dépassé |
+| 500 | `SERVER_ERROR` | `ACTOR_INTEGRITY_ERROR` | RPC `ACTOR_NOT_FOUND` (actor forgé) |
+| 500 | `SERVER_ERROR` | `CREDIT_NOTE_ISSUE_FAILED` | Exception RPC inattendue |
+
+### Effets de bord DB
+
+- RPC `issue_credit_number` (Story 4.1, signature 7 args) : `UPDATE credit_number_sequence RETURNING + INSERT credit_notes` dans une transaction unique → **zéro collision, zéro trou** (NFR-D3).
+- Trigger `trg_audit_credit_notes` capture `action='created'` (acteur via GUC `app.actor_operator_id`).
+- `sav.status` **n'est pas modifié** (V1 — opérateur clôture manuellement après vérification PDF, cf. Story 3.5 state-machine).
+- `pdf_web_url` reste NULL jusqu'à l'upload OneDrive (Story 4.5).
+
+### Calcul totaux
+
+Le handler :
+
+1. Charge `sav_lines` et rejette si ≥1 ligne `validation_status != 'ok'` (422 `NO_VALID_LINES`).
+2. Utilise `credit_amount_cents` figé par trigger (Story 4.2) — **pas de recalcul** : la source de vérité est DB.
+3. Résout la remise responsable live : `member.is_group_manager && member.group_id === sav.group_id`.
+4. Appelle `computeCreditNoteTotals` (`api/_lib/business/vatRemise.ts`, Story 4.2) qui applique la remise **avant** TVA, ligne par ligne.
+5. Passe les 4 totaux à la RPC (seule source de vérité comptable DB).
+
+
+## `GET /api/credit-notes/:number/pdf` (Epic 4 Story 4.4)
+
+Re-download du PDF d'un avoir émis. Accepte deux formats de `:number` :
+
+- `bigint` (ex: `42`) → lookup sur `credit_notes.number`
+- `AV-YYYY-NNNNN` (ex: `AV-2026-00042`) → lookup sur `credit_notes.number_formatted`
+
+### Auth
+
+`withAuth({ types: ['operator'] })` via le dispatcher `api/credit-notes.ts`. Rate-limité à **120 req/min par opérateur** (polling pendant la génération async).
+
+V1 opérateur uniquement — Story 6.4 ouvrira au self-service adhérent (même endpoint + filtrage RLS).
+
+### Réponses
+
+| HTTP | Corps / header | Signification |
+|------|----------------|---------------|
+| 302 | `Location: <pdf_web_url>`, `Cache-Control: no-store` | PDF disponible OneDrive — suivre le redirect |
+| 202 | `{ data: { code: 'PDF_PENDING', retry_after_seconds: 5, number, number_formatted } }` | Génération async pas encore terminée — poller toutes les 5s |
+| 400 | `details.code = 'INVALID_CREDIT_NOTE_NUMBER'` | Format `:number` invalide |
+| 404 | `details.code = 'CREDIT_NOTE_NOT_FOUND'` | Avoir inexistant |
+| 401 | `UNAUTHENTICATED` | Cookie opérateur manquant |
+| 500 | `SERVER_ERROR` | Erreur lecture DB |
+
+### Routing Vercel
+
+```
+GET /api/credit-notes/:number/pdf
+  → api/credit-notes.ts?op=pdf&number=:number
+```
+
+Nouveau dispatcher dédié (vs extension `sav.ts`) : sémantique différente (redirect OneDrive, RLS future adhérent). Budget Vercel Hobby : ce fichier porte le compteur à 12 serverless functions (plafond).
+

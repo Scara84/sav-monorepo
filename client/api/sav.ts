@@ -10,6 +10,7 @@ import {
   savCommentsPostHandler,
   savDuplicateHandler,
 } from './_lib/sav/productivity-handlers'
+import { emitCreditNoteHandler } from './_lib/credit-notes/emit-handler'
 import type { ApiHandler, ApiRequest, ApiResponse } from './_lib/types'
 
 /**
@@ -32,6 +33,7 @@ import type { ApiHandler, ApiRequest, ApiResponse } from './_lib/types'
  *   POST   /api/sav/:id/comments                 → commentCreateHandler
  *   GET    /api/sav/:id/comments                 → commentListHandler
  *   POST   /api/sav/:id/duplicate                → duplicateHandler
+ *   POST   /api/sav/:id/credit-notes             → emitCreditNoteHandler (Story 4.4)
  *
  * `withAuth({ types: ['operator'] })` est posé au niveau router (toutes les
  * routes back-office exigent un opérateur). Les `roles` (admin vs sav-operator)
@@ -95,6 +97,7 @@ const ALLOWED_OPS = new Set([
   'tags',
   'comments',
   'duplicate',
+  'credit-notes',
 ])
 
 function parseOp(req: ApiRequest): string | null {
@@ -212,6 +215,16 @@ const dispatch: ApiHandler = async (req, res) => {
       return
     }
     return savDuplicateHandler(savId)(req, res)
+  }
+
+  // Story 4.4 — POST /api/sav/:id/credit-notes
+  if (op === 'credit-notes') {
+    if (method !== 'POST') {
+      res.setHeader('Allow', 'POST')
+      sendError(res, 'VALIDATION_FAILED', 'Méthode non supportée', requestId)
+      return
+    }
+    return emitCreditNoteHandler(savId)(req, res)
   }
 
   sendError(res, 'NOT_FOUND', 'Route non disponible', requestId)

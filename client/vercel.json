@@ -14,7 +14,8 @@
     "api/self-service/draft.ts": { "maxDuration": 10 },
     "api/self-service/upload-session.ts": { "maxDuration": 10 },
     "api/self-service/upload-complete.ts": { "maxDuration": 10 },
-    "api/sav.ts": { "maxDuration": 10 }
+    "api/sav.ts": { "maxDuration": 10 },
+    "api/credit-notes.ts": { "maxDuration": 10 }
   },
   "crons": [{ "path": "/api/cron/dispatcher", "schedule": "0 3 * * *" }],
   "rewrites": [
@@ -25,10 +26,18 @@
     { "source": "/api/sav/:id/comments", "destination": "/api/sav?op=comments&id=:id" },
     { "source": "/api/sav/:id/duplicate", "destination": "/api/sav?op=duplicate&id=:id" },
     {
+      "source": "/api/sav/:id/credit-notes",
+      "destination": "/api/sav?op=credit-notes&id=:id"
+    },
+    {
       "source": "/api/sav/:id/lines/:lineId",
       "destination": "/api/sav?op=line&id=:id&lineId=:lineId"
     },
     { "source": "/api/sav/:id", "destination": "/api/sav?op=detail&id=:id" },
+    {
+      "source": "/api/credit-notes/:number/pdf",
+      "destination": "/api/credit-notes?op=pdf&number=:number"
+    },
     {
       "source": "/((?!api/|assets/|favicon\\.ico|robots\\.txt|.*\\.(?:js|css|png|jpg|jpeg|svg|ico|webp|woff2?)).*)",
       "destination": "/index.html"
