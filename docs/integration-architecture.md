@@ -177,6 +177,32 @@ RLS activée avec 6 policies explicites (défense-en-profondeur pour un futur cl
 
 Tests RLS : [`client/supabase/tests/rls/schema_sav_comments.test.sql`](../client/supabase/tests/rls/schema_sav_comments.test.sql) — 8 assertions `SAV-COMMENTS-RLS-01` → `08` couvrant les 3 rôles de lecture et les 3 failles d'écriture (internal par adhérent, SAV d'autrui, usurpation opérateur), plus le UPDATE bloqué et la contrainte CHECK DB.
 
+## Génération PDF bon SAV (Story 4.5)
+
+**Décision V1** : la génération PDF tourne **dans la même lambda** que l'émission d'avoir (`POST /api/sav/:id/credit-notes` → dispatcher `sav.ts` → `emit-handler.ts`). Le handler enqueue via `waitUntilOrVoid(generateCreditNotePdfAsync(…))` :
+
+- Si `@vercel/functions.waitUntil` est disponible (ajout dep V1.1 optionnelle), la lambda reste vivante après le retour HTTP jusqu'à la résolution de la promise ou le timeout 10s.
+- Sinon, fallback `void p.catch(…)` — la promise tourne dans l'event loop du process Node, acceptable tant que l'appelant attache son propre `.catch`.
+
+**Pipeline** (`client/api/_lib/pdf/generate-credit-note-pdf.ts`) :
+1. Idempotence check (`pdf_web_url IS NOT NULL` → skip log `PDF_ALREADY_GENERATED_SKIP`).
+2. Fetch parallèle credit_note + sav + member + group + lines + settings `company.*`.
+3. Fail-closed si un settings `company.*` est manquant ou toujours au placeholder `<à renseigner…>` (log `PDF_GENERATION_FAILED|missing_company_key=<k>`).
+4. Render via `@react-pdf/renderer` (pur JS, pas de Chromium — hors budget bundle serverless).
+5. `buildPdfFilename` sanitize → `AV-YYYY-NNNNN <client>.pdf`.
+6. Upload OneDrive (`uploadCreditNotePdf` direct PUT < 4 MB) avec **retry ×3 backoff exponentiel** (1s / 2s / 4s). Échec permanent → log `PDF_UPLOAD_FAILED` + throw.
+7. `UPDATE credit_notes SET pdf_onedrive_item_id, pdf_web_url` — après succès upload uniquement. Credit note reste `pdf_web_url IS NULL` en cas d'échec → opérateur peut relancer via `POST /api/credit-notes/:number/regenerate-pdf`.
+
+**Budget perfs V1** : p95 < 2s, p99 < 10s (marge Vercel Hobby). Bench manuel `client/scripts/bench/pdf-generation.ts`, 50 rendus. **Non intégré CI V1** — exécuté pré-merge sur stories qui touchent `_lib/pdf/*` et pré-cutover Epic 7.
+
+**Stale recovery (Story 4.5 AC #7 + AC #8)** :
+- `GET /api/credit-notes/:number/pdf` renvoie **500 `PDF_GENERATION_STALE`** si `pdf_web_url IS NULL` et `issued_at ≥ 5 minutes` (génération durablement échouée). Sous 5 min → **202 `PDF_PENDING`**.
+- `POST /api/credit-notes/:number/regenerate-pdf` déclenche une regénération **synchrone** (l'opérateur attend la réponse 200 + `pdf_web_url`). Idempotent : 409 `PDF_ALREADY_GENERATED` si déjà présent. Rate-limited 1/min par `:number`.
+
+**Settings émetteur** : table `settings` versionnée (`company.legal_name`, `company.siret`, `company.tva_intra`, `company.address_line1`, `company.postal_code`, `company.city`, `company.phone`, `company.email`, `company.legal_mentions_short`, `onedrive.pdf_folder_root`). Seed placeholder à la migration `20260428120000_settings_company_keys.sql` ; cutover Epic 7 bump les versions avec les valeurs légales réelles. La résolution se fait **au moment de la génération** (pas de snapshot stocké dans `credit_notes`) — les PDF déjà générés restent figés, les futurs PDF reflètent les settings courants.
+
+**Chemin OneDrive** : `<settings.onedrive.pdf_folder_root>/<YYYY>/<MM>/<AV-YYYY-NNNNN client>.pdf`. Dossier créé idempotemment via `ensureFolderExists` (legacy `onedrive.js`).
+
 ## Couplages à surveiller
 
 - **`VITE_API_KEY` ↔ `API_KEY`** (Vercel env) : doivent rester synchronisés lors des rotations.

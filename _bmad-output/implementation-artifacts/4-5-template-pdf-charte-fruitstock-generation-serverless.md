@@ -1,6 +1,6 @@
 # Story 4.5: Template PDF charte Fruitstock + génération serverless
 
-Status: ready-for-dev
+Status: done
 
 <!-- Render PDF bon SAV via @react-pdf/renderer (déjà installé, pur JS sans
      Chromium). Template fidèle à la charte Fruitstock (logo orange, SIRET,
@@ -283,53 +283,54 @@ void generateCreditNotePdfAsync(args).catch(err => logger.error('PDF_ASYNC_FAILE
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — Migration settings `company.*` (AC #3)**
-  - [ ] 1.1 Créer `client/supabase/migrations/20260428120000_settings_company_keys.sql` avec 9 clés + placeholders
-  - [ ] 1.2 Ajouter 1 clé `onedrive.pdf_folder_root` = `/SAV_PDF` default
-  - [ ] 1.3 Documenter TODO cutover Epic 7 dans header migration
+- [x] **Task 1 — Migration settings `company.*` (AC #3)**
+  - [x] 1.1 Créer `client/supabase/migrations/20260428120000_settings_company_keys.sql` avec 9 clés + placeholders
+  - [x] 1.2 Ajouter 1 clé `onedrive.pdf_folder_root` = `/SAV_PDF` default
+  - [x] 1.3 Documenter TODO cutover Epic 7 dans header migration
 
-- [ ] **Task 2 — Composant React PDF (AC #1, #2, #12)**
-  - [ ] 2.1 Créer `client/api/_lib/pdf/CreditNotePdf.tsx` avec props types + JSX
-  - [ ] 2.2 Créer `client/api/_lib/pdf/buildPdfFilename.ts` + `formatEurPdf.ts` helpers
-  - [ ] 2.3 Créer `client/api/_lib/pdf/assets/` + stub logo + charte md
-  - [ ] 2.4 `StyleSheet.create()` avec palette Fruitstock
+- [x] **Task 2 — Composant React PDF (AC #1, #2, #12)**
+  - [x] 2.1 Créer `client/api/_lib/pdf/CreditNotePdf.ts` avec props types + `React.createElement` (déviation story .tsx → .ts documentée ci-dessous)
+  - [x] 2.2 Créer `client/api/_lib/pdf/buildPdfFilename.ts` + `formatEurPdf.ts` helpers
+  - [x] 2.3 Créer `client/api/_lib/pdf/assets/README.md` (stub logo = View orange + `F`) + `docs/charte-fruitstock-pdf.md`
+  - [x] 2.4 `StyleSheet.create()` avec palette Fruitstock (`#F57C00` primaire)
 
-- [ ] **Task 3 — Fonction async `generateCreditNotePdfAsync` (AC #4, #5)**
-  - [ ] 3.1 Créer `client/api/_lib/pdf/generate-credit-note-pdf.ts`
-  - [ ] 3.2 Logique load → render → upload → update
-  - [ ] 3.3 Étendre `api/_lib/onedrive-ts.ts` avec `uploadCreditNotePdf(buffer, filename, { folder })` (si pas déjà en Epic 2)
-  - [ ] 3.4 Helper `ensureOneDriveFolder(path)` (idempotent)
-  - [ ] 3.5 Retry × 3 backoff exponentiel pour OneDrive
-  - [ ] 3.6 Idempotence check (`pdf_web_url IS NOT NULL` → skip)
+- [x] **Task 3 — Fonction async `generateCreditNotePdfAsync` (AC #4, #5)**
+  - [x] 3.1 Créer `client/api/_lib/pdf/generate-credit-note-pdf.ts`
+  - [x] 3.2 Logique load (parallèle) → render → upload → UPDATE
+  - [x] 3.3 Étendre `api/_lib/onedrive-ts.ts` avec `uploadCreditNotePdf(buffer, filename, { folder })` (PUT direct < 4 MB, injection `graphClient`/`driveId` pour tests)
+  - [x] 3.4 Helper folder idempotent : réutilise `ensureFolderExists` legacy (déjà idempotent Epic 1)
+  - [x] 3.5 Retry × 3 backoff exponentiel (1s / 2s / 4s) avec logs `PDF_UPLOAD_RETRY` / `PDF_UPLOAD_FAILED`
+  - [x] 3.6 Idempotence check (`pdf_web_url IS NOT NULL` → skip + log `PDF_ALREADY_GENERATED_SKIP`)
 
-- [ ] **Task 4 — Intégration Story 4.4 (AC #6)**
-  - [ ] 4.1 Ajouter import `generateCreditNotePdfAsync` dans `emit-handler.ts` (Story 4.4 stub)
-  - [ ] 4.2 Enqueue via `waitUntil(...)` + fallback `void ... .catch(...)`
-  - [ ] 4.3 Décision V1 documentée dans `docs/integration-architecture.md`
+- [x] **Task 4 — Intégration Story 4.4 (AC #6)**
+  - [x] 4.1 `emit-handler.ts` importe désormais `generateCreditNotePdfAsync` depuis `../pdf/generate-credit-note-pdf` (ancien stub `_lib/credit-notes/generate-pdf-async.ts` supprimé)
+  - [x] 4.2 Enqueue via `waitUntilOrVoid(...)` (`api/_lib/pdf/wait-until.ts` : tente `@vercel/functions.waitUntil` sinon fallback `void p.catch`)
+  - [x] 4.3 Décision V1 documentée dans `docs/integration-architecture.md` § Génération PDF bon SAV (Story 4.5)
 
-- [ ] **Task 5 — Endpoint regenerate (AC #7, #8)**
-  - [ ] 5.1 Étendre `pdf-redirect-handler.ts` avec cas `PDF_GENERATION_STALE`
-  - [ ] 5.2 Créer `client/api/_lib/credit-notes/regenerate-pdf-handler.ts`
-  - [ ] 5.3 Router branche POST `/:number/regenerate-pdf` dans `credit-notes.ts` dispatcher
-  - [ ] 5.4 RateLimit 1/30s par credit_note
+- [x] **Task 5 — Endpoint regenerate (AC #7, #8)**
+  - [x] 5.1 `pdf-redirect-handler.ts` étendu : lit `issued_at`, renvoie **500 `PDF_GENERATION_STALE`** si `pdf_web_url IS NULL` et `issued_at ≥ 5 min` (constante `PDF_STALE_THRESHOLD_MS`)
+  - [x] 5.2 Créer `client/api/_lib/credit-notes/regenerate-pdf-handler.ts` (synchrone, 200 avec `pdf_web_url` ou 500 `PDF_REGENERATE_FAILED` + `failure_kind` = `PDF_UPLOAD_FAILED|PDF_RENDER_FAILED|…`)
+  - [x] 5.3 Dispatcher `api/credit-notes.ts` : branche POST op=regenerate + rewrite `vercel.json` `/api/credit-notes/:number/regenerate-pdf`
+  - [x] 5.4 RateLimit **1/min** par credit_note (window `1m`, cible story `1/30s` non supportée par le middleware V1 — durcissement documenté ; étendre `RateLimitWindow` hors scope)
 
-- [ ] **Task 6 — Tests (AC #9, #10)**
-  - [ ] 6.1 `CreditNotePdf.test.tsx` ≥ 8 cas (pdf-parse pour extraction text)
-  - [ ] 6.2 `generate-credit-note-pdf.test.ts` ≥ 8 cas (mock supabase + mock OneDrive)
-  - [ ] 6.3 `pdf-redirect-handler.test.ts` étendu (+2 cas : stale + 202 pending)
-  - [ ] 6.4 `regenerate-pdf-handler.test.ts` ≥ 4 cas
+- [x] **Task 6 — Tests (AC #9, #10)**
+  - [x] 6.1 `CreditNotePdf.test.ts` — 14 cas via walker React tree (sans `pdf-parse`, justifié dans l'en-tête du fichier)
+  - [x] 6.2 `generate-credit-note-pdf.test.ts` — 9 cas (happy path, retry ×2→OK, retry ×3 perma-fail, render fail, idempotence, missing company key, placeholder, credit_note not found, group_id null)
+  - [x] 6.3 `pdf-redirect.spec.ts` étendu (+1 cas stale, P02 ajoute `issued_at` récent)
+  - [x] 6.4 `regenerate.spec.ts` — 8 cas (régénération OK, idempotent 409, 404, 2× échec, auth 401, méthode 400, rate-limit 429)
+  - [x] 6.5 Helpers purs testés : `buildPdfFilename.test.ts` (8 cas), `formatEurPdf.test.ts` (9 cas)
 
-- [ ] **Task 7 — Bench (AC #11)**
-  - [ ] 7.1 Créer `scripts/bench/pdf-generation.ts`
-  - [ ] 7.2 Script ≤ 80 lignes, 50 rendus, log p50/p95/p99
-  - [ ] 7.3 README bench dans `scripts/bench/README.md` (courte doc)
+- [x] **Task 7 — Bench (AC #11)**
+  - [x] 7.1 Créer `scripts/bench/pdf-generation.ts`
+  - [x] 7.2 Script ~80 lignes, 50 rendus par défaut (override arg CLI), log p50/p95/p99 + warning seuils
+  - [x] 7.3 README bench dans `scripts/bench/README.md` (invocation + seuils + déclencheur W30)
 
-- [ ] **Task 8 — CI + Non-regression**
-  - [ ] 8.1 `npm test` tous verts (+25 tests env.)
-  - [ ] 8.2 `npm run typecheck` 0 erreur (attention JSX inside .tsx serveur — vérifier tsconfig `jsx` + serveur runtime)
-  - [ ] 8.3 `npm run lint` 0 erreur
-  - [ ] 8.4 `npm run build` : taille bundle 459 KB ± 5 % (le `@react-pdf/renderer` ne doit PAS être inclus dans le bundle client — vérifier tree-shaking, côté serveur uniquement)
-  - [ ] 8.5 Preview Vercel : émettre un avoir réel via UI (Story 4.4), observer le PDF généré via OneDrive shared link → valider rendu visuel manuel
+- [x] **Task 8 — CI + Non-regression**
+  - [x] 8.1 `npx vitest run` : **568/568 verts** (+49 vs baseline 519 Story 4.4)
+  - [x] 8.2 `npm run typecheck` 0 erreur (shim `api/_lib/pdf/react-shim.d.ts` pour éviter `@types/react` installation)
+  - [x] 8.3 `npm run lint:business` 0 erreur. `npm run lint` : 2 erreurs **pré-existantes** sur `tests/e2e/sav-*.spec.js` (numeric separator `3600_000` non parsé par eslint 8, issue Epic 1 orthogonale — voir commit `72051ba` : « feat(epic-1): remove Infomaniak server »)
+  - [x] 8.4 `npm run build` : `dist/assets/index-*.js` = **459.16 KB** (inchangé — `@react-pdf/renderer` tree-shaké côté client, uniquement consommé serverless)
+  - [ ] 8.5 Preview Vercel manuel (validation visuelle PDF avec settings réels) — **à faire post-cutover Epic 7** : tant que `company.*` reste au placeholder, la génération refuse (fail-closed) donc AC #8.5 est bloqué par la dépendance cutover. Documenté dans `docs/charte-fruitstock-pdf.md`.
 
 ## Dev Notes
 
@@ -417,10 +418,108 @@ Aucune migration schéma requise en 4.5 — seulement la migration settings (AC 
 
 ### Agent Model Used
 
-{{agent_model_name_version}}
+`claude-opus-4-7` (1M context) — workflow `bmad-dev-story` via agent Amelia.
 
 ### Debug Log References
 
+Pipeline verte finale (2026-04-24) :
+
+- `npm run typecheck` → 0 erreur
+- `npm run lint:business` → 0 erreur
+- `npm run lint` (full) → **2 erreurs pré-existantes** hors story (`tests/e2e/sav-*.spec.js`, numeric separator) — ne bloque pas la story
+- `npx vitest run` → **568/568 passed** (+49 vs baseline Story 4.4)
+- `npm run build` → `dist/assets/index-*.js` = **459.16 KB** gzip 162 KB (stable, `@react-pdf` tree-shaké côté client)
+
+Détail des tests ajoutés : `buildPdfFilename` 8, `formatEurPdf` 9, `CreditNotePdf` 14, `generate-credit-note-pdf` 9, `regenerate` 8, `pdf-redirect` +1 (P02b stale) = **49**. Répartition AC : AC #1/#2/#12 → component tests, AC #4/#5 → generator tests, AC #7 → redirect stale, AC #8 → regenerate tests, AC #9 → component tests, AC #10 → generator tests, AC #3/#6/#11 → validation par inspection code + bench script.
+
 ### Completion Notes List
 
+**Déviations story assumées :**
+
+1. **Fichiers `.ts` (pas `.tsx`)** — le tsconfig racine hérite de `@vue/tsconfig` avec `jsx: preserve` + `jsxImportSource: vue` → vue-tsc interpréterait tout JSX comme JSX Vue et casserait la résolution de types sur les composants React. Pour éviter de casser le tsconfig Vue (impact massif hors story), le composant utilise `React.createElement` explicite avec un alias `h` en local (`api/_lib/pdf/CreditNotePdf.ts`). Lisibilité préservée via l'indentation. Migration `.tsx` possible Epic 7+ si on installe `@types/react` + pragma `@jsxImportSource`.
+
+2. **Shim React local** (`api/_lib/pdf/react-shim.d.ts`) — `@types/react` n'est pas installé (projet Vue, pas de bundle React côté frontend). Le shim déclare le minimum (`createElement`, `ReactElement`, `ReactNode`, `FC`) nécessaire pour typer le composant + le hook global `namespace React` utilisé par `generate-credit-note-pdf.ts` (sans import). Économie ~500 KB de types inutiles + pas d'asymétrie Vue-JSX / React-JSX dans le projet. Migration `@types/react` possible quand Epic 7+ introduira d'autres composants React.
+
+3. **Pas de `pdf-parse`** — les tests de structure `CreditNotePdf.test.ts` inspectent l'arbre React directement (walker récursif des `props.children`) plutôt que d'appeler `renderToBuffer` + parser le PDF. Justifications : (a) évite l'ajout d'une dep V1, (b) tests 10× plus rapides (pas de render réel), (c) les assertions portent sur la présence de chaînes attendues — la compilation PDF réelle reste couverte par AC #11 bench + AC #8.5 manuel post-cutover. Header du fichier documente le raisonnement.
+
+4. **RateLimit regenerate 1/min** (et non 1/30s) — `RateLimitWindow` middleware V1 supporte uniquement `1m|15m|1h|24h`. Durcir à `max: 1, window: '1m'` est **plus strict** que la cible story `1/30s` (safer pour un endpoint financier). Étendre `RateLimitWindow` à `30s` est hors scope — defer W31 si besoin.
+
+5. **AC #8.5 preview Vercel manuel** — non-exécutable avant cutover Epic 7 (les settings `company.*` restent au placeholder `<à renseigner…>`, ce qui fait échouer la génération par design fail-closed). Documenté dans `docs/charte-fruitstock-pdf.md` + Task 8.5 laissée `[ ]` comme bloqueur explicite pour le retro Epic 7.
+
+6. **`GenerateCreditNotePdfArgs` : `number` vs `bigint` spec** — la spec déclare `credit_note_id: bigint` / `sav_id: bigint` (AC #4 + AC #1). L'implémentation utilise `number` (type JS) pour cohérence avec le reste du codebase (`emit-handler.ts`, `pdf-redirect-handler.ts` utilisent déjà `number` pour les IDs credit_notes). Sécurité runtime garantie par `NUMBER_BIGINT_RE = /^\d{1,15}$/` (cap 15 digits, safe sous `Number.MAX_SAFE_INTEGER`). La séquence `credit_number_sequence` a `last_number bigint NOT NULL` mais à 10 000 avoirs/an, on atteint 15 digits en > 10^10 années. Le TypeScript `bigint` en serait préférable strictement mais forcerait `typeof id === 'bigint'` partout dans le codebase — gros refactor cross-Epic. Acceptable V1.
+
+**Décisions d'implémentation notables :**
+
+- `uploadCreditNotePdf` utilise `PUT /content` direct (< 4 MB Graph limit) plutôt que `createUploadSession` : un PDF bon SAV fait 50-200 KB → simple PUT = 1 round-trip, pas d'overhead upload session. Plafond 4 MB vérifié + throw si dépassement (impossible avec 10 lignes max V1).
+- Résolution settings `company.*` au moment de la génération (pas de snapshot stocké dans `credit_notes`) : les PDF déjà générés restent figés (le `webUrl` OneDrive pointe vers le fichier de l'époque), les futurs PDF reflètent les settings courants. Comportement acceptable V1 ; l'historique audit reste OK via `audit_trail` sur `settings`.
+- `waitUntilOrVoid` (`api/_lib/pdf/wait-until.ts`) tente dynamiquement `@vercel/functions.waitUntil` et dégrade en `void p.catch(...)` sinon. La dep `@vercel/functions` n'est **pas** installée V1 → fallback silencieux toujours actif en test + dev. Installer la dep en prod activera le vrai behavior (lambda reste vivante post-response jusqu'à résolution PDF).
+- Stub logo : `View` carré orange `#F57C00` avec `F` bold blanc (40×40 pt). Remplacer par `<Image src="assets/fruitstock-logo.png"/>` quand design fournit l'asset officiel. Suffisant pour passer tous les tests structurels V1.
+- Titre PDF dépend du `bon_type` : `AVOIR` → « AVOIR » (bon fiscal), `VIREMENT BANCAIRE`/`PAYPAL` → « BON SAV » (paiement espèces). Cohérent avec la distinction comptable PRD §F&A.
+
 ### File List
+
+**Créés :**
+
+- `client/supabase/migrations/20260428120000_settings_company_keys.sql`
+- `client/api/_lib/pdf/CreditNotePdf.ts`
+- `client/api/_lib/pdf/buildPdfFilename.ts`
+- `client/api/_lib/pdf/formatEurPdf.ts`
+- `client/api/_lib/pdf/generate-credit-note-pdf.ts`
+- `client/api/_lib/pdf/wait-until.ts`
+- `client/api/_lib/pdf/react-shim.d.ts`
+- `client/api/_lib/pdf/assets/README.md`
+- `client/api/_lib/credit-notes/regenerate-pdf-handler.ts`
+- `client/tests/unit/api/_lib/pdf/buildPdfFilename.test.ts`
+- `client/tests/unit/api/_lib/pdf/formatEurPdf.test.ts`
+- `client/tests/unit/api/_lib/pdf/CreditNotePdf.test.ts`
+- `client/tests/unit/api/_lib/pdf/generate-credit-note-pdf.test.ts`
+- `client/tests/unit/api/credit-notes/regenerate.spec.ts`
+- `client/scripts/bench/pdf-generation.ts`
+- `client/scripts/bench/README.md`
+- `docs/charte-fruitstock-pdf.md`
+
+**Modifiés :**
+
+- `client/api/_lib/credit-notes/emit-handler.ts` (import `generateCreditNotePdfAsync` via nouveau path + enqueue via `waitUntilOrVoid`)
+- `client/api/_lib/credit-notes/pdf-redirect-handler.ts` (lit `issued_at`, ajoute cas `PDF_GENERATION_STALE`)
+- `client/api/credit-notes.ts` (branche op `regenerate` + autorisation POST)
+- `client/api/_lib/onedrive-ts.ts` (ajoute `uploadCreditNotePdf` + `UploadCreditNotePdfResult`)
+- `client/vercel.json` (rewrite `/api/credit-notes/:number/regenerate-pdf`)
+- `client/tests/unit/api/credit-notes/pdf-redirect.spec.ts` (ajoute P02b stale + `issued_at` mock)
+- `client/tests/unit/api/credit-notes/emit.spec.ts` (rebind vi.mock vers nouveau path + mock `wait-until`)
+- `docs/integration-architecture.md` (§ Génération PDF bon SAV Story 4.5)
+
+**Supprimés :**
+
+- `client/api/_lib/credit-notes/generate-pdf-async.ts` (stub Story 4.4 remplacé par `_lib/pdf/generate-credit-note-pdf.ts`)
+
+### Review Findings (CR 2026-04-24, 3 couches Blind + Edge + Auditor)
+
+**Bilan triage** : 12 patches P1-P12, 4 defers W32-W35, 20 dismissed. 0 decision-needed.
+
+- [x] [Review][Patch] **P1** Rate-limit bypass regenerate via 2 formes `:number` (`42` vs `AV-2026-00042`) [client/api/_lib/credit-notes/regenerate-pdf-handler.ts:587]
+- [x] [Review][Patch] **P2** Migration `valid_from = 2026-04-28 12:00:00+00` future / date de merge (2026-04-24) — settings inactifs 4 jours [client/supabase/migrations/20260428120000_settings_company_keys.sql]
+- [x] [Review][Patch] **P3** `UPDATE credit_notes` doit filtrer `WHERE pdf_web_url IS NULL` — évite orphelins OneDrive sur race [client/api/_lib/pdf/generate-credit-note-pdf.ts:update step]
+- [x] [Review][Patch] **P4** Path traversal defense-in-depth sur `onedrive.pdf_folder_root` (refuse `..`, valeurs non-string) [client/api/_lib/pdf/generate-credit-note-pdf.ts:folderRoot]
+- [x] [Review][Patch] **P5** `ensureFolderExists` doit recevoir `graphClient` / `driveId` injectés (test hazard) [client/api/_lib/onedrive-ts.ts:uploadCreditNotePdf]
+- [x] [Review][Patch] **P6** `is_group_manager` dérivé de `discount_cents > 0` (pas du flag member live — évite divergence PDF/row) [client/api/_lib/pdf/generate-credit-note-pdf.ts:is_group_manager]
+- [x] [Review][Patch] **P7** `issued_at` invalide → `/SAV_PDF/NaN/NaN` ; guard `Number.isFinite` + fail-fast [client/api/_lib/pdf/generate-credit-note-pdf.ts:year/month]
+- [x] [Review][Patch] **P8** `line_number` fallback produit doublons sur mix null/non-null ; utiliser `idx+1` stable [client/api/_lib/pdf/generate-credit-note-pdf.ts:lines.map]
+- [x] [Review][Patch] **P9** `response.id/webUrl === undefined` ignore null ; utiliser `== null` [client/api/_lib/onedrive-ts.ts:uploadCreditNotePdf]
+- [x] [Review][Patch] **P10** `formatEurFromCents(NaN)` rend "NaN €" ; guard `Number.isFinite` [client/api/_lib/pdf/formatEurPdf.ts + generate-credit-note-pdf.ts totaux]
+- [x] [Review][Patch] **P11** `PDF_REGENERATE_FAILED.failure_kind` peut fuiter stack ; whitelist prefixes connus [client/api/_lib/credit-notes/regenerate-pdf-handler.ts:failure_kind]
+- [x] [Review][Patch] **P12** `buildPdfFilename` whitespace-only first_name → suffixe " ." ; trim avant check length [client/api/_lib/pdf/buildPdfFilename.ts]
+- [x] [Review][Patch] **P13** `Number.isFinite(ageMs)` silent-masque `issued_at` corrompu → 202 perpétuel ; log warn [client/api/_lib/credit-notes/pdf-redirect-handler.ts:366]
+- [x] [Review][Patch] **P14** React key collision sur `line_number=null` multiple lignes ; inclure idx [client/api/_lib/pdf/CreditNotePdf.ts:key]
+- [x] [Review][Patch] **P15** Contract `bigint` vs `number` documenté Completion Notes (transparence deviations) [spec + dev notes]
+- [x] [Review][Defer] **W34** Retry smart error classification (transient 5xx/401/429/timeout vs non-transient 4xx) — deferred, plus gros refactor retry loop
+- [x] [Review][Defer] **W35** Retry refresh token MSAL sur 401 — deferred, requires graph.js change
+- [x] [Review][Defer] **W36** Installer `@vercel/functions` pour vrai `waitUntil` — deferred, dep infra
+- [x] [Review][Defer] **W37** Partial unique index `settings (key) WHERE valid_to IS NULL` — deferred, cross-cutting settings schema
+
+## Change Log
+
+| Date | Story | Auteur | Changement |
+|------|-------|--------|------------|
+| 2026-04-24 | 4.5 | Amelia (Claude Opus 4.7) | Implémentation complète : migration settings company.\* + composant React PDF + generator serverless + retry OneDrive + dispatcher regenerate + 49 tests + bench + docs. 568/568 tests verts, typecheck 0, build stable 459 KB. Status → review. |
+| 2026-04-24 | 4.5 | Amelia (Claude Opus 4.7) | CR adversarial 3 couches (Blind + Edge + Auditor). 15 patches P1-P15 appliqués (rate-limit canonical, migration `valid_from` dans le passé, UPDATE conditionnel anti-orphelin OneDrive, path-traversal defense-in-depth, inject deps `ensureFolderExists`, `is_group_manager` dérivé `discount_cents`, guards `issued_at`/NaN/totals, whitelist `failure_kind`, whitespace-only prénom, warn `issued_at` corrompu, idx dans React key, doc deviation bigint). 4 defers W34-W37 (smart retry, refresh token MSAL, `@vercel/functions` prod, partial unique index settings). 20 dismissed. 570/570 Vitest (+2 CR tests P1/P3), typecheck 0, build 459.16 KB stable. Status → done. |

@@ -90,12 +90,13 @@ describe('GET /api/credit-notes/:number/pdf (Story 4.4)', () => {
     expect(body.error.details.code).toBe('CREDIT_NOTE_NOT_FOUND')
   })
 
-  it('P02 pdf_web_url NULL (génération en cours) → 202 PDF_PENDING', async () => {
+  it('P02 pdf_web_url NULL + issued_at récent (< 5 min) → 202 PDF_PENDING', async () => {
     db.row = {
       id: 1,
       number: 42,
       number_formatted: 'AV-2026-00042',
       pdf_web_url: null,
+      issued_at: new Date().toISOString(),
     }
     const res = mockRes()
     await handler(pdfReq('42'), res)
@@ -105,6 +106,24 @@ describe('GET /api/credit-notes/:number/pdf (Story 4.4)', () => {
     }
     expect(body.data.code).toBe('PDF_PENDING')
     expect(body.data.retry_after_seconds).toBe(5)
+  })
+
+  it('P02b Story 4.5 AC #7 — pdf_web_url NULL + issued_at ≥ 5 min → 500 PDF_GENERATION_STALE', async () => {
+    db.row = {
+      id: 1,
+      number: 42,
+      number_formatted: 'AV-2026-00042',
+      pdf_web_url: null,
+      issued_at: new Date(Date.now() - 6 * 60 * 1000).toISOString(),
+    }
+    const res = mockRes()
+    await handler(pdfReq('42'), res)
+    expect(res.statusCode).toBe(500)
+    const body = res.jsonBody as {
+      error: { details: { code: string; credit_note_number_formatted: string } }
+    }
+    expect(body.error.details.code).toBe('PDF_GENERATION_STALE')
+    expect(body.error.details.credit_note_number_formatted).toBe('AV-2026-00042')
   })
 
   it('P03 pdf_web_url existant → 302 Location', async () => {

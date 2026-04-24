@@ -23,11 +23,17 @@ const db = vi.hoisted(() => ({
   pdfEnqueueCalls: [] as Array<Record<string, unknown>>,
 }))
 
-vi.mock('../../../../api/_lib/credit-notes/generate-pdf-async', () => ({
+vi.mock('../../../../api/_lib/pdf/generate-credit-note-pdf', () => ({
   generateCreditNotePdfAsync: (args: Record<string, unknown>) => {
     db.pdfEnqueueCalls.push(args)
     return Promise.resolve()
   },
+}))
+vi.mock('../../../../api/_lib/pdf/wait-until', () => ({
+  waitUntilOrVoid: (p: Promise<unknown>) => {
+    void p.catch(() => undefined)
+  },
+  __resetWaitUntilCacheForTests: () => undefined,
 }))
 
 vi.mock('../../../../api/_lib/clients/supabase-admin', () => {

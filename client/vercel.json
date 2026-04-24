@@ -39,6 +39,10 @@
       "destination": "/api/credit-notes?op=pdf&number=:number"
     },
     {
+      "source": "/api/credit-notes/:number/regenerate-pdf",
+      "destination": "/api/credit-notes?op=regenerate&number=:number"
+    },
+    {
       "source": "/((?!api/|assets/|favicon\\.ico|robots\\.txt|.*\\.(?:js|css|png|jpg|jpeg|svg|ico|webp|woff2?)).*)",
       "destination": "/index.html"
     }

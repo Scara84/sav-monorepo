@@ -10,7 +10,8 @@ import {
   resolveGroupManagerDiscountBp,
   type SettingRow,
 } from '../business/settingsResolver'
-import { generateCreditNotePdfAsync } from './generate-pdf-async'
+import { generateCreditNotePdfAsync } from '../pdf/generate-credit-note-pdf'
+import { waitUntilOrVoid } from '../pdf/wait-until'
 import type { ApiHandler, ApiRequest, ApiResponse } from '../types'
 
 /**
@@ -535,21 +536,26 @@ function emitCore(savId: number): ApiHandler {
         return
       }
 
-      // ---- AC #7 : fire-and-forget PDF ----------------------------------
-      // Le `.catch` est indispensable — toute rejection non captée fait
-      // crasher l'event loop Node.js (Vercel serverless) à partir de 15+.
-      void generateCreditNotePdfAsync({
-        credit_note_id: insertedRow.id,
-        sav_id: savId,
-        request_id: requestId,
-      }).catch((err) => {
-        logger.error('credit_note.pdf.enqueue_failed', {
-          requestId,
-          creditNoteId: insertedRow.id,
-          savId,
-          error: err instanceof Error ? err.message : String(err),
+      // ---- AC #7 : enqueue PDF (Story 4.5) ------------------------------
+      // `waitUntilOrVoid` utilise `@vercel/functions.waitUntil` en serverless
+      // Vercel (la lambda attend la promise post-response avant freeze) et
+      // dégénère en `void ... .catch(...)` sinon (test env, dev local). La
+      // génération tourne dans la MÊME lambda — le budget 10s s'applique
+      // au total (émission ≤ 1s + PDF ≤ 5s). Au-delà : W30 migration queue DB.
+      waitUntilOrVoid(
+        generateCreditNotePdfAsync({
+          credit_note_id: insertedRow.id,
+          sav_id: savId,
+          request_id: requestId,
+        }).catch((err) => {
+          logger.error('credit_note.pdf.enqueue_failed', {
+            requestId,
+            creditNoteId: insertedRow.id,
+            savId,
+            error: err instanceof Error ? err.message : String(err),
+          })
         })
-      })
+      )
 
       const durationMs = Date.now() - startedAt
       logger.info('credit_note.emit.success', {

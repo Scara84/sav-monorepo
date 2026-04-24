@@ -39,6 +39,32 @@
 
 generated: 2026-04-18
 last_updated: 2026-04-24
+# 2026-04-24 : Story 4.5 done après CR adversarial 3 couches (Blind+Edge+Auditor).
+# 15 patches P1-P15 appliqués (rate-limit canonical key, migration valid_from
+# past date, UPDATE WHERE pdf_web_url IS NULL anti-orphelin, path-traversal
+# defense-in-depth folder_root, inject deps ensureFolderExists, is_group_manager
+# dérivé discount_cents > 0, guards issued_at/NaN/totals, whitelist failure_kind,
+# whitespace-only prénom, log warn issued_at corrompu, idx React key, doc
+# deviation bigint vs number). 4 defers W34-W37 (smart retry classification,
+# refresh token MSAL 401, @vercel/functions prod install, partial unique index
+# settings). 20 dismissed. 570/570 Vitest (+2 CR tests P1/P3), typecheck 0,
+# lint:business 0, build 459.16 KB stable.
+# 2026-04-24 : Story 4.5 implémentée → review. @react-pdf/renderer v4.5.1 pur
+# JS (sans Chromium) + composant CreditNotePdf.ts (charte orange #F57C00,
+# A4, 9 col tableau, totaux HT/Remise/TVA/TTC). Pipeline async generate-
+# credit-note-pdf.ts (idempotent, retry ×3 OneDrive, fail-closed settings
+# placeholder, logs PDF_GENERATED|PDF_UPLOAD_RETRY|PDF_RENDER_FAILED).
+# Wait-until wrapper (@vercel/functions optionnel, fallback void catch).
+# Endpoint regenerate POST /api/credit-notes/:number/regenerate-pdf
+# (synchrone, idempotent 409 PDF_ALREADY_GENERATED, rate-limit 1/min).
+# Redirect étendu avec cas PDF_GENERATION_STALE (≥5 min). Migration
+# 20260428120000 settings company.* (9 clés placeholder + pdf_folder_root).
+# Bench script 50 rendus p50/p95/p99 (manuel, pré-merge). 49 nouveaux
+# tests (568/568 Vitest +49), typecheck 0, lint:business 0, build 459.16
+# KB stable. Déviation documentée : .ts + React.createElement (pas .tsx
+# — tsconfig Vue jsxImportSource) + shim react local (pas @types/react).
+# AC #8.5 preview visuelle bloqué par placeholder settings → levé au
+# cutover Epic 7.
 # 2026-04-24 : Story 4.4 done après CR adversarial 3 couches (Blind+Edge+Auditor).
 # 24 findings bruts → triage 10 patches (2 High P1/P2, 5 Medium P3-P7, 3 Low
 # P8-P10) + 1 defer (W33 clock drift settings cross-4.3/4.4) + 10 dismissed.
@@ -206,7 +232,7 @@ development_status:
   4-2-moteur-calculs-metier-typescript-triggers-miroirs-fixture-excel: done
   4-3-integration-moteur-vue-detail-preview-live: done
   4-4-emission-atomique-n-avoir-bon-sav: done
-  4-5-template-pdf-charte-fruitstock-generation-serverless: ready-for-dev
+  4-5-template-pdf-charte-fruitstock-generation-serverless: done
   4-6-test-de-charge-sequence-d-avoir: ready-for-dev
   epic-4-retrospective: optional
 

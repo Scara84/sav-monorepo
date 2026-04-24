@@ -36,7 +36,13 @@ interface CreditNoteRow {
   number: number
   number_formatted: string
   pdf_web_url: string | null
+  issued_at: string
 }
+
+// Story 4.5 AC #7 : si `pdf_web_url IS NULL` et `issued_at >= STALE_THRESHOLD_MS`,
+// la génération async a échoué durablement. L'UI affiche un CTA « regénérer »
+// qui tape `POST /api/credit-notes/:number/regenerate-pdf` (AC #8).
+const PDF_STALE_THRESHOLD_MS = 5 * 60 * 1000 // 5 minutes
 
 function pdfRedirectCore(numberInput: string): ApiHandler {
   return async (req: ApiRequest, res: ApiResponse) => {
@@ -78,7 +84,7 @@ function pdfRedirectCore(numberInput: string): ApiHandler {
       const admin = supabaseAdmin()
       const { data, error } = await admin
         .from('credit_notes')
-        .select('id, number, number_formatted, pdf_web_url')
+        .select('id, number, number_formatted, pdf_web_url, issued_at')
         .eq(lookupColumn, lookupValue)
         .limit(1)
         .maybeSingle()
@@ -99,6 +105,35 @@ function pdfRedirectCore(numberInput: string): ApiHandler {
         return
       }
       if (row.pdf_web_url === null) {
+        // Story 4.5 AC #7 : distinguer génération en cours (< 5 min) des
+        // générations échouées durablement (≥ 5 min → opérateur doit relancer
+        // manuellement via POST /regenerate-pdf).
+        const issuedAtMs = new Date(row.issued_at).getTime()
+        // CR 4.5 P13 : log warn si `issued_at` non-parseable (corruption DB,
+        // timestamp sans Z/offset). Sinon la branche stale ne se déclenche
+        // jamais (NaN échappe `Number.isFinite`) → UI coincée en 202 perpétuel.
+        if (!Number.isFinite(issuedAtMs)) {
+          logger.warn('credit_note.pdf.issued_at_unparseable', {
+            requestId,
+            creditNoteId: row.id,
+            issuedAtRaw: String(row.issued_at).slice(0, 40),
+          })
+        }
+        const ageMs = Date.now() - issuedAtMs
+        if (Number.isFinite(ageMs) && ageMs >= PDF_STALE_THRESHOLD_MS) {
+          logger.error('credit_note.pdf.generation_stale', {
+            requestId,
+            creditNoteId: row.id,
+            number: row.number,
+            ageMs,
+          })
+          sendError(res, 'SERVER_ERROR', 'Génération PDF échouée', requestId, {
+            code: 'PDF_GENERATION_STALE',
+            credit_note_number_formatted: row.number_formatted,
+            number: row.number,
+          })
+          return
+        }
         // 202 Accepted : la génération est toujours en cours.
         res.status(202).json({
           data: {
@@ -160,4 +195,4 @@ export function pdfRedirectHandler(numberInput: string): ApiHandler {
   })(core)
 }
 
-export { NUMBER_FORMATTED_RE, NUMBER_BIGINT_RE }
+export { NUMBER_FORMATTED_RE, NUMBER_BIGINT_RE, PDF_STALE_THRESHOLD_MS }
