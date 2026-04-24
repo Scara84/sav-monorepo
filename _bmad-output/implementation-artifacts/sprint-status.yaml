@@ -38,7 +38,24 @@
 # - Une story passe par 'review' avant 'done' (via bmad-code-review)
 
 generated: 2026-04-18
-last_updated: 2026-04-26
+last_updated: 2026-04-27
+# 2026-04-27 : Stories 4.3 / 4.4 / 4.5 / 4.6 créées (ready-for-dev) — fin
+# contextualisation Epic 4. 4.3 preview live (composable useSavLinePreview +
+# extension detail-handler settings_snapshot + bloc UI Aperçu avoir + remise
+# responsable 4% conditionnelle, 11 AC). 4.4 émission atomique POST
+# /api/sav/:id/credit-notes (gate statut + lignes ok + 1 SAV=1 avoir,
+# migration UNIQUE(sav_id), totaux via moteur 4.2, RPC 4.1, async PDF
+# enqueue via waitUntil, endpoint re-download PDF 302/202, 12 AC).
+# 4.5 PDF Fruitstock (@react-pdf/renderer v4.5.1 déjà présent, template
+# charte orange + mentions légales + multi-taux TVA V1 simple, settings
+# company.* + onedrive.pdf_folder_root, upload OneDrive retry x3, async via
+# waitUntil dans même lambda émission, endpoint regenerate stale recovery,
+# bench p95 < 2s target, 12 AC). 4.6 load test 10k émissions (script
+# standalone Node + tsx, garde-fou anti-prod 3 niveaux, assertions zéro
+# collision/zéro trou/séquence-in-sync, cleanup finally, runbook README,
+# pas de CI V1 — manuel pré-merge + pré-cutover, 10 AC). Ordre dev
+# recommandé : 4.3 + 4.5 en parallèle, puis 4.4 (dépend 4.5 interface),
+# puis 4.6 validation empirique.
 # 2026-04-25 : Story 4.2 done après CR adversarial 3 couches (Blind+Edge+Auditor).
 # 1 BLOCKER résolu, 14 patches P1-P14 appliqués, 2 decisions tranchées (D1 NULL
 # qty_invoiced → to_calculate cohérent flow double-webhook Make.com ; D2 pas
@@ -165,10 +182,10 @@ development_status:
   4-0b-dette-tests-sql-rpc-epic-3: done
   4-1-migration-avoirs-sequence-transactionnelle-rpc: done
   4-2-moteur-calculs-metier-typescript-triggers-miroirs-fixture-excel: done
-  4-3-integration-moteur-dans-la-vue-detail-preview-live: backlog
-  4-4-emission-atomique-n-avoir-bon-sav: backlog
-  4-5-template-pdf-charte-fruitstock-generation-serverless: backlog
-  4-6-test-de-charge-sequence-d-avoir: backlog
+  4-3-integration-moteur-vue-detail-preview-live: ready-for-dev
+  4-4-emission-atomique-n-avoir-bon-sav: ready-for-dev
+  4-5-template-pdf-charte-fruitstock-generation-serverless: ready-for-dev
+  4-6-test-de-charge-sequence-d-avoir: ready-for-dev
   epic-4-retrospective: optional
 
   # ──────────────────────────────────────────────────────────────
