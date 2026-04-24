@@ -1,5 +1,5 @@
 # generated: 2026-04-18
-# last_updated: 2026-04-18
+# last_updated: 2026-04-24
 # project: sav-monorepo
 # project_key: NOKEY
 # tracking_system: file-system
@@ -39,6 +39,16 @@
 
 generated: 2026-04-18
 last_updated: 2026-04-24
+# 2026-04-24 : Story 4.6 done après CR adversarial 3 couches (Blind+Edge+Auditor).
+# 15 patches appliqués (abort-on-first-error runWithConcurrency, cleanup scoped
+# runTag UUID, assertion range [1..count] stricte, infra vs assertion error,
+# word-boundary regex hostname prod, cap count/errors, exit code propagé sur
+# cleanup/report failure, threader counts dans report, doc drift W31→W38).
+# 1 defer W39 (checklists Epic 4 final + cutover Epic 7). 602/602 Vitest
+# (+32 helpers load-test), typecheck strict 0, lint 0, build 459.16 KB stable.
+# Task 4 (run réel 10k RPC contre DB préview Supabase dédiée) différé manuel
+# pré-cutover Epic 7 — bloque déploiement prod V1 mais pas merge Epic 4.
+# → Epic 4 complet 6/6 stories (4.0, 4.0b, 4.1, 4.2, 4.3, 4.4, 4.5, 4.6 done).
 # 2026-04-24 : Story 4.5 done après CR adversarial 3 couches (Blind+Edge+Auditor).
 # 15 patches P1-P15 appliqués (rate-limit canonical key, migration valid_from
 # past date, UPDATE WHERE pdf_web_url IS NULL anti-orphelin, path-traversal
@@ -213,14 +223,14 @@ development_status:
   3-6-edition-lignes-sav-avec-validations-bloquantes: done
   3-7-tags-commentaires-duplication-fichiers-additionnels: done
   # Carry-over créés (backlog) :
-  3-6b-triggers-compute-sav-line-credit-et-ui-edition-ligne: backlog  # dépend Epic 4 moteur calcul
+  3-6b-triggers-compute-sav-line-credit-et-ui-edition-ligne: done  # 2026-04-24 DS + CR adversarial 3 couches (Blind+Edge+Auditor). 13/13 AC ✅. 7 patches CR appliqués (P1 MISSING_FIELD, P2 locale FR virgule, P3 reset-null update_sav_line, P4 refreshSafe hors try/catch, P5 confirmFn doc, P7 cleanup editDraft, P9 FORBIDDEN_FIELD F52). Migration 20260430120000 CR patches. 628/628 Vitest, typecheck 0, lint 0, build 459.64 KB.
   3-7b-ui-tags-compose-duplicate-upload-operateur: backlog             # dépend Epic 6 self-service
   epic-3-retrospective: done
 
   # ──────────────────────────────────────────────────────────────
   # Epic 4: Moteur comptable fidèle (calculs, avoirs, bons SAV PDF)
   # ──────────────────────────────────────────────────────────────
-  epic-4: in-progress
+  epic-4: done
   # Story 4.0 dette Epic 4 prep : alignement schéma sav_lines PRD-target (D2)
   # + enum validation_status CHECK strict (D3). Pré-requis Story 4.2 moteur calcul.
   4-0-dette-schema-sav-lines-prd-target: done
@@ -233,7 +243,7 @@ development_status:
   4-3-integration-moteur-vue-detail-preview-live: done
   4-4-emission-atomique-n-avoir-bon-sav: done
   4-5-template-pdf-charte-fruitstock-generation-serverless: done
-  4-6-test-de-charge-sequence-d-avoir: ready-for-dev
+  4-6-test-de-charge-sequence-d-avoir: done
   epic-4-retrospective: optional
 
   # ──────────────────────────────────────────────────────────────

@@ -35,13 +35,16 @@ export const lineEditBodySchema = z
   .object({
     qtyRequested: z.number().positive().max(99999).optional(),
     unitRequested: z.enum(['kg', 'piece', 'liter']).optional(),
-    qtyInvoiced: z.number().nonnegative().max(99999).optional(),
-    unitInvoiced: z.enum(['kg', 'piece', 'liter']).optional(),
+    // P3 (CR Blind-6) : nullable pour permettre reset explicite à NULL.
+    // Le RPC (migration 20260430120000) distingue clé absente (inchangé) vs
+    // clé présente=null (unset).
+    qtyInvoiced: z.number().nonnegative().max(99999).nullable().optional(),
+    unitInvoiced: z.enum(['kg', 'piece', 'liter']).nullable().optional(),
     unitPriceHtCents: z.number().int().nonnegative().max(100000000).optional(),
     vatRateBpSnapshot: z.number().int().min(0).max(10000).optional(),
     creditCoefficient: z.number().min(0).max(1).optional(),
     creditCoefficientLabel: z.string().max(32).optional(),
-    pieceToKgWeightG: z.number().int().positive().max(100000).optional(),
+    pieceToKgWeightG: z.number().int().positive().max(100000).nullable().optional(),
     position: z.number().int().nonnegative().max(999).optional(),
     lineNumber: z.number().int().positive().max(999).optional(),
     version: z.number().int().nonnegative(),

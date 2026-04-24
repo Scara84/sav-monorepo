@@ -33,6 +33,10 @@
       "source": "/api/sav/:id/lines/:lineId",
       "destination": "/api/sav?op=line&id=:id&lineId=:lineId"
     },
+    {
+      "source": "/api/sav/:id/lines",
+      "destination": "/api/sav?op=line&id=:id"
+    },
     { "source": "/api/sav/:id", "destination": "/api/sav?op=detail&id=:id" },
     {
       "source": "/api/credit-notes/:number/pdf",

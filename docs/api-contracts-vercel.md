@@ -408,6 +408,121 @@ stateDiagram-v2
 - Si `note` fourni : INSERT `sav_comments` `visibility='internal'`, auteur opérateur.
 
 
+## `PATCH /api/sav/:id/lines/:lineId` + `POST /api/sav/:id/lines` + `DELETE /api/sav/:id/lines/:lineId` (Epic 3 Story 3.6 V1 + Story 3.6b)
+
+Édition inline des lignes SAV (opérateur back-office). Toutes les opérations passent par RPCs atomiques (`update_sav_line`, `create_sav_line`, `delete_sav_line`) avec verrou optimiste CAS sur `sav.version`. Le trigger `compute_sav_line_credit` (Epic 4.2) recalcule automatiquement `credit_amount_cents` + `validation_status` à chaque INSERT/UPDATE de ligne, et `recompute_sav_total` met à jour `sav.total_amount_cents` (AFTER).
+
+### Auth & rate-limit
+
+- Toutes : `withAuth({ types: ['operator'] })` via le dispatcher `api/sav.ts`.
+- PATCH : bucket `sav:line:edit`, 300 req/min/opérateur (édition rapide = 1 champ par PATCH).
+- POST : bucket `sav:line:create`, 60 req/min/opérateur (création moins fréquente).
+- DELETE : bucket `sav:line:delete`, 60 req/min/opérateur.
+
+### Invariants partagés (toutes les 3 RPCs)
+
+- **F50** — actor existence check avant toute mutation.
+- **D6 SAV_LOCKED** — édition / création / suppression interdite si `sav.status ∈ ('validated','closed','cancelled')`.
+- **F52 whitelist** — `validation_status`, `validation_message`, `credit_amount_cents` **jamais** client-writable. Zod `.strict()` rejette les clés inconnues en amont (400) ; la RPC whitelist les colonnes écrites. Seul le trigger compute les écrit.
+
+### `PATCH /api/sav/:id/lines/:lineId`
+
+Body Zod (tous les champs optionnels sauf `version`, au moins 1 champ fonctionnel requis) :
+
+```ts
+z.object({
+  qtyRequested: z.number().positive().max(99999).optional(),
+  unitRequested: z.enum(['kg','piece','liter']).optional(),
+  qtyInvoiced: z.number().nonnegative().max(99999).optional(),
+  unitInvoiced: z.enum(['kg','piece','liter']).optional(),
+  unitPriceHtCents: z.number().int().nonnegative().max(100000000).optional(),
+  vatRateBpSnapshot: z.number().int().min(0).max(10000).optional(),
+  creditCoefficient: z.number().min(0).max(1).optional(),
+  creditCoefficientLabel: z.string().max(32).optional(),
+  pieceToKgWeightG: z.number().int().positive().max(100000).optional(),
+  position: z.number().int().nonnegative().max(999).optional(),
+  lineNumber: z.number().int().positive().max(999).optional(),
+  version: z.number().int().nonnegative(),
+}).strict()
+```
+
+Réponse 200 : `{ data: { savId, lineId, version, validationStatus } }`.
+
+### `POST /api/sav/:id/lines` (Story 3.6b)
+
+Crée une ligne. Le trigger `trg_assign_sav_line_number` auto-assigne `line_number = MAX+1` par `sav_id`. Defaults RPC-side si absents : `credit_coefficient = 1`, `credit_coefficient_label = 'TOTAL'`.
+
+Body Zod :
+
+```ts
+z.object({
+  productId: z.number().int().positive().optional(),
+  productCodeSnapshot: z.string().min(1).max(64),
+  productNameSnapshot: z.string().min(1).max(200),
+  qtyRequested: z.number().positive().max(99999),
+  unitRequested: z.enum(['kg','piece','liter']),
+  qtyInvoiced: z.number().nonnegative().max(99999).optional(),
+  unitInvoiced: z.enum(['kg','piece','liter']).optional(),
+  unitPriceHtCents: z.number().int().nonnegative().max(100000000).optional(),
+  vatRateBpSnapshot: z.number().int().min(0).max(10000).optional(),
+  creditCoefficient: z.number().min(0).max(1).optional(),
+  creditCoefficientLabel: z.string().max(32).optional(),
+  pieceToKgWeightG: z.number().int().positive().max(100000).optional(),
+  version: z.number().int().nonnegative(),
+}).strict()
+```
+
+Réponse **201** : `{ data: { savId, lineId, version, validationStatus } }`.
+
+Erreurs spécifiques : `PRODUCT_NOT_FOUND` → 422 `BUSINESS_RULE` si `productId` fourni mais inexistant / soft-deleted.
+
+Exemple cURL :
+```bash
+curl -X POST https://.../api/sav/42/lines \
+  -H "content-type: application/json" \
+  -H "cookie: sav_session=..." \
+  -d '{"productCodeSnapshot":"POM-01","productNameSnapshot":"Pommes","qtyRequested":3,"unitRequested":"kg","version":1}'
+```
+
+### `DELETE /api/sav/:id/lines/:lineId` (Story 3.6b)
+
+Body Zod : `{ version: number }` (obligatoire pour CAS).
+
+Hard delete. L'audit trigger `trg_audit_sav_lines` capture la suppression dans `audit_trail` (ON DELETE). Le trigger `recompute_sav_total` (AFTER DELETE) recalcule `sav.total_amount_cents`.
+
+Réponse 200 : `{ data: { savId, version } }`.
+
+Exemple cURL :
+```bash
+curl -X DELETE https://.../api/sav/42/lines/100 \
+  -H "content-type: application/json" \
+  -H "cookie: sav_session=..." \
+  -d '{"version":3}'
+```
+
+### Erreurs communes aux 3 endpoints
+
+| Code PG          | HTTP | `error.code`     | `error.details.code` | Exemple                                  |
+| ---------------- | ---- | ---------------- | -------------------- | ---------------------------------------- |
+| `NOT_FOUND`      | 404  | `NOT_FOUND`      | —                    | SAV ou ligne introuvable                 |
+| `VERSION_CONFLICT` | 409 | `CONFLICT`      | `VERSION_CONFLICT`   | `details.currentVersion` retourné        |
+| `SAV_LOCKED`     | 422  | `BUSINESS_RULE`  | `SAV_LOCKED`         | `details.status` = validated/closed/cancelled |
+| `ACTOR_NOT_FOUND`| 403  | `FORBIDDEN`      | —                    | JWT forgé / opérateur supprimé           |
+| `PRODUCT_NOT_FOUND` (POST only) | 422 | `BUSINESS_RULE` | `PRODUCT_NOT_FOUND` | `details.productId` retourné           |
+| Zod `.strict()`  | 400  | `VALIDATION_FAILED` | —                 | Clé inconnue / type invalide             |
+| Rate limit       | 429  | `RATE_LIMITED`   | —                    | Bucket dépassé                           |
+
+### Rewrites Vercel
+
+```
+POST   /api/sav/:id/lines         → /api/sav?op=line&id=:id
+PATCH  /api/sav/:id/lines/:lineId → /api/sav?op=line&id=:id&lineId=:lineId
+DELETE /api/sav/:id/lines/:lineId → /api/sav?op=line&id=:id&lineId=:lineId
+```
+
+Le dispatcher `api/sav.ts` route par méthode HTTP dans `op='line'` : POST sans lineId = create, PATCH avec lineId = update, DELETE avec lineId = delete.
+
+
 ## `POST /api/sav/:id/credit-notes` (Epic 4 Story 4.4)
 
 Émission atomique d'un **numéro d'avoir** (+ ligne `credit_notes`) et déclenchement asynchrone de la génération PDF (Story 4.5). Règle métier V1 : **1 SAV = au plus 1 avoir** — contrainte défendue applicativement (gate amont) + côté DB (migration `20260427120000_credit_notes_unique_sav.sql` : `UNIQUE(sav_id)`).

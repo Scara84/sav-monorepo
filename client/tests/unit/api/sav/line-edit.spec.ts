@@ -10,6 +10,7 @@ const rpcMock = vi.hoisted(() => ({
   error: null as unknown,
   rateLimitAllowed: true as boolean,
   capturedArgs: null as Record<string, unknown> | null,
+  capturedFn: null as string | null,
 }))
 
 vi.mock('../../../../api/_lib/clients/supabase-admin', () => ({
@@ -21,7 +22,8 @@ vi.mock('../../../../api/_lib/clients/supabase-admin', () => ({
           error: null,
         })
       }
-      if (fn === 'update_sav_line') {
+      if (fn === 'update_sav_line' || fn === 'create_sav_line' || fn === 'delete_sav_line') {
+        rpcMock.capturedFn = fn
         rpcMock.capturedArgs = args
         return Promise.resolve({ data: rpcMock.data, error: rpcMock.error })
       }
@@ -63,7 +65,29 @@ beforeEach(() => {
   rpcMock.error = null
   rpcMock.rateLimitAllowed = true
   rpcMock.capturedArgs = null
+  rpcMock.capturedFn = null
 })
+
+function postLineReq(savId: number, body: unknown, cookie = opCookie()) {
+  return mockReq({
+    method: 'POST',
+    headers: { cookie, 'content-type': 'application/json' },
+    query: { op: 'line', id: String(savId) } as Record<string, string | string[] | undefined>,
+    body: body as Record<string, unknown>,
+  })
+}
+
+function deleteLineReq(savId: number, lineId: number, body: unknown, cookie = opCookie()) {
+  return mockReq({
+    method: 'DELETE',
+    headers: { cookie, 'content-type': 'application/json' },
+    query: { op: 'line', id: String(savId), lineId: String(lineId) } as Record<
+      string,
+      string | string[] | undefined
+    >,
+    body: body as Record<string, unknown>,
+  })
+}
 
 describe('PATCH /api/sav/:id/lines/:lineId (Story 3.6)', () => {
   it('TL-01: 401 sans cookie', async () => {
@@ -228,5 +252,178 @@ describe('PATCH /api/sav/:id/lines/:lineId (Story 3.6)', () => {
     const res = mockRes()
     await handler(lineReq(1, 5, { unitRequested: 'tonne', version: 0 }), res)
     expect(res.statusCode).toBe(400)
+  })
+})
+
+describe('POST /api/sav/:id/lines (Story 3.6b)', () => {
+  const validBody = {
+    productCodeSnapshot: 'P-100',
+    productNameSnapshot: 'Cagette pêches',
+    qtyRequested: 3,
+    unitRequested: 'kg' as const,
+    version: 0,
+  }
+
+  it('TL-09: 201 POST create ligne OK', async () => {
+    rpcMock.data = [{ sav_id: 1, line_id: 42, new_version: 1, validation_status: 'ok' }]
+    const res = mockRes()
+    await handler(postLineReq(1, validBody), res)
+    expect(res.statusCode).toBe(201)
+    expect(rpcMock.capturedFn).toBe('create_sav_line')
+    expect(rpcMock.capturedArgs).toMatchObject({
+      p_sav_id: 1,
+      p_expected_version: 0,
+      p_patch: {
+        productCodeSnapshot: 'P-100',
+        productNameSnapshot: 'Cagette pêches',
+        qtyRequested: 3,
+        unitRequested: 'kg',
+      },
+    })
+    const body = res.jsonBody as { data: { lineId: number; version: number } }
+    expect(body.data.lineId).toBe(42)
+    expect(body.data.version).toBe(1)
+  })
+
+  it('TL-09b: 400 body invalide (qtyRequested manquant)', async () => {
+    const res = mockRes()
+    await handler(
+      postLineReq(1, {
+        productCodeSnapshot: 'P-100',
+        productNameSnapshot: 'X',
+        unitRequested: 'kg',
+        version: 0,
+      }),
+      res
+    )
+    expect(res.statusCode).toBe(400)
+  })
+
+  it('TL-09c: 404 SAV inexistant', async () => {
+    rpcMock.error = { code: 'P0001', message: 'NOT_FOUND' }
+    const res = mockRes()
+    await handler(postLineReq(999, validBody), res)
+    expect(res.statusCode).toBe(404)
+  })
+
+  it('TL-09d: 409 VERSION_CONFLICT', async () => {
+    rpcMock.error = { code: 'P0001', message: 'VERSION_CONFLICT|current=5' }
+    const res = mockRes()
+    await handler(postLineReq(1, validBody), res)
+    expect(res.statusCode).toBe(409)
+    const body = res.jsonBody as { error: { details: { currentVersion: number } } }
+    expect(body.error.details.currentVersion).toBe(5)
+  })
+
+  it('TL-09e: 422 SAV_LOCKED (statut terminal)', async () => {
+    rpcMock.error = { code: 'P0001', message: 'SAV_LOCKED|status=validated' }
+    const res = mockRes()
+    await handler(postLineReq(1, validBody), res)
+    expect(res.statusCode).toBe(422)
+    const body = res.jsonBody as { error: { details: { code: string; status: string } } }
+    expect(body.error.details.code).toBe('SAV_LOCKED')
+    expect(body.error.details.status).toBe('validated')
+  })
+
+  it('F52 POST : validationStatus dans body → rejeté Zod strict (400)', async () => {
+    const res = mockRes()
+    await handler(
+      postLineReq(1, { ...validBody, validationStatus: 'ok' } as Record<string, unknown>),
+      res
+    )
+    expect(res.statusCode).toBe(400)
+  })
+
+  it('F50 POST : ACTOR_NOT_FOUND → 403', async () => {
+    rpcMock.error = { code: 'P0001', message: 'ACTOR_NOT_FOUND|id=9999' }
+    const res = mockRes()
+    await handler(postLineReq(1, validBody), res)
+    expect(res.statusCode).toBe(403)
+  })
+
+  it('POST : rate limit 60/min → 429', async () => {
+    rpcMock.rateLimitAllowed = false
+    const res = mockRes()
+    await handler(postLineReq(1, validBody), res)
+    expect(res.statusCode).toBe(429)
+  })
+
+  it('POST avec lineId dans query → 400 (POST /lines ne doit pas inclure lineId)', async () => {
+    const res = mockRes()
+    await handler(
+      mockReq({
+        method: 'POST',
+        headers: { cookie: opCookie(), 'content-type': 'application/json' },
+        query: { op: 'line', id: '1', lineId: '5' },
+        body: validBody,
+      }),
+      res
+    )
+    expect(res.statusCode).toBe(400)
+  })
+})
+
+describe('DELETE /api/sav/:id/lines/:lineId (Story 3.6b)', () => {
+  it('TL-10: 200 DELETE ligne OK + version++', async () => {
+    rpcMock.data = [{ sav_id: 1, new_version: 3 }]
+    const res = mockRes()
+    await handler(deleteLineReq(1, 5, { version: 2 }), res)
+    expect(res.statusCode).toBe(200)
+    expect(rpcMock.capturedFn).toBe('delete_sav_line')
+    expect(rpcMock.capturedArgs).toMatchObject({
+      p_sav_id: 1,
+      p_line_id: 5,
+      p_expected_version: 2,
+    })
+    const body = res.jsonBody as { data: { savId: number; version: number } }
+    expect(body.data.version).toBe(3)
+  })
+
+  it('TL-10b: 404 ligne inexistante', async () => {
+    rpcMock.error = { code: 'P0001', message: 'NOT_FOUND|line=99' }
+    const res = mockRes()
+    await handler(deleteLineReq(1, 99, { version: 0 }), res)
+    expect(res.statusCode).toBe(404)
+  })
+
+  it('TL-10c: 409 VERSION_CONFLICT', async () => {
+    rpcMock.error = { code: 'P0001', message: 'VERSION_CONFLICT|current=7' }
+    const res = mockRes()
+    await handler(deleteLineReq(1, 5, { version: 3 }), res)
+    expect(res.statusCode).toBe(409)
+  })
+
+  it('TL-10d: 422 SAV_LOCKED (closed)', async () => {
+    rpcMock.error = { code: 'P0001', message: 'SAV_LOCKED|status=closed' }
+    const res = mockRes()
+    await handler(deleteLineReq(1, 5, { version: 0 }), res)
+    expect(res.statusCode).toBe(422)
+  })
+
+  it('DELETE : body sans version → 400', async () => {
+    const res = mockRes()
+    await handler(deleteLineReq(1, 5, {}), res)
+    expect(res.statusCode).toBe(400)
+  })
+
+  it('DELETE sans lineId → 400', async () => {
+    const res = mockRes()
+    await handler(
+      mockReq({
+        method: 'DELETE',
+        headers: { cookie: opCookie(), 'content-type': 'application/json' },
+        query: { op: 'line', id: '1' },
+        body: { version: 0 },
+      }),
+      res
+    )
+    expect(res.statusCode).toBe(400)
+  })
+
+  it('F50 DELETE : ACTOR_NOT_FOUND → 403', async () => {
+    rpcMock.error = { code: 'P0001', message: 'ACTOR_NOT_FOUND|id=9999' }
+    const res = mockRes()
+    await handler(deleteLineReq(1, 5, { version: 0 }), res)
+    expect(res.statusCode).toBe(403)
   })
 })

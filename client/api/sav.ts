@@ -5,6 +5,8 @@ import { listSavHandler } from './_lib/sav/list-handler'
 import { savDetailHandler } from './_lib/sav/detail-handler'
 import { savStatusHandler, savAssignHandler } from './_lib/sav/transition-handlers'
 import { savLineEditHandler } from './_lib/sav/line-edit-handler'
+import { savLineCreateHandler } from './_lib/sav/line-create-handler'
+import { savLineDeleteHandler } from './_lib/sav/line-delete-handler'
 import {
   savTagsHandler,
   savCommentsPostHandler,
@@ -178,16 +180,30 @@ const dispatch: ApiHandler = async (req, res) => {
   }
 
   if (op === 'line') {
+    // Story 3.6b — op=line dispatch par méthode HTTP :
+    //   POST   (sans lineId)  → create ligne
+    //   PATCH  (avec lineId)  → update ligne
+    //   DELETE (avec lineId)  → delete ligne
+    if (method === 'POST') {
+      if (lineId !== null) {
+        sendError(res, 'VALIDATION_FAILED', 'POST /lines ne doit pas inclure lineId', requestId)
+        return
+      }
+      return savLineCreateHandler(savId)(req, res)
+    }
     if (lineId === null) {
       sendError(res, 'VALIDATION_FAILED', 'ID ligne invalide ou manquant', requestId)
       return
     }
-    if (method !== 'PATCH') {
-      res.setHeader('Allow', 'PATCH')
-      sendError(res, 'VALIDATION_FAILED', 'Méthode non supportée', requestId)
-      return
+    if (method === 'PATCH') {
+      return savLineEditHandler(savId, lineId)(req, res)
     }
-    return savLineEditHandler(savId, lineId)(req, res)
+    if (method === 'DELETE') {
+      return savLineDeleteHandler(savId, lineId)(req, res)
+    }
+    res.setHeader('Allow', 'PATCH, DELETE, POST')
+    sendError(res, 'VALIDATION_FAILED', 'Méthode non supportée', requestId)
+    return
   }
 
   if (op === 'tags') {

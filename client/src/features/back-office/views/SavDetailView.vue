@@ -1,8 +1,10 @@
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
+import { computed, onMounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useSavDetail } from '../composables/useSavDetail'
+import { useSavDetail, type SavDetailLine } from '../composables/useSavDetail'
 import { useSavLinePreview } from '../composables/useSavLinePreview'
+import { useSavLineEdit } from '../composables/useSavLineEdit'
+import AddLineDialog from '../components/AddLineDialog.vue'
 import type { SavLineInput } from '../../../../api/_lib/business/creditCalculation'
 import { formatDiff } from '../utils/format-audit-diff'
 import { isOneDriveWebUrlTrusted } from '../../../shared/utils/onedrive-whitelist'
@@ -123,6 +125,225 @@ function scrollToFirstBlocking(event: Event): void {
 const showPreview = computed(
   () => sav.value?.status === 'in_progress' || sav.value?.status === 'validated'
 )
+
+// --- Story 3.6b : édition inline lignes + bouton Valider -----------------
+const savIdRef = computed<number>(() => sav.value?.id ?? 0)
+
+// La version locale sert au CAS : après un save, on la met à jour sans
+// attendre le refresh full (sauf POST/DELETE qui refresh).
+const localVersion = ref<number>(0)
+watch(
+  () => sav.value?.version,
+  (v) => {
+    if (typeof v === 'number') localVersion.value = v
+  }
+)
+
+const lineEdit = useSavLineEdit({
+  savId: savIdRef,
+  savVersion: localVersion,
+  onVersionUpdated: (v) => {
+    localVersion.value = v
+  },
+  onRefreshRequested: refresh,
+})
+
+// Draft values par ligne en édition (key = lineId).
+// Les inputs type=number peuvent émettre string OU number (Vue binding + jsdom
+// setValue coerce différemment) — on accepte les deux.
+const editDraft = reactive<
+  Record<
+    number,
+    {
+      qtyRequested: string | number
+      unitRequested: string
+      qtyInvoiced: string | number
+      unitInvoiced: string
+      unitPriceEuros: string | number
+      creditCoefficient: string | number
+      pieceToKgWeightG: string | number
+    }
+  >
+>({})
+
+function beginEditLine(l: SavDetailLine): void {
+  editDraft[l.id] = {
+    qtyRequested: String(l.qtyRequested),
+    unitRequested: l.unitRequested,
+    qtyInvoiced: l.qtyInvoiced !== null ? String(l.qtyInvoiced) : '',
+    unitInvoiced: l.unitInvoiced ?? '',
+    unitPriceEuros: l.unitPriceHtCents !== null ? (l.unitPriceHtCents / 100).toFixed(2) : '',
+    creditCoefficient: String(l.creditCoefficient),
+    pieceToKgWeightG: l.pieceToKgWeightG !== null ? String(l.pieceToKgWeightG) : '',
+  }
+  lineEdit.startEdit(l.id)
+  toastMessage.value = null
+}
+
+function cancelEditLine(): void {
+  const id = lineEdit.editingLineId.value
+  lineEdit.cancelEdit()
+  // P7 (CR Edge-11) : cleanup draft après annulation.
+  if (id !== null) delete editDraft[id]
+}
+
+// P2 (CR Blind-5) : locale FR — accepter virgule comme séparateur décimal.
+// Défensif : Vue `<input type="number">` peut émettre number ou string selon
+// le scénario (setValue en tests vs user type).
+function parseLocaleNumber(raw: string | number): number {
+  if (typeof raw === 'number') return raw
+  return Number(String(raw).replace(',', '.').trim())
+}
+
+function isEmptyDraftField(v: unknown): boolean {
+  return v === '' || v === null || v === undefined
+}
+
+async function saveEditLine(l: SavDetailLine): Promise<void> {
+  const draft = editDraft[l.id]
+  if (!draft) return
+  const patch: Record<string, unknown> = {}
+  const qtyReq = parseLocaleNumber(draft.qtyRequested)
+  if (Number.isFinite(qtyReq) && qtyReq !== l.qtyRequested) patch['qtyRequested'] = qtyReq
+  if (draft.unitRequested && draft.unitRequested !== l.unitRequested)
+    patch['unitRequested'] = draft.unitRequested
+  // P3 (CR Blind-6) : qtyInvoiced/unitInvoiced resettables à null via valeur vide.
+  if (isEmptyDraftField(draft.qtyInvoiced)) {
+    if (l.qtyInvoiced !== null) patch['qtyInvoiced'] = null
+  } else {
+    const q = parseLocaleNumber(draft.qtyInvoiced)
+    if (Number.isFinite(q) && q !== l.qtyInvoiced) patch['qtyInvoiced'] = q
+  }
+  if (isEmptyDraftField(draft.unitInvoiced)) {
+    if (l.unitInvoiced !== null) patch['unitInvoiced'] = null
+  } else if (draft.unitInvoiced !== l.unitInvoiced) {
+    patch['unitInvoiced'] = draft.unitInvoiced
+  }
+  if (!isEmptyDraftField(draft.unitPriceEuros)) {
+    const cents = Math.round(parseLocaleNumber(draft.unitPriceEuros) * 100)
+    if (Number.isFinite(cents) && cents !== l.unitPriceHtCents) patch['unitPriceHtCents'] = cents
+  }
+  if (!isEmptyDraftField(draft.creditCoefficient)) {
+    const c = parseLocaleNumber(draft.creditCoefficient)
+    if (Number.isFinite(c) && c !== l.creditCoefficient) patch['creditCoefficient'] = c
+  }
+  if (!isEmptyDraftField(draft.pieceToKgWeightG)) {
+    const g = Math.round(parseLocaleNumber(draft.pieceToKgWeightG))
+    if (Number.isFinite(g) && g !== l.pieceToKgWeightG) patch['pieceToKgWeightG'] = g
+  }
+  if (Object.keys(patch).length === 0) {
+    lineEdit.cancelEdit()
+    return
+  }
+  const result = await lineEdit.savePatch(l.id, patch)
+  if (!result.ok) {
+    if (result.error.code === 'VERSION_CONFLICT') {
+      toastMessage.value = 'Rechargez, le SAV a été modifié par un autre utilisateur.'
+      await refresh()
+    } else {
+      toastMessage.value = result.error.message
+    }
+    return
+  }
+  // P7 (CR Edge-11) : cleanup draft pour éviter accumulation mémoire.
+  delete editDraft[l.id]
+  // Trigger compute peut avoir changé validation_status → refresh pour
+  // surfacer les nouveaux badges/crédits (sav.total_amount_cents aussi).
+  await refresh()
+}
+
+async function deleteLineConfirmed(l: SavDetailLine): Promise<void> {
+  if (!confirmFn(`Supprimer la ligne ${l.lineNumber ?? l.position} (${l.productNameSnapshot}) ?`))
+    return
+  const result = await lineEdit.deleteLine(l.id)
+  if (!result.ok) {
+    if (result.error.code === 'VERSION_CONFLICT') {
+      toastMessage.value = 'Rechargez, le SAV a été modifié par un autre utilisateur.'
+      await refresh()
+    } else {
+      toastMessage.value = result.error.message
+    }
+  }
+}
+
+// P5 (CR Blind-12) : wrapper minimal autour de window.confirm. Les tests
+// stubbent `window.confirm` via `vi.stubGlobal('confirm', …)` — une injection
+// via provide/props serait plus propre mais overkill V1 pour un simple yes/no.
+function confirmFn(message: string): boolean {
+  if (typeof window !== 'undefined' && typeof window.confirm === 'function') {
+    return window.confirm(message)
+  }
+  return true
+}
+
+// Modal ajout ligne
+const addLineOpen = ref(false)
+function openAddLine(): void {
+  addLineOpen.value = true
+}
+async function handleAddLineCreate(body: {
+  productCodeSnapshot: string
+  productNameSnapshot: string
+  qtyRequested: number
+  unitRequested: 'kg' | 'piece' | 'liter'
+  unitPriceHtCents?: number
+  vatRateBpSnapshot?: number
+  creditCoefficient?: number
+}): Promise<void> {
+  const result = await lineEdit.createLine({ ...body })
+  if (!result.ok) {
+    toastMessage.value = result.error.message
+    return
+  }
+  addLineOpen.value = false
+}
+
+// Bouton Valider
+const toastMessage = ref<string | null>(null)
+const canValidate = computed<boolean>(() => {
+  const lines = sav.value?.lines ?? []
+  return lines.length > 0 && lines.every((l) => l.validationStatus === 'ok')
+})
+const showValidateButton = computed<boolean>(() => sav.value?.status === 'in_progress')
+const validating = ref(false)
+
+async function validateSav(): Promise<void> {
+  if (!canValidate.value || !sav.value) return
+  validating.value = true
+  toastMessage.value = null
+  try {
+    const res = await fetch(`/api/sav/${sav.value.id}/status`, {
+      method: 'PATCH',
+      credentials: 'include',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ status: 'validated', version: localVersion.value }),
+    })
+    if (res.status === 422) {
+      // LINES_BLOCKED race → refresh + scroll vers 1re bloquante
+      await refresh()
+      toastMessage.value = 'Des lignes sont encore en erreur — valider impossible.'
+      if (firstBlockingLineId.value !== null) {
+        const el = document.getElementById(`sav-line-${firstBlockingLineId.value}`)
+        el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      }
+      return
+    }
+    if (res.status === 409) {
+      toastMessage.value = 'Version périmée — le SAV sera rechargé.'
+      await refresh()
+      return
+    }
+    if (!res.ok) {
+      toastMessage.value = 'Validation impossible (erreur serveur).'
+      return
+    }
+    await refresh()
+  } catch (e) {
+    toastMessage.value = e instanceof Error ? e.message : 'Erreur réseau'
+  } finally {
+    validating.value = false
+  }
+}
 
 onMounted(() => {
   void refresh()
@@ -305,10 +526,25 @@ function backToList(): void {
     <template v-else-if="sav">
       <!-- Header -->
       <section class="header card" :aria-labelledby="'sav-detail-title'">
-        <h1 id="sav-detail-title">{{ sav.reference }}</h1>
-        <span :class="['status-badge', STATUS_COLOR[sav.status] ?? 'bg-gray']">
-          {{ STATUS_LABEL[sav.status] ?? sav.status }}
-        </span>
+        <div class="header-title-row">
+          <h1 id="sav-detail-title">{{ sav.reference }}</h1>
+          <span :class="['status-badge', STATUS_COLOR[sav.status] ?? 'bg-gray']">
+            {{ STATUS_LABEL[sav.status] ?? sav.status }}
+          </span>
+          <button
+            v-if="showValidateButton"
+            type="button"
+            class="validate-btn"
+            :disabled="!canValidate || validating"
+            :title="
+              !canValidate ? 'Corrige les lignes en erreur avant de valider' : 'Valider le SAV'
+            "
+            data-testid="sav-validate-btn"
+            @click="validateSav"
+          >
+            {{ validating ? 'Validation…' : 'Valider le SAV' }}
+          </button>
+        </div>
         <dl class="metadata">
           <div>
             <dt>Adhérent</dt>
@@ -375,44 +611,222 @@ function backToList(): void {
               <th scope="col">Qté demandée</th>
               <th scope="col">Qté facturée</th>
               <th scope="col">PU HT</th>
+              <th scope="col">Coef.</th>
               <th scope="col">Avoir</th>
               <th scope="col">Validation</th>
+              <th scope="col">Actions</th>
             </tr>
           </thead>
           <tbody>
-            <tr
-              v-for="l in sav.lines"
-              :key="l.id"
-              :id="`sav-line-${l.id}`"
-              :data-blocking="l.validationStatus !== 'ok' ? 'true' : 'false'"
-            >
-              <td>{{ l.position }}</td>
-              <td>{{ l.productCodeSnapshot }}</td>
-              <td>{{ l.productNameSnapshot }}</td>
-              <td>{{ l.qtyRequested }} {{ l.unitRequested }}</td>
-              <td>
-                {{ l.qtyInvoiced ?? '—' }}
-                {{ l.qtyInvoiced !== null ? (l.unitInvoiced ?? l.unitRequested) : '' }}
-              </td>
-              <td>{{ formatEur(l.unitPriceHtCents) }}</td>
-              <td>{{ formatEur(l.creditAmountCents) }}</td>
-              <td>
-                <span
-                  :class="[
-                    'validation-badge',
-                    VALIDATION_COLOR[l.validationStatus] ?? 'validation-ok',
-                  ]"
-                >
-                  {{ l.validationStatus }}
-                </span>
-              </td>
-            </tr>
+            <template v-for="l in sav.lines" :key="l.id">
+              <tr
+                :id="`sav-line-${l.id}`"
+                :data-blocking="l.validationStatus !== 'ok' ? 'true' : 'false'"
+                :aria-busy="lineEdit.savingLineId.value === l.id ? 'true' : 'false'"
+                :class="{ 'line-saving': lineEdit.savingLineId.value === l.id }"
+              >
+                <td>{{ l.lineNumber ?? l.position }}</td>
+                <td>{{ l.productCodeSnapshot }}</td>
+                <td>{{ l.productNameSnapshot }}</td>
+                <!-- Qté demandée -->
+                <td>
+                  <input
+                    v-if="lineEdit.editingLineId.value === l.id && editDraft[l.id]"
+                    v-model="editDraft[l.id]!.qtyRequested"
+                    type="number"
+                    min="0.001"
+                    max="99999"
+                    step="0.001"
+                    :aria-label="`Quantité demandée, ligne ${l.lineNumber ?? l.position}`"
+                    class="cell-input"
+                    :data-testid="`edit-qty-requested-${l.id}`"
+                    @keydown.enter.prevent="saveEditLine(l)"
+                    @keydown.esc.prevent="cancelEditLine"
+                  />
+                  <span v-else>{{ l.qtyRequested }} {{ l.unitRequested }}</span>
+                </td>
+                <!-- Qté facturée -->
+                <td>
+                  <span
+                    v-if="lineEdit.editingLineId.value === l.id && editDraft[l.id]"
+                    class="cell-pair"
+                  >
+                    <input
+                      v-model="editDraft[l.id]!.qtyInvoiced"
+                      type="number"
+                      min="0"
+                      max="99999"
+                      step="0.001"
+                      placeholder="—"
+                      :aria-label="`Quantité facturée, ligne ${l.lineNumber ?? l.position}`"
+                      class="cell-input"
+                      @keydown.enter.prevent="saveEditLine(l)"
+                      @keydown.esc.prevent="cancelEditLine"
+                    />
+                    <select
+                      v-model="editDraft[l.id]!.unitInvoiced"
+                      class="cell-select"
+                      :aria-label="`Unité facturée, ligne ${l.lineNumber ?? l.position}`"
+                    >
+                      <option value="">—</option>
+                      <option value="kg">kg</option>
+                      <option value="piece">pièce</option>
+                      <option value="liter">litre</option>
+                    </select>
+                  </span>
+                  <span v-else>
+                    {{ l.qtyInvoiced ?? '—' }}
+                    {{ l.qtyInvoiced !== null ? (l.unitInvoiced ?? l.unitRequested) : '' }}
+                  </span>
+                </td>
+                <!-- PU HT -->
+                <td>
+                  <input
+                    v-if="lineEdit.editingLineId.value === l.id && editDraft[l.id]"
+                    v-model="editDraft[l.id]!.unitPriceEuros"
+                    type="number"
+                    min="0"
+                    step="0.01"
+                    placeholder="€"
+                    :aria-label="`Prix unitaire HT, ligne ${l.lineNumber ?? l.position}`"
+                    class="cell-input"
+                    @keydown.enter.prevent="saveEditLine(l)"
+                    @keydown.esc.prevent="cancelEditLine"
+                  />
+                  <span v-else>{{ formatEur(l.unitPriceHtCents) }}</span>
+                </td>
+                <!-- Coefficient -->
+                <td>
+                  <input
+                    v-if="lineEdit.editingLineId.value === l.id && editDraft[l.id]"
+                    v-model="editDraft[l.id]!.creditCoefficient"
+                    type="number"
+                    min="0"
+                    max="1"
+                    step="0.01"
+                    :aria-label="`Coefficient avoir, ligne ${l.lineNumber ?? l.position}`"
+                    class="cell-input"
+                    @keydown.enter.prevent="saveEditLine(l)"
+                    @keydown.esc.prevent="cancelEditLine"
+                  />
+                  <span v-else>
+                    {{
+                      l.creditCoefficientLabel ??
+                      (Number.isFinite(l.creditCoefficient) ? l.creditCoefficient : '—')
+                    }}
+                  </span>
+                </td>
+                <td>{{ formatEur(l.creditAmountCents) }}</td>
+                <td>
+                  <span
+                    :class="[
+                      'validation-badge',
+                      VALIDATION_COLOR[l.validationStatus] ?? 'validation-ok',
+                    ]"
+                    :title="l.validationMessage ?? ''"
+                  >
+                    {{ l.validationStatus }}
+                  </span>
+                </td>
+                <td class="actions-cell">
+                  <span v-if="lineEdit.editingLineId.value === l.id" class="actions-pair">
+                    <button
+                      type="button"
+                      class="btn-sm"
+                      :disabled="lineEdit.savingLineId.value !== null"
+                      :data-testid="`save-line-${l.id}`"
+                      @click="saveEditLine(l)"
+                    >
+                      Enregistrer
+                    </button>
+                    <button
+                      type="button"
+                      class="btn-sm"
+                      :disabled="lineEdit.savingLineId.value !== null"
+                      @click="cancelEditLine"
+                    >
+                      Annuler
+                    </button>
+                  </span>
+                  <span v-else class="actions-pair">
+                    <button
+                      type="button"
+                      class="btn-sm"
+                      :disabled="sav.status !== 'in_progress'"
+                      :data-testid="`edit-line-${l.id}`"
+                      @click="beginEditLine(l)"
+                    >
+                      Éditer
+                    </button>
+                    <button
+                      type="button"
+                      class="btn-sm btn-danger"
+                      :disabled="sav.status !== 'in_progress'"
+                      :data-testid="`delete-line-${l.id}`"
+                      @click="deleteLineConfirmed(l)"
+                    >
+                      Supprimer
+                    </button>
+                  </span>
+                </td>
+              </tr>
+              <!-- Row secondaire : poids unité (g) visible si to_calculate + édition -->
+              <tr
+                v-if="
+                  lineEdit.editingLineId.value === l.id &&
+                  editDraft[l.id] &&
+                  l.validationStatus === 'to_calculate'
+                "
+                class="edit-extra-row"
+              >
+                <td colspan="10">
+                  <label class="extra-label">
+                    Poids unité (g)
+                    <input
+                      v-model="editDraft[l.id]!.pieceToKgWeightG"
+                      type="number"
+                      min="1"
+                      max="100000"
+                      step="1"
+                      :aria-label="`Poids unité en grammes, ligne ${l.lineNumber ?? l.position}`"
+                      class="cell-input"
+                      data-testid="edit-piece-to-kg-weight-g"
+                      @keydown.enter.prevent="saveEditLine(l)"
+                      @keydown.esc.prevent="cancelEditLine"
+                    />
+                  </label>
+                </td>
+              </tr>
+            </template>
             <tr v-if="sav.lines.length === 0">
-              <td colspan="8" class="empty">Aucune ligne sur ce SAV.</td>
+              <td colspan="10" class="empty">Aucune ligne sur ce SAV.</td>
             </tr>
           </tbody>
         </table>
+
+        <div v-if="sav.status === 'in_progress'" class="lines-actions">
+          <button
+            type="button"
+            class="btn-primary"
+            data-testid="sav-add-line-btn"
+            @click="openAddLine"
+          >
+            + Ajouter une ligne
+          </button>
+        </div>
       </section>
+
+      <AddLineDialog
+        :open="addLineOpen"
+        :saving="lineEdit.savingLineId.value === -1"
+        @create="handleAddLineCreate"
+        @cancel="addLineOpen = false"
+      />
+
+      <div v-if="toastMessage" class="toast toast-error" role="alert" data-testid="sav-toast">
+        {{ toastMessage }}
+        <button type="button" class="toast-close" @click="toastMessage = null">×</button>
+      </div>
 
       <!-- Story 4.3 — Aperçu avoir (preview live, AC #2) -->
       <section
@@ -927,5 +1341,140 @@ a:focus-visible {
   font-size: 0.75rem;
   margin-left: 0.5rem;
   font-weight: 400;
+}
+
+/* Story 3.6b — édition inline + bouton Valider */
+.header-title-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+.validate-btn {
+  margin-left: auto;
+  padding: 0.5rem 1rem;
+  background: #16a34a;
+  color: white;
+  border: 1px solid #15803d;
+  border-radius: 4px;
+  font: inherit;
+  font-weight: 600;
+  cursor: pointer;
+}
+.validate-btn:hover:not(:disabled) {
+  background: #15803d;
+}
+.validate-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  background: #86efac;
+  border-color: #86efac;
+}
+.cell-input,
+.cell-select {
+  width: 100%;
+  padding: 0.25rem 0.375rem;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  font: inherit;
+  font-size: 0.875rem;
+  box-sizing: border-box;
+}
+.cell-input:focus-visible,
+.cell-select:focus-visible {
+  outline: 2px solid #0066cc;
+  outline-offset: 1px;
+}
+.actions-cell {
+  vertical-align: middle;
+}
+.actions-pair {
+  display: inline-flex;
+  gap: 0.25rem;
+  flex-wrap: wrap;
+}
+.cell-pair {
+  display: inline-flex;
+  gap: 0.25rem;
+  align-items: center;
+}
+.btn-sm {
+  padding: 0.25rem 0.5rem;
+  font-size: 0.8125rem;
+  border: 1px solid #d1d5db;
+  background: white;
+  border-radius: 4px;
+  cursor: pointer;
+}
+.btn-sm:hover:not(:disabled) {
+  background: #f3f4f6;
+}
+.btn-sm:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+.btn-danger {
+  color: #991b1b;
+  border-color: #fca5a5;
+}
+.btn-danger:hover:not(:disabled) {
+  background: #fee2e2;
+}
+.btn-primary {
+  padding: 0.5rem 0.875rem;
+  background: #0066cc;
+  color: white;
+  border: 1px solid #0066cc;
+  border-radius: 4px;
+  font: inherit;
+  cursor: pointer;
+}
+.btn-primary:hover {
+  background: #0052a3;
+}
+.lines-actions {
+  margin-top: 0.75rem;
+}
+.line-saving {
+  opacity: 0.6;
+}
+.edit-extra-row td {
+  background: #f9fafb;
+}
+.extra-label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  font-size: 0.8125rem;
+}
+.extra-label .cell-input {
+  width: 120px;
+}
+.toast {
+  position: fixed;
+  bottom: 1rem;
+  right: 1rem;
+  padding: 0.75rem 2.5rem 0.75rem 1rem;
+  border-radius: 4px;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.15);
+  z-index: 100;
+  max-width: 420px;
+  font-size: 0.875rem;
+}
+.toast-error {
+  background: #fee2e2;
+  color: #991b1b;
+  border: 1px solid #fca5a5;
+}
+.toast-close {
+  position: absolute;
+  top: 0.25rem;
+  right: 0.5rem;
+  background: transparent;
+  border: none;
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+  color: inherit;
 }
 </style>
