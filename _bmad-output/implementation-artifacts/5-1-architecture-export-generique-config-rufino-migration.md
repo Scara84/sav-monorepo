@@ -1,6 +1,6 @@
 # Story 5.1: Architecture export générique + config Rufino + migration
 
-Status: review
+Status: done
 
 <!-- Première story Epic 5 Pilotage. Pose les fondations : table supplier_exports
 (historique + trace des générations), builder TS générique piloté par config

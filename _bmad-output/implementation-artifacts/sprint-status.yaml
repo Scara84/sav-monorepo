@@ -286,7 +286,7 @@ development_status:
   # Epic 5: Pilotage — exports fournisseurs + reporting + alertes
   # ──────────────────────────────────────────────────────────────
   epic-5: in-progress  # démarré 2026-04-24 avec Story 5.1
-  5-1-architecture-export-generique-config-rufino-migration: review
+  5-1-architecture-export-generique-config-rufino-migration: done
   5-2-endpoint-export-fournisseur-ui-back-office: ready-for-dev
   5-3-endpoints-reporting-dashboard-vue: ready-for-dev
   5-4-export-csv-reporting-ad-hoc: ready-for-dev
