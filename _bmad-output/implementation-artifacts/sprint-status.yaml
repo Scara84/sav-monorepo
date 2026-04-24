@@ -39,6 +39,42 @@
 
 generated: 2026-04-18
 last_updated: 2026-04-24
+# 2026-04-24 : Epic 5 contextualisation complète — 6 stories créées ready-for-dev.
+# 5.1 architecture export générique : builder TS agnostique fournisseur
+# (SupplierExportConfig contract) + rufinoConfig.ts + migration supplier_exports
+# + backfill validation_lists.value_es (motif_sav + bon_type). Test guard
+# hardcoded FR36 (grep MARTINEZ/RUFINO dans builder → 0). SheetJS only. 14 AC.
+# 5.2 endpoint POST /api/exports/supplier + UI ExportSupplierModal + historique.
+# DÉCISION ARCHITECTURALE MAJEURE : Vercel cap 12/12 atteint post-Epic 4 →
+# router consolidé /api/pilotage.ts (absorbe exports + reports 5.3 + admin 5.5)
+# + consolidation self-service/upload-session|upload-complete dans draft.ts
+# (router op-based) → libère 1 slot. Settings onedrive.exports_folder_root
+# placeholder fail-closed. Bench p95 < 3s (AC-2.5.1). 17 AC.
+# 5.3 reporting dashboard : 4 endpoints (cost-timeline N-1, top-products 90j,
+# delay-distribution p50/p90, top-reasons-suppliers) agrégés SQL-side
+# (generate_series gap-fill, percentile_cont PG). DashboardView 4 cards +
+# chart.js 4 / vue-chartjs 5 (+~70 KB gzip chunk séparé). Migration indexes
+# optimisation (idx sav received_at+status, sav_lines motif partiel, etc.).
+# Bench p95 < 2s (AC-2.5.3). 16 AC.
+# 5.4 export CSV ad hoc : GET /api/reports/export-csv réutilise
+# listSavQuerySchema Story 3.2 (filtres consistants). CSV UTF-8 BOM + ';'
+# (Excel FR) + virgule décimale + CRLF. Seuil 5000 lignes → SWITCH_TO_XLSX
+# warning JSON + 50000 hard limit. 13 colonnes fixes (ref, date, client,
+# groupe, totaux, motifs, fournisseurs agrégés string_agg). 13 AC.
+# 5.5 cron alertes seuil + admin settings : migration settings.threshold_alert
+# (count=5,days=7,dedup_hours=24 défaut) + table threshold_alert_sent (audit
+# dédup append-only). Runner threshold-alerts.ts étend dispatcher existant
+# (pas de nouveau slot cron Vercel Hobby 2/jour). Email enqueue outbox
+# kind='threshold_alert' (delivery activée Epic 6.6 — dépendance documentée).
+# Admin UI SettingsAdminView onglet Seuils + PATCH /api/admin/settings/
+# threshold_alert versionné. 18 AC.
+# 5.6 validation empirique FR36 : martinezConfig.ts + supplier-configs.ts
+# map typée + GET /api/exports/supplier/config-list (fetch dynamique UI).
+# ZERO modif supplierExportBuilder.ts (test guard Story 5.1 re-vérifié CI).
+# Case study doc architecture-client.md. 14 AC.
+# Ordre dev recommandé : 5.1 (foundation) → 5.2 (consolidation Vercel critique)
+# → 5.3 + 5.4 en parallèle (endpoints reporting indépendants) → 5.5 (cron+admin)
+# → 5.6 (validation FR36). Epic 5 passera in-progress à la 1re story qui démarre.
 # 2026-04-24 : Story 4.6 done après CR adversarial 3 couches (Blind+Edge+Auditor).
 # 15 patches appliqués (abort-on-first-error runWithConcurrency, cleanup scoped
 # runTag UUID, assertion range [1..count] stricte, infra vs assertion error,
@@ -249,13 +285,13 @@ development_status:
   # ──────────────────────────────────────────────────────────────
   # Epic 5: Pilotage — exports fournisseurs + reporting + alertes
   # ──────────────────────────────────────────────────────────────
-  epic-5: backlog
-  5-1-architecture-export-generique-config-rufino-migration: backlog
-  5-2-endpoint-export-fournisseur-ui-back-office: backlog
-  5-3-endpoints-reporting-dashboard-vue: backlog
-  5-4-export-csv-reporting-ad-hoc: backlog
-  5-5-job-cron-alertes-seuil-produit-config-admin: backlog
-  5-6-ajout-d-un-deuxieme-fournisseur-validation-architecture: backlog
+  epic-5: backlog  # passera in-progress quand 5.1 démarre (première story)
+  5-1-architecture-export-generique-config-rufino-migration: ready-for-dev
+  5-2-endpoint-export-fournisseur-ui-back-office: ready-for-dev
+  5-3-endpoints-reporting-dashboard-vue: ready-for-dev
+  5-4-export-csv-reporting-ad-hoc: ready-for-dev
+  5-5-job-cron-alertes-seuil-produit-config-admin: ready-for-dev
+  5-6-ajout-d-un-deuxieme-fournisseur-validation-architecture: ready-for-dev
   epic-5-retrospective: optional
 
   # ──────────────────────────────────────────────────────────────
