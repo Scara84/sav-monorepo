@@ -1,6 +1,6 @@
 # Story 4.6: Test de charge séquence d'avoir
 
-Status: ready-for-dev
+Status: done (Tasks 1/2/3/5 + CR 15/15 patches appliqués — Task 4 run réel différé manuel pré-cutover Epic 7)
 
 <!-- Preuve empirique NFR-D3 : 10 000 émissions RPC `issue_credit_number`
      concurrentes → 10 000 numéros distincts, zéro collision, zéro trou.
@@ -293,30 +293,30 @@ LOAD_TEST_CONFIRM=yes npx tsx client/scripts/load-test/credit-sequence.ts --clea
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — Script principal (AC #1-7)**
-  - [ ] 1.1 Créer `client/scripts/load-test/credit-sequence.ts` structure CLI + types
-  - [ ] 1.2 Helper `parseCliArgs(argv): { count, concurrency, cleanup, dryRun, cleanupOnly }`
-  - [ ] 1.3 Helper `guardAgainstProd(url, env)` (regex + env check + credit_notes empty check)
-  - [ ] 1.4 Helper `seedLoadTestData(supabase, count): Promise<{ operatorId, memberId, savIds }>`
-  - [ ] 1.5 Helper `runWithConcurrency(tasks, concurrency)`
-  - [ ] 1.6 Helper `computeLatencyPercentiles(durations)`
-  - [ ] 1.7 Helper `cleanupLoadTestData(supabase, memberId)`
-  - [ ] 1.8 Helper `writeReport(report, outputDir)`
-  - [ ] 1.9 Bloc `main()` orchestrant guard → seed → run → assert → cleanup → report
-  - [ ] 1.10 Gestion exit codes (0 / 1 / 2)
+- [x] **Task 1 — Script principal (AC #1-7)**
+  - [x] 1.1 Créer `client/scripts/load-test/credit-sequence.ts` structure CLI + types
+  - [x] 1.2 Helper `parseCliArgs(argv): { count, concurrency, cleanup, dryRun, cleanupOnly }`
+  - [x] 1.3 Helper `guardAgainstProd(url)` + `guardEnvConfirm(env)` + `guardDbEmpty(supabase)`
+  - [x] 1.4 Helper `seedLoadTestData(supabase, count): Promise<SeedResult>` (idempotent operator + member, batchs 500, pre-clean résidus)
+  - [x] 1.5 Helper `runWithConcurrency(tasks, concurrency)`
+  - [x] 1.6 Helper `computeLatencyPercentiles(durations)` (nearest-rank, robuste empty)
+  - [x] 1.7 Helper `cleanupLoadTestData(supabase, memberId)` + `printCleanupFailureSql` fallback manuel
+  - [x] 1.8 Helper `writeReport(report, outputDir, timestamp)`
+  - [x] 1.9 Bloc `main()` orchestrant guard → seed → run → assert → cleanup → report (cleanup dans `finally`)
+  - [x] 1.10 Gestion exit codes (0 / 1 / 2)
 
-- [ ] **Task 2 — Tests unitaires (AC #9)**
-  - [ ] 2.1 Créer `client/scripts/load-test/credit-sequence.test.ts`
-  - [ ] 2.2 Tests pour `parseCliArgs`, `guardAgainstProd`, `computeLatencyPercentiles`, `runWithConcurrency`
-  - [ ] 2.3 Exclure fichier des tests Vitest principaux si trop long (pattern `*.load.test.ts` ?) — décision : **inclure** dans suite standard, tests unitaires des helpers sont rapides (< 1s)
+- [x] **Task 2 — Tests unitaires (AC #9)**
+  - [x] 2.1 Créer `client/scripts/load-test/credit-sequence.test.ts`
+  - [x] 2.2 Tests pour `parseCliArgs` (12), `guardAgainstProd` (4), `computeLatencyPercentiles` (4), `runWithConcurrency` (5) → **25 tests passants**
+  - [x] 2.3 Inclus dans suite Vitest standard (54 ms total) — pas de pattern d'exclusion nécessaire
 
-- [ ] **Task 3 — Runbook & doc (AC #8, #10)**
-  - [ ] 3.1 Créer `client/scripts/load-test/README.md`
-  - [ ] 3.2 Ajouter `client/scripts/load-test/results/.gitkeep` + `.gitignore` entry `results/*.json`
-  - [ ] 3.3 Amender `docs/development-guide-client.md` section « Load tests » (3-5 lignes + lien)
-  - [ ] 3.4 Ajouter entry `W31 — Integration CI job load-test` dans `_bmad-output/implementation-artifacts/deferred-work.md` (V1.1)
+- [x] **Task 3 — Runbook & doc (AC #8, #10)**
+  - [x] 3.1 Créer `client/scripts/load-test/README.md`
+  - [x] 3.2 Ajouter `client/scripts/load-test/results/.gitkeep` + `.gitignore` `results/*.json`
+  - [x] 3.3 Amender `docs/development-guide-client.md` section « Load tests »
+  - [x] 3.4 Ajouter entry `W38 — Intégration CI du load test credit-sequence` dans `_bmad-output/implementation-artifacts/deferred-work.md` (V1.1) — note : W31 déjà pris (CR Story 4.3), réassigné à W38
 
-- [ ] **Task 4 — Exécution réelle V1 pré-merge (AC #5 validation)**
+- [ ] **Task 4 — Exécution réelle V1 pré-merge (AC #5 validation)** *(différé manuel — out of dev scope)*
   - [ ] 4.1 Créer une DB préview Supabase dédiée (branch de la base de test existante)
   - [ ] 4.2 Appliquer migrations Epic 1-4 (via `supabase db push --branch <name>`)
   - [ ] 4.3 Exécuter le script `--count=10000 --concurrency=100`
@@ -324,11 +324,30 @@ LOAD_TEST_CONFIRM=yes npx tsx client/scripts/load-test/credit-sequence.ts --clea
   - [ ] 4.5 Si p95 > 1s ou durée > 5 min : investiguer (pool exhausted ? CPU Supabase tier ?) et ajuster concurrency
   - [ ] 4.6 Documenter les valeurs observées dans le README (AC #8 tableau « Valeurs attendues »)
 
-- [ ] **Task 5 — Vérifications CI**
-  - [ ] 5.1 `npm test` tous verts (+4-6 tests unitaires helpers)
-  - [ ] 5.2 `npm run typecheck` 0 erreur (script en TS strict)
-  - [ ] 5.3 `npm run lint` 0 erreur — `no-console` override pour le script (log intentionnel)
-  - [ ] 5.4 `npm run build` 459 KB ± 5 % (le script n'est PAS bundlé — Node standalone)
+- [x] **Task 5 — Vérifications CI**
+  - [x] 5.1 `npm test` 595/595 tests verts (+25 nouveaux)
+  - [x] 5.2 Strict tsc OK : `tsc --strict --noUncheckedIndexedAccess --exactOptionalPropertyTypes` exit 0 sur les 2 fichiers (le tsconfig client n'inclut pas `scripts/`, comme pour `bench/` Story 4.5)
+  - [x] 5.3 `npx eslint scripts/load-test/` exit 0 — directive `eslint-disable no-console` en tête du script
+  - [x] 5.4 `npm run build` 459.16 KB (cible 459 ± 5 % ✅)
+
+### Review Findings
+
+- [x] [Review][Patch] Assertion « zero holes » ne garantit pas `min === 1` — un résidu séquence non resetté décale la plage et le test passe faussement `[credit-sequence.ts:575-583]`
+- [x] [Review][Patch] `Math.min(...numbers)` / `Math.max(...numbers)` spread 10 000 args — risque stack/argument-limit sur `--count` large ; utiliser `sorted[0]` / `sorted[sorted.length-1]` `[credit-sequence.ts:575-576]`
+- [x] [Review][Patch] `runWithConcurrency` continue d'invoquer les tâches restantes après le premier throw — pollue la DB entre fail et cleanup, fuite de credit_notes `[credit-sequence.ts:195-204]`
+- [x] [Review][Patch] `cleanupLoadTestData` supprime tous les SAV `LT-%` (y compris ceux d'autres runs en cours ou de cleanup-only) — scoper à `LT-{runTag}-%` et threader `runTag` `[credit-sequence.ts:361-364]`
+- [x] [Review][Patch] Cleanup failure loggée mais exit code reste 0 → CI verte avec DB polluée, poisonne le prochain `guardDbEmpty` `[credit-sequence.ts:603-611]`
+- [x] [Review][Patch] `writeReport` failure loggée mais exit code reste 0 → CI verte sans artifact, alors que l'archive JSON est l'obligation AC #6 `[credit-sequence.ts:660-664]`
+- [x] [Review][Patch] `--cleanup-only` + `--dry-run` combinables silencieusement → DELETE réel sous un flag attendu « safe ». Rejeter la combinaison dans `parseCliArgs` `[credit-sequence.ts:87-137, 457-476]`
+- [x] [Review][Patch] `parseCliArgs` accepte `--count=1e20` (> MAX_SAFE_INTEGER) → OOM/wrap bigint pendant le seed. Cap explicite (ex. 1 000 000) `[credit-sequence.ts:101-107]`
+- [x] [Review][Patch] `runWithConcurrency(tasks, NaN)` passe via `concurrency <= 0` false-y → 0 worker, résultats `[]`, assertion count_match fail ou silence. Ajouter `Number.isInteger` guard `[credit-sequence.ts:189-191]`
+- [x] [Review][Patch] JSON report `errors[]` non plafonné — 10 000 erreurs × message verbeux peuvent exploser le fichier à plusieurs MB. Cap à 100 + `errors_truncated: true` `[credit-sequence.ts:650-654]`
+- [x] [Review][Patch] Regex `/prod|production/i` trop permissif : matche `reprod`, `staging-reproduction` → bloque des préviews légitimes. Utiliser word-boundary `/(^|[.\-_])prod(uction)?([.\-_]|$)/i` sur `new URL(url).hostname` `[credit-sequence.ts:148-157]`
+- [x] [Review][Patch] JSON report `cleanup` block manque `deleted_credit_notes` + `deleted_sav` (AC #6 explicite). Threader les counts depuis `cleanupLoadTestData` jusqu'au report `[credit-sequence.ts:655-658]`
+- [x] [Review][Patch] Seed orchestration : si erreur entre member-upsert et fin de seed, `memberId` reste null côté `main` (assigné seulement via `seed.memberId`) → `finally` skip cleanup → orphan SAV. Assigner `memberId` dès qu'il est connu côté seed (via callback out-param ou state mutable) `[credit-sequence.ts:504-509, 638]`
+- [x] [Review][Patch] `assertionError` conflate infra (Supabase network, seq.error) et assertion (collision/trou). Différencier dans le report : `assertion_error` vs `infra_error` pour ne pas polluer la corpus de preuves NFR-D3 `[credit-sequence.ts:597-599, 644]`
+- [x] [Review][Patch] Doc drift : README `load-test/README.md:67` et `docs/development-guide-client.md:91` référencent **W31** alors que l'entrée défer a été logguée en **W38** (W31 déjà pris par CR 4.3). Synchroniser les deux docs `[client/scripts/load-test/README.md:67 + docs/development-guide-client.md:91]`
+- [x] [Review][Defer] Checklist Epic 4 final + cutover Epic 7 : référencer « Load test credit-sequence passed within last 7 days » — deferred, documents de checklist pas encore créés, sera traité à l'ouverture de l'Epic 7
 
 ## Dev Notes
 
@@ -401,10 +420,38 @@ Pas de migration DB (utilise schéma 4.1).
 
 ### Agent Model Used
 
-{{agent_model_name_version}}
+claude-opus-4-7 (Amelia / bmad-agent-dev)
 
 ### Debug Log References
 
+- `npx vitest run scripts/load-test/credit-sequence.test.ts` → 25/25 passed (54 ms)
+- `npm test -- --run` → 595/595 passed (53 fichiers)
+- `npx tsc --ignoreConfig --strict --noUncheckedIndexedAccess --exactOptionalPropertyTypes --types node` → exit 0
+- `npx eslint scripts/load-test/` → exit 0
+- `npm run build` → 459.16 KB (gzip 162.07 KB)
+
 ### Completion Notes List
 
+1. **W38 vs W31** : la story référençait `W31` comme placeholder pour le défer CI load-test, mais `W31` a été assigné par le CR de Story 4.3. Réassigné à **W38** dans `deferred-work.md` (entrée explicitement labellée Story 4.6).
+2. **Schema correction** : la story spécifiait `groupe_id` (français) mais la colonne s'appelle `group_id` dans `members`. Le seed utilise le vrai nom.
+3. **`invoice_ref` non-colonne** : `sav` ne possède pas de colonne `invoice_ref` directe ; le seed l'écrit dans `metadata.invoice_ref` (cohérent avec le `tsvector search` de la table).
+4. **Operator seed** : `operators.azure_oid uuid UNIQUE NOT NULL` requis ; le seed génère un `randomUUID()` pour le compte loadtest. `role='sav-operator'`.
+5. **SAV reference unique cross-runs** : le préfix `LT-<runTag>-<i>` (où `runTag = Date.now().toString(36)`) garantit l'unicité même si un run précédent a laissé des résidus avant cleanup. Idempotence runs successifs : pre-clean au début du seed (delete credit_notes du loadtest member + delete sav `LT-%`).
+6. **Cleanup `finally`** : implémenté avec garde `args.cleanup && !args.dryRun && memberId !== null`. Une exception cleanup imprime le SQL manuel copy-paste-friendly mais ne masque pas le statut d'assertion d'origine.
+7. **`while(true)` → `for (;;)`** : ESLint `no-constant-condition` refusait `while(true)` ; remplacé par `for (;;)` (équivalent canonique, pattern de queue worker).
+8. **`isMain` detection** : le bloc `if (isMain)` à la fin évite que `import` depuis le test trigger `main()`. Comparaison `fileURLToPath(import.meta.url) === process.argv[1]`.
+9. **Task 4 différé** : exécution réelle 10 000 RPC contre une DB préview Supabase dédiée n'est pas dans le scope dev-agent (nécessite création de branch DB + secret). Documenté comme prérequis manuel pré-cutover Epic 7.
+10. **Tsconfig non-touché** : le pattern existant (`bench/`, `cutover/`) n'inclut pas `scripts/` dans `tsconfig.json` du client. Le script reste TS strict via `tsx` runtime + `tsc --strict` standalone (vérifié, exit 0).
+
 ### File List
+
+**Créés :**
+- `client/scripts/load-test/credit-sequence.ts` — script principal (~480 LOC)
+- `client/scripts/load-test/credit-sequence.test.ts` — 25 tests Vitest des helpers purs
+- `client/scripts/load-test/README.md` — runbook (~75 lignes)
+- `client/scripts/load-test/.gitignore` — ignore `results/*.json`
+- `client/scripts/load-test/results/.gitkeep`
+
+**Modifiés :**
+- `docs/development-guide-client.md` — ajout section « Load tests » (5 lignes)
+- `_bmad-output/implementation-artifacts/deferred-work.md` — ajout entrée `W38 — Intégration CI du load test credit-sequence`

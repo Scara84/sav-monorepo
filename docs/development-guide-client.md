@@ -88,6 +88,13 @@ Le binaire des fichiers uploadés transite **directement du navigateur à Micros
   - Démarrage auto de Vite sur `:5173` (`webServer` dans `playwright.config.js`).
   - Variables d'env forcées en test : `VITE_MAINTENANCE_MODE=0`. Les routes `/api/*` sont mockées par `page.route()` dans chaque spec.
 
+## Load tests
+
+Scripts manuels (non intégrés au CI V1, cf. deferred W38) :
+
+- **`client/scripts/load-test/credit-sequence.ts`** (Story 4.6) — preuve NFR-D3 : 10 000 émissions concurrentes de la RPC `issue_credit_number`, zéro collision, zéro trou. Exigé pré-merge final Epic 4 et pré-cutover Epic 7. Runbook : [`client/scripts/load-test/README.md`](../client/scripts/load-test/README.md).
+- **`client/scripts/bench/pdf-generation.ts`** (Story 4.5) — bench PDF render p50/p95/p99. Runbook : [`client/scripts/bench/README.md`](../client/scripts/bench/README.md).
+
 ## Dépannage rapide
 
 | Symptôme | Piste |
