@@ -64,3 +64,12 @@
 
 - **W38 — Intégration CI du load test `credit-sequence`** : V1 le script tourne uniquement en manuel (pré-merge final Epic 4 + pré-cutover Epic 7). V1.1 envisage un job GitHub Actions `workflow_dispatch` (trigger manuel) ciblant une DB préview Supabase dédiée + secret store CI pour `SUPABASE_SERVICE_ROLE_KEY` + archivage du JSON report en artifact. **Jamais** en push `main` ni en PR (charge DB trop coûteuse). [`client/scripts/load-test/credit-sequence.ts` + `.github/workflows/`]
 - **W39 (CR 4.6) — Checklist Epic 4 final + Checklist cutover Epic 7 référencent le load test** : AC #10 de Story 4.6 exige que le script soit inscrit dans « Checklist Epic 4 final + Checklist cutover Epic 7 » comme étape obligatoire « Load test credit-sequence passed within last 7 days ». Ces documents de checklist ne sont pas encore matérialisés dans le repo ; à créer ou compléter au kickoff Epic 7. [`_bmad-output/implementation-artifacts/4-6-test-de-charge-sequence-d-avoir.md` AC #10 + futures checklist files]
+
+## Deferred from: code review of story-5-1 (2026-04-24)
+
+- **Formule cachée `v:0` lue comme 0 dans les viewers read-only Excel Online / LibreOffice headless** — Excel desktop recalcule à l'ouverture, pas d'impact Rufino qui ouvre dans Excel. Revoir si un bug fournisseur est remonté.
+- **Guard spec textuel bypassable** (`'RUF' + 'INO'`, template literals, `String.fromCharCode`, indirection `process.env`) — Story 5.6 (ajout MARTINEZ) validera empiriquement le principe FR36 en pratique. Considérer un test black-box comportemental si régression.
+- **CHECK `total_amount_cents >= 0` interdit montants négatifs** — Design V1. Si une cancellation/reversal fournisseur apparaît, ALTER CHECK en Epic 7.
+- **Multiples `validation_messages.kind='cause'` : first-wins silencieux** — À documenter en invariant Story 5.2 UI ou Story 3.6b. Pas de régression V1.
+- **RLS `NULLIF(..., '')` whitespace-only GUC** — Concern middleware-level (Epic 1 auth). Le middleware actuel ne pose jamais de whitespace ; revoir si bug.
+- **Coverage ≥ 90% non empiriquement vérifiée** (AC #10) — Lancer `npm test -- --coverage tests/unit/api/exports/` et consigner dans Debug Log.

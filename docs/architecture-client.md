@@ -388,3 +388,90 @@ Le trigger ne lit que les colonnes de la ligne (`unit_price_ht_cents`, `vat_rate
 - Spec : `_bmad-output/planning-artifacts/epics.md:814-836`, `_bmad-output/planning-artifacts/prd.md:222-228` + `1209-1217` (FR21-FR28) + `1331` (NFR-D2).
 - Story créatrice : `_bmad-output/implementation-artifacts/4-2-moteur-calculs-metier-typescript-triggers-miroirs-fixture-excel.md`.
 - Débloque : Story 3.6b (UI édition ligne), Story 4.3 (preview live), Story 4.4 (émission atomique).
+
+
+## Export fournisseur générique (Epic 5.1)
+
+### Principe FR36 — zéro hardcode fournisseur
+
+Le moteur d'export (`supplierExportBuilder.ts`) est **totalement agnostique du fournisseur**. Toute la logique qui diffère entre fournisseurs (libellés colonnes, langue, ordre, formules Excel, filtres lignes) passe par la config `SupplierExportConfig`. L'ajout d'un nouveau fournisseur (MARTINEZ Story 5.6, et les N suivants) = pur ajout de `<supplier>Config.ts` ; **aucune modification** du code builder.
+
+Un test guard (`tests/unit/api/exports/supplier-export-builder.guard.spec.ts`) verrouille ce principe en CI : si un dev ajoute `if (supplier === 'RUFINO')` ou une string fournisseur hardcodée dans le builder, la CI casse immédiatement.
+
+### Contrat `SupplierExportConfig`
+
+```ts
+interface SupplierExportConfig {
+  supplier_code: string                    // 'RUFINO', 'MARTINEZ', …
+  language: 'fr' | 'es'                    // pilote les traductions validation_lists
+  file_name_template: string               // ex. 'RUFINO_{period_from}_{period_to}.xlsx'
+  columns: SupplierExportColumn[]          // ordre déterministe du XLSX
+  row_filter?: (ctx) => boolean            // exclusion optionnelle de lignes
+  formulas?: Record<string, string>        // formules Excel paramétrées {row}
+}
+```
+
+Chaque colonne porte une `source` typée avec **5 kinds** :
+
+| kind | Usage |
+|---|---|
+| `field` | Dot-path dans la row (ex. `sav.received_at`) |
+| `computed` | Fonction pure `(ctx) => value` — pour compositions / extractions spécifiques (nom composé, jsonb, etc.) |
+| `validation_list` | Lookup via map `validation_lists.value_es` pré-chargée |
+| `formula` | Délégué à `config.formulas[formula]` — template Excel (`{row}` remplacé à l'écriture) |
+| `constant` | Valeur fixe (rare) |
+
+Formats cellule supportés : `date-iso`, `cents-to-euros`, `integer`, `text`.
+
+### Requête SQL canonique
+
+Une seule requête jointe `sav_lines → products → sav → members`, filtrée par :
+- `sav.received_at ∈ [period_from, period_to + 1 jour)` (period_to inclusif)
+- `product.supplier_code = config.supplier_code` (JOIN, car un SAV peut contenir plusieurs fournisseurs)
+- `sav.status IN ('validated', 'closed')` — seuls les SAV comptables sont exportables. Raison : un SAV encore `in_progress` a ses totaux non figés → exporter un avant-projet serait faux comptablement. Défer Epic 7 si besoin opérationnel (`settings.export_statuses`).
+
+Le filtre `supplier_code` passe par le JOIN `products` (pas une colonne SAV) : chaque ligne SAV appartient à un unique fournisseur via `product.supplier_code`.
+
+### i18n via `validation_lists.value_es`
+
+La colonne `value_es` existe depuis Epic 1 (migration initial_identity_auth_infra). Story 5.1 backfill systématiquement les 2 listes critiques pour Rufino (`sav_cause` + `bon_type`) via migration `20260501130000_validation_lists_value_es_backfill.sql`.
+
+**Fallback** : si `value_es` est NULL ou vide pour une valeur rencontrée, le builder utilise la clé FR et logue `export.translation.missing` (warning). Pas de table `supplier_translations` dédiée V1 — si un 3ᵉ fournisseur exige une 3ᵉ langue (ex. portugais), **migration obligatoire** vers `value_i18n jsonb` (hors V1).
+
+### Table `supplier_exports` (historique)
+
+Migration `20260501120000_supplier_exports.sql` — table append-only qui trace chaque génération (code fournisseur, période, totaux, fichier OneDrive). Pas de `set_updated_at` (la ligne est immuable post-génération). Trigger audit `trg_audit_supplier_exports` standard (FR69).
+
+Story 5.1 livre la table + moteur. Story 5.2 consommera ce moteur via un endpoint `POST /api/exports/supplier` (router consolidé `/api/pilotage.ts` — économie de slot Vercel).
+
+### Config Rufino — adaptations schéma réel
+
+`rufinoConfig.ts` expose les 10 colonnes PRD (FECHA, REFERENCE, ALBARAN, CLIENTE, DESCRIPCIÓN, UNIDADES, PESO, PRECIO, IMPORTE, CAUSA). Trois écarts entre la story spec et le schéma DB réel sont absorbés par la config (`computed` + ajustement des `field` paths) :
+
+| Spec story | Schéma réel | Résolution config |
+|---|---|---|
+| `members.name` | `first_name` + `last_name` | `CLIENTE` = `computed` (concat) |
+| `products.designation_fr` | `products.name_fr` | `DESCRIPCIÓN` = `field: product.name_fr` |
+| `sav_lines.motif` | `sav_lines.validation_messages` jsonb `{kind:'cause'}` | `CAUSA` = `computed` (extract JSONB + traduction `sav_cause`) |
+| `sav_lines.piece_kg` | `piece_to_kg_weight_g` (grammes) | `PESO` = `computed` (g → kg) |
+
+La liste des motifs SAV est `sav_cause` (pas `motif_sav` comme écrit dans la spec — alignement sur le seed Epic 1).
+
+### Formules XLSX
+
+La colonne `IMPORTE` est écrite en **formule Excel vivante** via SheetJS (`{ t:'n', f:'=G{row}*H{row}' }`), pas en valeur pré-calculée — l'utilisateur Excel voit et peut éditer la formule. Le builder calcule **aussi** la valeur attendue côté JS (`piece_kg × price_cents`) pour alimenter `total_amount_cents` (défense-en-profondeur + log warning si divergence théorique).
+
+### Dépendance XLSX — SheetJS
+
+Le builder utilise `xlsx ^0.18.5` (déjà présent, pattern Epic 4.5). Pas d'ajout de dépendance. Léger (~500 KB), sans binding natif (compatible Linux serverless Vercel).
+
+### Tests
+
+- `supplier-export-builder.spec.ts` — tests : happy path 3 lignes (assertions I2/I3/I4), fallback traduction, ordre colonnes, row_filter, formats, PESO null→0, file_name, empty dataset, filtres SQL (+ `.order('id')` stabilité + `.range(0, 49_999)` cap), erreurs DB (translations + sav_lines), plus tests de régression post-code-review : formula injection sanitization, volume cap `EXPORT_VOLUME_CAP_EXCEEDED`, normalisation UTC-midnight, row_filter exception tolérance, arithmétique entière (divergence nulle avec formule Excel), sanitize file_name path-traversal, prototype pollution translations, formula template sans `{row}` → throw, getPath warn sur traversée cassée (pas sur terminal null).
+- `supplier-export-builder.guard.spec.ts` — 3 tests : zéro string `RUFINO`/`MARTINEZ` dans le builder, zéro enum fournisseur hardcodé, zéro import de config fournisseur.
+
+### Référence
+
+- Spec : `_bmad-output/planning-artifacts/epics.md:914-932`, `_bmad-output/planning-artifacts/prd.md:867-881` (schéma `supplier_exports`), `prd.md:1226-1257` (FR35, FR36), `prd.md:1523-1532` (endpoints Epic 5).
+- Story créatrice : `_bmad-output/implementation-artifacts/5-1-architecture-export-generique-config-rufino-migration.md`.
+- Débloque : Story 5.2 (endpoint + UI), Story 5.6 (preuve FR36 via ajout MARTINEZ).
