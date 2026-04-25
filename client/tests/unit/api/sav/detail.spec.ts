@@ -455,6 +455,53 @@ describe('GET /api/sav/:id (Story 3.4)', () => {
     expect(body.meta.settingsDegraded).toBe(false)
   })
 
+  it('W30 : settings shape inconnue → log warn settings.unknown_value_shape + snapshot null', async () => {
+    db.savRow = {
+      id: 1,
+      reference: 'x',
+      member: {
+        id: 1,
+        first_name: null,
+        last_name: 'X',
+        email: 'x@x.com',
+        is_group_manager: false,
+        group_id: null,
+      },
+      lines: [],
+      files: [],
+    }
+    // Shape non reconnue : { basis_points: N } au lieu de { bp: N }.
+    // Le handler ne sait pas extraire → row passe au resolver tel quel,
+    // resolver retourne null + on warn la dérive.
+    db.settings = [
+      {
+        key: 'vat_rate_default',
+        value: { basis_points: 550 },
+        valid_from: '2020-01-01T00:00:00Z',
+        valid_to: null,
+      },
+    ]
+    const errorSpy = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    const res = mockRes()
+    await handler(req(['1']), res)
+    expect(res.statusCode).toBe(200)
+    const body = res.jsonBody as {
+      data: {
+        settingsSnapshot: {
+          vat_rate_default_bp: number | null
+          group_manager_discount_bp: number | null
+        }
+      }
+    }
+    expect(body.data.settingsSnapshot.vat_rate_default_bp).toBeNull()
+    const warnCall = errorSpy.mock.calls.find(
+      (call) =>
+        typeof call[0] === 'string' && (call[0] as string).includes('settings.unknown_value_shape')
+    )
+    expect(warnCall).toBeDefined()
+    errorSpy.mockRestore()
+  })
+
   it('Story 4.3 : settings absents → snapshot null, pas de 500', async () => {
     db.savRow = {
       id: 1,

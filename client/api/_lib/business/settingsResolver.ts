@@ -42,9 +42,13 @@ export function resolveSettingAt<T = unknown>(
   for (const row of rows) {
     if (row.key !== key) continue
     const fromMs = new Date(row.valid_from).getTime()
+    // W32 — rejet explicite des dates non parsables (ex: valid_from='garbage')
+    // pour ne jamais sélectionner une row corrompue comme best-row.
+    if (Number.isNaN(fromMs)) continue
     if (fromMs > atMs) continue
     if (row.valid_to !== null) {
       const toMs = new Date(row.valid_to).getTime()
+      if (Number.isNaN(toMs)) continue
       if (toMs <= atMs) continue
     }
     if (fromMs > bestMs) {

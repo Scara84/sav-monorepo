@@ -216,17 +216,32 @@ function buildCoreHandler(savId: number): ApiHandler {
         // Seed Epic 1 stocke `{"bp": N}` en jsonb ; resolver attend un nombre.
         // Normalisation : on extrait .bp si présent, sinon on passe la valeur
         // brute (compat backward avec tests settingsResolver).
-        const rows: SettingRow[] = rawRows.map((r) => ({
-          key: r.key,
-          value:
-            r.value !== null &&
-            typeof r.value === 'object' &&
-            'bp' in (r.value as Record<string, unknown>)
-              ? (r.value as { bp: unknown }).bp
-              : r.value,
-          valid_from: r.valid_from,
-          valid_to: r.valid_to,
-        }))
+        const rows: SettingRow[] = rawRows.map((r) => {
+          let normalized: unknown = r.value
+          if (r.value !== null && typeof r.value === 'object') {
+            const obj = r.value as Record<string, unknown>
+            if ('bp' in obj) {
+              normalized = obj.bp
+            } else {
+              // W30 — shape inconnue (ex: { basis_points: N } legacy/typo) :
+              // on passe la valeur brute au resolver qui retournera null,
+              // mais on warn pour rendre visible la dérive admin/seed.
+              logger.warn('settings.unknown_value_shape', {
+                requestId,
+                savId,
+                key: r.key,
+                value_type: 'object',
+                value_keys: Object.keys(obj).slice(0, 5),
+              })
+            }
+          }
+          return {
+            key: r.key,
+            value: normalized,
+            valid_from: r.valid_from,
+            valid_to: r.valid_to,
+          }
+        })
         // Review P8 — clamp défensif côté source : si un admin insère une
         // valeur hors plage (ex: bp=-100 ou bp=12000), on renvoie null
         // plutôt que laisser la valeur polluer la preview. Le resolver

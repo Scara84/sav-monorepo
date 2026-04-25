@@ -265,6 +265,14 @@
             {
               "name": "fetch",
               "message": "Composable preview doit rester pur (no-io). Utiliser uniquement api/_lib/business/*."
+            },
+            {
+              "name": "XMLHttpRequest",
+              "message": "Composable preview doit rester pur (no-io)."
+            },
+            {
+              "name": "WebSocket",
+              "message": "Composable preview doit rester pur (no-io)."
             }
           ],
           "no-restricted-imports": [
@@ -282,6 +290,13 @@
                     "@supabase/*"
                   ],
                   "message": "Composable preview doit rester pur (no-io)."
+                },
+                {
+                  "group": [
+                    "**/clients/**",
+                    "**/_lib/clients/**"
+                  ],
+                  "message": "Composable preview doit rester pur (no-io). Aucun client IO autorise."
                 }
               ]
             }
