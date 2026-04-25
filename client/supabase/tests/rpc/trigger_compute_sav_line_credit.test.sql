@@ -46,6 +46,10 @@ DO $test_1$
 DECLARE
   v_row sav_lines%ROWTYPE;
 BEGIN
+  -- W21 — isolation : repartir d'un SAV vide pour éviter accumulation
+  -- silencieuse de sav.total_amount_cents entre tests.
+  DELETE FROM sav_lines WHERE sav_id = current_setting('test.sav_id')::bigint;
+
   INSERT INTO sav_lines (
     sav_id, product_id, product_code_snapshot, product_name_snapshot,
     qty_requested, unit_requested, qty_invoiced, unit_invoiced,
@@ -73,6 +77,9 @@ DO $test_2$
 DECLARE
   v_row sav_lines%ROWTYPE;
 BEGIN
+  -- W21 — isolation
+  DELETE FROM sav_lines WHERE sav_id = current_setting('test.sav_id')::bigint;
+
   INSERT INTO sav_lines (
     sav_id, product_id, product_code_snapshot, product_name_snapshot,
     qty_requested, unit_requested, qty_invoiced, unit_invoiced,
@@ -101,6 +108,9 @@ DO $test_3$
 DECLARE
   v_row sav_lines%ROWTYPE;
 BEGIN
+  -- W21 — isolation
+  DELETE FROM sav_lines WHERE sav_id = current_setting('test.sav_id')::bigint;
+
   INSERT INTO sav_lines (
     sav_id, product_id, product_code_snapshot, product_name_snapshot,
     qty_requested, unit_requested, qty_invoiced, unit_invoiced,
@@ -128,6 +138,9 @@ DO $test_4$
 DECLARE
   v_row sav_lines%ROWTYPE;
 BEGIN
+  -- W21 — isolation
+  DELETE FROM sav_lines WHERE sav_id = current_setting('test.sav_id')::bigint;
+
   INSERT INTO sav_lines (
     sav_id, product_id, product_code_snapshot, product_name_snapshot,
     qty_requested, unit_requested, qty_invoiced, unit_invoiced,
@@ -152,6 +165,9 @@ DO $test_5$
 DECLARE
   v_row sav_lines%ROWTYPE;
 BEGIN
+  -- W21 — isolation
+  DELETE FROM sav_lines WHERE sav_id = current_setting('test.sav_id')::bigint;
+
   INSERT INTO sav_lines (
     sav_id, product_id, product_code_snapshot, product_name_snapshot,
     qty_requested, unit_requested, qty_invoiced, unit_invoiced,
@@ -176,6 +192,9 @@ DO $test_6$
 DECLARE
   v_caught boolean := false;
 BEGIN
+  -- W21 — isolation
+  DELETE FROM sav_lines WHERE sav_id = current_setting('test.sav_id')::bigint;
+
   BEGIN
     INSERT INTO sav_lines (
       sav_id, product_id, product_code_snapshot, product_name_snapshot,
@@ -205,6 +224,9 @@ DECLARE
   v_line_id bigint;
   v_row sav_lines%ROWTYPE;
 BEGIN
+  -- W21 — isolation
+  DELETE FROM sav_lines WHERE sav_id = current_setting('test.sav_id')::bigint;
+
   INSERT INTO sav_lines (
     sav_id, product_id, product_code_snapshot, product_name_snapshot,
     qty_requested, unit_requested, qty_invoiced, unit_invoiced,
@@ -350,8 +372,12 @@ BEGIN
   INSERT INTO settings (key, value, valid_from)
     VALUES ('vat_rate_default', to_jsonb(600), now());
 
-  -- Triggered recompute sur la ligne pré-existante (UPDATE d'une colonne watchée)
-  UPDATE sav_lines SET qty_invoiced = qty_invoiced WHERE id = v_line_id;
+  -- W20 — Triggered recompute sur la ligne pré-existante. L'ancien
+  -- `SET qty_invoiced = qty_invoiced` est un no-op qui peut être skip si
+  -- la valeur ne change pas selon les triggers WHEN. On force 2 mutations
+  -- avec résultat net identique pour garantir 2 fires du trigger.
+  UPDATE sav_lines SET qty_invoiced = qty_invoiced + 1 WHERE id = v_line_id;
+  UPDATE sav_lines SET qty_invoiced = qty_invoiced - 1 WHERE id = v_line_id;
 
   SELECT credit_amount_cents, vat_rate_bp_snapshot
     INTO v_credit_after, v_vat_snap

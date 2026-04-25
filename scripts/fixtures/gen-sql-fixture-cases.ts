@@ -57,17 +57,28 @@ const ROOT = resolve(SCRIPT_DIR, '..', '..')
 const FIXTURE_PATH = resolve(ROOT, 'client/tests/fixtures/excel-calculations.json')
 const OUTPUT_PATH = resolve(ROOT, 'client/supabase/tests/rpc/_generated_fixture_cases.sql')
 
-function sqlLiteral(v: number | string | null): string {
+// W19 — élargi pour couvrir boolean, bigint, et array PG ARRAY[].
+// L'assertion Number.isFinite reste centrale pour les number.
+export function sqlLiteral(
+  v: number | bigint | boolean | string | readonly (number | string | null)[] | null
+): string {
   if (v === null) return 'NULL'
+  if (typeof v === 'boolean') return v ? 'TRUE' : 'FALSE'
+  if (typeof v === 'bigint') return `${v.toString()}::bigint`
   if (typeof v === 'number') {
     if (!Number.isFinite(v)) {
       throw new Error(`sqlLiteral: number non-finite interdit (reçu ${v})`)
     }
     return String(v)
   }
+  if (Array.isArray(v)) {
+    // PG ARRAY syntax : ARRAY[v1, v2, ...] avec récursion sur chaque élément.
+    const parts = v.map((item) => sqlLiteral(item as number | string | null))
+    return `ARRAY[${parts.join(', ')}]`
+  }
   // Les % littéraux dans un message deviennent des placeholders RAISE côté PG
   // — on doit les doubler. Puis échapper les quotes.
-  return `'${v.replace(/'/g, "''").replace(/%/g, '%%')}'`
+  return `'${(v as string).replace(/'/g, "''").replace(/%/g, '%%')}'`
 }
 
 function sqlNumericOrNull(v: number | null, field: string): string {
@@ -190,4 +201,8 @@ function main(): void {
   )
 }
 
-main()
+// W19 — guard ESM : ne lance main() que si invoqué directement (CLI),
+// pas si importé depuis un test unitaire.
+if (process.argv[1] && process.argv[1] === fileURLToPath(import.meta.url)) {
+  main()
+}
