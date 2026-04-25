@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, computed, watch } from 'vue'
+import { ref, onMounted, computed, nextTick, watch } from 'vue'
 import {
   useSupplierExport,
   type ExportHistoryItem,
@@ -15,11 +15,16 @@ import {
  *  - Date-range (défaut : mois précédent clos via firstDayOfPrevMonth /
  *    lastDayOfPrevMonth).
  *  - Bouton Générer (spinner pendant requête).
- *  - Zone erreur (code → message FR via `useSupplierExport.error`).
+ *  - Zone erreur (code → message FR via `useSupplierExport.generateError` /
+ *    `historyError`).
  *  - Liste historique (10 derniers, rafraîchie après succès).
  *
  * Émet `close` quand l'opérateur ferme, et `generated` quand un export
  * réussit (payload : le résultat API, utile pour tests / parent).
+ *
+ * W41 (CR Story 5.2) — focus-trap + `@keydown.esc` pour conformité WCAG
+ * `aria-modal=true`. W50 (CR Story 5.2) — flag `historyLoadFailed` distingue
+ * « échec chargement » vs « historique vide » dans l'UI.
  */
 
 interface Props {
@@ -43,8 +48,9 @@ const supplier = ref<string>(SUPPLIERS[0])
 const periodFrom = ref<string>('')
 const periodTo = ref<string>('')
 const history = ref<ExportHistoryItem[]>([])
-const historyLoading = ref(false)
+const historyLoadFailed = ref(false)
 const toastMessage = ref<string | null>(null)
+const dialogRef = ref<HTMLElement | null>(null)
 
 function pad(n: number): string {
   return n < 10 ? `0${n}` : String(n)
@@ -66,22 +72,25 @@ function resetDates(): void {
 
 async function loadHistory(): Promise<void> {
   if (!supplier.value) return
-  historyLoading.value = true
+  historyLoadFailed.value = false
   try {
     const page = await exp.fetchHistory({ supplier: supplier.value, limit: HISTORY_LIMIT })
     history.value = page.items
-  } catch {
-    // error déjà dans exp.error
+  } catch (e) {
+    // W46 — un AbortError signifie que l'opérateur a switché de fournisseur
+    // ou fermé la modal entre-temps : pas un échec réel, n'affiche rien.
+    if (e instanceof Error && e.name === 'AbortError') return
+    // W50 — historique non chargé : flag dédié pour l'UI distingue
+    // « échec » (banner rouge) vs « vide » (empty state neutre).
+    historyLoadFailed.value = true
     history.value = []
-  } finally {
-    historyLoading.value = false
   }
 }
 
 async function onSubmit(): Promise<void> {
   // CR 5.2 P9 — re-entry guard. Un double-click avant que Vue ait re-
   // rendu le :disabled du bouton peut déclencher 2 `onSubmit` concurrents.
-  if (exp.loading.value) return
+  if (exp.generating.value) return
   toastMessage.value = null
   if (!supplier.value) return
   const fromDate = new Date(periodFrom.value + 'T00:00:00Z')
@@ -110,7 +119,7 @@ async function onSubmit(): Promise<void> {
     }
     await loadHistory()
   } catch {
-    // Message affiché via exp.error (binding template).
+    // Message affiché via exp.generateError (binding template).
   }
 }
 
@@ -135,15 +144,47 @@ function formatDate(iso: string): string {
 
 const canSubmit = computed(
   () =>
-    !exp.loading.value &&
+    !exp.generating.value &&
     supplier.value.length > 0 &&
     periodFrom.value.length > 0 &&
     periodTo.value.length > 0
 )
 
+function focusableElements(): HTMLElement[] {
+  if (!dialogRef.value) return []
+  const sel =
+    'button:not([disabled]), [href], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), [tabindex]:not([tabindex="-1"])'
+  return Array.from(dialogRef.value.querySelectorAll<HTMLElement>(sel))
+}
+
+function onKeydownTrap(e: KeyboardEvent): void {
+  if (e.key !== 'Tab') return
+  const items = focusableElements()
+  if (items.length === 0) return
+  const first = items[0]!
+  const last = items[items.length - 1]!
+  const active = document.activeElement as HTMLElement | null
+  if (e.shiftKey && (active === first || !dialogRef.value?.contains(active))) {
+    e.preventDefault()
+    last.focus()
+  } else if (!e.shiftKey && active === last) {
+    e.preventDefault()
+    first.focus()
+  }
+}
+
+async function focusFirst(): Promise<void> {
+  await nextTick()
+  const items = focusableElements()
+  items[0]?.focus()
+}
+
 onMounted(() => {
   resetDates()
-  if (props.open) void loadHistory()
+  if (props.open) {
+    void loadHistory()
+    void focusFirst()
+  }
 })
 
 watch(
@@ -153,6 +194,7 @@ watch(
       resetDates()
       toastMessage.value = null
       void loadHistory()
+      void focusFirst()
     }
   }
 )
@@ -169,10 +211,14 @@ function onClose(): void {
 <template>
   <div
     v-if="props.open"
+    ref="dialogRef"
     class="export-modal"
     role="dialog"
     aria-modal="true"
     aria-labelledby="export-modal-title"
+    tabindex="-1"
+    @keydown.esc.stop="onClose"
+    @keydown="onKeydownTrap"
   >
     <div class="export-modal__backdrop" @click="onClose" aria-hidden="true"></div>
     <div class="export-modal__dialog">
@@ -186,7 +232,7 @@ function onClose(): void {
       <form class="export-modal__form" @submit.prevent="onSubmit">
         <label>
           <span>Fournisseur</span>
-          <select v-model="supplier" :disabled="exp.loading.value" aria-label="Fournisseur">
+          <select v-model="supplier" :disabled="exp.generating.value" aria-label="Fournisseur">
             <option v-for="s in SUPPLIERS" :key="s" :value="s">{{ s }}</option>
           </select>
         </label>
@@ -196,7 +242,7 @@ function onClose(): void {
           <input
             type="date"
             v-model="periodFrom"
-            :disabled="exp.loading.value"
+            :disabled="exp.generating.value"
             aria-label="Date de début de période"
           />
         </label>
@@ -206,7 +252,7 @@ function onClose(): void {
           <input
             type="date"
             v-model="periodTo"
-            :disabled="exp.loading.value"
+            :disabled="exp.generating.value"
             aria-label="Date de fin de période"
           />
         </label>
@@ -216,20 +262,25 @@ function onClose(): void {
             type="submit"
             class="btn btn-primary"
             :disabled="!canSubmit"
-            :aria-busy="exp.loading.value"
+            :aria-busy="exp.generating.value"
           >
-            <span v-if="exp.loading.value" class="spinner" aria-hidden="true"></span>
-            {{ exp.loading.value ? 'Génération en cours…' : 'Générer' }}
+            <span v-if="exp.generating.value" class="spinner" aria-hidden="true"></span>
+            {{ exp.generating.value ? 'Génération en cours…' : 'Générer' }}
           </button>
         </div>
       </form>
 
-      <p v-if="exp.error.value" class="export-modal__error" role="alert">{{ exp.error.value }}</p>
+      <p v-if="exp.generateError.value" class="export-modal__error" role="alert">
+        {{ exp.generateError.value }}
+      </p>
       <p v-if="toastMessage" class="export-modal__toast" role="status">{{ toastMessage }}</p>
 
       <section class="export-modal__history" aria-label="Historique des exports">
         <h3>Historique</h3>
-        <p v-if="historyLoading" class="muted">Chargement…</p>
+        <p v-if="exp.fetchingHistory.value" class="muted">Chargement…</p>
+        <p v-else-if="historyLoadFailed" class="export-modal__error" role="alert">
+          {{ exp.historyError.value ?? 'Chargement de l’historique impossible.' }}
+        </p>
         <p v-else-if="history.length === 0" class="muted">Aucun export pour ce fournisseur.</p>
         <ul v-else class="history-list">
           <li v-for="item in history" :key="item.id">

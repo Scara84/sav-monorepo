@@ -214,4 +214,56 @@ describe('ExportSupplierModal.vue', () => {
     await flushPromises()
     expect(mountedWrapper.html()).toContain('Aucun export pour ce fournisseur')
   })
+
+  // W41 (CR Story 5.2) — ESC ferme la modal.
+  it('W41 keydown ESC émet `close`', async () => {
+    mountedWrapper = mount(ExportSupplierModal, {
+      props: { open: true },
+      global: { stubs: globalStubs() },
+      attachTo: document.body,
+    })
+    await flushPromises()
+    await mountedWrapper.find('[role="dialog"]').trigger('keydown', { key: 'Escape' })
+    expect(mountedWrapper.emitted('close')).toBeTruthy()
+  })
+
+  // W41 — Tab depuis le dernier focusable revient au premier (focus-trap).
+  it('W41 Tab depuis le dernier focusable wrap au premier', async () => {
+    mountedWrapper = mount(ExportSupplierModal, {
+      props: { open: true },
+      global: { stubs: globalStubs() },
+      attachTo: document.body,
+    })
+    await flushPromises()
+    const dialog = mountedWrapper.find('[role="dialog"]')
+    const focusables = dialog.element.querySelectorAll<HTMLElement>(
+      'button:not([disabled]), input:not([disabled]), select:not([disabled]), [href]'
+    )
+    expect(focusables.length).toBeGreaterThan(1)
+    const last = focusables[focusables.length - 1]!
+    last.focus()
+    expect(document.activeElement).toBe(last)
+    await dialog.trigger('keydown', { key: 'Tab' })
+    expect(document.activeElement).toBe(focusables[0])
+  })
+
+  // W50 (CR Story 5.2) — historyLoadFailed distingue échec vs vide.
+  it('W50 fetchHistory en erreur affiche le banner historyLoadFailed', async () => {
+    globalThis.fetch = vi.fn(((url: string) => {
+      if (String(url).startsWith('/api/exports/supplier/history')) {
+        return Promise.resolve(jsonResponse(500, {}))
+      }
+      return Promise.resolve(jsonResponse(201, sampleResult()))
+    }) as unknown as typeof fetch)
+
+    mountedWrapper = mount(ExportSupplierModal, {
+      props: { open: true },
+      global: { stubs: globalStubs() },
+    })
+    await flushPromises()
+    // Pas le message "Aucun export" : c'est un échec, pas un empty.
+    expect(mountedWrapper.html()).not.toContain('Aucun export pour ce fournisseur')
+    // Banner d'erreur de l'historique présent.
+    expect(mountedWrapper.html()).toContain('Service indisponible')
+  })
 })

@@ -1,4 +1,4 @@
-import { ref, type Ref } from 'vue'
+import { ref, onScopeDispose, type Ref } from 'vue'
 
 /**
  * Story 5.2 AC #11 — composable back-office exports fournisseurs.
@@ -10,6 +10,15 @@ import { ref, type Ref } from 'vue'
  *
  * Les erreurs HTTP sont traduites via `errorMessages` map (FR strings) pour
  * affichage direct dans l'UI (pattern `useSavLineEdit.ts` Story 3.6b).
+ *
+ * W42 (CR Story 5.2) — `loading`/`error` séparés en `generating` /
+ * `fetchingHistory` et `generateError` / `historyError` pour qu'un appel
+ * concurrent ne réinitialise pas l'UI de l'autre.
+ *
+ * W46 (CR Story 5.2) — chaque fetch dispose d'un `AbortController` ; un
+ * nouvel appel annule le précédent du même type, et `onScopeDispose` annule
+ * tout fetch en cours quand le composant qui utilise ce composable est
+ * détruit (rapid supplier switch / unmount).
  */
 
 export interface ExportResult {
@@ -53,8 +62,10 @@ export interface FetchHistoryParams {
 }
 
 export interface UseSupplierExportApi {
-  loading: Ref<boolean>
-  error: Ref<string | null>
+  generating: Ref<boolean>
+  fetchingHistory: Ref<boolean>
+  generateError: Ref<string | null>
+  historyError: Ref<string | null>
   lastResult: Ref<ExportResult | null>
   generateExport: (params: GenerateExportParams) => Promise<ExportResult>
   fetchHistory: (params?: FetchHistoryParams) => Promise<ExportHistoryPage>
@@ -75,6 +86,7 @@ const errorMessages: Record<string, string> = {
   UNAUTHENTICATED: 'Session expirée.',
   EXPORT_NOT_FOUND: 'Export introuvable.',
   EXPORT_FILE_UNAVAILABLE: 'Fichier indisponible.',
+  GATEWAY: 'Service indisponible, réessayez dans quelques instants.',
   NETWORK: 'Erreur réseau.',
   UNKNOWN: 'Erreur inattendue.',
 }
@@ -106,14 +118,42 @@ function translate(code: string): string {
   return errorMessages[code] ?? errorMessages['UNKNOWN']!
 }
 
+// W49 (CR Story 5.2) — un 5xx (504 Gateway Timeout Vercel, 502 Bad Gateway,
+// 503 Service Unavailable) remonte HTML → `res.json()` catch renvoie `{}` →
+// avant : `UNKNOWN` ("Erreur inattendue") affiché à l'opérateur. Mappage
+// explicite vers `GATEWAY` pour un message dédié.
+function classifyHttpError(status: number, body: ApiErrorShape): string {
+  const code = extractErrorCode(body, '')
+  if (code) return code
+  if (status >= 500 && status < 600) return 'GATEWAY'
+  return 'UNKNOWN'
+}
+
+function isAbortError(e: unknown): boolean {
+  return e instanceof Error && e.name === 'AbortError'
+}
+
 export function useSupplierExport(): UseSupplierExportApi {
-  const loading = ref(false)
-  const error = ref<string | null>(null)
+  const generating = ref(false)
+  const fetchingHistory = ref(false)
+  const generateError = ref<string | null>(null)
+  const historyError = ref<string | null>(null)
   const lastResult = ref<ExportResult | null>(null)
 
+  let generateController: AbortController | null = null
+  let historyController: AbortController | null = null
+
+  onScopeDispose(() => {
+    generateController?.abort()
+    historyController?.abort()
+  })
+
   async function generateExport(params: GenerateExportParams): Promise<ExportResult> {
-    loading.value = true
-    error.value = null
+    generateController?.abort()
+    const ac = new AbortController()
+    generateController = ac
+    generating.value = true
+    generateError.value = null
     try {
       const res = await fetch('/api/exports/supplier', {
         method: 'POST',
@@ -125,65 +165,83 @@ export function useSupplierExport(): UseSupplierExportApi {
           period_to: formatIsoDate(params.period_to),
           format: 'XLSX',
         }),
+        signal: ac.signal,
       })
       const body = (await res.json().catch(() => ({}))) as ApiErrorShape & {
         data?: ExportResult
       }
       if (!res.ok) {
-        const code = extractErrorCode(body, 'UNKNOWN')
+        const code = classifyHttpError(res.status, body)
         const msg = translate(code)
-        error.value = msg
+        generateError.value = msg
         throw new Error(msg)
       }
       if (!body.data) {
-        error.value = translate('UNKNOWN')
-        throw new Error(error.value)
+        generateError.value = translate('UNKNOWN')
+        throw new Error(generateError.value)
       }
       lastResult.value = body.data
       return body.data
     } catch (e) {
-      if (error.value === null) {
-        error.value = translate('NETWORK')
+      if (isAbortError(e)) throw e
+      if (generateError.value === null) {
+        generateError.value = translate('NETWORK')
       }
       throw e instanceof Error ? e : new Error(String(e))
     } finally {
-      loading.value = false
+      if (generateController === ac) {
+        generating.value = false
+      }
     }
   }
 
   async function fetchHistory(params: FetchHistoryParams = {}): Promise<ExportHistoryPage> {
-    loading.value = true
-    error.value = null
+    historyController?.abort()
+    const ac = new AbortController()
+    historyController = ac
+    fetchingHistory.value = true
+    historyError.value = null
     try {
       const qs = new URLSearchParams()
       if (params.supplier) qs.set('supplier', params.supplier)
       if (typeof params.limit === 'number') qs.set('limit', String(params.limit))
       if (params.cursor) qs.set('cursor', params.cursor)
       const url = `/api/exports/supplier/history${qs.toString() ? '?' + qs.toString() : ''}`
-      const res = await fetch(url, { credentials: 'same-origin' })
+      const res = await fetch(url, { credentials: 'same-origin', signal: ac.signal })
       const body = (await res.json().catch(() => ({}))) as ApiErrorShape & {
         data?: ExportHistoryPage
       }
       if (!res.ok) {
-        const code = extractErrorCode(body, 'UNKNOWN')
+        const code = classifyHttpError(res.status, body)
         const msg = translate(code)
-        error.value = msg
+        historyError.value = msg
         throw new Error(msg)
       }
       if (!body.data) {
-        error.value = translate('UNKNOWN')
-        throw new Error(error.value)
+        historyError.value = translate('UNKNOWN')
+        throw new Error(historyError.value)
       }
       return body.data
     } catch (e) {
-      if (error.value === null) {
-        error.value = translate('NETWORK')
+      if (isAbortError(e)) throw e
+      if (historyError.value === null) {
+        historyError.value = translate('NETWORK')
       }
       throw e instanceof Error ? e : new Error(String(e))
     } finally {
-      loading.value = false
+      if (historyController === ac) {
+        fetchingHistory.value = false
+      }
     }
   }
 
-  return { loading, error, lastResult, generateExport, fetchHistory }
+  return {
+    generating,
+    fetchingHistory,
+    generateError,
+    historyError,
+    lastResult,
+    generateExport,
+    fetchHistory,
+  }
 }

@@ -33,9 +33,17 @@ async function load(cursor: string | null = null): Promise<void> {
   const params: { supplier?: string; limit?: number; cursor?: string } = { limit: PAGE_SIZE }
   if (supplier.value) params.supplier = supplier.value
   if (cursor !== null) params.cursor = cursor
-  const page = await exp.fetchHistory(params)
-  items.value = page.items
-  nextCursor.value = page.next_cursor
+  try {
+    const page = await exp.fetchHistory(params)
+    items.value = page.items
+    nextCursor.value = page.next_cursor
+  } catch (e) {
+    // W46 — un AbortError signifie qu'un nouveau load() a été déclenché
+    // (changement filtre / pagination rapide) : silently ignore, le fetch
+    // suivant produira l'état affiché.
+    if (e instanceof Error && e.name === 'AbortError') return
+    throw e
+  }
 }
 
 async function onNext(): Promise<void> {
@@ -74,7 +82,7 @@ function goBack(): void {
   void router.push({ name: 'admin-sav-list' })
 }
 
-const isEmpty = computed(() => !exp.loading.value && items.value.length === 0)
+const isEmpty = computed(() => !exp.fetchingHistory.value && items.value.length === 0)
 
 onMounted(async () => {
   hydrateFromQuery()
@@ -109,9 +117,9 @@ watch(supplier, async (v) => {
       </label>
     </section>
 
-    <p v-if="exp.error.value" class="error" role="alert">{{ exp.error.value }}</p>
+    <p v-if="exp.historyError.value" class="error" role="alert">{{ exp.historyError.value }}</p>
 
-    <template v-if="exp.loading.value && items.length === 0">
+    <template v-if="exp.fetchingHistory.value && items.length === 0">
       <div class="skeleton" aria-busy="true">Chargement…</div>
     </template>
 
@@ -159,12 +167,16 @@ watch(supplier, async (v) => {
       <footer class="pagination">
         <button
           type="button"
-          :disabled="cursorStack.length === 0 || exp.loading.value"
+          :disabled="cursorStack.length === 0 || exp.fetchingHistory.value"
           @click="onPrev"
         >
           Page précédente
         </button>
-        <button type="button" :disabled="nextCursor === null || exp.loading.value" @click="onNext">
+        <button
+          type="button"
+          :disabled="nextCursor === null || exp.fetchingHistory.value"
+          @click="onNext"
+        >
           Page suivante
         </button>
       </footer>

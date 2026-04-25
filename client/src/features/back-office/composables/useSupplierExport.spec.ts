@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import { effectScope } from 'vue'
 import { useSupplierExport } from './useSupplierExport'
 
 const originalFetch = globalThis.fetch
@@ -50,8 +51,8 @@ describe('useSupplierExport (composable)', () => {
       period_to: new Date(Date.UTC(2026, 0, 31)),
     })
     expect(result.id).toBe(10)
-    expect(exp.loading.value).toBe(false)
-    expect(exp.error.value).toBeNull()
+    expect(exp.generating.value).toBe(false)
+    expect(exp.generateError.value).toBeNull()
     const call = mockFetch.mock.calls[0] as [string, RequestInit]
     expect(call[0]).toBe('/api/exports/supplier')
     const body = JSON.parse(String(call[1].body)) as { period_from: string; period_to: string }
@@ -75,7 +76,7 @@ describe('useSupplierExport (composable)', () => {
         period_to: new Date(),
       })
     ).rejects.toThrow()
-    expect(exp.error.value).toBe('Fournisseur inconnu.')
+    expect(exp.generateError.value).toBe('Fournisseur inconnu.')
   })
 
   it('fetchHistory propage supplier/limit en query string', async () => {
@@ -98,6 +99,130 @@ describe('useSupplierExport (composable)', () => {
 
     const exp = useSupplierExport()
     await expect(exp.fetchHistory({ supplier: 'RUFINO' })).rejects.toThrow()
-    expect(exp.error.value).toBe('Trop de tentatives. Attendez 1 minute.')
+    expect(exp.historyError.value).toBe('Trop de tentatives. Attendez 1 minute.')
+  })
+
+  // W42 (CR Story 5.2) — refs séparées : un appel concurrent ne réinitialise
+  // pas l'UI de l'autre.
+  it('W42 generating et fetchingHistory sont indépendants', async () => {
+    let resolveGen: (v: Response) => void = () => undefined
+    const pendingGen = new Promise<Response>((r) => (resolveGen = r))
+    globalThis.fetch = vi.fn(((url: string) => {
+      if (String(url).startsWith('/api/exports/supplier/history')) {
+        return Promise.resolve(jsonResponse(200, { data: { items: [], next_cursor: null } }))
+      }
+      return pendingGen
+    }) as unknown as typeof fetch)
+
+    const exp = useSupplierExport()
+    const genPromise = exp.generateExport({
+      supplier: 'RUFINO',
+      period_from: new Date(Date.UTC(2026, 0, 1)),
+      period_to: new Date(Date.UTC(2026, 0, 31)),
+    })
+    expect(exp.generating.value).toBe(true)
+    expect(exp.fetchingHistory.value).toBe(false)
+    // Un fetchHistory en parallèle ne touche pas generating ni generateError.
+    await exp.fetchHistory({ supplier: 'RUFINO' })
+    expect(exp.generating.value).toBe(true)
+    resolveGen(
+      jsonResponse(201, {
+        data: {
+          id: 1,
+          supplier_code: 'RUFINO',
+          web_url: 'x',
+          file_name: 'f',
+          line_count: 1,
+          total_amount_cents: '1',
+          created_at: '2026-04-25T00:00:00Z',
+        },
+      })
+    )
+    await genPromise
+    expect(exp.generating.value).toBe(false)
+  })
+
+  // W49 (CR Story 5.2) — 5xx → GATEWAY (504 Vercel renvoie HTML, body
+  // vide après res.json().catch).
+  it('W49 fetchHistory 504 → GATEWAY message FR', async () => {
+    const mockFetch = vi.fn().mockResolvedValue(jsonResponse(504, {}))
+    globalThis.fetch = mockFetch as unknown as typeof fetch
+
+    const exp = useSupplierExport()
+    await expect(exp.fetchHistory({ supplier: 'RUFINO' })).rejects.toThrow()
+    expect(exp.historyError.value).toBe('Service indisponible, réessayez dans quelques instants.')
+  })
+
+  it('W49 generateExport 502 → GATEWAY message FR', async () => {
+    const mockFetch = vi.fn().mockResolvedValue(jsonResponse(502, {}))
+    globalThis.fetch = mockFetch as unknown as typeof fetch
+
+    const exp = useSupplierExport()
+    await expect(
+      exp.generateExport({
+        supplier: 'RUFINO',
+        period_from: new Date(Date.UTC(2026, 0, 1)),
+        period_to: new Date(Date.UTC(2026, 0, 31)),
+      })
+    ).rejects.toThrow()
+    expect(exp.generateError.value).toBe('Service indisponible, réessayez dans quelques instants.')
+  })
+
+  // W46 (CR Story 5.2) — un nouvel appel annule le fetch précédent du même
+  // type via AbortController.
+  it('W46 second fetchHistory annule le premier (signal abort)', async () => {
+    const fetches: AbortSignal[] = []
+    globalThis.fetch = vi.fn(((url: string, init?: RequestInit) => {
+      const sig = init?.signal as AbortSignal
+      fetches.push(sig)
+      // Le mock écoute le signal pour rejeter quand le composable abort.
+      return new Promise<Response>((resolve, reject) => {
+        sig.addEventListener('abort', () => {
+          reject(new DOMException('aborted', 'AbortError'))
+        })
+        // Le 2e fetch ne sera jamais aborté ici → on le résout pour clore.
+        setTimeout(() => resolve(jsonResponse(200, { data: { items: [], next_cursor: null } })), 0)
+      })
+    }) as unknown as typeof fetch)
+
+    const exp = useSupplierExport()
+    const first = exp.fetchHistory({ supplier: 'RUFINO' })
+    const second = exp.fetchHistory({ supplier: 'MARTINEZ' })
+    await expect(first).rejects.toThrow(/aborted/)
+    await second
+    expect(fetches[0]!.aborted).toBe(true)
+    expect(fetches[1]!.aborted).toBe(false)
+  })
+
+  it('W46 onScopeDispose abort tous les fetch en cours', async () => {
+    const signals: AbortSignal[] = []
+    globalThis.fetch = vi.fn(((url: string, init?: RequestInit) => {
+      const sig = init?.signal as AbortSignal
+      signals.push(sig)
+      return new Promise<Response>((_, reject) => {
+        sig.addEventListener('abort', () => {
+          reject(new DOMException('aborted', 'AbortError'))
+        })
+      })
+    }) as unknown as typeof fetch)
+
+    const scope = effectScope()
+    let exp: ReturnType<typeof useSupplierExport>
+    scope.run(() => {
+      exp = useSupplierExport()
+    })
+    const f1 = exp!.fetchHistory({ supplier: 'RUFINO' })
+    const f2 = exp!.generateExport({
+      supplier: 'RUFINO',
+      period_from: new Date(Date.UTC(2026, 0, 1)),
+      period_to: new Date(Date.UTC(2026, 0, 31)),
+    })
+    // Catch sur les promesses pour éviter l'unhandled rejection après abort.
+    f1.catch(() => undefined)
+    f2.catch(() => undefined)
+    scope.stop()
+    expect(signals.length).toBe(2)
+    expect(signals[0]!.aborted).toBe(true)
+    expect(signals[1]!.aborted).toBe(true)
   })
 })
