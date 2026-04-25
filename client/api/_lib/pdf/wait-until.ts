@@ -6,18 +6,15 @@
  * jusqu'à résolution de la promise OU timeout lambda (10s Hobby). Sans ça,
  * V8 peut freezer la lambda dès le retour du handler.
  *
- * En environnement non-Vercel (tests, dev local Node standalone) ou si la
- * dépendance n'est pas installée (cas V1), on dégrade proprement :
- * `void promise.catch(...)` — le handler retourne, la promise continue à
- * tourner dans l'event loop du process. Acceptable tant que la promise ne
- * throw pas (elle doit avoir son propre `.catch` ou être no-throw).
+ * `@vercel/functions` est désormais installé en dépendance de production
+ * (W36, post-5.2) — le `require` dynamique ci-dessous résout le vrai module
+ * en runtime Vercel. Le fallback subsiste comme garde-fou pour les
+ * environnements de test ou dev local où `@vercel/functions` peut être
+ * stubbé via `__resetWaitUntilCacheForTests()`.
  *
  * Contrat : `waitUntilOrVoid(p)` ne retourne rien — side-effect uniquement.
  * Toute rejection **doit** être capturée par l'appelant AVANT de passer
  * ici (pattern emit-handler : `generateCreditNotePdfAsync(...).catch(...)`).
- *
- * V1.1 migration possible : installer `@vercel/functions` en prod pour
- * activer le vrai `waitUntil`. Ce fichier détecte sa présence dynamiquement.
  */
 import { logger } from '../logger'
 
