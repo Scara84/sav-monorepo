@@ -252,4 +252,33 @@ describe('GET/PUT /api/self-service/draft', () => {
     )
     expect(res.statusCode).toBe(400)
   })
+
+  // W40 (CR Story 5.2) — defense-in-depth router-level auth.
+  it('W40 op=invalid sans auth → 401 (auth bloque avant le 404 router)', async () => {
+    const res = mockRes()
+    await handler(mockReq({ method: 'GET', query: { op: 'garbage' } }), res)
+    expect(res.statusCode).toBe(401)
+  })
+
+  // W52 (CR Story 5.2) — méthode non supportée → 405 METHOD_NOT_ALLOWED.
+  it('W52 DELETE /draft → 405 METHOD_NOT_ALLOWED', async () => {
+    const res = mockRes()
+    await handler(mockReq({ method: 'DELETE', cookies: { sav_session: memberToken(42) } }), res)
+    expect(res.statusCode).toBe(405)
+    expect((res.jsonBody as { error: { code: string } }).error.code).toBe('METHOD_NOT_ALLOWED')
+  })
+
+  it('W52 GET /upload-session → 405 METHOD_NOT_ALLOWED (POST attendu)', async () => {
+    const res = mockRes()
+    await handler(
+      mockReq({
+        method: 'GET',
+        cookies: { sav_session: memberToken(42) },
+        query: { op: 'upload-session' },
+      }),
+      res
+    )
+    expect(res.statusCode).toBe(405)
+    expect((res.jsonBody as { error: { code: string } }).error.code).toBe('METHOD_NOT_ALLOWED')
+  })
 })

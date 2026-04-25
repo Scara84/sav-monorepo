@@ -138,7 +138,7 @@ const dispatch: ApiHandler = async (req, res) => {
   if (op === 'list') {
     if (method !== 'GET') {
       res.setHeader('Allow', 'GET')
-      sendError(res, 'VALIDATION_FAILED', 'Méthode non supportée', requestId)
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
       return
     }
     return listSavHandler(req, res)
@@ -155,7 +155,7 @@ const dispatch: ApiHandler = async (req, res) => {
   if (op === 'detail') {
     if (method !== 'GET') {
       res.setHeader('Allow', 'GET')
-      sendError(res, 'VALIDATION_FAILED', 'Méthode non supportée', requestId)
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
       return
     }
     return savDetailHandler(savId)(req, res)
@@ -164,7 +164,7 @@ const dispatch: ApiHandler = async (req, res) => {
   if (op === 'status') {
     if (method !== 'PATCH') {
       res.setHeader('Allow', 'PATCH')
-      sendError(res, 'VALIDATION_FAILED', 'Méthode non supportée', requestId)
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
       return
     }
     return savStatusHandler(savId)(req, res)
@@ -173,7 +173,7 @@ const dispatch: ApiHandler = async (req, res) => {
   if (op === 'assign') {
     if (method !== 'PATCH') {
       res.setHeader('Allow', 'PATCH')
-      sendError(res, 'VALIDATION_FAILED', 'Méthode non supportée', requestId)
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
       return
     }
     return savAssignHandler(savId)(req, res)
@@ -202,14 +202,14 @@ const dispatch: ApiHandler = async (req, res) => {
       return savLineDeleteHandler(savId, lineId)(req, res)
     }
     res.setHeader('Allow', 'PATCH, DELETE, POST')
-    sendError(res, 'VALIDATION_FAILED', 'Méthode non supportée', requestId)
+    sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
     return
   }
 
   if (op === 'tags') {
     if (method !== 'PATCH') {
       res.setHeader('Allow', 'PATCH')
-      sendError(res, 'VALIDATION_FAILED', 'Méthode non supportée', requestId)
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
       return
     }
     return savTagsHandler(savId)(req, res)
@@ -218,7 +218,7 @@ const dispatch: ApiHandler = async (req, res) => {
   if (op === 'comments') {
     if (method !== 'POST') {
       res.setHeader('Allow', 'POST')
-      sendError(res, 'VALIDATION_FAILED', 'Méthode non supportée', requestId)
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
       return
     }
     return savCommentsPostHandler(savId)(req, res)
@@ -227,7 +227,7 @@ const dispatch: ApiHandler = async (req, res) => {
   if (op === 'duplicate') {
     if (method !== 'POST') {
       res.setHeader('Allow', 'POST')
-      sendError(res, 'VALIDATION_FAILED', 'Méthode non supportée', requestId)
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
       return
     }
     return savDuplicateHandler(savId)(req, res)
@@ -237,7 +237,7 @@ const dispatch: ApiHandler = async (req, res) => {
   if (op === 'credit-notes') {
     if (method !== 'POST') {
       res.setHeader('Allow', 'POST')
-      sendError(res, 'VALIDATION_FAILED', 'Méthode non supportée', requestId)
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
       return
     }
     return emitCreditNoteHandler(savId)(req, res)

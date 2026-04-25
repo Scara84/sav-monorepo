@@ -187,7 +187,7 @@ function parseOp(req: ApiRequest): string | null {
   return 'invalid'
 }
 
-const router: ApiHandler = async (req, res) => {
+const dispatch: ApiHandler = async (req, res) => {
   const op = parseOp(req)
   const method = (req.method ?? 'GET').toUpperCase()
 
@@ -204,7 +204,7 @@ const router: ApiHandler = async (req, res) => {
     if (method === 'PUT') return putGuard(req, res)
     const requestId = ensureRequestId(req)
     res.setHeader('Allow', 'GET, PUT')
-    sendError(res, 'VALIDATION_FAILED', 'Méthode non supportée', requestId)
+    sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
     return
   }
 
@@ -212,7 +212,7 @@ const router: ApiHandler = async (req, res) => {
     if (method !== 'POST') {
       const requestId = ensureRequestId(req)
       res.setHeader('Allow', 'POST')
-      sendError(res, 'VALIDATION_FAILED', 'Méthode non supportée', requestId)
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
       return
     }
     return uploadSessionHandler(req, res)
@@ -222,7 +222,7 @@ const router: ApiHandler = async (req, res) => {
     if (method !== 'POST') {
       const requestId = ensureRequestId(req)
       res.setHeader('Allow', 'POST')
-      sendError(res, 'VALIDATION_FAILED', 'Méthode non supportée', requestId)
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
       return
     }
     return uploadCompleteHandler(req, res)
@@ -231,5 +231,10 @@ const router: ApiHandler = async (req, res) => {
   const requestId = ensureRequestId(req)
   sendError(res, 'NOT_FOUND', 'Route non disponible', requestId)
 }
+
+// W40 (CR Story 5.2) — defense-in-depth : auth au niveau router en plus
+// des sub-handlers déjà auth-wrappés. Si un refactor futur retire `withAuth`
+// d'un sub-handler, l'auth reste garantie ici.
+const router: ApiHandler = withAuth({ types: ['member'] })(dispatch)
 
 export default router

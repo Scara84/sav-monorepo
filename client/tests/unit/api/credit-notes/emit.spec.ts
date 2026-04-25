@@ -547,7 +547,7 @@ describe('POST /api/sav/:id/credit-notes (Story 4.4)', () => {
     expect(res.statusCode).toBe(401)
   })
 
-  it('T23 méthode GET sur /credit-notes → 400 Méthode non supportée', async () => {
+  it('T23 méthode GET sur /credit-notes → 405 Méthode non supportée', async () => {
     const res = mockRes()
     await handler(
       mockReq({
@@ -557,7 +557,8 @@ describe('POST /api/sav/:id/credit-notes (Story 4.4)', () => {
       }),
       res
     )
-    expect(res.statusCode).toBe(400)
+    expect(res.statusCode).toBe(405)
+    expect((res.jsonBody as { error: { code: string } }).error.code).toBe('METHOD_NOT_ALLOWED')
   })
 
   it('T24 body absent → 400 INVALID_BODY', async () => {

@@ -71,7 +71,7 @@ const dispatch: ApiHandler = async (req, res) => {
   if (op === 'export-supplier') {
     if (method !== 'POST') {
       res.setHeader('Allow', 'POST')
-      sendError(res, 'VALIDATION_FAILED', 'Méthode non supportée', requestId)
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
       return
     }
     return exportSupplierHandler(req, res)
@@ -80,7 +80,7 @@ const dispatch: ApiHandler = async (req, res) => {
   if (op === 'export-history') {
     if (method !== 'GET') {
       res.setHeader('Allow', 'GET')
-      sendError(res, 'VALIDATION_FAILED', 'Méthode non supportée', requestId)
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
       return
     }
     return exportHistoryHandler(req, res)
@@ -89,7 +89,7 @@ const dispatch: ApiHandler = async (req, res) => {
   if (op === 'export-download') {
     if (method !== 'GET') {
       res.setHeader('Allow', 'GET')
-      sendError(res, 'VALIDATION_FAILED', 'Méthode non supportée', requestId)
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
       return
     }
     if (exportId === null) {
