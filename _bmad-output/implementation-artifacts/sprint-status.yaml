@@ -39,6 +39,56 @@
 
 generated: 2026-04-18
 last_updated: 2026-04-25
+# 2026-04-25 : session polish moyen — 8 W## résolus (cohérence settings,
+# retry PDF Graph API, micro-fixes DB/UX). 6 commits atomiques sur
+# refonte-phase-2 (à pusher séparément quand prêt) :
+#   a83bef1 W22+W37 settings overlap guard : trigger BEFORE INSERT WHEN
+#           NEW.valid_to IS NULL ferme automatiquement la version active
+#           précédente (UPDATE ... SET valid_to = NEW.valid_from) +
+#           partial UNIQUE INDEX settings(key) WHERE valid_to IS NULL —
+#           défense en profondeur indépendante. Audit DB préview confirmé
+#           zéro overlap pré-existante. Compat seeds idempotents (WHERE
+#           NOT EXISTS skip naturel). Migration 20260504120000 + test SQL
+#           3 cas (supersede + race unique + INSERT historique skip).
+#   ceab551 W34+W35 PDF retry smart classification + MSAL refresh sur
+#           401 : helper `isTransientGraphError(err)` exporté short-circuit
+#           sur 400/403/404/413 + assertions locales (gain ~7s lambda
+#           budget). Helper `forceRefreshAccessToken()` dans graph.js
+#           via MSAL acquireTokenByClientCredential({skipCache:true}) —
+#           refresh AVANT retry suivant sur 401, fail-soft si refresh KO.
+#           4 tests Vitest ajoutés (W34 400 short-circuit, W34 503 retry,
+#           W35 401→refresh+success, W35 401×3 raise sans boucle infinie).
+#           Tests baseline G01-G10 préservés (10 → 14 tests fichier).
+#   2538855 W26 trigger BEFORE UPDATE OF sav_id sav_lines IMMUTABLE :
+#           raise IMMUTABLE_SAV_ID|line_id=...|old_sav_id=...|new_sav_id=...
+#           ERRCODE check_violation. Défense en profondeur vs whitelist
+#           update_sav_line (qui exclut déjà sav_id). Si besoin légitime
+#           apparaît, DROP/RECREATE explicit + recompute des deux totaux
+#           documenté. Migration 20260504130000 + test SQL 2 cas.
+#   e688043 W28 resolveSettingAt tie-break déterministe (valid_from
+#           DESC, id DESC) : SettingRow.id?: number optionnel, fallback
+#           -Infinity (legacy callers first-vue wins préservé). Test
+#           Vitest tie-break id=10/20 → id=20 wins quel que soit l'ordre
+#           input. Complément W37 partial UNIQUE INDEX (qui interdit
+#           désormais 2 rows actives → tie-break utile sur edge race).
+#   a3584ec W18 formatter qty validation_message (PG to_char + TS
+#           toFixed) : helper TS `formatQty(value)` exporté +
+#           validation_message qty_exceeds utilise formatQty. Migration
+#           20260504140000 mirror PG via regexp_replace(qty::text,
+#           '\.?0+$', ''). 7 tests Vitest (1 message + 6 formatQty).
+#   7c0e630 W8 LINES_BLOCKED ids array_to_string format pipe-friendly :
+#           CREATE OR REPLACE FUNCTION transition_sav_status avec
+#           array_to_string(v_blocked_ids, ',') → format
+#           LINES_BLOCKED|ids=1,2,3 (au lieu de {1,2,3} bigint[] natif).
+#           Body identique sauf bloc LINES_BLOCKED. SET search_path +
+#           SET app.actor_operator_id reset (W2+W13) ré-incorporés
+#           explicitement (CREATE OR REPLACE écrase ALTER précédents).
+#           Migration 20260504150000 + test SQL 2 cas (multi 3 ids +
+#           singleton). Compat caller LIKE 'LINES_BLOCKED%' préservée.
+# Tests : 742/742 (vs baseline 730 : +12 nouveaux W34/W35 + W28 + W18 +
+# 6 formatQty), typecheck 0, lint:business 0, build 459.96 KB stable
+# (sous cap 460 KB AC #17 Story 5.2). Tests SQL : 3 nouveaux dans
+# tests/security/ (w22_w37, w26, w8) exécutés en CI au push.
 # 2026-04-25 : cross-cutting sécurité PG — W2 + W10 + W11 + W13 + W14 + W17
 # résolus + W12 strikethrough (couvert Story 4.6 done). 4 commits atomiques
 # sur refonte-phase-2 (à pusher séparément quand prêt) :
