@@ -1,6 +1,6 @@
 # Story 5.2: Endpoint export fournisseur + UI back-office
 
-Status: ready-for-dev
+Status: done
 
 <!-- Seconde story Epic 5. Wire l'endpoint HTTP qui appelle le builder (Story 5.1)
 + upload OneDrive du XLSX + persistance supplier_exports + lien de téléchargement.
@@ -240,45 +240,45 @@ export function useSupplierExport() {
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — Consolidation self-service (AC #2)**
-  - [ ] 1.1 Créer `api/_lib/self-service/upload-session-handler.ts` (logique extraite)
-  - [ ] 1.2 Créer `api/_lib/self-service/upload-complete-handler.ts` (logique extraite)
-  - [ ] 1.3 Refactor `api/self-service/draft.ts` en router dispatcher op=draft|upload-session|upload-complete
-  - [ ] 1.4 Supprimer `api/self-service/upload-session.ts` + `api/self-service/upload-complete.ts`
-  - [ ] 1.5 Refactor tests existants pour pointer sur les handlers extraits
-  - [ ] 1.6 Mise à jour `vercel.json` : retrait 2 functions + ajout 2 rewrites
-  - [ ] 1.7 Vérifier typecheck + suite complète verte
+- [x] **Task 1 — Consolidation self-service (AC #2)**
+  - [x] 1.1 Créer `api/_lib/self-service/upload-session-handler.ts` (logique extraite)
+  - [x] 1.2 Créer `api/_lib/self-service/upload-complete-handler.ts` (logique extraite)
+  - [x] 1.3 Refactor `api/self-service/draft.ts` en router dispatcher op=draft|upload-session|upload-complete
+  - [x] 1.4 Supprimer `api/self-service/upload-session.ts` + `api/self-service/upload-complete.ts`
+  - [x] 1.5 Refactor tests existants pour pointer sur les handlers extraits
+  - [x] 1.6 Mise à jour `vercel.json` : retrait 2 functions + ajout 2 rewrites
+  - [x] 1.7 Vérifier typecheck + suite complète verte
 
-- [ ] **Task 2 — Router `api/pilotage.ts` (AC #1)**
-  - [ ] 2.1 Dispatcher op `export-supplier` | `export-history` | `export-download` + ops futurs (Stories 5.3-5.5 comments placeholder)
-  - [ ] 2.2 `withAuth({ types: ['operator'] })` niveau router
-  - [ ] 2.3 Ajout dans `vercel.json` functions + rewrites
+- [x] **Task 2 — Router `api/pilotage.ts` (AC #1)**
+  - [x] 2.1 Dispatcher op `export-supplier` | `export-history` | `export-download` + ops futurs (Stories 5.3-5.5 comments placeholder)
+  - [x] 2.2 `withAuth({ types: ['operator'] })` niveau router
+  - [x] 2.3 Ajout dans `vercel.json` functions + rewrites
 
-- [ ] **Task 3 — Handler `exportSupplierHandler` (AC #3, #4, #5, #6)**
-  - [ ] 3.1 Schéma Zod body
-  - [ ] 3.2 Résolution config supplier (map `{ rufino: rufinoConfig }`)
-  - [ ] 3.3 Lookup `getSetting('onedrive.exports_folder_root')` + fail-closed placeholder
-  - [ ] 3.4 Call `buildSupplierExport` (Story 5.1)
-  - [ ] 3.5 Call `uploadExportXlsx` (wrapper léger autour onedrive-ts.ts)
-  - [ ] 3.6 INSERT supplier_exports + retour 201
-  - [ ] 3.7 Gestion erreurs + codes HTTP + logs structurés
-  - [ ] 3.8 Rate limit via middleware
+- [x] **Task 3 — Handler `exportSupplierHandler` (AC #3, #4, #5, #6)**
+  - [x] 3.1 Schéma Zod body
+  - [x] 3.2 Résolution config supplier (map `{ rufino: rufinoConfig }`)
+  - [x] 3.3 Lookup `getSetting('onedrive.exports_folder_root')` + fail-closed placeholder
+  - [x] 3.4 Call `buildSupplierExport` (Story 5.1)
+  - [x] 3.5 Call `uploadExportXlsx` (wrapper léger autour onedrive-ts.ts)
+  - [x] 3.6 INSERT supplier_exports + retour 201
+  - [x] 3.7 Gestion erreurs + codes HTTP + logs structurés
+  - [x] 3.8 Rate limit via middleware
 
-- [ ] **Task 4 — Migration `20260501140000_settings_exports_folder_root.sql` (AC #4)**
+- [x] **Task 4 — Migration `20260501140000_settings_exports_folder_root.sql` (AC #4)**
 
-- [ ] **Task 5 — Handler `exportHistoryHandler` + `exportDownloadHandler` (AC #7, #8)**
+- [x] **Task 5 — Handler `exportHistoryHandler` + `exportDownloadHandler` (AC #7, #8)**
 
-- [ ] **Task 6 — UI `ExportSupplierModal.vue` + composable + routing (AC #9, #10, #11, #14)**
+- [x] **Task 6 — UI `ExportSupplierModal.vue` + composable + routing (AC #9, #10, #11, #14)**
 
-- [ ] **Task 7 — Tests API + UI (AC #12, #13)**
+- [x] **Task 7 — Tests API + UI (AC #12, #13)**
 
-- [ ] **Task 8 — Script bench p95 (AC #15)**
-  - [ ] 8.1 `scripts/bench/export-supplier.ts` (tsx + node-fetch, 10 runs)
-  - [ ] 8.2 Rapport `_bmad-output/implementation-artifacts/5-2-bench-report.md`
+- [x] **Task 8 — Script bench p95 (AC #15)**
+  - [x] 8.1 `scripts/bench/export-supplier.ts` (tsx + node-fetch, 10 runs)
+  - [x] 8.2 Rapport `_bmad-output/implementation-artifacts/5-2-bench-report.md` (exécution défer cutover — placeholder settings)
 
-- [ ] **Task 9 — Documentation (AC #16)**
+- [x] **Task 9 — Documentation (AC #16)**
 
-- [ ] **Task 10 — Validation (AC #17)**
+- [x] **Task 10 — Validation (AC #17)**
 
 ## Dev Notes
 
@@ -441,10 +441,153 @@ Config `_bmad/bmm/config.yaml` appliquée.
 
 ### Agent Model Used
 
-{{agent_model_name_version}}
+claude-opus-4-7 (1M context) — Amelia bmad-dev-story — 2026-04-24
 
 ### Debug Log References
 
+- Typecheck initial (après Tasks 1-5) : 0 error.
+- Premier run tests export-supplier : 14/14 FAIL — cause : `withRateLimit` rejetait 400 `VALIDATION_FAILED` car `req.user` absent (handler appelé hors router, donc auth pas encore résolue). Fix : wrapper `withAuth` directement dans `exportSupplierHandler` (double-wrap accepté, cohérent avec pattern `upload-session-handler.ts`). 14/14 PASS après fix.
+- Premier run tests history : `400 INVALID_CURSOR` attendu sur cursor `"!!!not-base64"` — comportement conforme (base64url decode renvoie bytes random → JSON.parse throw → return null).
+- Lint : 2 erreurs `no-unused-vars` sur `defineEmits<{ (e: ...) }>()` (Vue 3 TS pattern standard — faux positif ESLint) → `// eslint-disable-next-line no-unused-vars`. Les 2 erreurs restantes (`tests/e2e/sav-{error-cases,happy-path}.spec.js`) sont PRE-EXISTANTES (vérifié `git stash` + relint).
+- Baseline tests : 661/661 pré-5.2 → 694/694 post-5.2 (+33 tests : 14 export-supplier + 4 history + 5 download + 4 composable + 6 UI modal).
+
 ### Completion Notes List
 
+**AC #1 — Router `api/pilotage.ts` créé** :
+- Dispatcher avec `ALLOWED_OPS = { export-supplier, export-history, export-download }`, extensible Stories 5.3/5.4/5.5.
+- `withAuth({ types: ['operator'] })` niveau router.
+- `vercel.json` : 3 rewrites ajoutés pour REST routes → `/api/pilotage?op=...`. `maxDuration: 30` (cohérent Epic 4.5 budget upload).
+
+**AC #2 — Consolidation self-service** :
+- Handlers extraits sous `api/_lib/self-service/upload-{session,complete}-handler.ts` (auth + rate-limit préservés dans les exports).
+- `api/self-service/draft.ts` devient router dispatcher op=draft|upload-session|upload-complete. **Backward-compat préservée** : op absent = mode draft (GET/PUT). Les appels legacy `GET/PUT /api/self-service/draft` sans `?op=` continuent de marcher.
+- Tests imports mis à jour (2 lignes). 29/29 tests self-service green.
+- `vercel.json` : -2 functions (upload-*) + rewrites ajoutés. Net slot count : **11/12** (1 retrait draft/upload + 1 ajout pilotage = -1).
+
+**AC #3 — Endpoint POST /api/exports/supplier** :
+- Body Zod : `supplier [A-Za-z_]+ uppercased`, `period_from/to z.coerce.date()`, `format: z.enum(['XLSX']).default('XLSX')`.
+- Gate période : `period_to >= period_from`, durée ≤ 366j (tolérance 1 an + bissextile).
+- Handler = `withAuth + withRateLimit + core`. Clé canonique rate-limit `export-supplier:{operator_id}:{supplier_code}` (pattern Epic 4.5 P1).
+- Pipeline : parse → config lookup → settings resolve → builder Story 5.1 → uploadExportXlsx → INSERT supplier_exports → 201.
+- Status codes mappés AC #5 (inc. 502 pour OneDrive KO via `errorEnvelope` direct, le helper `sendError` ne supporte pas 502 natif).
+
+**AC #4 — Migration settings** :
+- `supabase/migrations/20260501140000_settings_exports_folder_root.sql` : INSERT idempotent `WHERE NOT EXISTS`, valeur placeholder `/PLACEHOLDER_EXPORTS_ROOT`.
+- Fail-closed : handler rejette 500 `EXPORTS_FOLDER_NOT_CONFIGURED` si valeur commence par placeholder (pattern Story 4.5).
+- Defense-in-depth path traversal : pattern `/(^|\/)\.\.(\/|$)|\0/` (Story 4.5 P4).
+
+**AC #5 — Gestion d'erreurs** : 10 status codes mappés (inc. `PERSIST_FAILED` = soft-orphan log WARN `export.orphan.onedrive`, conforme accepté V1).
+
+**AC #6 — Rate-limit** : 3 req/min/couple. Clé canonique via closure sur `operator_id + supplier`. Test `429 RATE_LIMITED` vert.
+
+**AC #7 — Endpoint history** : cursor-based keyset pagination `(created_at, id) tuple`. Enrichissement `operator.email` en 1 lookup batch (IN list). `email_display_short` = local-part (pattern F36/F37 Epic 3). 4/4 tests verts.
+
+**AC #8 — Endpoint download** : 302 redirect vers `web_url` OneDrive (pattern Epic 4.4). Guards : `INVALID_EXPORT_ID` (400), `EXPORT_NOT_FOUND` (404), `EXPORT_FILE_UNAVAILABLE` (404 si web_url NULL). 5/5 tests verts.
+
+**AC #9/#10 — UI ExportSupplierModal.vue** : Vue 3 Composition API TS. Select RUFINO hardcodé V1 (Story 5.6 ajoutera MARTINEZ). Date-pickers défaut mois précédent clos. Spinner pendant génération. Téléchargement auto via `window.location.href = web_url`. Historique 10 derniers + lien « Voir tout » vers ExportHistoryView. Toast success. 6/6 tests verts.
+
+**AC #11 — Composable `useSupplierExport.ts`** : `generateExport()` + `fetchHistory()`. `errorMessages` FR (UNKNOWN_SUPPLIER → « Fournisseur inconnu », etc.). 4/4 tests verts.
+
+**AC #12 — Tests handler API** : 14 scénarios export-supplier (happy, INVALID_BODY, UNKNOWN_SUPPLIER, PERIOD_INVALID x2, EXPORTS_FOLDER_NOT_CONFIGURED, BUILD_FAILED, ONEDRIVE_UPLOAD_FAILED, PERSIST_FAILED, RATE_LIMITED, actor check, FORBIDDEN, uppercase, INVALID_BODY array). Le scénario 12 (audit trail SQL) défer en test SQL Story future (mock insuffisant — noté dans story).
+
+**AC #13 — Tests UI** : 6 scénarios ExportSupplierModal.
+
+**AC #14 — Vue `ExportHistoryView.vue`** : route `/admin/exports/history` (nom `admin-export-history`). Pagination cursor-based (stack de cursors pour « page précédente »). Filtre `?supplier=` URL-bound. `meta.requiresAuth: 'msal'` hérité de `/admin` parent.
+
+**AC #15 — Bench script** : `scripts/bench/export-supplier.ts` + rapport `5-2-bench-report.md` (exécution différée cutover — placeholder settings bloque — cohérent Story 4.5 bench PDF reporté).
+
+**AC #16 — Documentation** : `docs/api-contracts-vercel.md` : section « Epic 5 Story 5.2 — Exports fournisseurs » ajoutée, 11/12 slots Vercel documentés, pattern consolidation self-service documenté pour référence Epic 6.
+
+**AC #17 — Validation** :
+- typecheck : 0 error
+- npm test : **694/694** (baseline 661 → 694, **+33 tests**). **Dépasse la cible story 633/633** — tests Story 4.5 PDF ajoutent +30 que je n'avais pas comptés dans la baseline pré-5.2.
+- Lint : 2 erreurs pre-existantes e2e `sav-{error-cases,happy-path}.spec.js` (vérifié via git stash). Aucune erreur introduite par Story 5.2.
+- Build : `index-xxx.js` 459.91 KB (vs 459.16 KB baseline pré-5.2). **Croissance +0.75 KB gzip** (bien sous le cap 10 KB AC #17). ExportHistoryView + useSupplierExport en chunks séparés (lazy-loaded via router dynamic import).
+
+**Déviations / décisions** :
+- 502 Bad Gateway pour ONEDRIVE_UPLOAD_FAILED (AC #5) : `sendError` helper renvoie 503 par défaut pour `DEPENDENCY_DOWN`. Solution : émission manuelle via `errorEnvelope` + `res.status(502).json(...)` pour honorer strictement AC #5. Alternative rejetée : ajouter un nouveau ErrorCode `BAD_GATEWAY` (pollue le domain-specific error set V1).
+- ESLint `no-unused-vars` sur `defineEmits<{ (e: 'close'): void }>()` : faux positif Vue 3 TS — inline `eslint-disable-next-line`. Pattern à adresser globalement si d'autres composants sont ajoutés.
+- `recordAudit` explicite pour supplier_exports : **non effectué** V1 — le trigger SQL `trg_audit_supplier_exports` (Story 5.1) couvre déjà INSERT/UPDATE/DELETE via `audit_changes()`. `generated_by_operator_id` stocké dans la row elle-même (défense en profondeur). Cohérent pattern Story 3.7 productivity-handlers.
+- Bench non exécuté réellement : bloqué placeholder settings cutover. Rapport documente la marche à suivre post-cutover (pattern Story 4.5).
+
 ### File List
+
+**Nouveaux fichiers :**
+- `client/api/pilotage.ts` — router catch-all Epic 5
+- `client/api/_lib/exports/export-supplier-handler.ts` — handler POST export
+- `client/api/_lib/exports/export-history-handler.ts` — handler GET history
+- `client/api/_lib/exports/export-download-handler.ts` — handler GET download (302 redirect)
+- `client/api/_lib/exports/upload-export.ts` — wrapper OneDrive XLSX (calqué uploadCreditNotePdf)
+- `client/api/_lib/exports/supplier-configs.ts` — map `{ rufino: rufinoConfig }` + résolveur
+- `client/api/_lib/self-service/upload-session-handler.ts` — extrait du top-level (AC #2)
+- `client/api/_lib/self-service/upload-complete-handler.ts` — extrait du top-level (AC #2)
+- `client/supabase/migrations/20260501140000_settings_exports_folder_root.sql`
+- `client/src/features/back-office/components/ExportSupplierModal.vue`
+- `client/src/features/back-office/components/ExportSupplierModal.spec.ts`
+- `client/src/features/back-office/composables/useSupplierExport.ts`
+- `client/src/features/back-office/composables/useSupplierExport.spec.ts`
+- `client/src/features/back-office/views/ExportHistoryView.vue`
+- `client/tests/unit/api/exports/export-supplier.spec.ts`
+- `client/tests/unit/api/exports/export-history.spec.ts`
+- `client/tests/unit/api/exports/export-download.spec.ts`
+- `client/scripts/bench/export-supplier.ts`
+- `_bmad-output/implementation-artifacts/5-2-bench-report.md`
+
+**Fichiers modifiés :**
+- `client/api/self-service/draft.ts` — devenu router dispatcher op=draft|upload-*
+- `client/vercel.json` — -2 functions upload-*, +1 function pilotage.ts, +5 rewrites (2 self-service + 3 pilotage)
+- `client/src/router/index.js` — ajout route `admin-export-history`
+- `client/src/features/back-office/views/SavListView.vue` — bouton « Export fournisseur » + import modal
+- `client/tests/unit/api/self-service/upload-session.spec.ts` — import de `_lib/self-service/upload-session-handler` (1 ligne)
+- `client/tests/unit/api/self-service/upload-complete.spec.ts` — import de `_lib/self-service/upload-complete-handler` (1 ligne)
+- `docs/api-contracts-vercel.md` — section Epic 5 Story 5.2 ajoutée
+
+**Fichiers supprimés :**
+- `client/api/self-service/upload-session.ts` — logique extraite dans `_lib/`
+- `client/api/self-service/upload-complete.ts` — logique extraite dans `_lib/`
+
+## Senior Developer Review (AI) — 2026-04-24
+
+**Reviewer** : Amelia (bmad-code-review, Opus 4.7 1M).
+**Approach** : 3 couches parallèles (Blind Hunter + Edge Case Hunter + Acceptance Auditor, prompts self-contained, agents non contextualisés).
+**Raw findings** : ~76 bruts → triage → **10 patches appliqués** + **17 defers (W40-W56)** + **~48 dismissed** (design, faux-positifs, pré-existant).
+
+### Outcome : Changes applied — 10 patches, ready for human review
+
+| # | Sev | Title | File | Source |
+|---|-----|-------|------|--------|
+| P1 | HIGH | Rate-limit bypass via rotation de codes supplier invalides (buckets distincts) → bucket unique `INVALID:{operatorId}` post-Zod | `client/api/_lib/exports/export-supplier-handler.ts` | blind+edge |
+| P2 | HIGH | `cursor.createdAt` interpolé brut dans PostgREST `.or()` avec validation Date faible (accepte `"2026,01,01"`) → injection possible | `client/api/_lib/exports/export-history-handler.ts` | blind+edge |
+| P3 | HIGH | `shortEmail` retournait email complet si absence de `@` (PII leak sur données malformées) → retourne `null` | `client/api/_lib/exports/export-history-handler.ts` | auditor+edge |
+| P4 | HIGH | `z.coerce.date()` accepte TZ offset et `"2026"` → folder year divergent du builder. Regex stricte `YYYY-MM-DD` + normalisation UTC-midnight cohérente Story 5.1 | `client/api/_lib/exports/export-supplier-handler.ts` | blind+edge |
+| P5 | MED | `export-download` 302 vers `web_url` sans allowlist host (open-redirect si DB compromise future) → `isTrustedOneDriveUrl` avant redirect | `client/api/_lib/exports/export-download-handler.ts` | blind |
+| P6 | MED | `upload-export.uploadExportXlsx(buffer, filename, ...)` sans guard filename (défense en profondeur si appelant futur bypass builder) → `assertSafeFilename` | `client/api/_lib/exports/upload-export.ts` | edge |
+| P7 | MED | `MICROSOFT_DRIVE_ID=''` classé 502 ONEDRIVE_UPLOAD_FAILED → opérateur retry en vain. Préfixe `CONFIG_ERROR\|` + remap 500 `EXPORTS_FOLDER_NOT_CONFIGURED` | `client/api/_lib/exports/upload-export.ts` + `export-supplier-handler.ts` | edge |
+| P8 | MED | Placeholder detection `startsWith(PLACEHOLDER_ROOT)` rejetait faux-positif `/PLACEHOLDER_EXPORTS_ROOT_BIS` → strict equality | `client/api/_lib/exports/export-supplier-handler.ts` | blind |
+| P9 | LOW | Double-click « Générer » avant propagation Vue `:disabled` → 2 submits concurrents → re-entry guard `if (exp.loading.value) return` en tête d'`onSubmit` | `client/src/features/back-office/components/ExportSupplierModal.vue` | edge |
+| P10 | LOW | `window.location.href = web_url` sortait du SPA → `loadHistory()` interrompu. `window.open(url, '_blank', 'noopener,noreferrer')` + fallback si popup bloqué | `client/src/features/back-office/components/ExportSupplierModal.vue` | edge |
+
+**Tests CR ajoutés** : **+10 tests** sur `export-supplier.spec.ts` (5), `export-history.spec.ts` (3), `export-download.spec.ts` (2) — couvrent P1 (rate-limit bucket partagé), P2 (rejet cursor `,`/id≤0), P3 (email sans `@` → null), P4 (TZ + year-only rejetés), P5 (host allowlist + protocole https), P7 (CONFIG_ERROR remap), P8 (strict equality).
+
+### Decisions / Deferrals
+
+**Defers** (17 findings) documentés dans `deferred-work.md` W40-W56. Thèmes :
+- **Défense en profondeur** (W40 router top-level auth, W43 `require` → `import` ESM, W46 AbortController, W54 UNIQUE partiel race concurrente)
+- **Accessibilité + UX** (W41 focus-trap + ESC, W50 état « load failed » vs empty, W51 format date cohérent, W42 loading/error refs séparées)
+- **Ops + config** (W44 bench `--dry-run`, W47 tests Graph 429, W49 mapping 5xx gateway, W56 bench réel différé cutover)
+- **Cross-cutting patterns** (W52 code `METHOD_NOT_ALLOWED` 405, W55 path `/admin` vs `/back-office` — décision produit)
+- **Pré-existant non introduit par 5.2** (W53 upload-complete cap replace, W45 router.replace drop query params)
+
+**Dismissed** (~48 findings) — design décisions documentées, faux-positifs (ex. vercel.json = 11 functions confirmé), suggestions nitpick.
+
+### Post-patches Validation
+
+- `typecheck` : **0 error** (vue-tsc strict).
+- `npm test -- --run` : **704/704** (baseline pré-5.2 661 → post-5.2 avant CR 694 → post-CR **704**, +10 tests CR).
+- `npm run build` : **459.91 KB** index (inchangé vs avant CR). Bundle 5.2 toujours +0.75 KB gzip sur baseline pré-5.2 (sous cap AC #17 de 10 KB).
+- `npm run lint:business` : **0 warning**.
+- `npm run lint` : 2 erreurs pre-existantes e2e (non introduites Story 5.2, vérifié `git stash`).
+
+### Recommandation
+
+**Story 5.2 : review → done après human check.** Aucun blocker, 10 patches appliqués, tests CR couvrent les 4 HIGH + patches clés. Defers structurés dans W40-W56 avec owner et cible Epic 7 / cross-cutting.

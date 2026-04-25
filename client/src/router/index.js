@@ -41,6 +41,11 @@ const routes = [
         name: 'admin-sav-detail',
         component: () => import('@/features/back-office/views/SavDetailView.vue'),
       },
+      {
+        path: 'exports/history',
+        name: 'admin-export-history',
+        component: () => import('@/features/back-office/views/ExportHistoryView.vue'),
+      },
     ],
   },
 ]

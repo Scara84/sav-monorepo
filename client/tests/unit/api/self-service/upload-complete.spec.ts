@@ -82,7 +82,7 @@ vi.mock('../../../../api/_lib/clients/supabase-admin', () => {
   return { supabaseAdmin: () => client, __resetSupabaseAdminForTests: () => undefined }
 })
 
-import handler from '../../../../api/self-service/upload-complete'
+import { uploadCompleteHandler as handler } from '../../../../api/_lib/self-service/upload-complete-handler'
 
 function farFuture(): number {
   return Math.floor(Date.now() / 1000) + 3600

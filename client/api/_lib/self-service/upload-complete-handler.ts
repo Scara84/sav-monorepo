@@ -1,31 +1,25 @@
 import { z } from 'zod'
-import { withAuth } from '../_lib/middleware/with-auth'
-import { withRateLimit } from '../_lib/middleware/with-rate-limit'
-import { ensureRequestId } from '../_lib/request-id'
-import { sendError } from '../_lib/errors'
-import { logger } from '../_lib/logger'
-import { supabaseAdmin } from '../_lib/clients/supabase-admin'
-import { formatErrors } from '../_lib/middleware/with-validation'
-import { recordAudit } from '../_lib/audit/record'
-import type { ApiHandler, ApiRequest } from '../_lib/types'
+import { withAuth } from '../middleware/with-auth'
+import { withRateLimit } from '../middleware/with-rate-limit'
+import { ensureRequestId } from '../request-id'
+import { sendError } from '../errors'
+import { logger } from '../logger'
+import { supabaseAdmin } from '../clients/supabase-admin'
+import { formatErrors } from '../middleware/with-validation'
+import { recordAudit } from '../audit/record'
+import type { ApiHandler, ApiRequest } from '../types'
 
 /**
- * POST /api/self-service/upload-complete — Story 2.4
+ * Story 2.4 handler extrait — POST /api/self-service/upload-complete.
  *
- * Notifie le backend qu'un upload Graph vient de se terminer. Persiste :
- *   - si `savReference` fourni : INSERT `sav_files` (source='member-add').
- *   - si `draftAttachmentId` fourni : append dans `sav_drafts.data.files[]`.
- *
- * XOR strict entre les deux modes (Zod refinement).
+ * Story 5.2 AC #2 : logique déplacée du top-level `api/self-service/upload-complete.ts`
+ * (retiré) vers cette library pure. Identique comportement ; seul l'emplacement
+ * du code change (consolidation Vercel cap 12 functions).
  */
 
-// Patch F7 review adversarial : webUrl doit pointer vers un domaine Graph/SharePoint
-// de confiance (anti-phishing). L'attaquant ne peut plus soumettre un webUrl arbitraire
-// (ex: https://phishing.example) qui serait ensuite rendu en lien cliquable dans
-// l'UI back-office opérateur.
 const TRUSTED_WEBURL_HOSTS = [
   /\.sharepoint\.com$/i,
-  /\.sharepoint\.us$/i, // SharePoint GCC/GCC High
+  /\.sharepoint\.us$/i,
   /(^|\.)graph\.microsoft\.com$/i,
   /(^|\.)onedrive\.live\.com$/i,
   /\.files\.onedrive\.com$/i,
@@ -100,7 +94,6 @@ const coreHandler: ApiHandler = async (req, res) => {
   const memberId = user.sub
   const admin = supabaseAdmin()
 
-  // --- Mode SAV : INSERT sav_files ---
   if (body.savReference) {
     const { data: sav, error: selErr } = await admin
       .from('sav')
@@ -176,7 +169,6 @@ const coreHandler: ApiHandler = async (req, res) => {
     return
   }
 
-  // --- Mode brouillon : append dans sav_drafts.data.files[] ---
   if (body.draftAttachmentId) {
     const { data: draft, error: selErr } = await admin
       .from('sav_drafts')
@@ -191,9 +183,6 @@ const coreHandler: ApiHandler = async (req, res) => {
 
     const existingData: { files?: unknown[] } & Record<string, unknown> = draft?.data ?? {}
     const existingFiles = Array.isArray(existingData.files) ? existingData.files : []
-    // Patch F5 review adversarial : cap à MAX_DRAFT_FILES pour empêcher la croissance
-    // infinie via 1 UUID différent par POST. Le retrait par `notSameId` permet le
-    // replace idempotent, donc ce cap ne compte que les attachments distincts.
     const filtered = existingFiles.filter(notSameId(body.draftAttachmentId))
     if (filtered.length >= MAX_DRAFT_FILES) {
       sendError(
@@ -238,7 +227,6 @@ const coreHandler: ApiHandler = async (req, res) => {
     return
   }
 
-  // Unreachable (refinement Zod) — garde-fou.
   sendError(res, 'VALIDATION_FAILED', 'Mode invalide', requestId)
 }
 
@@ -250,7 +238,7 @@ function notSameId(id: string) {
   }
 }
 
-export default withAuth({ types: ['member'] })(
+export const uploadCompleteHandler: ApiHandler = withAuth({ types: ['member'] })(
   withRateLimit({
     bucketPrefix: 'upload:complete',
     keyFrom: (req: ApiRequest) =>
@@ -260,4 +248,4 @@ export default withAuth({ types: ['member'] })(
   })(coreHandler)
 )
 
-export { coreHandler as __coreHandler }
+export { coreHandler as __uploadCompleteCore }

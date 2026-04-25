@@ -1,36 +1,32 @@
 import { z } from 'zod'
-import { withAuth } from '../_lib/middleware/with-auth'
-import { withRateLimit } from '../_lib/middleware/with-rate-limit'
-import { ensureRequestId } from '../_lib/request-id'
-import { sendError } from '../_lib/errors'
-import { logger } from '../_lib/logger'
-import { supabaseAdmin } from '../_lib/clients/supabase-admin'
-import { formatErrors } from '../_lib/middleware/with-validation'
-import type { ApiHandler, ApiRequest, ApiResponse } from '../_lib/types'
 import { randomBytes } from 'node:crypto'
-import { ensureFolderExists, createUploadSession } from '../_lib/onedrive-ts'
-import { sanitizeFilename, sanitizeSavDossier } from '../_lib/sanitize-ts'
-import { isMimeAllowed } from '../_lib/mime-ts'
-import fileLimits from '../../shared/file-limits.json'
+import { withAuth } from '../middleware/with-auth'
+import { withRateLimit } from '../middleware/with-rate-limit'
+import { ensureRequestId } from '../request-id'
+import { sendError } from '../errors'
+import { logger } from '../logger'
+import { supabaseAdmin } from '../clients/supabase-admin'
+import { formatErrors } from '../middleware/with-validation'
+import { ensureFolderExists, createUploadSession } from '../onedrive-ts'
+import { sanitizeFilename, sanitizeSavDossier } from '../sanitize-ts'
+import { isMimeAllowed } from '../mime-ts'
+import fileLimits from '../../../shared/file-limits.json'
+import type { ApiHandler, ApiRequest } from '../types'
 
 /**
- * POST /api/self-service/upload-session — Story 2.4
+ * Story 2.4 handler extrait — POST /api/self-service/upload-session.
  *
- * Négocie une session d'upload OneDrive côté Graph pour un adhérent connecté
- * (magic-link). Équivalent du `api/upload-session.js` legacy API-key, mais scopé
- * à un membre authentifié et avec routage dossier brouillon / dossier SAV.
- *
- * Flow 3 étapes côté front :
- *   1. POST /upload-session → { uploadUrl, sanitizedFilename, storagePath }
- *   2. PUT chunks 4 MiB → uploadUrl (directement vers Graph)
- *   3. POST /upload-complete → persistance sav_files ou sav_drafts.data.files
+ * Story 5.2 AC #2 : logique déplacée du top-level `api/self-service/upload-session.ts`
+ * (retiré) vers cette library pure, pour libérer 1 slot Vercel Hobby
+ * (cap 12 functions). Le router `api/self-service/draft.ts` dispatche
+ * op=upload-session vers le handler exporté ci-dessous (auth + rate-limit
+ * déjà composés — pas d'intervention supplémentaire côté router).
  */
 
 const bodySchema = z.object({
   filename: z.string().min(1).max(255),
   mimeType: z.string().min(1).max(127),
   size: z.number().int().positive(),
-  // Optionnel : rattachement à un SAV existant du membre.
   savReference: z
     .string()
     .regex(/^SAV-\d{4}-\d{5}$/, 'Format attendu SAV-YYYY-NNNNN')
@@ -77,7 +73,6 @@ const coreHandler: ApiHandler = async (req, res) => {
     return
   }
 
-  // Scope check si rattachement à un SAV existant.
   let folderPath: string
   if (body.savReference) {
     const { data: sav, error } = await supabaseAdmin()
@@ -110,7 +105,6 @@ const coreHandler: ApiHandler = async (req, res) => {
     }
     folderPath = `${drivePath}/${sanitizedRef}`
   } else {
-    // Upload dans un dossier brouillon isolé par membre.
     const ts = new Date()
     const stamp = `${ts.getUTCFullYear()}${pad(ts.getUTCMonth() + 1)}${pad(ts.getUTCDate())}-${pad(ts.getUTCHours())}${pad(ts.getUTCMinutes())}${pad(ts.getUTCSeconds())}`
     const rand = randomBytes(3).toString('hex')
@@ -144,7 +138,7 @@ function pad(n: number): string {
   return n < 10 ? `0${n}` : String(n)
 }
 
-export default withAuth({ types: ['member'] })(
+export const uploadSessionHandler: ApiHandler = withAuth({ types: ['member'] })(
   withRateLimit({
     bucketPrefix: 'upload:session',
     keyFrom: (req: ApiRequest) =>
@@ -154,4 +148,4 @@ export default withAuth({ types: ['member'] })(
   })(coreHandler)
 )
 
-export { coreHandler as __coreHandler }
+export { coreHandler as __uploadSessionCore }

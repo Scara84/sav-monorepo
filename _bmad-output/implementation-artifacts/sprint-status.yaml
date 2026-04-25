@@ -39,6 +39,26 @@
 
 generated: 2026-04-18
 last_updated: 2026-04-24
+# 2026-04-24 : Story 5.2 DS + CR adversarial 3 couches (Blind+Edge+Auditor).
+# 17/17 AC couverts, 10 tasks done. 10 patches appliqués (P1-P10) :
+# P1 rate-limit bucket partagé post-Zod (INVALID:{opId}) anti-bypass rotation
+#    suppliers invalides, P2 cursor strict ISO regex + id>0 anti-injection
+#    PostgREST .or(), P3 shortEmail null si @ absent (PII leak), P4 regex
+#    stricte YYYY-MM-DD sur period_from/to + UTC-midnight normalisation
+#    cohérente builder 5.1, P5 host allowlist OneDrive avant 302 anti-open-
+#    redirect, P6 filename path-traversal guard upload-export, P7 CONFIG_ERROR|
+#    préfixe → remap 500 EXPORTS_FOLDER_NOT_CONFIGURED au lieu de 502 trompeur,
+#    P8 placeholder strict equality (vs startsWith faux-positif),
+#    P9 double-click re-entry guard modal, P10 window.open au lieu de
+#    window.location.href (préserve SPA). Tests CR +10 (704/704 post-CR,
+#    baseline pré-5.2 661). Vercel slots 11/12 (consolidation self-service
+#    draft.ts router -2 upload-*.ts + 1 pilotage.ts = -1 net). Bundle
+#    459.91 KB stable post-CR (+0.75 KB gzip vs baseline pré-5.2, sous
+#    cap 10 KB AC #17). 17 defers W40-W56 (router top-level auth, AbortController,
+#    focus-trap + ESC modal, METHOD_NOT_ALLOWED 405 code, bench --dry-run,
+#    upload-complete cap replace, path /admin vs /back-office décision
+#    produit, bench réel différé cutover, etc.). Pattern consolidation
+#    self-service documenté docs/api-contracts-vercel.md (référence Epic 6).
 # 2026-04-24 : Epic 5 contextualisation complète — 6 stories créées ready-for-dev.
 # 5.1 architecture export générique : builder TS agnostique fournisseur
 # (SupplierExportConfig contract) + rufinoConfig.ts + migration supplier_exports
@@ -287,7 +307,7 @@ development_status:
   # ──────────────────────────────────────────────────────────────
   epic-5: in-progress  # démarré 2026-04-24 avec Story 5.1
   5-1-architecture-export-generique-config-rufino-migration: done
-  5-2-endpoint-export-fournisseur-ui-back-office: ready-for-dev
+  5-2-endpoint-export-fournisseur-ui-back-office: done
   5-3-endpoints-reporting-dashboard-vue: ready-for-dev
   5-4-export-csv-reporting-ad-hoc: ready-for-dev
   5-5-job-cron-alertes-seuil-produit-config-admin: ready-for-dev

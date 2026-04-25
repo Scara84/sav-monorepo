@@ -12,10 +12,9 @@
     "api/cron/dispatcher.ts": { "maxDuration": 60 },
     "api/webhooks/capture.ts": { "maxDuration": 30 },
     "api/self-service/draft.ts": { "maxDuration": 10 },
-    "api/self-service/upload-session.ts": { "maxDuration": 10 },
-    "api/self-service/upload-complete.ts": { "maxDuration": 10 },
     "api/sav.ts": { "maxDuration": 10 },
-    "api/credit-notes.ts": { "maxDuration": 10 }
+    "api/credit-notes.ts": { "maxDuration": 10 },
+    "api/pilotage.ts": { "maxDuration": 30 }
   },
   "crons": [{ "path": "/api/cron/dispatcher", "schedule": "0 3 * * *" }],
   "rewrites": [
@@ -45,6 +44,26 @@
     {
       "source": "/api/credit-notes/:number/regenerate-pdf",
       "destination": "/api/credit-notes?op=regenerate&number=:number"
+    },
+    {
+      "source": "/api/self-service/upload-session",
+      "destination": "/api/self-service/draft?op=upload-session"
+    },
+    {
+      "source": "/api/self-service/upload-complete",
+      "destination": "/api/self-service/draft?op=upload-complete"
+    },
+    {
+      "source": "/api/exports/supplier",
+      "destination": "/api/pilotage?op=export-supplier"
+    },
+    {
+      "source": "/api/exports/supplier/history",
+      "destination": "/api/pilotage?op=export-history"
+    },
+    {
+      "source": "/api/exports/supplier/:id/download",
+      "destination": "/api/pilotage?op=export-download&id=:id"
     },
     {
       "source": "/((?!api/|assets/|favicon\\.ico|robots\\.txt|.*\\.(?:js|css|png|jpg|jpeg|svg|ico|webp|woff2?)).*)",

@@ -629,3 +629,174 @@ GET /api/credit-notes/:number/pdf
 
 Nouveau dispatcher dédié (vs extension `sav.ts`) : sémantique différente (redirect OneDrive, RLS future adhérent). Budget Vercel Hobby : ce fichier porte le compteur à 12 serverless functions (plafond).
 
+
+
+## Epic 5 Story 5.2 — Exports fournisseurs (router `api/pilotage.ts`)
+
+### Contexte Vercel cap 12
+
+Le plan Vercel Hobby plafonne les Serverless Functions à 12. Epic 4 a atteint
+ce cap avec `api/credit-notes.ts`. Epic 5 ajoute 1 nouvelle function
+`api/pilotage.ts` qui **consolide** les endpoints exports (Story 5.2),
+reporting (Story 5.3), CSV (Story 5.4) et admin-config (Story 5.5). Pour
+tenir sous 12, Story 5.2 AC #2 consolide en parallèle les 3 endpoints
+self-service (`draft`, `upload-session`, `upload-complete`) sous un unique
+router `api/self-service/draft.ts` — libérant 2 slots, consommant 1 slot
+pour `api/pilotage.ts`, net = -1.
+
+**Slots Vercel après Story 5.2 (11/12) :**
+
+1. `api/health.ts`
+2. `api/auth/msal/login.ts`
+3. `api/auth/msal/callback.ts`
+4. `api/auth/magic-link/issue.ts`
+5. `api/auth/magic-link/verify.ts`
+6. `api/cron/dispatcher.ts`
+7. `api/webhooks/capture.ts`
+8. `api/self-service/draft.ts` (router 3 ops)
+9. `api/sav.ts`
+10. `api/credit-notes.ts`
+11. `api/pilotage.ts` (router 3 ops Epic 5 + extensions 5.3/5.4/5.5)
+
+Story 5.5 pourra réutiliser `api/pilotage.ts` (ajout op `threshold-alerts`) OU
+consommer le 12e slot pour un dispatcher admin dédié — décision Story 5.5.
+
+### Pattern routing self-service (ex. de consolidation)
+
+```
+POST /api/self-service/upload-session   → /api/self-service/draft?op=upload-session
+POST /api/self-service/upload-complete  → /api/self-service/draft?op=upload-complete
+GET/PUT /api/self-service/draft         → /api/self-service/draft (op absent = draft)
+```
+
+Handlers library : `api/_lib/self-service/upload-session-handler.ts`,
+`api/_lib/self-service/upload-complete-handler.ts`. Chacun expose un
+`ApiHandler` déjà composé auth + rate-limit — le router appelle directement.
+
+### `POST /api/exports/supplier`
+
+Déclenche la génération d'un export fournisseur XLSX, upload OneDrive,
+persistance `supplier_exports`, retour 201 + lien OneDrive.
+
+#### Auth + Rate-limit
+
+- `withAuth({ types: ['operator'] })` niveau router (`api/pilotage.ts`).
+- Rate-limit : **3 req / min** par couple `(operator_id, supplier_code)`.
+  Clé canonique `export-supplier:{operator_id}:{supplier_code}` (pattern
+  Epic 4.5).
+
+#### Body
+
+```json
+{
+  "supplier": "RUFINO",
+  "period_from": "2026-01-01",
+  "period_to": "2026-01-31",
+  "format": "XLSX"
+}
+```
+
+- `supplier` : `[A-Za-z_]+`, uppercased serveur (`rufino` → `RUFINO`).
+  Résolu contre la map `supplier-configs.ts` → `SupplierExportConfig`.
+- `period_from` / `period_to` : ISO date (`YYYY-MM-DD`) ou ISO datetime.
+  Contraintes : `period_from <= period_to` et durée ≤ 366 jours.
+- `format` : `XLSX` uniquement V1 (Story 5.4 ajoutera `CSV`).
+
+#### Réponses
+
+| HTTP | Code (details) | Signification |
+|------|----------------|---------------|
+| 201 | — | Export généré. Body `{ data: { id, supplier_code, web_url, file_name, line_count, total_amount_cents, created_at } }` |
+| 400 | `INVALID_BODY` | Zod échec ou body non-objet |
+| 400 | `UNKNOWN_SUPPLIER` | Code supplier absent de `supplierConfigs` |
+| 400 | `PERIOD_INVALID` | `period_to < period_from` ou durée > 366j |
+| 401 | `UNAUTHENTICATED` | Cookie opérateur manquant |
+| 403 | `FORBIDDEN` | Session member (non-operator) |
+| 429 | `RATE_LIMITED` | 4e req / min sur couple (operator, supplier) |
+| 500 | `EXPORTS_FOLDER_NOT_CONFIGURED` | Settings `onedrive.exports_folder_root` = placeholder (fail-closed — pattern Story 4.5) |
+| 500 | `BUILD_FAILED` | Exception builder Story 5.1 (ex. `EXPORT_VOLUME_CAP_EXCEEDED`) |
+| 500 | `PERSIST_FAILED` | INSERT `supplier_exports` KO (soft-orphan V1 : fichier reste sur OneDrive ; cleanup batch Epic 7) |
+| 502 | `ONEDRIVE_UPLOAD_FAILED` | Upload Graph API KO (retry manuel par l'opérateur V1) |
+
+#### Effets de bord DB
+
+- `INSERT supplier_exports` (append-only). Colonnes `onedrive_item_id`,
+  `web_url`, `generated_by_operator_id`, `file_name`, `line_count`,
+  `total_amount_cents`, `period_from`, `period_to`, `format`.
+- Trigger `trg_audit_supplier_exports` (Story 5.1) capture `action='created'`.
+
+#### Budget p95
+
+Target AC-2.5.1 : **p95 < 3 s** (1 mois Rufino ~100-200 lignes). Bench
+manuel via `scripts/bench/export-supplier.ts` — rapport dans
+`_bmad-output/implementation-artifacts/5-2-bench-report.md`.
+
+
+### `GET /api/exports/supplier/history`
+
+Liste cursor-based des exports générés, tri `created_at DESC, id DESC`.
+
+#### Query params
+
+- `supplier` (optionnel) — filtre code supplier (match exact uppercased).
+- `limit` (optionnel, défaut 20, max 100) — taille de page.
+- `cursor` (optionnel) — base64url encodé `{ createdAt, id }` de la dernière
+  ligne de la page précédente.
+
+#### Réponse 200
+
+```json
+{
+  "data": {
+    "items": [
+      {
+        "id": 42,
+        "supplier_code": "RUFINO",
+        "period_from": "2026-01-01",
+        "period_to": "2026-01-31",
+        "file_name": "RUFINO_2026-01-01_2026-01-31.xlsx",
+        "line_count": 120,
+        "total_amount_cents": "1250000",
+        "web_url": "https://onedrive.live.com/file/42",
+        "generated_by_operator": {
+          "id": 7,
+          "email_display_short": "alice.martin"
+        },
+        "created_at": "2026-04-24T12:00:00.000Z"
+      }
+    ],
+    "next_cursor": "eyJjcmVhdGVk…"
+  }
+}
+```
+
+- `total_amount_cents` renvoyé en **string** (bigint safe).
+- `email_display_short` = local-part de l'email (pattern PII Epic 3 F36/F37).
+- `next_cursor = null` → fin de liste.
+
+Erreurs : `400 INVALID_QUERY | INVALID_CURSOR`, `403 FORBIDDEN`, `500
+HISTORY_QUERY_FAILED`.
+
+
+### `GET /api/exports/supplier/:id/download`
+
+Re-download d'un XLSX déjà généré — **302 redirect** vers `web_url`
+(pattern Epic 4.4 credit-notes PDF). Aucun stream binaire côté serveur.
+
+| HTTP | Code | Signification |
+|------|------|---------------|
+| 302 | — | `Location: <web_url>` |
+| 400 | `INVALID_EXPORT_ID` | `:id` non numérique |
+| 404 | `EXPORT_NOT_FOUND` | Ligne absente en DB |
+| 404 | `EXPORT_FILE_UNAVAILABLE` | `web_url IS NULL` (cas orphan rare) |
+| 403 | `FORBIDDEN` | Session member |
+
+### Routing Vercel (rewrites ajoutés)
+
+```
+POST /api/exports/supplier               → /api/pilotage?op=export-supplier
+GET  /api/exports/supplier/history       → /api/pilotage?op=export-history
+GET  /api/exports/supplier/:id/download  → /api/pilotage?op=export-download&id=:id
+POST /api/self-service/upload-session    → /api/self-service/draft?op=upload-session
+POST /api/self-service/upload-complete   → /api/self-service/draft?op=upload-complete
+```

@@ -6,16 +6,26 @@ import { sendError } from '../_lib/errors'
 import { logger } from '../_lib/logger'
 import { supabaseAdmin } from '../_lib/clients/supabase-admin'
 import { formatErrors } from '../_lib/middleware/with-validation'
-import type { ApiHandler, ApiRequest, ApiResponse } from '../_lib/types'
+import { uploadSessionHandler } from '../_lib/self-service/upload-session-handler'
+import { uploadCompleteHandler } from '../_lib/self-service/upload-complete-handler'
+import type { ApiHandler, ApiRequest } from '../_lib/types'
 
 /**
- * GET/PUT /api/self-service/draft — Story 2.3
+ * Router self-service — Story 2.3 (draft) + Story 2.4 (upload session/complete)
+ * consolidés Story 5.2 AC #2.
  *
- * Brouillon formulaire adhérent (1 par member_id). Auto-save côté front via
- * composable `useDraftAutoSave`. Purge à 30 j via cron dispatcher.
+ * Contrainte Vercel Hobby : cap 12 Serverless Functions atteint post Epic 4.
+ * Pour libérer 1 slot et permettre Epic 5 (`api/pilotage.ts`), on consolide
+ * les 3 endpoints self-service sous ce fichier unique :
  *
- *   GET  → 200 { data: null } OR { data: { data: <jsonb>, lastSavedAt: iso } }
- *   PUT  { data: <obj> } → 200 { data: { lastSavedAt: iso } }
+ *   GET  /api/self-service/draft                     → op absent → draft read
+ *   PUT  /api/self-service/draft                     → op absent → draft save
+ *   POST /api/self-service/upload-session            → op=upload-session
+ *   POST /api/self-service/upload-complete           → op=upload-complete
+ *
+ * Les rewrites Vercel (vercel.json) mappent les URLs REST avec le bon
+ * `?op=...`. Les tests existants importent directement le handler extrait
+ * (`uploadSessionHandler` / `uploadCompleteHandler`) depuis `_lib/`.
  */
 
 const MAX_DATA_BYTES = 262144 // 256 KiB
@@ -24,17 +34,6 @@ const MAX_DATA_KEYS = 500
 const FORBIDDEN_KEY_PREFIXES = ['__', '$']
 const FORBIDDEN_KEY_NAMES = new Set(['__proto__', 'constructor', 'prototype'])
 
-/**
- * Valide récursivement que `value` ne contient pas de clés dangereuses
- * (patch F4 review adversarial) :
- *   - prototype pollution : `__proto__`, `constructor`, `prototype`
- *   - réservées : clés commençant par `__` ou `$`
- *   - profondeur max et cardinalité
- *
- * Les strings ne sont PAS sanitized ici (contrat : le front consomme via
- * interpolation `{{}}` / `v-text`, jamais `v-html`). Le serveur stocke des
- * bytes tels quels — la responsabilité XSS est côté render.
- */
 interface SafeDataResult {
   ok: boolean
   reason?: string
@@ -65,7 +64,6 @@ function validateSafeData(value: unknown, depth = 0): SafeDataResult {
 }
 
 const putBodySchema = z.object({
-  // Objet libre côté front (items, customer, currentStep, …). Pas de schéma strict V1.
   data: z.record(z.string(), z.unknown()),
 })
 
@@ -166,9 +164,8 @@ function readMemberId(req: ApiRequest): number | null {
   return u.sub
 }
 
-// --- Composition par méthode ---
-
 const authMember = withAuth({ types: ['member'] })
+const getGuard = authMember(getCore)
 const putGuard = authMember(
   withRateLimit({
     bucketPrefix: 'draft:save',
@@ -178,14 +175,61 @@ const putGuard = authMember(
     window: '1m',
   })(putCore)
 )
-const getGuard = authMember(getCore)
+
+const ALLOWED_OPS = new Set(['draft', 'upload-session', 'upload-complete'])
+
+function parseOp(req: ApiRequest): string | null {
+  const raw = (req.query as Record<string, unknown> | undefined)?.['op']
+  if (raw === undefined) return null
+  if (typeof raw === 'string') return ALLOWED_OPS.has(raw) ? raw : 'invalid'
+  if (Array.isArray(raw) && typeof raw[0] === 'string')
+    return ALLOWED_OPS.has(raw[0]) ? raw[0] : 'invalid'
+  return 'invalid'
+}
 
 const router: ApiHandler = async (req, res) => {
-  if (req.method === 'GET') return getGuard(req, res)
-  if (req.method === 'PUT') return putGuard(req, res)
+  const op = parseOp(req)
+  const method = (req.method ?? 'GET').toUpperCase()
+
+  if (op === 'invalid') {
+    const requestId = ensureRequestId(req)
+    sendError(res, 'NOT_FOUND', 'Route non disponible', requestId)
+    return
+  }
+
+  // op=null ou op='draft' → routage par méthode HTTP (backward-compat
+  // des appels GET/PUT /api/self-service/draft sans query op).
+  if (op === null || op === 'draft') {
+    if (method === 'GET') return getGuard(req, res)
+    if (method === 'PUT') return putGuard(req, res)
+    const requestId = ensureRequestId(req)
+    res.setHeader('Allow', 'GET, PUT')
+    sendError(res, 'VALIDATION_FAILED', 'Méthode non supportée', requestId)
+    return
+  }
+
+  if (op === 'upload-session') {
+    if (method !== 'POST') {
+      const requestId = ensureRequestId(req)
+      res.setHeader('Allow', 'POST')
+      sendError(res, 'VALIDATION_FAILED', 'Méthode non supportée', requestId)
+      return
+    }
+    return uploadSessionHandler(req, res)
+  }
+
+  if (op === 'upload-complete') {
+    if (method !== 'POST') {
+      const requestId = ensureRequestId(req)
+      res.setHeader('Allow', 'POST')
+      sendError(res, 'VALIDATION_FAILED', 'Méthode non supportée', requestId)
+      return
+    }
+    return uploadCompleteHandler(req, res)
+  }
+
   const requestId = ensureRequestId(req)
-  res.setHeader('Allow', 'GET, PUT')
-  sendError(res, 'VALIDATION_FAILED', 'Méthode non supportée', requestId)
+  sendError(res, 'NOT_FOUND', 'Route non disponible', requestId)
 }
 
 export default router

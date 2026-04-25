@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { onMounted, watch, computed, nextTick } from 'vue'
+import { onMounted, watch, computed, nextTick, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDebounceFn } from '@vueuse/core'
 import { useSavList } from '../composables/useSavList'
+import ExportSupplierModal from '../components/ExportSupplierModal.vue'
 
 /**
  * Story 3.3 — Vue liste SAV back-office.
@@ -229,14 +230,31 @@ function fullName(m: { firstName: string | null; lastName: string } | null): str
   if (!m) return '—'
   return m.firstName ? `${m.firstName} ${m.lastName}` : m.lastName
 }
+
+// Story 5.2 AC #9 — Modal export fournisseur, déclenchée depuis la barre
+// d'actions de la liste SAV.
+const exportModalOpen = ref(false)
+function openExportModal(): void {
+  exportModalOpen.value = true
+}
+function closeExportModal(): void {
+  exportModalOpen.value = false
+}
 </script>
 
 <template>
   <main class="sav-list-view" aria-labelledby="sav-list-title">
     <header class="header">
       <h1 id="sav-list-title">SAV — Liste</h1>
-      <p class="count">{{ list.meta.value.count }} résultats</p>
+      <div class="header-actions">
+        <p class="count">{{ list.meta.value.count }} résultats</p>
+        <button type="button" class="btn-export" @click="openExportModal">
+          Export fournisseur
+        </button>
+      </div>
     </header>
+
+    <ExportSupplierModal :open="exportModalOpen" @close="closeExportModal" />
 
     <!-- zone off-screen pour annonces lecteur d'écran -->
     <div class="sr-only" aria-live="polite" role="status">{{ ariaLiveMessage }}</div>
@@ -407,6 +425,23 @@ function fullName(m: { firstName: string | null; lastName: string } | null): str
 }
 .count {
   color: #666;
+}
+.header-actions {
+  display: flex;
+  gap: 1rem;
+  align-items: center;
+}
+.btn-export {
+  background: #f57c00;
+  color: white;
+  border: none;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  cursor: pointer;
+  font-weight: 500;
+}
+.btn-export:hover {
+  background: #e65100;
 }
 .sr-only {
   position: absolute;
