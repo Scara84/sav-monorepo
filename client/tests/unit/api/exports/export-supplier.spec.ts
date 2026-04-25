@@ -56,8 +56,11 @@ vi.mock('../../../../api/_lib/exports/supplierExportBuilder', async () => {
   }
 })
 
+const uploadCallCount = vi.hoisted(() => ({ value: 0 }))
+
 vi.mock('../../../../api/_lib/exports/upload-export', () => ({
   uploadExportXlsx: async (_buffer: Buffer, _filename: string, _opts: unknown) => {
+    uploadCallCount.value++
     if (state.uploadError) throw state.uploadError
     return (
       state.uploadResult ?? { itemId: 'od-item-1', webUrl: 'https://onedrive.live.com/file/abc' }
@@ -155,6 +158,7 @@ describe('POST /api/exports/supplier — export-supplier-handler', () => {
     state.uploadResult = null
     state.uploadError = null
     state.rateLimitAllowed = true
+    uploadCallCount.value = 0
     process.env['SESSION_COOKIE_SECRET'] = SECRET
   })
   afterEach(() => {
@@ -450,6 +454,23 @@ describe('POST /api/exports/supplier — export-supplier-handler', () => {
     expect(res.statusCode).toBe(500)
     const body = res.jsonBody as { error: { details: { code: string } } }
     expect(body.error.details.code).toBe('EXPORTS_FOLDER_NOT_CONFIGURED')
+  })
+
+  // W47 (CR Story 5.2) — design V1 : pas de retry sur uploadExportXlsx
+  // (retry manuel par l'opérateur). Une erreur transient remonte directement.
+  it('W47 uploadExportXlsx ne retry pas (1 seul appel sur erreur transient)', async () => {
+    state.uploadError = new Error('Graph 503')
+    const res = mockRes()
+    await exportSupplierHandler(
+      operatorReq({
+        supplier: 'RUFINO',
+        period_from: '2026-01-01',
+        period_to: '2026-01-31',
+      }),
+      res
+    )
+    expect(res.statusCode).toBe(502)
+    expect(uploadCallCount.value).toBe(1)
   })
 
   it('CR P8 — 500 si placeholder == valeur exacte `/PLACEHOLDER_EXPORTS_ROOT` seulement (pas startsWith)', async () => {

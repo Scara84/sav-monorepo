@@ -211,7 +211,7 @@ describe('POST /api/credit-notes/:number/regenerate-pdf (Story 4.5 AC #8)', () =
     expect(res.statusCode).toBe(401)
   })
 
-  it('R07 méthode GET non autorisée → 400', async () => {
+  it('R07 méthode GET non autorisée → 405 METHOD_NOT_ALLOWED', async () => {
     const res = mockRes()
     await handler(
       mockReq({
@@ -221,7 +221,8 @@ describe('POST /api/credit-notes/:number/regenerate-pdf (Story 4.5 AC #8)', () =
       }),
       res
     )
-    expect(res.statusCode).toBe(400)
+    expect(res.statusCode).toBe(405)
+    expect((res.jsonBody as { error: { code: string } }).error.code).toBe('METHOD_NOT_ALLOWED')
   })
 
   it('R09 CR P1 rate-limit key normalisé — `42` et `AV-2026-00042` partagent le même bucket', async () => {

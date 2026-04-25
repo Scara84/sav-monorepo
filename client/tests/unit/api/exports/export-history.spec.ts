@@ -220,4 +220,28 @@ describe('GET /api/exports/supplier/history', () => {
     }
     expect(body.data.items[0]!.generated_by_operator?.email_display_short).toBeNull()
   })
+
+  // W48 (CR Story 5.2) — un bookmark URL avec `?supplier=` édité à la main
+  // doit être interprété comme « tous fournisseurs » (filter ignoré) plutôt
+  // que rejeté 400.
+  it('W48 ?supplier= vide accepté → liste sans filter supplier', async () => {
+    state.rows = [
+      {
+        id: 1,
+        supplier_code: 'RUFINO',
+        period_from: '2026-01-01',
+        period_to: '2026-01-31',
+        file_name: 'a.xlsx',
+        line_count: 1,
+        total_amount_cents: '100',
+        web_url: null,
+        created_at: '2026-04-24T12:00:00.000Z',
+        generated_by_operator_id: null,
+      },
+    ]
+    const res = mockRes()
+    await exportHistoryHandler(operatorReq({ supplier: '' }), res)
+    expect(res.statusCode).toBe(200)
+    expect(state.lastFilterSupplier).toBeNull()
+  })
 })

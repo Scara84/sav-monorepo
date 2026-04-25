@@ -18,11 +18,20 @@ import type { ApiHandler } from '../types'
 const MAX_LIMIT = 100
 const DEFAULT_LIMIT = 20
 
+// W48 (CR Story 5.2) — un bookmark URL avec `?supplier=` édité à la main
+// est interprété comme « tous fournisseurs » plutôt que rejeté 400. Le
+// regex ne s'applique qu'aux strings non vides.
 const querySchema = z.object({
   supplier: z
     .string()
-    .regex(/^[A-Za-z_]+$/)
-    .optional(),
+    .optional()
+    .transform((s) => (s && s.length > 0 ? s : undefined))
+    .pipe(
+      z
+        .string()
+        .regex(/^[A-Za-z_]+$/)
+        .optional()
+    ),
   limit: z.coerce.number().int().positive().max(MAX_LIMIT).optional(),
   cursor: z.string().optional(),
 })

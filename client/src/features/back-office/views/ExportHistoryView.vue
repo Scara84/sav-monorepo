@@ -91,9 +91,17 @@ onMounted(async () => {
 })
 
 watch(supplier, async (v) => {
-  void router.replace({
-    query: v ? { supplier: v } : {},
-  })
+  // W45 (CR Story 5.2) — merger avec la query existante au lieu d'écraser :
+  // un deep-link portant d'autres params (tracking, debug, etc.) reste
+  // intact lors d'un changement de filtre.
+  const nextQuery: Record<string, string | (string | null)[]> = {}
+  for (const [k, val] of Object.entries(route.query)) {
+    if (k === 'supplier') continue
+    if (typeof val === 'string') nextQuery[k] = val
+    else if (Array.isArray(val)) nextQuery[k] = val
+  }
+  if (v) nextQuery['supplier'] = v
+  void router.replace({ query: nextQuery })
   cursorStack.value = []
   await load(null)
 })
@@ -145,7 +153,7 @@ watch(supplier, async (v) => {
           <tr v-for="item in items" :key="item.id">
             <td>{{ formatDate(item.created_at) }}</td>
             <td>{{ item.supplier_code }}</td>
-            <td>{{ item.period_from }} → {{ item.period_to }}</td>
+            <td>{{ formatDate(item.period_from) }} → {{ formatDate(item.period_to) }}</td>
             <td class="ellipsis">{{ item.file_name }}</td>
             <td>{{ item.line_count }}</td>
             <td>{{ formatEuros(item.total_amount_cents) }}</td>

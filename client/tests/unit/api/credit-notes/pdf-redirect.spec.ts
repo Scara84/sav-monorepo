@@ -188,7 +188,7 @@ describe('GET /api/credit-notes/:number/pdf (Story 4.4)', () => {
     expect(res.statusCode).toBe(401)
   })
 
-  it('P08 méthode POST non autorisée → 400', async () => {
+  it('P08 méthode POST non autorisée → 405 METHOD_NOT_ALLOWED', async () => {
     const res = mockRes()
     await handler(
       mockReq({
@@ -198,7 +198,8 @@ describe('GET /api/credit-notes/:number/pdf (Story 4.4)', () => {
       }),
       res
     )
-    expect(res.statusCode).toBe(400)
+    expect(res.statusCode).toBe(405)
+    expect((res.jsonBody as { error: { code: string } }).error.code).toBe('METHOD_NOT_ALLOWED')
   })
 
   // ===== CR 4.4 — patches P1/P2/P4 =====

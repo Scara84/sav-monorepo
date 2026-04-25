@@ -25,6 +25,10 @@ const DEFAULT_COUNT = 10
 const COUNT = Number(process.argv[2] ?? DEFAULT_COUNT)
 const BASE_URL = process.env['BENCH_BASE_URL']
 const SESSION_COOKIE = process.env['BENCH_SESSION_COOKIE']
+// W44 (CR Story 5.2) — chaque run = N INSERT DB + N upload OneDrive
+// (replace). Pattern Story 4.6 load-test : exiger un opt-in explicite
+// pour éviter qu'un run accidentel ne pollue la prod.
+const ALLOW_DESTRUCTIVE = process.env['BENCH_ALLOW_DESTRUCTIVE'] === '1'
 
 if (!BASE_URL) {
   console.error('ERR: BENCH_BASE_URL requis (ex. https://sav-preview.vercel.app)')
@@ -34,6 +38,13 @@ if (!SESSION_COOKIE) {
   console.error(
     "ERR: BENCH_SESSION_COOKIE requis (cookie Set-Cookie d'une session opérateur valide)"
   )
+  process.exit(2)
+}
+if (!ALLOW_DESTRUCTIVE) {
+  console.error(
+    `ERR: BENCH_ALLOW_DESTRUCTIVE=1 requis. Ce script écrit ${COUNT} lignes \`supplier_exports\` + ${COUNT} fichiers OneDrive (replace).`
+  )
+  console.error('Vérifiez que vous ciblez bien une préview avant de relancer.')
   process.exit(2)
 }
 
