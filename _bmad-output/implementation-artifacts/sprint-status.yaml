@@ -39,6 +39,24 @@
 
 generated: 2026-04-18
 last_updated: 2026-04-25
+# 2026-04-25 : quick wins deferred-work post-5.2 — 9 W## résolus + Story 5.1
+# coverage empirique. 6 commits atomiques sur refonte-phase-2 :
+#   8b04c0e chore(deps): W36 install @vercel/functions ^3.4.4 prod (fix
+#           wait-until.ts fallback silencieux post-PDF gen Vercel).
+#   79d850f chore(deferred): W30+W31+W32 polish 4.3 (settings.unknown_value
+#           _shape warn + ESLint patterns clients/** + globals XHR/WS +
+#           Number.isNaN reject dans resolveSettingAt + 6 tests).
+#   f4a79e8 chore(deferred): W19+W20+W21 polish 4.2 fixture/test isolation
+#           (sqlLiteral boolean/bigint/array + 7 tests + Test 11 +1/-1 +
+#           DELETE Tests 1-7).
+#   01334d0 chore(deferred): W4 update_sav_line p_expected_version int→bigint
+#           (migration 20260502120000).
+#   4f74df8 docs(prd): W15 PG17 IMMUTABLE AT TIME ZONE 'UTC' patch §846.
+#   53e596e chore(deferred): typecheck fixes + Story 5.1 empirical coverage
+#           (86.14% global / 91.6% hors upload-export.ts mocké).
+# Tests : 730/730 (+13 vs baseline 717 : 7 sqlLiteral, 3 ESLint, 2 settings
+# Resolver NaN, 1 detail-handler unknown_value_shape). Typecheck 0,
+# lint:business 0, build 459.96 KB (cap 460 KB inchangé AC #17 Story 5.2).
 # 2026-04-25 : cleanup deferred-work post-5.2 — 12 W## traités sur 17 (W43,
 # W53-W56 reportés, statut documenté inchangé). 3 commits atomiques sur
 # refonte-phase-2 :
