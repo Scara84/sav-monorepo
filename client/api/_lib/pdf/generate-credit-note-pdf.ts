@@ -64,11 +64,13 @@ const RETRY_BACKOFFS_MS = [1000, 2000, 4000] as const
 // Hook exposé pour injection en tests uniquement — surcharge le renderer.
 type RenderToBuffer = (element: React.ReactElement) => Promise<Buffer>
 type UploadFn = typeof uploadCreditNotePdf
+type RefreshGraphTokenFn = () => Promise<unknown>
 
 interface GenerateDeps {
   renderToBuffer?: RenderToBuffer
   upload?: UploadFn
   sleep?: (ms: number) => Promise<void>
+  refreshGraphToken?: RefreshGraphTokenFn
 }
 
 let __deps: GenerateDeps = {}
@@ -87,9 +89,68 @@ function getUpload(): UploadFn {
 function getSleep(): (ms: number) => Promise<void> {
   return __deps.sleep ?? defaultSleep
 }
+function getRefreshGraphToken(): RefreshGraphTokenFn {
+  if (__deps.refreshGraphToken !== undefined) return __deps.refreshGraphToken
+  return defaultRefreshGraphToken
+}
 
 function defaultSleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function defaultRefreshGraphToken(): Promise<unknown> {
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const graph = require('../graph.js') as { forceRefreshAccessToken: () => Promise<unknown> }
+  return graph.forceRefreshAccessToken()
+}
+
+/**
+ * W34 (2026-05-04) — classifie une erreur Graph API / OneDrive comme
+ * transient (retry justifié) ou non-transient (short-circuit immédiat).
+ *
+ * Transient (retry) :
+ *   - HTTP 408 / 429 / 502 / 503 / 504 (server errors retryables)
+ *   - HTTP 401 (token possiblement expiré → W35 force MSAL refresh
+ *     avant le retry suivant)
+ *   - Autres HTTP 5xx (défaut conservatif sur erreurs serveur)
+ *   - Network codes ECONNRESET / ETIMEDOUT / ENETUNREACH / EAI_AGAIN
+ *   - Erreurs sans `statusCode`/`code` parsables → transient par défaut
+ *     (préserve le comportement legacy `Error("OneDrive 500")` sans status)
+ *
+ * Non-transient (short-circuit) :
+ *   - HTTP 400 / 403 / 404 / 413 (erreurs déterministes côté client)
+ *   - Autres HTTP 4xx connus
+ *   - Assertions locales (`"PDF dépasse 4 MB"`, `"réponse invalide"`,
+ *     `"MICROSOFT_DRIVE_ID manquante"`) — bug code, retry inutile
+ *
+ * Référence : Microsoft Graph error handling docs (HTTP status codes).
+ * Si une erreur 400 transient apparaît en pratique (ex: quota Graph
+ * temporaire renvoyé en 400 atypique), réviser cette liste.
+ */
+export function isTransientGraphError(err: unknown): boolean {
+  if (!(err instanceof Error)) return true
+  const e = err as { statusCode?: unknown; code?: unknown; message?: string }
+  // Assertions locales — short-circuit
+  if (typeof e.message === 'string') {
+    if (e.message.includes('dépasse') && e.message.includes('octets')) return false
+    if (e.message.includes('réponse invalide pour upload')) return false
+    if (e.message.includes('MICROSOFT_DRIVE_ID manquante')) return false
+  }
+  if (typeof e.statusCode === 'number') {
+    if (e.statusCode === 401) return true // W35 — refreshable
+    if ([408, 429, 502, 503, 504].includes(e.statusCode)) return true
+    if ([400, 403, 404, 413].includes(e.statusCode)) return false
+    if (e.statusCode >= 400 && e.statusCode < 500) return false
+    if (e.statusCode >= 500) return true
+  }
+  if (typeof e.code === 'string') {
+    if (['ECONNRESET', 'ETIMEDOUT', 'ENETUNREACH', 'EAI_AGAIN'].includes(e.code)) return true
+    return false
+  }
+  // Erreurs sans statusCode ni code (legacy `new Error("…")`) → conserver
+  // le comportement de retry pour ne pas régresser les callers existants
+  // qui throw sans enrichir l'objet erreur.
+  return true
 }
 
 interface CreditNoteRow {
@@ -506,24 +567,74 @@ export async function generateCreditNotePdfAsync(args: GenerateCreditNotePdfArgs
     last_name: member.last_name,
   })
 
-  // ---- 8. Upload OneDrive avec retry ×3 exponentiel -------------------
+  // ---- 8. Upload OneDrive avec retry ×3 exponentiel + classification --
+  // W34 : `isTransientGraphError` short-circuit sur erreurs déterministes
+  //       (400/403/404/413, assertions locales) → 1 seule tentative au lieu
+  //       de gaspiller le budget lambda sur 3 retry sans espoir.
+  // W35 : sur 401, force MSAL `forceRefreshAccessToken` AVANT le retry
+  //       suivant (cas token expiré côté Microsoft alors que MSAL local
+  //       le cache encore comme valide).
   let uploadResult: Awaited<ReturnType<UploadFn>> | null = null
   let lastError: Error | null = null
+  let attempts_used = 0
   for (let attempt = 0; attempt < RETRY_BACKOFFS_MS.length; attempt++) {
+    attempts_used = attempt + 1
     try {
       uploadResult = await getUpload()(buffer, filename, { folder })
       lastError = null
       break
     } catch (err) {
       lastError = err instanceof Error ? err : new Error(String(err))
+      const transient = isTransientGraphError(lastError)
+      const statusCode = (lastError as { statusCode?: unknown }).statusCode
       logger.warn('PDF_UPLOAD_RETRY', {
         requestId: request_id,
         creditNoteId: credit_note_id,
         savId: sav_id,
         attempt: attempt + 1,
         maxAttempts: RETRY_BACKOFFS_MS.length,
+        transient,
+        statusCode: typeof statusCode === 'number' ? statusCode : null,
         message: lastError.message,
       })
+
+      if (!transient) {
+        // W34 short-circuit : erreur déterministe, raise immédiatement
+        // sans consommer les retry restants (gain ~7s lambda budget).
+        logger.error('PDF_UPLOAD_FAILED', {
+          requestId: request_id,
+          creditNoteId: credit_note_id,
+          savId: sav_id,
+          attempts: attempts_used,
+          lastError: lastError.message,
+          reason: 'non_transient_short_circuit',
+        })
+        throw new Error(`PDF_UPLOAD_FAILED|${lastError.message}`)
+      }
+
+      // W35 : 401 → force refresh token MSAL avant le retry suivant.
+      if (statusCode === 401 && attempt < RETRY_BACKOFFS_MS.length - 1) {
+        try {
+          await getRefreshGraphToken()()
+          logger.warn('PDF_UPLOAD_TOKEN_REFRESHED', {
+            requestId: request_id,
+            creditNoteId: credit_note_id,
+            savId: sav_id,
+            attempt: attempt + 1,
+          })
+        } catch (refreshErr) {
+          // Refresh échoué : on continue le retry standard (ne masque pas
+          // l'erreur 401 originale, le prochain attempt remontera la même).
+          logger.warn('PDF_UPLOAD_TOKEN_REFRESH_FAILED', {
+            requestId: request_id,
+            creditNoteId: credit_note_id,
+            savId: sav_id,
+            attempt: attempt + 1,
+            message: refreshErr instanceof Error ? refreshErr.message : String(refreshErr),
+          })
+        }
+      }
+
       if (attempt < RETRY_BACKOFFS_MS.length - 1) {
         await getSleep()(RETRY_BACKOFFS_MS[attempt] as number)
       }
@@ -534,7 +645,7 @@ export async function generateCreditNotePdfAsync(args: GenerateCreditNotePdfArgs
       requestId: request_id,
       creditNoteId: credit_note_id,
       savId: sav_id,
-      attempts: RETRY_BACKOFFS_MS.length,
+      attempts: attempts_used,
       lastError: lastError === null ? 'unknown' : lastError.message,
     })
     throw new Error(`PDF_UPLOAD_FAILED|${lastError === null ? 'unknown' : lastError.message}`)

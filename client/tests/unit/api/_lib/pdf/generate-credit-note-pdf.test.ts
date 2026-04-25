@@ -461,4 +461,114 @@ describe('generateCreditNotePdfAsync (Story 4.5 AC #10)', () => {
     })
     expect(db.capturedUpdate).not.toBeNull()
   })
+
+  // ---- W34 : retry smart classification (short-circuit non-transient) ----
+  it('W34 upload 400 Bad Request → short-circuit, 1 seul appel, pas de retry', async () => {
+    seedHappyPath()
+    let attempts = 0
+    __setGeneratePdfDepsForTests({
+      renderToBuffer: async () => Buffer.from('%PDF-'),
+      upload: async () => {
+        attempts++
+        const err = new Error('Graph API rejected: invalid request body') as Error & {
+          statusCode: number
+        }
+        err.statusCode = 400
+        throw err
+      },
+      sleep: async () => undefined,
+    })
+    await expect(
+      generateCreditNotePdfAsync({ credit_note_id: 100, sav_id: 10, request_id: 'req-w34a' })
+    ).rejects.toThrow(/PDF_UPLOAD_FAILED/)
+    expect(attempts).toBe(1)
+    expect(db.capturedUpdate).toBeNull()
+  })
+
+  it('W34 upload 503 Service Unavailable puis 200 → success après retry', async () => {
+    seedHappyPath()
+    let attempts = 0
+    __setGeneratePdfDepsForTests({
+      renderToBuffer: async () => Buffer.from('%PDF-'),
+      upload: async () => {
+        attempts++
+        if (attempts === 1) {
+          const err = new Error('Service Unavailable') as Error & { statusCode: number }
+          err.statusCode = 503
+          throw err
+        }
+        return { itemId: 'item-503', webUrl: 'https://x/503-recovered.pdf' }
+      },
+      sleep: async () => undefined,
+    })
+    await generateCreditNotePdfAsync({
+      credit_note_id: 100,
+      sav_id: 10,
+      request_id: 'req-w34b',
+    })
+    expect(attempts).toBe(2)
+    expect(db.capturedUpdate).not.toBeNull()
+  })
+
+  // ---- W35 : 401 → MSAL force refresh + retry ---------------------------
+  it('W35 upload 401 Unauthorized puis 200 → refresh token + retry success', async () => {
+    seedHappyPath()
+    let attempts = 0
+    let refreshCalls = 0
+    __setGeneratePdfDepsForTests({
+      renderToBuffer: async () => Buffer.from('%PDF-'),
+      upload: async () => {
+        attempts++
+        if (attempts === 1) {
+          const err = new Error('Unauthorized — token expired') as Error & {
+            statusCode: number
+          }
+          err.statusCode = 401
+          throw err
+        }
+        return { itemId: 'item-401', webUrl: 'https://x/refreshed.pdf' }
+      },
+      refreshGraphToken: async () => {
+        refreshCalls++
+        return 'new-fake-token'
+      },
+      sleep: async () => undefined,
+    })
+    await generateCreditNotePdfAsync({
+      credit_note_id: 100,
+      sav_id: 10,
+      request_id: 'req-w35a',
+    })
+    expect(attempts).toBe(2)
+    expect(refreshCalls).toBe(1)
+    expect(db.capturedUpdate).not.toBeNull()
+  })
+
+  it('W35 upload 401 × 3 → raise PDF_UPLOAD_FAILED, refresh appelé sur les retries (pas en boucle infinie)', async () => {
+    seedHappyPath()
+    let attempts = 0
+    let refreshCalls = 0
+    __setGeneratePdfDepsForTests({
+      renderToBuffer: async () => Buffer.from('%PDF-'),
+      upload: async () => {
+        attempts++
+        const err = new Error('Unauthorized perma') as Error & { statusCode: number }
+        err.statusCode = 401
+        throw err
+      },
+      refreshGraphToken: async () => {
+        refreshCalls++
+        return 'still-bad'
+      },
+      sleep: async () => undefined,
+    })
+    await expect(
+      generateCreditNotePdfAsync({ credit_note_id: 100, sav_id: 10, request_id: 'req-w35b' })
+    ).rejects.toThrow(/PDF_UPLOAD_FAILED/)
+    // 3 tentatives upload (RETRY_BACKOFFS_MS = [1000,2000,4000]) ;
+    // refresh appelé sur les 2 premières (la 3e n'a plus d'attempt suivant).
+    expect(attempts).toBe(3)
+    expect(refreshCalls).toBe(2)
+    expect(db.capturedUpdate).toBeNull()
+  })
 })
