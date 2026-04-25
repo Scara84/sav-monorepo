@@ -38,7 +38,22 @@
 # - Une story passe par 'review' avant 'done' (via bmad-code-review)
 
 generated: 2026-04-18
-last_updated: 2026-04-24
+last_updated: 2026-04-25
+# 2026-04-25 : cleanup deferred-work post-5.2 — 12 W## traités sur 17 (W43,
+# W53-W56 reportés, statut documenté inchangé). 3 commits atomiques sur
+# refonte-phase-2 :
+#   498c627 W40+W52 (router auth top-level draft.ts + METHOD_NOT_ALLOWED 405
+#           cross-router) — sécurité + cross-cutting AVANT Stories 5.3-5.5.
+#   031bdfa W41+W42+W46+W49+W50 (modal a11y focus-trap+ESC, composable refs
+#           séparées generating/fetchingHistory + AbortController +
+#           onScopeDispose, mapping 5xx→GATEWAY, historyLoadFailed flag).
+#   cd0128e W44+W45+W47+W48+W51 (bench garde-fou BENCH_ALLOW_DESTRUCTIVE,
+#           router.replace merge query, test no-retry uploadExportXlsx,
+#           ?supplier= vide accepté, formatDate sur period_from/to).
+# Tests : 717/717 (+13 nouveaux : W40 auth, W52×4 router 405 status, W41×2
+# ESC+focus-trap, W42 indépendance refs, W46×2 abort, W49×2 GATEWAY 502/504,
+# W50 historyLoadFailed, W47 no-retry, W48 supplier vide). Typecheck 0,
+# lint:business 0, build 459.96 KB (sous cap 460 KB AC #17 Story 5.2).
 # 2026-04-24 : Story 5.2 DS + CR adversarial 3 couches (Blind+Edge+Auditor).
 # 17/17 AC couverts, 10 tasks done. 10 patches appliqués (P1-P10) :
 # P1 rate-limit bucket partagé post-Zod (INVALID:{opId}) anti-bypass rotation
