@@ -843,7 +843,11 @@ CREATE TABLE credit_number_sequence (
 CREATE TABLE credit_notes (
   id                  bigint GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
   number              bigint UNIQUE NOT NULL,                  -- ex: 1234 → 'AV-2026-01234'
-  number_formatted    text GENERATED ALWAYS AS ('AV-' || extract(year from issued_at) || '-' || lpad(number::text, 5, '0')) STORED,
+  number_formatted    text GENERATED ALWAYS AS ('AV-' || extract(year from issued_at AT TIME ZONE 'UTC') || '-' || lpad(number::text, 5, '0')) STORED,
+  -- W15 : `extract(year from timestamptz)` n'est PAS IMMUTABLE en PG17
+  -- (dépend du fuseau de session). Le cast `AT TIME ZONE 'UTC'` rend
+  -- l'expression IMMUTABLE et donc utilisable dans une colonne GENERATED
+  -- ALWAYS AS STORED. Voir Story 4.1 implémentation pour le détail.
   sav_id              bigint NOT NULL REFERENCES sav(id),
   member_id           bigint NOT NULL REFERENCES members(id),
   total_ht_cents      bigint NOT NULL,
