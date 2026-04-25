@@ -15,6 +15,10 @@ export type SettingRow = {
   value: unknown
   valid_from: string // ISO 8601
   valid_to: string | null // ISO 8601 ou null (encore en vigueur)
+  // W28 — id optionnel pour tie-break déterministe sur valid_from égal
+  // (ordre Supabase fetch non garanti). Quand absent, fallback à -Infinity
+  // → la première row au même valid_from gagne, comportement legacy.
+  id?: number
 }
 
 function toDate(at: Date | string | undefined): Date {
@@ -26,7 +30,9 @@ function toDate(at: Date | string | undefined): Date {
 /**
  * Résout la valeur d'une clé settings au timestamp donné (ou now).
  * Si plusieurs lignes sont en vigueur simultanément (race migration),
- * retourne la plus récente par `valid_from`.
+ * retourne la plus récente par `valid_from`. Tie-break déterministe
+ * sur `id DESC` quand `valid_from` est égal (W28) — sinon ordre Supabase
+ * fetch non garanti et le résultat dérive entre runs.
  */
 export function resolveSettingAt<T = unknown>(
   rows: readonly SettingRow[],
@@ -38,6 +44,7 @@ export function resolveSettingAt<T = unknown>(
 
   let best: SettingRow | null = null
   let bestMs = -Infinity
+  let bestId = -Infinity
 
   for (const row of rows) {
     if (row.key !== key) continue
@@ -51,9 +58,13 @@ export function resolveSettingAt<T = unknown>(
       if (Number.isNaN(toMs)) continue
       if (toMs <= atMs) continue
     }
-    if (fromMs > bestMs) {
+    // W28 — tie-break déterministe : valid_from DESC, puis id DESC
+    // (id optionnel : si absent, fallback -Infinity = legacy first-vue wins).
+    const rowId = typeof row.id === 'number' ? row.id : -Infinity
+    if (fromMs > bestMs || (fromMs === bestMs && rowId > bestId)) {
       best = row
       bestMs = fromMs
+      bestId = rowId
     }
   }
 

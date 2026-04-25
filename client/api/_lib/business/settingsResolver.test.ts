@@ -91,6 +91,22 @@ describe('resolveSettingAt', () => {
     ]
     expect(resolveSettingAt(corrupt, 'k', '2025-01-01T00:00:00Z')).toBe('good')
   })
+
+  it('W28 — tie-break déterministe sur valid_from égal : id DESC wins', () => {
+    // Cas pathologique : 2 rows avec exactement le même valid_from (race
+    // migration). Sans tie-break id DESC, l'ordre Supabase fetch détermine
+    // le winner et le résultat dérive entre runs. Avec W28, id=20 (le plus
+    // grand) gagne quel que soit l'ordre des rows en input.
+    const same_ts = '2026-04-15T00:00:00Z'
+    const ordered: SettingRow[] = [
+      { key: 'k', value: 'older_id', valid_from: same_ts, valid_to: null, id: 10 },
+      { key: 'k', value: 'newer_id', valid_from: same_ts, valid_to: null, id: 20 },
+    ]
+    expect(resolveSettingAt(ordered, 'k', '2026-05-01T00:00:00Z')).toBe('newer_id')
+    // Et inversion d'ordre : doit toujours retourner id=20.
+    const reversed: SettingRow[] = [ordered[1] as SettingRow, ordered[0] as SettingRow]
+    expect(resolveSettingAt(reversed, 'k', '2026-05-01T00:00:00Z')).toBe('newer_id')
+  })
 })
 
 describe('resolveDefaultVatRateBp', () => {
