@@ -69,13 +69,19 @@ describe('resolveSettingAt', () => {
   })
 
   it('W32 — skip une row dont valid_from est non parsable (NaN)', () => {
+    const corruptOnly: SettingRow = {
+      key: 'k',
+      value: 'corrupt',
+      valid_from: 'garbage',
+      valid_to: null,
+    }
     const corrupt: SettingRow[] = [
-      { key: 'k', value: 'corrupt', valid_from: 'garbage', valid_to: null },
+      corruptOnly,
       { key: 'k', value: 'good', valid_from: '2020-01-01T00:00:00Z', valid_to: null },
     ]
     expect(resolveSettingAt(corrupt, 'k', '2025-01-01T00:00:00Z')).toBe('good')
     // Si seule la row corrompue existe, on retourne null (pas best-row).
-    expect(resolveSettingAt([corrupt[0]], 'k', '2025-01-01T00:00:00Z')).toBeNull()
+    expect(resolveSettingAt([corruptOnly], 'k', '2025-01-01T00:00:00Z')).toBeNull()
   })
 
   it('W32 — skip une row dont valid_to est non parsable (NaN)', () => {

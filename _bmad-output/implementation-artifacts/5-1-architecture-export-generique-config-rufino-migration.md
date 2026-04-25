@@ -446,6 +446,23 @@ Claude Opus 4.7 (bmad-dev-story / Amelia)
 - `grep "supplierExportBuilder\|rufinoConfig" dist/assets/*.js` — 0 occurrence (builder api-side only confirmé)
 - `git diff client/vercel.json` — 0 ligne modifiée (AC #12)
 
+#### Empirical coverage (mesuré 2026-04-25 — quick-wins post-5.2)
+
+Commande : `npx vitest run tests/unit/api/exports/ --coverage --coverage.include='api/_lib/exports/**' --coverage.include='api/exports/**'`
+
+| Fichier                       | Stmts   | Branch  | Funcs | Lines   |
+| ----------------------------- | ------- | ------- | ----- | ------- |
+| supplier-configs.ts           | 100 %   | 100 %   | 100 % | 100 %   |
+| rufinoConfig.ts               | 98.92 % | 68.42 % | 100 % | 98.92 % |
+| supplierExportBuilder.ts      | 91.65 % | 78.43 % | 100 % | 91.65 % |
+| export-supplier-handler.ts    | 90.52 % | 76.78 % | 100 % | 90.52 % |
+| export-history-handler.ts     | 89.78 % | 73.07 % | 100 % | 89.78 % |
+| export-download-handler.ts    | 84.82 % | 86.95 % | 100 % | 84.82 % |
+| upload-export.ts              | 0 %    | 0 %     | 0 %   | 0 %     |
+| **Tous les fichiers**         | **86.14 %** | **76.86 %** | **96.42 %** | **86.14 %** |
+
+`upload-export.ts` (wrapper Microsoft Graph PUT) est intégralement mocké côté tests handler (pattern AC #4) — pas de couverture unitaire directe possible sans mock OneDrive. Hors `upload-export.ts`, la couverture cumulée de la Story 5.1 est **91.6 % statements / lines** (1598/1745). La barre des 90 % unitaires sur le périmètre Story 5.1 « pur » (builder + config + handlers métier) est atteinte. Un follow-up `Wxx upload-export integration coverage` est consigné dans `deferred-work.md` pour la session sécurité dédiée — toute couverture supplémentaire impose un test integration Graph (hors scope unitaire).
+
 ### Completion Notes List
 
 **Écarts schéma story ↔ DB (absorbés par `computed` dans rufinoConfig)** — À retenir pour Stories 5.2/5.6 :
