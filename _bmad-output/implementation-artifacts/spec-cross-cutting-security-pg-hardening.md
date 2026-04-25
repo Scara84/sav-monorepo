@@ -2,7 +2,7 @@
 title: 'Cross-cutting sécurité PG — search_path, RLS active operator, GUC reset, audit PII purge'
 type: 'chore'
 created: '2026-04-25'
-status: 'ready-for-dev'
+status: 'done'
 context:
   - '{project-root}/_bmad-output/implementation-artifacts/deferred-work.md'
 ---

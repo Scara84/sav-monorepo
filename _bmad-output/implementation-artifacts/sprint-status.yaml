@@ -39,6 +39,35 @@
 
 generated: 2026-04-18
 last_updated: 2026-04-25
+# 2026-04-25 : cross-cutting sécurité PG — W2 + W10 + W11 + W13 + W14 + W17
+# résolus + W12 strikethrough (couvert Story 4.6 done). 4 commits atomiques
+# sur refonte-phase-2 (à pusher séparément quand prêt) :
+#   b5dbbd8 W14 RLS authenticated EXISTS operators active (4 policies :
+#           credit_notes, sav, sav_lines, sav_files) — bloquant Epic 6 levé.
+#           Migration 20260503120000 + test SQL 5 cas + extension CI runner
+#           pour découvrir tests/security/*.sql.
+#   16df7d3 W2+W10+W17 SET search_path lockdown + qualifications public.* :
+#           ALTER FUNCTION × 9 RPCs SECURITY DEFINER manquantes + audit_changes
+#           re-créé avec SET + INSERT INTO public.audit_trail qualifié +
+#           recompute_sav_total avec FROM public.sav_lines + UPDATE public.sav.
+#           Migration 20260503130000 + test introspection pg_proc.proconfig
+#           (12 RPCs/triggers) + leurre pg_temp.audit_trail.
+#   6197b04 W13 reset app.actor_operator_id en fin de RPC (mécanisme PG
+#           ALTER FUNCTION SET app.actor_operator_id='' save/restore × 8
+#           RPCs SECURITY DEFINER concernées). Defense-in-depth pgBouncer
+#           sans réécrire les bodies (zéro drift). Migration 20260503140000
+#           + test introspection + comportemental.
+#   6d1b68e W11 purge_audit_pii_for_member helper RGPD curative (Option B).
+#           Migration 20260503150000 + test 4 cas (purge before+after,
+#           préservation autres members, idempotence, NULL guard). Câblage
+#           Story Epic 7.6 future (admin-rgpd-export-json-signe-anonymisation).
+# Tests : 730/730 inchangés (aucun TS modifié), typecheck 0, lint:business 0,
+# build 459.96 KB stable (sous cap 460 KB AC #17 Story 5.2). Tests SQL :
+# 4 nouveaux dans tests/security/ exécutés en CI au push. Strategie ALTER
+# FUNCTION (W2 + W13) zéro réécriture body sur ~1500 lignes RPCs, mécanisme
+# PG save/restore documenté dans les migrations. Spec : spec-cross-cutting-
+# security-pg-hardening.md (status=done) + matrice RPC × patches pour
+# traçabilité Epic 7 audit RGPD.
 # 2026-04-25 : quick wins deferred-work post-5.2 — 9 W## résolus + Story 5.1
 # coverage empirique. 6 commits atomiques sur refonte-phase-2 :
 #   8b04c0e chore(deps): W36 install @vercel/functions ^3.4.4 prod (fix
