@@ -13,13 +13,15 @@
 --
 -- CREATE OR REPLACE FUNCTION `transition_sav_status` : body intégral
 -- repris à l'identique (cf. migration 20260423120000:458-604) sauf le
--- bloc LINES_BLOCKED ligne 528. Les SET search_path + actor_operator_id
--- précédemment posés via ALTER FUNCTION (sessions sécurité W2 + W13)
--- sont RE-INCORPORÉS dans la définition pour ne pas être effacés par
--- CREATE OR REPLACE.
+-- bloc LINES_BLOCKED ligne 528.
 --
--- Sécurité : `SET search_path = public, pg_temp` (W2) + `SET app.
--- actor_operator_id = ''` save/restore (W13) préservés.
+-- Sécurité : `SET search_path = public, pg_temp` (W2) ré-incorporé
+-- dans la définition (CREATE OR REPLACE écrase les ALTER précédents).
+-- `SET app.actor_operator_id = ''` (W13) RE-APPLIQUÉ via ALTER FUNCTION
+-- post-CREATE car poser un GUC custom au sein du CREATE nécessite des
+-- privilèges superuser/role-set que le SQL Editor (rôle postgres) n'a
+-- pas — alors que ALTER FUNCTION ne requiert que les droits owner
+-- (cf. pattern initial migration 20260503140000_security_w13).
 --
 -- Pas de modification du SQLSTATE (P0001) ni du SQLERRM prefix
 -- (`LINES_BLOCKED|ids=...`) → callers existants qui matchent sur
@@ -48,7 +50,6 @@ RETURNS TABLE (
 LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
-SET app.actor_operator_id = ''
 AS $$
 DECLARE
   v_current_status  text;
@@ -167,7 +168,13 @@ BEGIN
 END;
 $$;
 
+-- W13 — ré-applique le SET actor_operator_id reset effacé par CREATE
+-- OR REPLACE. Pattern owner-driven (ne nécessite pas superuser, contrairement
+-- à un SET dans la déclaration CREATE FUNCTION).
+ALTER FUNCTION public.transition_sav_status(bigint, text, int, bigint, text)
+  SET app.actor_operator_id = '';
+
 COMMENT ON FUNCTION public.transition_sav_status(bigint, text, int, bigint, text) IS
-  'Epic 3 transition_sav_status — W8 (2026-05-04) format LINES_BLOCKED|ids=1,2,3 (array_to_string au lieu de bigint[] natif {1,2,3} non pipe-friendly). Body identique à la version 20260423120000 sauf bloc LINES_BLOCKED. SET search_path + SET app.actor_operator_id reset (W2+W13) préservés explicitement.';
+  'Epic 3 transition_sav_status — W8 (2026-05-04) format LINES_BLOCKED|ids=1,2,3 (array_to_string au lieu de bigint[] natif {1,2,3} non pipe-friendly). Body identique à la version 20260423120000 sauf bloc LINES_BLOCKED. SET search_path inline + SET app.actor_operator_id reset via ALTER FUNCTION post-CREATE (W2+W13).';
 
 -- END 20260504150000_transition_sav_status_lines_blocked_pipe_format.sql
