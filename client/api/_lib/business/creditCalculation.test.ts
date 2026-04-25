@@ -3,6 +3,7 @@ import fixture from '../../../tests/fixtures/excel-calculations.json'
 import {
   computeSavLineCredit,
   computeSavTotal,
+  formatQty,
   type SavLineInput,
   type SavLineComputed,
 } from './creditCalculation'
@@ -195,5 +196,44 @@ describe('computeSavLineCredit — ordre de précédence validation_status', () 
       piece_to_kg_weight_g: 200,
     })
     expect(r.validation_status).toBe('blocked')
+  })
+
+  it('W18 — validation_message qty_exceeds_invoice formatte qty exact (6 vs 6.000)', () => {
+    // 10 kg demandé, 20 pcs facturé, weight 300g → qty_invoiced_converted = 6 (exact).
+    // Le message doit afficher "6", pas "6.000" (zéros parasites de précision).
+    const r = computeSavLineCredit({
+      qty_requested: 10,
+      unit_requested: 'kg',
+      qty_invoiced: 20,
+      unit_invoiced: 'piece',
+      unit_price_ht_cents: 30,
+      vat_rate_bp_snapshot: 550,
+      credit_coefficient: 1,
+      piece_to_kg_weight_g: 300,
+    })
+    expect(r.validation_status).toBe('qty_exceeds_invoice')
+    expect(r.validation_message).toBe('Quantité demandée (10) > quantité facturée (6)')
+    expect(r.validation_message).not.toMatch(/6\.000/)
+  })
+})
+
+describe('formatQty (W18)', () => {
+  it('entier exact → pas de décimale ("6")', () => {
+    expect(formatQty(6)).toBe('6')
+  })
+  it('décimal partiel → garde signifiants ("6.5")', () => {
+    expect(formatQty(6.5)).toBe('6.5')
+  })
+  it('3 décimales pleines → toutes conservées', () => {
+    expect(formatQty(6.123)).toBe('6.123')
+  })
+  it('plus de 3 décimales → tronque à 3', () => {
+    expect(formatQty(6.1234)).toBe('6.123')
+  })
+  it('grand entier → pas de zéros ("100")', () => {
+    expect(formatQty(100)).toBe('100')
+  })
+  it('zéro → "0"', () => {
+    expect(formatQty(0)).toBe('0')
   })
 })

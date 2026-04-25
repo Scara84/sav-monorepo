@@ -65,6 +65,24 @@ function roundQty3(value: number): number {
 }
 
 /**
+ * W18 (2026-05-04) — formate une quantité numérique pour affichage UX
+ * sans afficher de zéros de précision parasites :
+ *   - 6        → "6"
+ *   - 6.5      → "6.5"
+ *   - 6.123    → "6.123"
+ *   - 6.1234   → "6.123" (toFixed(3) tronque/arrondit)
+ *   - 100      → "100"
+ *
+ * Utilisé dans `validation_message` (qty_exceeds_invoice). Mirror SQL
+ * dans le trigger `compute_sav_line_credit` via `regexp_replace(qty::text,
+ * '\.?0+$', '')` (cf. migration 20260504140000).
+ */
+export function formatQty(value: number): string {
+  if (!Number.isFinite(value)) return String(value)
+  return value.toFixed(3).replace(/\.?0+$/, '')
+}
+
+/**
  * Calcule `credit_amount_cents` + `validation_status` pour une ligne SAV.
  * Déterministe, ne mute pas son argument, ne lance pas d'exception.
  */
@@ -163,7 +181,9 @@ export function computeSavLineCredit(input: SavLineInput): SavLineComputed {
     return {
       credit_amount_cents: null,
       validation_status: 'qty_exceeds_invoice',
-      validation_message: `Quantité demandée (${qty_requested}) > quantité facturée (${qty_invoiced_converted})`,
+      // W18 — formatQty évite les zéros de précision parasites (`6` plutôt
+      // que `6.000` quand qty_requested vient d'un numeric(12,3)).
+      validation_message: `Quantité demandée (${formatQty(qty_requested)}) > quantité facturée (${formatQty(qty_invoiced_converted)})`,
     }
   }
 
