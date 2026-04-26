@@ -81,3 +81,6 @@ CLAUDE.local.md
 .ai/*
 .mcp.json
 .vercel
+
+# Résidu Supabase CLI à la racine (la vraie config vit dans client/supabase/)
+/supabase/
