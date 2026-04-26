@@ -17,11 +17,22 @@
 --
 -- Sécurité : `SET search_path = public, pg_temp` (W2) ré-incorporé
 -- dans la définition (CREATE OR REPLACE écrase les ALTER précédents).
--- `SET app.actor_operator_id = ''` (W13) RE-APPLIQUÉ via ALTER FUNCTION
--- post-CREATE car poser un GUC custom au sein du CREATE nécessite des
--- privilèges superuser/role-set que le SQL Editor (rôle postgres) n'a
--- pas — alors que ALTER FUNCTION ne requiert que les droits owner
--- (cf. pattern initial migration 20260503140000_security_w13).
+--
+-- W13 (defense pgBouncer GUC reset) : NE peut PAS être restauré via
+-- `ALTER FUNCTION ... SET app.actor_operator_id = ''` (essais en local
+-- + cloud preview = `permission denied to set parameter` même pour
+-- supabase_admin — limitation Supabase sur les GUC custom). En
+-- remplacement : `PERFORM set_config('app.actor_operator_id', '', false)`
+-- ajouté en fin de body avant RETURN NEXT. `is_local=false` =
+-- session-wide reset (équivalent au mécanisme W13 ALTER FUNCTION SET).
+-- Le set_config dynamique est autorisé pour tout rôle.
+--
+-- À noter : la migration 20260503140000_security_w13_actor_guc_reset
+-- (W13 originale) souffre du même problème — les `ALTER FUNCTION SET
+-- app.actor_operator_id = ''` qu'elle tente échouent silencieusement
+-- (jamais appliquée propremment ni en local ni en cloud preview).
+-- Une session future devrait refactorer W13 sur le même pattern
+-- `PERFORM set_config(..., false)` pour les 8 RPCs concernées.
 --
 -- Pas de modification du SQLSTATE (P0001) ni du SQLERRM prefix
 -- (`LINES_BLOCKED|ids=...`) → callers existants qui matchent sur
@@ -158,6 +169,13 @@ BEGIN
     VALUES (p_sav_id, p_actor_operator_id, 'internal', 'Transition ' || v_current_status || ' → ' || p_new_status || E'\n' || p_note);
   END IF;
 
+  -- W13 (replacement) — reset session-wide du GUC actor_operator_id en fin
+  -- de RPC. Defense-in-depth pgBouncer transaction pooling : la connexion
+  -- réutilisée par un autre handler ne hérite plus de l'actor de cet appel.
+  -- `is_local=false` = persiste après la transaction (équivalent au
+  -- ALTER FUNCTION SET qui ne peut pas être appliqué côté Supabase).
+  PERFORM set_config('app.actor_operator_id', '', false);
+
   sav_id          := p_sav_id;
   previous_status := v_current_status;
   new_status      := v_updated_status;
@@ -168,13 +186,7 @@ BEGIN
 END;
 $$;
 
--- W13 — ré-applique le SET actor_operator_id reset effacé par CREATE
--- OR REPLACE. Pattern owner-driven (ne nécessite pas superuser, contrairement
--- à un SET dans la déclaration CREATE FUNCTION).
-ALTER FUNCTION public.transition_sav_status(bigint, text, int, bigint, text)
-  SET app.actor_operator_id = '';
-
 COMMENT ON FUNCTION public.transition_sav_status(bigint, text, int, bigint, text) IS
-  'Epic 3 transition_sav_status — W8 (2026-05-04) format LINES_BLOCKED|ids=1,2,3 (array_to_string au lieu de bigint[] natif {1,2,3} non pipe-friendly). Body identique à la version 20260423120000 sauf bloc LINES_BLOCKED. SET search_path inline + SET app.actor_operator_id reset via ALTER FUNCTION post-CREATE (W2+W13).';
+  'Epic 3 transition_sav_status — W8 (2026-05-04) format LINES_BLOCKED|ids=1,2,3 (array_to_string au lieu de bigint[] natif {1,2,3} non pipe-friendly). Body identique à la version 20260423120000 sauf bloc LINES_BLOCKED + reset GUC actor_operator_id en fin de body via set_config (replacement de W13 ALTER FUNCTION SET, non applicable sur Supabase). SET search_path inline (W2).';
 
 -- END 20260504150000_transition_sav_status_lines_blocked_pipe_format.sql
