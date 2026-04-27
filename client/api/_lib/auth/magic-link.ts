@@ -4,11 +4,23 @@ import { supabaseAdmin } from '../clients/supabase-admin'
 /** TTL d'un magic link : 15 min (NFR-S5). */
 export const MAGIC_LINK_TTL_SEC = 15 * 60
 
+export type MagicLinkKind = 'member' | 'operator'
+
 export interface MagicLinkPayload {
   sub: number
   jti: string
   iat: number
   exp: number
+  /**
+   * Discriminateur ajouté Story 5.8.
+   * - Tokens émis avant 5.8 : champ absent → traité comme 'member' à la vérification (rétrocompat).
+   * - Tokens émis après 5.8 : 'member' (issue.ts adhérent) ou 'operator' (operator/issue.ts).
+   *
+   * Le verify endpoint REJETTE un token dont le `kind` ne matche pas celui attendu
+   * (cross-use protection : un token adhérent ne peut pas ouvrir une session opérateur
+   * et inversement).
+   */
+  kind?: MagicLinkKind
 }
 
 // -----------------------------------------------------------------------
@@ -26,18 +38,49 @@ function base64UrlDecode(s: string): string {
   return Buffer.from(b64, 'base64').toString('utf8')
 }
 
+function signPayload(payload: MagicLinkPayload, secret: string): string {
+  const header = { alg: 'HS256', typ: 'JWT' }
+  const h = base64UrlEncode(JSON.stringify(header))
+  const p = base64UrlEncode(JSON.stringify(payload))
+  const s = base64UrlEncode(createHmac('sha256', secret).update(`${h}.${p}`).digest())
+  return `${h}.${p}.${s}`
+}
+
 export function signMagicLink(
   memberId: number,
   secret: string,
   now: number = Math.floor(Date.now() / 1000)
 ): { token: string; jti: string; expiresAt: Date } {
   const jti = randomUUID()
-  const payload: MagicLinkPayload = { sub: memberId, jti, iat: now, exp: now + MAGIC_LINK_TTL_SEC }
-  const header = { alg: 'HS256', typ: 'JWT' }
-  const h = base64UrlEncode(JSON.stringify(header))
-  const p = base64UrlEncode(JSON.stringify(payload))
-  const s = base64UrlEncode(createHmac('sha256', secret).update(`${h}.${p}`).digest())
-  return { token: `${h}.${p}.${s}`, jti, expiresAt: new Date(payload.exp * 1000) }
+  const payload: MagicLinkPayload = {
+    sub: memberId,
+    jti,
+    iat: now,
+    exp: now + MAGIC_LINK_TTL_SEC,
+    kind: 'member',
+  }
+  return { token: signPayload(payload, secret), jti, expiresAt: new Date(payload.exp * 1000) }
+}
+
+/**
+ * Story 5.8 — sign d'un magic link opérateur.
+ * Payload identique sauf `kind: 'operator'` qui empêche le cross-use avec
+ * /api/auth/magic-link/verify (endpoint adhérent).
+ */
+export function signOperatorMagicLink(
+  operatorId: number,
+  secret: string,
+  now: number = Math.floor(Date.now() / 1000)
+): { token: string; jti: string; expiresAt: Date } {
+  const jti = randomUUID()
+  const payload: MagicLinkPayload = {
+    sub: operatorId,
+    jti,
+    iat: now,
+    exp: now + MAGIC_LINK_TTL_SEC,
+    kind: 'operator',
+  }
+  return { token: signPayload(payload, secret), jti, expiresAt: new Date(payload.exp * 1000) }
 }
 
 export type VerifyResult =
@@ -87,16 +130,24 @@ export function verifyMagicLink(
 function isMagicLinkPayload(v: unknown): v is MagicLinkPayload {
   if (typeof v !== 'object' || v === null) return false
   const o = v as Record<string, unknown>
-  return (
-    typeof o['sub'] === 'number' &&
-    typeof o['jti'] === 'string' &&
-    typeof o['iat'] === 'number' &&
-    typeof o['exp'] === 'number'
-  )
+  if (
+    typeof o['sub'] !== 'number' ||
+    typeof o['jti'] !== 'string' ||
+    typeof o['iat'] !== 'number' ||
+    typeof o['exp'] !== 'number'
+  ) {
+    return false
+  }
+  // `kind` est optionnel pour rétrocompat (tokens émis avant Story 5.8) ;
+  // si présent doit être 'member' ou 'operator'.
+  if (o['kind'] !== undefined && o['kind'] !== 'member' && o['kind'] !== 'operator') {
+    return false
+  }
+  return true
 }
 
 // -----------------------------------------------------------------------
-// Persistance des tokens (table magic_link_tokens)
+// Persistance des tokens (table magic_link_tokens — polymorphique 5.8)
 // -----------------------------------------------------------------------
 
 export interface StoreTokenArgs {
@@ -110,7 +161,33 @@ export interface StoreTokenArgs {
 export async function storeTokenIssue(args: StoreTokenArgs): Promise<void> {
   const row: Record<string, unknown> = {
     jti: args.jti,
+    target_kind: 'member',
     member_id: args.memberId,
+    expires_at: args.expiresAt.toISOString(),
+  }
+  if (args.ipHash !== undefined) row['ip_hash'] = args.ipHash
+  if (args.userAgent !== undefined) row['user_agent'] = args.userAgent
+  const { error } = await supabaseAdmin().from('magic_link_tokens').insert(row)
+  if (error) throw error
+}
+
+export interface StoreOperatorTokenArgs {
+  jti: string
+  operatorId: number
+  expiresAt: Date
+  ipHash?: string
+  userAgent?: string
+}
+
+/**
+ * Story 5.8 — INSERT magic_link_tokens avec target_kind='operator'.
+ * member_id reste null ; la CHECK XOR `magic_link_tokens_target_xor` est respectée.
+ */
+export async function storeOperatorTokenIssue(args: StoreOperatorTokenArgs): Promise<void> {
+  const row: Record<string, unknown> = {
+    jti: args.jti,
+    target_kind: 'operator',
+    operator_id: args.operatorId,
     expires_at: args.expiresAt.toISOString(),
   }
   if (args.ipHash !== undefined) row['ip_hash'] = args.ipHash
@@ -121,7 +198,9 @@ export async function storeTokenIssue(args: StoreTokenArgs): Promise<void> {
 
 export interface MagicLinkTokenRow {
   jti: string
-  member_id: number
+  target_kind: 'member' | 'operator'
+  member_id: number | null
+  operator_id: number | null
   issued_at: string
   expires_at: string
   used_at: string | null
@@ -130,7 +209,7 @@ export interface MagicLinkTokenRow {
 export async function findTokenByJti(jti: string): Promise<MagicLinkTokenRow | null> {
   const { data, error } = await supabaseAdmin()
     .from('magic_link_tokens')
-    .select('jti, member_id, issued_at, expires_at, used_at')
+    .select('jti, target_kind, member_id, operator_id, issued_at, expires_at, used_at')
     .eq('jti', jti)
     .maybeSingle()
   if (error) throw error

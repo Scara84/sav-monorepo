@@ -5,10 +5,10 @@
   "framework": "vite",
   "functions": {
     "api/health.ts": { "maxDuration": 10 },
-    "api/auth/msal/login.ts": { "maxDuration": 5 },
-    "api/auth/msal/callback.ts": { "maxDuration": 10 },
     "api/auth/magic-link/issue.ts": { "maxDuration": 10 },
     "api/auth/magic-link/verify.ts": { "maxDuration": 5 },
+    "api/auth/operator/issue.ts": { "maxDuration": 10 },
+    "api/auth/operator/verify.ts": { "maxDuration": 5 },
     "api/cron/dispatcher.ts": { "maxDuration": 60 },
     "api/webhooks/capture.ts": { "maxDuration": 30 },
     "api/self-service/draft.ts": { "maxDuration": 10 },

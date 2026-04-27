@@ -8,7 +8,7 @@ import { useSupplierExport, type ExportHistoryItem } from '../composables/useSup
  *
  * Pagination cursor-based (pattern Story 3.3 SavListView). Filtre
  * `?supplier=` en query string. Route protégée par
- * `meta.requiresAuth='msal'` + roles ['admin','sav-operator']
+ * `meta.requiresAuth='operator'` + roles ['admin','sav-operator']
  * (cf. `src/router/index.js`).
  */
 

@@ -110,14 +110,13 @@ export function useSavList() {
       })
       if (seq !== requestSeq) return // stale response ignored
       if (res.status === 401) {
-        // F21 (CR Epic 3) : pas de session → redirect MSAL login.
-        // `returnTo` permet au callback MSAL de revenir sur la même page
-        // après succès. Le cookie de session `sav_session` est HttpOnly,
-        // on ne peut pas le détecter en amont dans un router guard.
+        // Story 5.8 — pas de session → redirect /admin/login (magic link).
+        // Le cookie `sav_session` est HttpOnly, on ne peut pas le détecter
+        // en amont dans un router guard. Le verify endpoint redirect vers
+        // /admin après login (returnTo non préservé en V1 — scope V1.5).
         error.value = 'Session expirée'
         if (typeof window !== 'undefined') {
-          const returnTo = encodeURIComponent(window.location.pathname + window.location.search)
-          window.location.href = `/api/auth/msal/login?returnTo=${returnTo}`
+          window.location.href = '/admin/login'
         }
         return
       }

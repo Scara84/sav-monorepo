@@ -162,11 +162,10 @@ export function useSavDetail(id: Ref<number>) {
       })
       if (seq !== requestSeq || seenId !== id.value) return
       if (res.status === 401) {
-        // F21 (CR Epic 3) : redirect MSAL login avec returnTo.
+        // Story 5.8 — pas de session → redirect /admin/login (magic link).
         error.value = 'unauthenticated'
         if (typeof window !== 'undefined') {
-          const returnTo = encodeURIComponent(window.location.pathname + window.location.search)
-          window.location.href = `/api/auth/msal/login?returnTo=${returnTo}`
+          window.location.href = '/admin/login'
         }
         return
       }

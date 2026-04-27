@@ -74,10 +74,36 @@ const coreHandler: ApiHandler = async (req, res) => {
     return
   }
 
+  // Cross-use protection (Story 5.8 CR fix) : un token operator ne doit pas
+  // pouvoir ouvrir une session member, même si la signature JWT est valide
+  // (`MAGIC_LINK_SECRET` est partagé entre les deux endpoints).
+  // Pour les tokens pré-Story-5.8 (kind absent), la BDD `target_kind` rattrape ci-dessous.
+  if (verified.payload.kind !== undefined && verified.payload.kind !== 'member') {
+    await logAuthEvent({
+      eventType: 'magic_link_failed',
+      metadata: { reason: 'kind_mismatch', kind: verified.payload.kind },
+      ...(ua ? { userAgent: ua } : {}),
+    }).catch(() => undefined)
+    sendError(res, 'UNAUTHENTICATED', 'Lien invalide', requestId)
+    return
+  }
+
   // Vérifier que le jti existe en BDD et n'est pas consommé
   const stored = await findTokenByJti(verified.payload.jti)
   if (!stored) {
     sendError(res, 'UNAUTHENTICATED', 'Lien inconnu', requestId)
+    return
+  }
+  // Defense-in-depth (Story 5.8) : rejette aussi un row dont target_kind n'est pas 'member',
+  // utile pour les tokens pré-5.8 dont le payload n'a pas de `kind` mais dont la row DB
+  // serait `target_kind='operator'` (impossible en pratique mais protège contre bug futur).
+  if (stored.target_kind !== 'member') {
+    await logAuthEvent({
+      eventType: 'magic_link_failed',
+      metadata: { reason: 'wrong_target_kind', target_kind: stored.target_kind },
+      ...(ua ? { userAgent: ua } : {}),
+    }).catch(() => undefined)
+    sendError(res, 'UNAUTHENTICATED', 'Lien invalide', requestId)
     return
   }
   if (stored.used_at !== null) {

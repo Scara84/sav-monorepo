@@ -1,5 +1,5 @@
 # generated: 2026-04-18
-# last_updated: 2026-04-26
+# last_updated: 2026-04-27
 # project: sav-monorepo
 # project_key: NOKEY
 # tracking_system: file-system
@@ -425,7 +425,7 @@ development_status:
   5-5-job-cron-alertes-seuil-produit-config-admin: ready-for-dev
   5-6-ajout-d-un-deuxieme-fournisseur-validation-architecture: ready-for-dev
   5-7-cutover-make-pennylane-emails: backlog  # ajoutée 2026-04-27 suite audit Make + décisions cutover
-  5-8-refonte-auth-operateurs-magic-link: backlog  # ajoutée 2026-04-27 suite décision : pas de M365 par employé, magic link sur operators (réutilise infra adhérents). PRIORITÉ : avant 5.7 et avant onboarding réel d'opérateurs.
+  5-8-refonte-auth-operateurs-magic-link: done  # DS+CR complets 2026-04-27, magic link sur operators (réutilise infra adhérents). 5 patches CR appliqués + 11 items deferred. Suite 795/795 verte.
   epic-5-retrospective: optional
 
   # ──────────────────────────────────────────────────────────────

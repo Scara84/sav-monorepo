@@ -1,7 +1,7 @@
 <script setup lang="ts">
 /**
  * Layout back-office (Epic 3 Story 3.3, étendu Story 5.3 nav reporting).
- * Stories 3.4 → 3.7 enrichiront le header (sign-out MSAL, user menu, breadcrumbs).
+ * Stories 3.4 → 3.7 enrichiront le header (sign-out, user menu, breadcrumbs).
  */
 </script>
 

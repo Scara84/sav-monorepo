@@ -144,7 +144,7 @@ export function verifyJwt(token: string, secret: string): SessionUser | undefine
   return payload
 }
 
-/** Signe un payload en JWT HS256. Utilisé par les endpoints d'issue (MSAL callback, magic-link verify). */
+/** Signe un payload en JWT HS256. Utilisé par les endpoints d'issue (magic-link verify adhérent + opérateur). */
 export function signJwt(payload: SessionUser, secret: string): string {
   const header = { alg: ALGO, typ: 'JWT' }
   const h = base64UrlEncode(JSON.stringify(header))

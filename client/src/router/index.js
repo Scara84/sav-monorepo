@@ -27,9 +27,17 @@ const routes = [
     component: Maintenance,
   },
   {
+    // Story 5.8 — page login back-office (magic link operator).
+    // Doit être déclarée AVANT la route '/admin' parente sinon le routeur la masque.
+    path: '/admin/login',
+    name: 'admin-login',
+    component: () => import('@/features/back-office/views/AdminLoginView.vue'),
+    meta: { requiresAuth: false },
+  },
+  {
     path: '/admin',
     component: () => import('@/features/back-office/views/BackOfficeLayout.vue'),
-    meta: { requiresAuth: 'msal', roles: ['admin', 'sav-operator'] },
+    meta: { requiresAuth: 'operator', roles: ['admin', 'sav-operator'] },
     children: [
       {
         path: 'sav',

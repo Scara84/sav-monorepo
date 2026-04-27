@@ -3,20 +3,53 @@ import type { SessionUser } from '../types'
 
 export interface OperatorRow {
   id: number
-  azure_oid: string
+  azure_oid: string | null
   email: string
   display_name: string
   role: 'admin' | 'sav-operator'
   is_active: boolean
 }
 
-/** Retourne l'operator actif matchant l'azure_oid, ou null sinon. */
+/**
+ * Retourne l'operator actif matchant l'azure_oid, ou null sinon.
+ *
+ * @deprecated Story 5.8 — l'auth utilisateur n'utilise plus azure_oid.
+ * Conservé en lecture seule pour rétrocompat (anciens scripts admin / tests
+ * MSAL Graph M2M). Pour l'auth magic link, utiliser `findActiveOperatorByEmail`.
+ */
 export async function findActiveOperator(azureOid: string): Promise<OperatorRow | null> {
   const { data, error } = await supabaseAdmin()
     .from('operators')
     .select('id, azure_oid, email, display_name, role, is_active')
     .eq('azure_oid', azureOid)
     .eq('is_active', true)
+    .maybeSingle()
+  if (error) throw error
+  return (data as OperatorRow | null) ?? null
+}
+
+/**
+ * Story 5.8 — lookup opérateur actif par email pour l'émission magic link.
+ * Email comparé via citext (case-insensitive natif sur la colonne).
+ * is_active = true filtre les comptes désactivés (révocation rapide).
+ */
+export async function findActiveOperatorByEmail(email: string): Promise<OperatorRow | null> {
+  const { data, error } = await supabaseAdmin()
+    .from('operators')
+    .select('id, azure_oid, email, display_name, role, is_active')
+    .eq('email', email.normalize('NFC').toLowerCase().trim())
+    .eq('is_active', true)
+    .maybeSingle()
+  if (error) throw error
+  return (data as OperatorRow | null) ?? null
+}
+
+/** Story 5.8 — version par id (utilisé en verify pour re-vérifier is_active). */
+export async function findOperatorById(operatorId: number): Promise<OperatorRow | null> {
+  const { data, error } = await supabaseAdmin()
+    .from('operators')
+    .select('id, azure_oid, email, display_name, role, is_active')
+    .eq('id', operatorId)
     .maybeSingle()
   if (error) throw error
   return (data as OperatorRow | null) ?? null
@@ -44,6 +77,10 @@ export interface AuthEventInput {
     | 'magic_link_verified'
     | 'magic_link_failed'
     | 'magic_link_rate_limited'
+    | 'operator_magic_link_issued'
+    | 'operator_magic_link_verified'
+    | 'operator_magic_link_failed'
+    | 'operator_magic_link_rate_limited'
   operatorId?: number
   memberId?: number
   emailHash?: string
