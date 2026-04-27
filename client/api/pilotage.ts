@@ -8,6 +8,7 @@ import { costTimelineHandler } from './_lib/reports/cost-timeline-handler'
 import { topProductsHandler } from './_lib/reports/top-products-handler'
 import { delayDistributionHandler } from './_lib/reports/delay-distribution-handler'
 import { topReasonsSuppliersHandler } from './_lib/reports/top-reasons-suppliers-handler'
+import { exportSavCsvHandler } from './_lib/reports/export-csv-handler'
 import type { ApiHandler, ApiRequest } from './_lib/types'
 
 /**
@@ -40,6 +41,7 @@ const ALLOWED_OPS = new Set([
   'top-products',
   'delay-distribution',
   'top-reasons-suppliers',
+  'export-csv',
 ])
 
 function parseOp(req: ApiRequest): string | null {
@@ -133,6 +135,16 @@ const dispatch: ApiHandler = async (req, res) => {
     if (op === 'top-products') return topProductsHandler(req, res)
     if (op === 'delay-distribution') return delayDistributionHandler(req, res)
     return topReasonsSuppliersHandler(req, res)
+  }
+
+  // Story 5.4 — export CSV/XLSX ad hoc (GET).
+  if (op === 'export-csv') {
+    if (method !== 'GET') {
+      res.setHeader('Allow', 'GET')
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
+      return
+    }
+    return exportSavCsvHandler(req, res)
   }
 
   sendError(res, 'NOT_FOUND', 'Route non disponible', requestId)

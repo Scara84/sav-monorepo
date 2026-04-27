@@ -3,6 +3,7 @@ import { onMounted, watch, computed, nextTick, ref } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useDebounceFn } from '@vueuse/core'
 import { useSavList } from '../composables/useSavList'
+import { useSavExport, type ExportFormat } from '../composables/useSavExport'
 import ExportSupplierModal from '../components/ExportSupplierModal.vue'
 
 /**
@@ -240,6 +241,50 @@ function openExportModal(): void {
 function closeExportModal(): void {
   exportModalOpen.value = false
 }
+
+// Story 5.4 AC #8/#9 — Export CSV/XLSX ad hoc des SAV filtrés.
+// Bouton + menu déroulant CSV/XLSX dans la barre d'actions, à côté du bouton
+// Export fournisseur (Story 5.2). Toast info/error géré in-place via
+// `exportToast`. Pas de dépendance toast lib externe — mini overlay local.
+const csvExport = useSavExport()
+const exportMenuOpen = ref(false)
+const exportToast = ref<{
+  variant: 'info' | 'success' | 'error'
+  message: string
+  showXlsxAction?: boolean
+} | null>(null)
+
+function toggleExportMenu(): void {
+  exportMenuOpen.value = !exportMenuOpen.value
+}
+function closeExportMenu(): void {
+  exportMenuOpen.value = false
+}
+function dismissToast(): void {
+  exportToast.value = null
+}
+async function runExport(format: ExportFormat): Promise<void> {
+  exportMenuOpen.value = false
+  exportToast.value = null
+  const result = await csvExport.downloadExport({
+    format,
+    filters: { ...list.filters, status: [...list.filters.status] },
+  })
+  if (result.status === 'downloaded') {
+    exportToast.value = { variant: 'success', message: 'Export téléchargé.' }
+  } else if (result.status === 'switch_suggested') {
+    exportToast.value = {
+      variant: 'info',
+      message: `Plus de 5 000 lignes (${result.row_count ?? '?'}). L'export XLSX est recommandé.`,
+      showXlsxAction: true,
+    }
+  } else if (result.status === 'error' && result.message !== 'aborted') {
+    exportToast.value = {
+      variant: 'error',
+      message: result.message ?? 'Erreur inattendue',
+    }
+  }
+}
 </script>
 
 <template>
@@ -251,8 +296,66 @@ function closeExportModal(): void {
         <button type="button" class="btn-export" @click="openExportModal">
           Export fournisseur
         </button>
+        <!-- Story 5.4 AC #8 — Bouton « Exporter » avec menu CSV/XLSX. -->
+        <div class="export-csv-wrapper">
+          <button
+            type="button"
+            class="btn-export"
+            data-testid="btn-export-csv"
+            :aria-expanded="exportMenuOpen"
+            aria-haspopup="menu"
+            :disabled="csvExport.downloading.value"
+            @click="toggleExportMenu"
+          >
+            {{ csvExport.downloading.value ? 'Export en cours…' : 'Exporter' }}
+          </button>
+          <ul v-if="exportMenuOpen" class="export-menu" role="menu" @mouseleave="closeExportMenu">
+            <li role="none">
+              <button
+                type="button"
+                role="menuitem"
+                data-testid="btn-export-csv-format"
+                @click="runExport('csv')"
+              >
+                CSV
+              </button>
+            </li>
+            <li role="none">
+              <button
+                type="button"
+                role="menuitem"
+                data-testid="btn-export-xlsx-format"
+                @click="runExport('xlsx')"
+              >
+                XLSX
+              </button>
+            </li>
+          </ul>
+        </div>
       </div>
     </header>
+
+    <!-- Toast simple, ancré sous le header (pas de dépendance externe). -->
+    <div
+      v-if="exportToast"
+      class="export-toast"
+      :class="`toast-${exportToast.variant}`"
+      role="status"
+      aria-live="polite"
+      data-testid="export-toast"
+    >
+      <span>{{ exportToast.message }}</span>
+      <button
+        v-if="exportToast.showXlsxAction"
+        type="button"
+        class="btn-link"
+        data-testid="btn-toast-xlsx"
+        @click="runExport('xlsx')"
+      >
+        Générer XLSX
+      </button>
+      <button type="button" class="btn-link" aria-label="Fermer" @click="dismissToast">×</button>
+    </div>
 
     <ExportSupplierModal :open="exportModalOpen" @close="closeExportModal" />
 
@@ -442,6 +545,71 @@ function closeExportModal(): void {
 }
 .btn-export:hover {
   background: #e65100;
+}
+.btn-export:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+/* Story 5.4 — menu déroulant Export CSV/XLSX */
+.export-csv-wrapper {
+  position: relative;
+}
+.export-menu {
+  position: absolute;
+  right: 0;
+  top: calc(100% + 4px);
+  background: white;
+  border: 1px solid #ddd;
+  border-radius: 4px;
+  list-style: none;
+  margin: 0;
+  padding: 0.25rem 0;
+  min-width: 6rem;
+  box-shadow: 0 2px 6px rgba(0, 0, 0, 0.08);
+  z-index: 20;
+}
+.export-menu li {
+  display: block;
+}
+.export-menu button {
+  display: block;
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  padding: 0.5rem 0.75rem;
+  cursor: pointer;
+}
+.export-menu button:hover {
+  background: #f5f5f5;
+}
+.export-toast {
+  margin: 0.5rem 1rem;
+  padding: 0.5rem 0.75rem;
+  border-radius: 4px;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+.toast-info {
+  background: #e3f2fd;
+  border: 1px solid #90caf9;
+}
+.toast-success {
+  background: #e8f5e9;
+  border: 1px solid #a5d6a7;
+}
+.toast-error {
+  background: #ffebee;
+  border: 1px solid #ef9a9a;
+}
+.btn-link {
+  background: transparent;
+  border: 0;
+  color: inherit;
+  cursor: pointer;
+  padding: 0.25rem 0.5rem;
+  text-decoration: underline;
 }
 .sr-only {
   position: absolute;

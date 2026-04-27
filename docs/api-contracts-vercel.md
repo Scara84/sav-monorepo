@@ -964,3 +964,97 @@ GET /api/reports/top-reasons-suppliers   → /api/pilotage?op=top-reasons-suppli
 Chaque handler log `report.<op>.success` (info) ou `report.<op>.failed` (error)
 avec `{ requestId, params, durationMs }`. Pas de PII dans les params (uniquement
 des bornes temporelles + days/limit).
+
+---
+
+## Epic 5 Story 5.4 — Export CSV/XLSX ad hoc (extension `api/pilotage.ts`)
+
+### Vue d'ensemble
+
+Endpoint **GET `/api/reports/export-csv`** — exporte la liste SAV filtrée
+au format CSV (UTF-8 BOM, séparateur `;`, CRLF, décimale FR) ou XLSX,
+réutilisant le schéma de filtres `listSavQuerySchema` (Story 3.2). Pas de
+pagination — export intégral.
+
+Format CSV choisi pour Excel FR :
+- **BOM UTF-8** (`\xEF\xBB\xBF`) en tête → Excel reconnaît UTF-8, accents
+  préservés.
+- **`;` (point-virgule)** comme séparateur → convention française (la virgule
+  est réservée à la décimale).
+- **CRLF (`\r\n`)** entre lignes → convention CSV Microsoft.
+- **Décimale FR** (`1234,56`) — pas de séparateur de milliers.
+- Échappement RFC 4180 standard (cellules avec `;`, `"`, `\n`, `\r`
+  entourées de `"..."`, `"` internes doublés).
+
+### Query params
+
+Mêmes que `GET /api/sav` (Story 3.2) — réutilisation du schéma `listSavQuerySchema` :
+`status`, `q`, `from`, `to`, `invoiceRef`, `memberId`, `groupId`, `assignedTo`, `tag`.
+**Plus** :
+- `format` : `csv` (défaut) | `xlsx`
+
+Les champs `cursor` et `limit` sont silencieusement ignorés (l'export ne pagine pas).
+
+### Garde-fous volume
+
+| Cas                         | Comportement                                         |
+| --------------------------- | ---------------------------------------------------- |
+| count ≤ 5 000               | génère le binaire (CSV ou XLSX selon `format`)       |
+| count > 5 000 + format=csv  | **200 JSON** `{ warning: 'SWITCH_TO_XLSX', row_count, message }` (ne génère PAS le CSV — l'UI invite l'opérateur à basculer) |
+| count > 5 000 + format=xlsx | génère l'XLSX (XLSX accepte jusqu'à 50 000 lignes V1) |
+| count > 50 000              | **400** `EXPORT_TOO_LARGE` — restreindre les filtres |
+
+### Colonnes (V1, fixes)
+
+14 colonnes dans cet ordre : Référence, Date réception, Statut, Client,
+Email client (PII opérateur), Groupe, Opérateur assigné (partie locale email),
+Total TTC (€) (formaté `1234,56`), Nb lignes, Motifs (concat ` | ` déduplé,
+extrait de `sav_lines.validation_messages` entrées `kind='cause'`),
+Fournisseurs (concat ` | ` `products.supplier_code` déduplé), Invoice ref,
+Tags (concat ` | `), Date clôture.
+
+### Note schéma motifs
+
+La colonne `sav_lines.motif` n'existe pas en V1 — les motifs sont des
+entrées `kind='cause'` dans la JSONB `sav_lines.validation_messages`
+(format Story 2.1 capture). On agrège ces entrées TS-side avec
+case-fold dédup (cohérent avec le RPC `report_top_reasons` Story 5.3).
+Défer Epic 7 si besoin d'une colonne dédiée.
+
+### Headers réponse binaire
+
+```
+Content-Type: text/csv; charset=utf-8
+                  OU application/vnd.openxmlformats-officedocument.spreadsheetml.sheet
+Content-Disposition: attachment; filename="sav-export-YYYY-MM-DD-HHMMSS.<csv|xlsx>"
+Content-Length: <bytes>
+Cache-Control: no-store
+```
+
+### Erreurs
+
+| HTTP | `details.code`      | Signification                                                |
+| ---- | ------------------- | ------------------------------------------------------------ |
+| 400  | `INVALID_FILTERS`   | Zod failure (format invalide, valeur statut invalide, etc.)  |
+| 400  | `EXPORT_TOO_LARGE`  | count > 50 000 lignes — restreindre les filtres              |
+| 401  | `UNAUTHENTICATED`   | session absente / expirée                                    |
+| 403  | `FORBIDDEN`         | type session != operator                                     |
+| 405  | (Allow header)      | méthode autre que GET                                        |
+| 500  | `QUERY_FAILED`      | erreur SQL imprévue (count ou fetch)                         |
+
+### Routing Vercel — rewrite ajouté Story 5.4
+
+```
+GET /api/reports/export-csv → /api/pilotage?op=export-csv
+```
+
+`api/pilotage.ts` cap à **12/12 functions Vercel Hobby** maintenu (extension
+du router existant, pas de nouveau slot).
+
+### Logging
+
+`export.csv.start` / `export.csv.success` / `export.csv.warning`
+(SWITCH_TO_XLSX) / `export.csv.too_large` / `export.csv.count_failed` /
+`export.csv.fetch_failed`. Champ `filters_hash` (hash 8-chars non-crypto
+des filtres normalisés) corrèle les exports d'un même opérateur sans
+logger les valeurs PII (email, member_id, etc.).

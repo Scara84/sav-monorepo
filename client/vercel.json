@@ -82,6 +82,10 @@
       "destination": "/api/pilotage?op=top-reasons-suppliers"
     },
     {
+      "source": "/api/reports/export-csv",
+      "destination": "/api/pilotage?op=export-csv"
+    },
+    {
       "source": "/((?!api/|assets/|src/|@vite/|@id/|@fs/|node_modules/|favicon\\.ico|robots\\.txt|.*\\.(?:js|css|vue|ts|tsx|json|map|png|jpg|jpeg|svg|ico|webp|woff2?)).*)",
       "destination": "/index.html"
     }
