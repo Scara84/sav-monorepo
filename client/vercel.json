@@ -66,6 +66,22 @@
       "destination": "/api/pilotage?op=export-download&id=:id"
     },
     {
+      "source": "/api/reports/cost-timeline",
+      "destination": "/api/pilotage?op=cost-timeline"
+    },
+    {
+      "source": "/api/reports/top-products",
+      "destination": "/api/pilotage?op=top-products"
+    },
+    {
+      "source": "/api/reports/delay-distribution",
+      "destination": "/api/pilotage?op=delay-distribution"
+    },
+    {
+      "source": "/api/reports/top-reasons-suppliers",
+      "destination": "/api/pilotage?op=top-reasons-suppliers"
+    },
+    {
       "source": "/((?!api/|assets/|favicon\\.ico|robots\\.txt|.*\\.(?:js|css|png|jpg|jpeg|svg|ico|webp|woff2?)).*)",
       "destination": "/index.html"
     }

@@ -800,3 +800,167 @@ GET  /api/exports/supplier/:id/download  → /api/pilotage?op=export-download&id
 POST /api/self-service/upload-session    → /api/self-service/draft?op=upload-session
 POST /api/self-service/upload-complete   → /api/self-service/draft?op=upload-complete
 ```
+
+## Epic 5 Story 5.3 — Endpoints reporting (extension `api/pilotage.ts`)
+
+4 endpoints reporting agrégé pour le dashboard pilotage Fruitstock (FR52-FR55).
+Tous **GET** + `withAuth({ types: ['operator'] })` au niveau router. Tous
+basés sur des **fonctions RPC PostgreSQL** (migration `20260505120000`)
+qui font les agrégats SQL natifs (CTE + generate_series + percentile_cont
++ JOIN). Les handlers TS sont fines couches Zod + supabase.rpc() — aucune
+interpolation SQL, sécurité défense en profondeur.
+
+Slots Vercel inchangés : 11/12 (les 4 ops s'ajoutent à `api/pilotage.ts`).
+
+### `GET /api/reports/cost-timeline` (FR52)
+
+Coût SAV mensuel + comparatif N-1 (gap-fill côté SQL via `generate_series`).
+
+Query string :
+
+| Param         | Type      | Défaut | Validation                                    |
+| ------------- | --------- | ------ | --------------------------------------------- |
+| `granularity` | enum      | month  | `month` (V1, `year` → 400 NOT_SUPPORTED V1)   |
+| `from`        | YYYY-MM   | requis | regex strict + `from <= to` + range <= 36 mois |
+| `to`          | YYYY-MM   | requis | (idem)                                        |
+
+Réponse 200 :
+
+```json
+{
+  "data": {
+    "granularity": "month",
+    "periods": [
+      { "period": "2026-01", "total_cents": 125000, "n1_total_cents": 98000 },
+      { "period": "2026-02", "total_cents": 87000,  "n1_total_cents": 110000 }
+    ]
+  }
+}
+```
+
+- Mois sans data → `total_cents: 0` + `n1_total_cents: 0` (gap-fill SQL).
+- Performance cible : p95 < 2 s sur 12 mois data.
+
+Erreurs : `400 INVALID_PARAMS | PERIOD_INVALID | PERIOD_TOO_LARGE | GRANULARITY_NOT_SUPPORTED`, `500 QUERY_FAILED`.
+
+### `GET /api/reports/top-products` (FR53)
+
+Top N produits par nombre de SAV sur fenêtre N jours.
+
+Query string :
+
+| Param   | Type | Défaut | Validation              |
+| ------- | ---- | ------ | ----------------------- |
+| `days`  | int  | 90     | 1..365                  |
+| `limit` | int  | 10     | 1..50                   |
+
+Réponse 200 :
+
+```json
+{
+  "data": {
+    "window_days": 90,
+    "items": [
+      { "product_id": 42, "product_code": "POM001", "name_fr": "Pomme Golden 5kg", "sav_count": 12, "total_cents": 45000 }
+    ]
+  }
+}
+```
+
+- Ordre déterministe (RPC) : `sav_count DESC, total_cents DESC, p.id DESC`.
+- Filtre côté SQL : `s.status IN ('validated','closed')`.
+- `name_fr` : nom catalogue produit (la spec PRD mentionnait `designation_fr`,
+  c'est en réalité `products.name_fr` cf. rufinoConfig.ts:17).
+- Performance cible : p95 < 1.5 s.
+
+### `GET /api/reports/delay-distribution` (FR54)
+
+Stats distribution délais traitement (heures) sur fenêtre `[from, to]`.
+
+Query string :
+
+| Param   | Type                     | Validation                                                                 |
+| ------- | ------------------------ | -------------------------------------------------------------------------- |
+| `from`  | YYYY-MM-DD               | regex strict, range <= 2 ans, from <= to                                   |
+| `to`    | YYYY-MM-DD               | (idem)                                                                     |
+| `basis` | `received` \| `closed`   | optionnel, défaut `received`. Selector cohort vs activité (P11 — code-review 2026-04-26). |
+
+Réponse 200 :
+
+```json
+{
+  "data": {
+    "from": "2026-01-01",
+    "to": "2026-12-31",
+    "basis": "received",
+    "p50_hours": 48.5,
+    "p90_hours": 168.2,
+    "avg_hours": 72.3,
+    "min_hours": 2.1,
+    "max_hours": 720.5,
+    "n_samples": 234
+  }
+}
+```
+
+- Si `n_samples === 0` : `p50_hours/p90_hours = null` + `warning: "NO_DATA"`.
+- Si `1 <= n_samples < 5` : `warning: "LOW_SAMPLE_SIZE"` (percentiles peu fiables).
+- Filtre SQL commun : `status='closed' AND closed_at IS NOT NULL AND closed_at >= received_at`.
+- Filtre fenêtre selon `basis` :
+  - `basis=received` (défaut V1) : `received_at >= from AND received_at < to+1d` — SAV reçus dans la fenêtre (cohort historique stable mais censure de fin de fenêtre).
+  - `basis=closed` : `closed_at >= from AND closed_at < to+1d` — SAV clos dans la fenêtre (activité période, plus stable).
+- Performance cible : p95 < 1 s (révision code-review 2026-04-26 D2-C — agrégat unique sans jointure lourde).
+
+### `GET /api/reports/top-reasons-suppliers` (FR55)
+
+Top motifs (extraits de `sav_lines.validation_messages` jsonb, `kind=cause`)
++ top fournisseurs (`products.supplier_code`). Deux RPC en parallèle (`Promise.all`).
+
+Query string : `days` (défaut 90) + `limit` (défaut 10) — mêmes bornes.
+
+Réponse 200 :
+
+```json
+{
+  "data": {
+    "window_days": 90,
+    "reasons":   [ { "motif": "Abimé",  "count": 45, "total_cents": 120000 } ],
+    "suppliers": [ { "supplier_code": "RUFINO", "sav_count": 78, "total_cents": 450000 } ]
+  }
+}
+```
+
+- Note : `sav_lines.motif` n'existe pas en DB V1. La cause est stockée dans
+  `validation_messages` jsonb sous `[{kind:'cause',text:'…'}]`. La RPC
+  `report_top_reasons` extrait via `CROSS JOIN LATERAL jsonb_array_elements`.
+- `credit_amount_cents` (réel) au lieu de `amount_credited_cents` (spec PRD)
+  — renommage Epic 4.0 (migration 20260424120000).
+- Performance cible : p95 < 1.5 s.
+
+### Codes erreurs reporting (uniformisés AC #7 Story 5.3)
+
+| HTTP | `details.code`              | Signification                                       |
+| ---- | --------------------------- | --------------------------------------------------- |
+| 400  | `INVALID_PARAMS`            | Zod failure (regex/range)                           |
+| 400  | `PERIOD_INVALID`            | from > to                                           |
+| 400  | `PERIOD_TOO_LARGE`          | range > 36 mois (cost-timeline) ou > 2 ans (delay)  |
+| 400  | `GRANULARITY_NOT_SUPPORTED` | granularity=year non livrée V1                      |
+| 401  | `UNAUTHENTICATED`           | (via withAuth)                                      |
+| 403  | `FORBIDDEN`                 | type session != operator                            |
+| 405  | (Allow header)              | méthode autre que GET                               |
+| 500  | `QUERY_FAILED`              | erreur SQL/RPC imprévue (log requestId + payload)   |
+
+### Routing Vercel — rewrites ajoutés Story 5.3
+
+```
+GET /api/reports/cost-timeline           → /api/pilotage?op=cost-timeline
+GET /api/reports/top-products            → /api/pilotage?op=top-products
+GET /api/reports/delay-distribution      → /api/pilotage?op=delay-distribution
+GET /api/reports/top-reasons-suppliers   → /api/pilotage?op=top-reasons-suppliers
+```
+
+### Logging
+
+Chaque handler log `report.<op>.success` (info) ou `report.<op>.failed` (error)
+avec `{ requestId, params, durationMs }`. Pas de PII dans les params (uniquement
+des bornes temporelles + days/limit).

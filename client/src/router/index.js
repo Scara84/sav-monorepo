@@ -46,6 +46,13 @@ const routes = [
         name: 'admin-export-history',
         component: () => import('@/features/back-office/views/ExportHistoryView.vue'),
       },
+      {
+        // Story 5.3 — dashboard pilotage. Async import → chunk séparé
+        // (chart.js + vue-chartjs hors main bundle).
+        path: 'dashboard',
+        name: 'admin-dashboard',
+        component: () => import('@/features/back-office/views/DashboardView.vue'),
+      },
     ],
   },
 ]

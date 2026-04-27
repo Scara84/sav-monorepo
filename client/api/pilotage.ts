@@ -4,27 +4,43 @@ import { sendError } from './_lib/errors'
 import { exportSupplierHandler } from './_lib/exports/export-supplier-handler'
 import { exportHistoryHandler } from './_lib/exports/export-history-handler'
 import { exportDownloadHandler } from './_lib/exports/export-download-handler'
+import { costTimelineHandler } from './_lib/reports/cost-timeline-handler'
+import { topProductsHandler } from './_lib/reports/top-products-handler'
+import { delayDistributionHandler } from './_lib/reports/delay-distribution-handler'
+import { topReasonsSuppliersHandler } from './_lib/reports/top-reasons-suppliers-handler'
 import type { ApiHandler, ApiRequest } from './_lib/types'
 
 /**
- * Story 5.2 AC #1 — Router `/api/pilotage.ts` (domaine Pilotage Epic 5).
+ * Story 5.2 AC #1 + Story 5.3 AC #5 — Router `/api/pilotage.ts` (Pilotage Epic 5).
  *
  * Consolidation Vercel Hobby cap 12 : un seul slot pour TOUS les endpoints
  * Epic 5 (exports fournisseurs, reporting dashboard, alertes seuil admin).
- * Stories 5.3 / 5.4 / 5.5 ajouteront leurs ops ici en étendant `ALLOWED_OPS`
- * et `dispatch()` — pas de nouveau fichier top-level.
+ * Story 5.3 ajoute 4 ops reporting : `cost-timeline`, `top-products`,
+ * `delay-distribution`, `top-reasons-suppliers`. Aucun nouveau slot.
  *
  * Mapping rewrites (vercel.json) :
- *   POST /api/exports/supplier                → op=export-supplier
- *   GET  /api/exports/supplier/history        → op=export-history
- *   GET  /api/exports/supplier/:id/download   → op=export-download&id=:id
+ *   POST /api/exports/supplier                  → op=export-supplier
+ *   GET  /api/exports/supplier/history          → op=export-history
+ *   GET  /api/exports/supplier/:id/download     → op=export-download&id=:id
+ *   GET  /api/reports/cost-timeline             → op=cost-timeline
+ *   GET  /api/reports/top-products              → op=top-products
+ *   GET  /api/reports/delay-distribution        → op=delay-distribution
+ *   GET  /api/reports/top-reasons-suppliers     → op=top-reasons-suppliers
  *
  * `withAuth({ types: ['operator'] })` au niveau router — toutes les routes
  * Pilotage exigent un opérateur (admin ou sav-operator). Les handlers
  * n'ont pas besoin de re-vérifier le type.
  */
 
-const ALLOWED_OPS = new Set(['export-supplier', 'export-history', 'export-download'])
+const ALLOWED_OPS = new Set([
+  'export-supplier',
+  'export-history',
+  'export-download',
+  'cost-timeline',
+  'top-products',
+  'delay-distribution',
+  'top-reasons-suppliers',
+])
 
 function parseOp(req: ApiRequest): string | null {
   const raw = (req.query as Record<string, unknown> | undefined)?.['op']
@@ -99,6 +115,24 @@ const dispatch: ApiHandler = async (req, res) => {
       return
     }
     return exportDownloadHandler(exportId)(req, res)
+  }
+
+  // Story 5.3 — endpoints reporting (tous GET).
+  if (
+    op === 'cost-timeline' ||
+    op === 'top-products' ||
+    op === 'delay-distribution' ||
+    op === 'top-reasons-suppliers'
+  ) {
+    if (method !== 'GET') {
+      res.setHeader('Allow', 'GET')
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
+      return
+    }
+    if (op === 'cost-timeline') return costTimelineHandler(req, res)
+    if (op === 'top-products') return topProductsHandler(req, res)
+    if (op === 'delay-distribution') return delayDistributionHandler(req, res)
+    return topReasonsSuppliersHandler(req, res)
   }
 
   sendError(res, 'NOT_FOUND', 'Route non disponible', requestId)

@@ -475,3 +475,56 @@ Le builder utilise `xlsx ^0.18.5` (déjà présent, pattern Epic 4.5). Pas d'ajo
 - Spec : `_bmad-output/planning-artifacts/epics.md:914-932`, `_bmad-output/planning-artifacts/prd.md:867-881` (schéma `supplier_exports`), `prd.md:1226-1257` (FR35, FR36), `prd.md:1523-1532` (endpoints Epic 5).
 - Story créatrice : `_bmad-output/implementation-artifacts/5-1-architecture-export-generique-config-rufino-migration.md`.
 - Débloque : Story 5.2 (endpoint + UI), Story 5.6 (preuve FR36 via ajout MARTINEZ).
+
+## Dashboard pilotage (Epic 5 Story 5.3)
+
+### Stack
+
+- **chart.js 4.5** + **vue-chartjs 5.3** (ajoutés Story 5.3) — wrapper Vue 3 idiomatique. Bundle gzip mesuré ~73 KB (cf. AC #9). `DashboardView` est `async import` dans `router/index.js` → chunk séparé du main bundle.
+- Aucune autre librairie graphique (rejet ApexCharts 150 KB, Plotly 500+ KB).
+
+### Composables
+
+`features/back-office/composables/useDashboard.ts` expose les 4 fetch reporting :
+
+- `costTimeline`, `topProducts`, `delayDistribution`, `topReasonsSuppliers` (refs).
+- `loading` (booléen global), `errors` (map `ReportKey → string | null`).
+- `loadAll(params)` : 4 fetch en `Promise.allSettled` → un fail isolé n'empêche pas l'affichage des autres cards.
+- `refresh*()` individuels (ex. range cost-timeline 6/12/24 mois).
+
+Pattern `AbortController` + `onScopeDispose` (cf. `useSupplierExport`) — un nouveau fetch annule le précédent du même type, et tous les fetch en cours sont abandonnés au démontage du composant.
+
+Helpers exposés via `__testables` : `computeMonthWindow`, `computeDayWindow`, `classifyHttpError`, `translate` — utilisés dans les tests unitaires.
+
+### Vue
+
+`features/back-office/views/DashboardView.vue` orchestre 4 cards dans un grid CSS responsive (2×2 desktop, 1×4 mobile à <900 px) :
+
+- `DashboardCostTimelineCard` — line chart `vue-chartjs` (2 datasets : courant + N-1), range selector 6/12/24 mois, total + delta % vs N-1.
+- `DashboardTopProductsCard` — table triée (rang, code, désignation, nb SAV, total €).
+- `DashboardDelayDistributionCard` — gauge horizontale custom (pas de gauge natif chart.js V1) avec marqueurs p50/p90 sur échelle 0-720h, métriques (médiane, p90, moyenne, échantillon). Warning visuel `LOW_SAMPLE_SIZE` ; placeholder `NO_DATA`.
+- `DashboardTopReasonsSuppliersCard` — 2 colonnes (motifs / fournisseurs).
+
+Skeleton pendant le fetch initial. Erreur isolée par card (`role="alert"`).
+
+### Endpoints consommés
+
+Tous via `/api/reports/*` (cf. `docs/api-contracts-vercel.md` §Story 5.3). Chaque appel envoie `credentials: 'same-origin'` (cookie session opérateur).
+
+### Routing
+
+```
+/admin/dashboard → DashboardView (async, chunk séparé)
+```
+
+`router/index.js` ajoute la route avec lazy-import. Le lien navigation est dans `BackOfficeLayout.vue` : `Liste SAV | Dashboard | Exports`.
+
+### Tests
+
+- `useDashboard.spec.ts` — 9 tests (helpers `computeMonthWindow/Day`, `classifyHttpError`, `loadAll` parallèle, error isolation, refresh granularity, error mapping FR).
+- `DashboardView.spec.ts` — 6 tests (initial render skeleton, after-data datasets transmis chart.js, range selector change params fetch, error isolation 1 card, `LOW_SAMPLE_SIZE` badge visible, `NO_DATA` placeholder). Mock `vue-chartjs` (stub `Line`) pour éviter le rendu Canvas.
+
+### Référence
+
+- Spec : `_bmad-output/planning-artifacts/epics.md:951-973`, `prd.md:1252-1257`, `prd.md:1525-1529` (FR52-FR55, AC-2.5.3).
+- Story créatrice : `_bmad-output/implementation-artifacts/5-3-endpoints-reporting-dashboard-vue.md`.
