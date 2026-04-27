@@ -567,6 +567,7 @@ claude-opus-4-7[1m] (Claude Opus 4.7, 1M context)
 | ---------- | --------------- | ----------------------------------------------------------------------------------------- |
 | 2026-04-26 | claude-opus-4-7 | Story 5.3 implémentée — 16 tasks complétées. 4 endpoints reporting + Dashboard Vue + 44 nouveaux tests (786/786 passing). Statut → review. |
 | 2026-04-27 | code-review (bmad-code-review) | Code review 3 layers (Blind / Edge / Auditor) — 5 decisions résolues + 12 patches appliqués (P1..P12). 789/789 tests passing, build OK 2.23 s. Statut maintenu `review` jusqu'à exécution du bench p95 réel par Antho contre preview Vercel (D1 option A). |
+| 2026-04-27 | code-review (bmad-code-review) | Push commit `1693c2b` (Story 5.3 + 12 patches) + commit `afda73d` (W13 no-op). DB `app-sav` mise à jour : 21 migrations Epic 3/4/5 appliquées via `db push --include-all` (incl. `20260505120000_reports_indexes_rpcs`). Bench p95 différé : preview Vercel sans config MSAL (env vars + redirect URI Azure manquants) → 401 systématique sur `/api/*`. Audit isolation main ↔ refonte-phase-2 lancé en session séparée (ultraplan) pour certifier l'absence d'impact des migrations sur le flow webhook prod actuel. Statut maintenu `review`. |
 
 ## Review Findings
 
@@ -602,6 +603,26 @@ _Résolution 2026-04-27 : 5 decisions tranchées (4 résolues en patch, 1 dismis
 - [x] **Typecheck** `vue-tsc --noEmit` : OK (0 erreur).
 - [x] **Tests** `vitest --run` : **789/789 passing** (+3 tests P11 basis sur delay-distribution).
 - [x] **Build** `vite build` : OK 2.23 s ; chunk `DashboardView` 60.36 KB gzip (chart.js + vue-chartjs hors main bundle, conforme AC #9).
+- [x] **Migration appliquée sur DB cible `app-sav`** (ref `viwgyrqpyryagzgvnfoi`) : `20260505120000_reports_indexes_rpcs.sql` poussée + 20 migrations Epic 3/4/5 antérieures rattrapées via `db push --include-all`. La migration W13 (20260503140000) a été convertie en no-op documenté pour débloquer le push (cf. commit `afda73d` + deferred-work « W13 — refactor set_config(false) body sur 7 RPCs restantes »).
+- [x] **Code Vue runtime** : la preview Vercel `https://sav-monorepo-client-scara84-ants-projects-3dc3de65.vercel.app/admin/dashboard` rend correctement les 4 cards (toggle « Reçus / Clos » P11 visible, layout grid 2×2). Auth applicative renvoie 401 sur les `/api/*` (env vars MSAL absentes côté preview, voir blocker bench ci-dessous).
+
+### Bench p95 — bloqué côté infra preview, différé
+
+Le bench réel n'a **pas été exécuté** malgré la résolution D1 option A (« exécuter maintenant »). Blockers identifiés :
+
+1. **MSAL non configuré côté env Vercel preview** : `GET /api/auth/msal/login` retourne `{"error":{"code":"SERVER_ERROR","message":"Configuration manquante"}}`. Manque `MICROSOFT_TENANT_ID` / `MICROSOFT_CLIENT_ID` / `MICROSOFT_CLIENT_SECRET` dans le scope Preview Vercel.
+2. **Redirect URI MSAL non whitelisté** : chaque preview Vercel a une URL unique (`sav-monorepo-client-scara84-ants-projects-3dc3de65.vercel.app`) → l'Azure App Registration ne reconnaîtra pas le `/api/auth/msal/callback` correspondant.
+3. **Conséquence** : impossible d'obtenir un cookie `sav_session` opérateur valide → tous les `/api/reports/*` retournent 401, le bench script (avec son nouveau garde-fou MIN_OK_RATE=90 %) marque correctement `❌ INVALIDE` au lieu d'un faux PASS.
+
+Le bench est donc différé à l'environnement de prod stable une fois (a) la migration appliquée sur la DB cible (déjà fait pour `app-sav` qui est la DB du projet, à confirmer comme DB de prod), (b) MSAL accessible sur l'URL stable. Item ajouté à `deferred-work.md`.
+
+**Cibles D2-C maintenues comme cibles théoriques validées par revue de code** ; à confirmer/affiner par chiffres réels au premier bench réussi.
+
+### Audit isolation main ↔ refonte-phase-2 (en cours, session séparée)
+
+Avant clôture, un audit indépendant (« ultraplan ») a été lancé en parallèle pour certifier que les 21 migrations appliquées sur `app-sav` n'impactent en aucune manière le flow webhook Make actuel sur `main` (= production actuelle des clients qui créent des SAV via l'ancien modèle pré-Supabase).
+
+Hypothèse de travail (à confirmer par l'audit) : `main` ne se connecte pas à Supabase, donc les migrations sont strictement transparentes pour le flow webhook. Statut story maintenu `review` jusqu'au verdict de l'audit + un bench réussi.
 
 ### Deferred
 
