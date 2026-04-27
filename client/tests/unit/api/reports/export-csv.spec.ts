@@ -32,6 +32,12 @@ const state = vi.hoisted(() => ({
     calls: [] as Array<{ method: string; args: unknown[] }>,
     phase: 'idle' as 'idle' | 'count' | 'fetch',
   },
+  // CR 5.4 EC4 — état partagé pour le rpc rate_limit_check_increment.
+  // Par défaut allowed=true (pas de blocage des tests existants).
+  rateLimit: {
+    rpcCalls: 0 as number,
+    nextResponse: { allowed: true, retry_after: 0 } as { allowed: boolean; retry_after: number },
+  },
 }))
 
 vi.mock('../../../../api/_lib/clients/supabase-admin', () => {
@@ -77,11 +83,26 @@ vi.mock('../../../../api/_lib/clients/supabase-admin', () => {
         return makeBuilder(s, isCount ? 'count' : 'fetch')
       },
     }),
+    // CR 5.4 EC4 — rpc utilisé par `withRateLimit` (rate_limit_check_increment).
+    // Par défaut renvoie allowed=true ; les tests rate-limit override
+    // `state.rateLimit.nextResponse` pour simuler le 429.
+    rpc: (_fn: string, _args: Record<string, unknown>) => {
+      state.rateLimit.rpcCalls++
+      return Promise.resolve({
+        data: state.rateLimit.nextResponse,
+        error: null,
+      })
+    },
   }
   return { supabaseAdmin: () => client, __resetSupabaseAdminForTests: () => undefined }
 })
 
-import { exportSavCsvHandler } from '../../../../api/_lib/reports/export-csv-handler'
+import { __testables } from '../../../../api/_lib/reports/export-csv-handler'
+// CR 5.4 EC4 — `exportSavCsvHandler` est composé avec `withRateLimit` qui
+// requiert un client Supabase RPC pour `rate_limit_check_increment`. Les
+// tests ciblent le `coreHandler` (logique métier) ; le rate-limit est
+// couvert par `with-rate-limit.spec.ts` (pattern Story 3.2 list-handler).
+const exportSavCsvHandler = __testables.coreHandler
 
 function farFuture(): number {
   return Math.floor(Date.now() / 1000) + 3600
@@ -422,5 +443,52 @@ describe('GET /api/reports/export-csv', () => {
     expect(res.statusCode).toBe(500)
     const body = res.jsonBody as { error: { details: { code: string } } }
     expect(body.error.details.code).toBe('QUERY_FAILED')
+  })
+})
+
+/**
+ * CR 5.4 EC4 — Rate-limit composé via `withRateLimit({ max: 6, window: '1m' })`.
+ * On vérifie ici que le handler exporté `exportSavCsvHandler` (composition)
+ * applique bien le rate-limiter avant de déléguer à `coreHandler`. La
+ * logique du rate-limit elle-même est couverte par with-rate-limit.spec.ts.
+ */
+import { exportSavCsvHandler as ratedHandler } from '../../../../api/_lib/reports/export-csv-handler'
+
+describe('GET /api/reports/export-csv — rate-limit (CR 5.4 EC4)', () => {
+  beforeEach(() => {
+    state.builderState.count = 0
+    state.builderState.rows = []
+    state.builderState.error = null
+    state.builderState.countError = null
+    state.builderState.calls = []
+    state.rateLimit.rpcCalls = 0
+    state.rateLimit.nextResponse = { allowed: true, retry_after: 0 }
+  })
+
+  it('429 RATE_LIMITED si rpc rate_limit retourne allowed=false', async () => {
+    state.rateLimit.nextResponse = { allowed: false, retry_after: 42 }
+    const res = mockRes()
+    await ratedHandler(operatorReq({}), res)
+    expect(res.statusCode).toBe(429)
+    expect(res.headers['retry-after']).toBe(42)
+  })
+
+  it('200 si allowed=true (passe au coreHandler)', async () => {
+    state.rateLimit.nextResponse = { allowed: true, retry_after: 0 }
+    state.builderState.count = 0
+    const res = mockRes()
+    await ratedHandler(operatorReq({}), res)
+    expect(res.statusCode).toBe(200)
+    expect(state.rateLimit.rpcCalls).toBe(1)
+  })
+
+  it('keyFrom: pas de session opérateur → 400 VALIDATION_FAILED (clé manquante)', async () => {
+    const req = mockReq({ method: 'GET', query: {} })
+    // pas de req.user → withRateLimit `keyFrom` retourne undefined
+    const res = mockRes()
+    await ratedHandler(req, res)
+    // withRateLimit envoie 400 VALIDATION_FAILED quand keyFrom = undefined
+    // (avant même que coreHandler ne voit la requête)
+    expect(res.statusCode).toBe(400)
   })
 })

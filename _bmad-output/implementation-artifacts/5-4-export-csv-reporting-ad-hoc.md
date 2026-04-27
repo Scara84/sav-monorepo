@@ -1,6 +1,6 @@
 # Story 5.4: Export CSV reporting ad hoc
 
-Status: in-progress
+Status: review
 
 <!-- Quatrième story Epic 5. Permet à un opérateur d'exporter la liste SAV
 filtrée (même filtres que SavListView.vue Story 3.3) en CSV UTF-8 avec BOM
@@ -335,5 +335,37 @@ Claude Opus 4.7 (1M context) — DS pass 2026-04-27
 - `client/vercel.json` — rewrite `GET /api/reports/export-csv → /api/pilotage?op=export-csv`
 - `client/src/features/back-office/views/SavListView.vue` — bouton « Exporter » + menu CSV/XLSX + toast
 - `docs/api-contracts-vercel.md` — section « Epic 5 Story 5.4 — Export CSV/XLSX ad hoc »
-- `_bmad-output/implementation-artifacts/sprint-status.yaml` — 5-4 ready-for-dev → in-progress (puis review post-CR)
+- `_bmad-output/implementation-artifacts/sprint-status.yaml` — 5-4 ready-for-dev → in-progress → review
 - `_bmad-output/implementation-artifacts/5-4-export-csv-reporting-ad-hoc.md` — status + tasks + Dev Agent Record
+- `_bmad-output/implementation-artifacts/deferred-work.md` — W47-W52 (CR Story 5.4)
+
+## Senior Developer Review (AI) — 2026-04-27
+
+**Review Outcome :** APPROVE (avec patches CR appliqués + 6 items déférés).
+
+**Reviewer :** Claude Opus 4.7 (1M context) — adversarial 3-layer (Blind Hunter / Edge Case Hunter / Acceptance Auditor).
+
+### Findings résolus pendant le CR (3 patches appliqués au commit DS+CR)
+
+| ID  | Layer | Severity | Title                                                  | Action                                                  |
+| --- | ----- | -------- | ------------------------------------------------------ | ------------------------------------------------------- |
+| EC4 | EC    | MEDIUM   | Pas de rate-limit sur l'endpoint export                | Ajout `withRateLimit({ max: 6, window: '1m' })` op:sub  |
+| BH7 | BH    | LOW      | `triggerBrowserDownload` no try/finally for removeChild | Wrap `a.click()` en try/finally (cleanup garanti)       |
+| EC9 | EC    | LOW      | `emailShort` malformed email starting with `@`         | Fallback display_name si `at <= 0`                      |
+
+### Findings déférés (W47-W52, voir `deferred-work.md`)
+
+- **W47 (AA2)** — Streaming CSV non implémenté (DS-documenté, conforme contrat ApiResponse).
+- **W48 (EC18)** — Pas de touche Escape pour fermer menu Export (a11y).
+- **W49 (EC15)** — PostgREST `db-max-rows` cap inconnu en prod Supabase.
+- **W50 (EC22)** — Vercel response body limit (4.5 MB Hobby) sur grosses exports XLSX.
+- **W51 (Dev Notes carry-over)** — Audit trail `sav_exports` applicatif (RGPD).
+- **W52 (Bench V1)** — Pas de bench performance (cf. AC #5 targets).
+
+### Validation post-patches
+
+- Tests : 865/865 (vs baseline 795 ; +67 nouveaux + 3 rate-limit).
+- Typecheck : 0.
+- Lint:business : 0.
+- Build : 460.44 KB ≡ baseline (pas de drift bundle).
+- Acceptance Criteria : 13/13 satisfaits (ou DS-documented adaptation).

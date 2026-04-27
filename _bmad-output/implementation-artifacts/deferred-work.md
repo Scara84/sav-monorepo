@@ -1,5 +1,19 @@
 # Travaux différés — sav-monorepo
 
+## Deferred from: code review of 5-4-export-csv-reporting-ad-hoc (2026-04-27)
+
+- **W47 (AA2 LOW) — Streaming CSV non implémenté V1** : la spec AC #5 mentionne le streaming en chunks pour CSV ≥ 1000 lignes (`res.write` + Transfer-Encoding chunked) pour éviter spike mémoire lambda. Le contrat `ApiResponse` actuel n'expose pas `res.write()` ni `pipe()` ; on bufferise tout. Acceptable V1 (≤ 5000 lignes CSV ~500 KB sous budget 1 GB lambda confortable). Si bench réel pousse > 30k lignes, migrer vers async job + OneDrive (cf. Dev Notes Story 5.4 §"Pourquoi pas streaming XLSX ?"). [`api/_lib/reports/export-csv-handler.ts:sendBinary`]
+
+- **W48 (EC18 LOW) — Pas de touche Échap pour fermer le menu Export** : le menu déroulant CSV/XLSX se ferme au mouseleave (souris) ou au clic d'un item. Pas d'Escape handler ni de focus-trap. Accessibilité partielle pour utilisateurs clavier. Fix : `@keydown.esc="closeExportMenu"` sur le wrapper + focus restoration sur le bouton trigger. [`src/features/back-office/views/SavListView.vue:export-csv-wrapper`]
+
+- **W49 (EC15 INFO) — PostgREST `db-max-rows` cap inconnu en prod Supabase** : le handler fait `.limit(50_000)`. Si l'instance Supabase Cloud a `db-max-rows` configuré (pas le cas par défaut, mais possible), notre export sera silencieusement tronqué. À vérifier au déploiement (curl `/rest/v1/sav?limit=50000` doit renvoyer 50k rows si la base les contient). Si limite, soit ajuster `db-max-rows`, soit paginer côté handler (cursor en boucle interne). [`api/_lib/reports/export-csv-handler.ts:HARD_LIMIT_ROWS`]
+
+- **W50 (EC22 INFO) — Vercel response body limit** : Hobby plan = 4.5 MB par défaut. Un XLSX de 50k lignes ≈ 5 MB. Risque de 413 côté Vercel avant que notre handler termine. À monitorer post-déploiement. Fallback Epic 7 : route via OneDrive (upload puis 302 redirect, comme `export-download` Story 5.2). [`api/_lib/reports/export-csv-handler.ts:sendBinary`]
+
+- **W51 (Dev Notes carry-over) — Audit trail `sav_exports` applicatif** : la spec Dev Notes mentionne "défer Epic 7 : ajouter audit trail sav_exports applicatif (pas en DB, logger applicatif centralisé)". Aujourd'hui on log `export.csv.success` avec filters_hash + row_count + durationMs ; pas de persistance DB. Si besoin RGPD pour traçabilité PII export → ajouter un INSERT `audit_trail` côté handler (pattern Story 5.1 trigger PG ou applicatif). [`api/_lib/reports/export-csv-handler.ts:logger.info`]
+
+- **W52 (Bench V1) — Pas de bench rigoureux performance** : Dev Notes Story 5.4 explicitement défère ("volumes Fruitstock prévu : < 5000 lignes / an la 1re année"). Si volumes réels divergent, lancer `scripts/bench/reports.ts` adapté (pattern Story 5.3) avec datasets 1k/5k/30k/50k. Targets AC #5 : < 2s p95 / 1k lignes, < 5s / 5k, < 10s / 50k.
+
 ## Deferred from: code review of 5-8-refonte-auth-operateurs-magic-link (2026-04-27)
 
 - **W36 — `logAuthEvent(...).catch(() => undefined)` swallow silencieusement** : pattern hérité Story 1.5, présent dans tous les handlers magic-link (adhérent + opérateur). Audit log peut être perdu si Supabase RPC indispo. Acceptable en V1 (audit best-effort), mais à traiter transversalement Epic 6 — soit retry queue, soit dégrader le 202 en 503 si l'audit ne passe pas. [`api/auth/operator/{issue,verify}.ts`, `api/auth/magic-link/{issue,verify}.ts`]

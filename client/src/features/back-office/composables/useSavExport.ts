@@ -125,16 +125,22 @@ function triggerBrowserDownload(blob: Blob, fileName: string): void {
   a.download = fileName
   a.style.display = 'none'
   doc.body.appendChild(a)
-  a.click()
-  doc.body.removeChild(a)
-  // Revoke après un microtick pour laisser le browser commencer le download.
-  Promise.resolve().then(() => {
-    try {
-      urlApi.revokeObjectURL(objectUrl)
-    } catch {
-      // ignore — déjà revoke
-    }
-  })
+  // CR 5.4 BH7 — try/finally garantit le cleanup DOM même si `a.click()` jette
+  // (très rare en pratique, mais défense-en-profondeur — un node `<a>` orphelin
+  // resterait sinon dans le DOM jusqu'à navigation).
+  try {
+    a.click()
+  } finally {
+    doc.body.removeChild(a)
+    // Revoke après un microtick pour laisser le browser commencer le download.
+    Promise.resolve().then(() => {
+      try {
+        urlApi.revokeObjectURL(objectUrl)
+      } catch {
+        // ignore — déjà revoke
+      }
+    })
+  }
 }
 
 /**

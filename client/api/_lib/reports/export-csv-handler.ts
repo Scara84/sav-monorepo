@@ -2,6 +2,7 @@ import { ensureRequestId } from '../request-id'
 import { sendError } from '../errors'
 import { logger } from '../logger'
 import { supabaseAdmin } from '../clients/supabase-admin'
+import { withRateLimit } from '../middleware/with-rate-limit'
 import {
   listSavQuerySchema,
   normalizeListQuery,
@@ -134,12 +135,18 @@ function memberFullName(m: RawMember | null): string {
   return m.first_name ? `${m.first_name} ${m.last_name}` : m.last_name
 }
 
-/** Partie locale de l'email (avant `@`) — fallback display_name si email absent. */
+/**
+ * Partie locale de l'email (avant `@`) — fallback display_name si email
+ * absent ou malformé. CR 5.4 EC9 : email commençant par `@` (`@foo.com`)
+ * → `at === 0` → fallback display_name.
+ */
 function emailShort(a: RawAssignee | null): string {
   if (!a) return ''
   const at = a.email.indexOf('@')
   if (at > 0) return a.email.slice(0, at)
-  return a.email || a.display_name || ''
+  // at === 0 (email malformé) ou at === -1 (pas de @) → fallback display_name
+  // si dispo, sinon l'email tel quel (préférable à vide pour traçabilité).
+  return a.display_name || a.email || ''
 }
 
 /**
@@ -330,7 +337,7 @@ function sendBinary(res: ApiResponse, buffer: Buffer, contentType: string, fileN
   ;(res.end as unknown as (chunk: Buffer) => void)(buffer)
 }
 
-export const exportSavCsvHandler: ApiHandler = async (req, res) => {
+const coreHandler: ApiHandler = async (req, res) => {
   const requestId = ensureRequestId(req)
   const startedAt = Date.now()
   const user = req.user
@@ -516,6 +523,27 @@ export const exportSavCsvHandler: ApiHandler = async (req, res) => {
   }
 }
 
+/**
+ * Pipeline final : rate-limit (CR 5.4 EC4) → coreHandler.
+ * Rate-limit : 6 exports/min/opérateur, clé `op:<sub>` (SessionUser.sub,
+ * non-spoofable). Pourquoi 6/min : un export prend 1-10 s côté Vercel ;
+ * 6/min couvre largement le besoin légitime (expérimentation filtres) tout
+ * en bloquant un opérateur défaillant qui spam le bouton ou un script
+ * malveillant qui voudrait OOM le lambda en concurrence.
+ *
+ * `withAuth` est posé en amont par le router `api/pilotage.ts`.
+ */
+export const exportSavCsvHandler: ApiHandler = async (req, res) => {
+  const composed = withRateLimit({
+    bucketPrefix: 'reports:export-csv',
+    keyFrom: (r: ApiRequest) =>
+      r.user && r.user.type === 'operator' ? `op:${r.user.sub}` : undefined,
+    max: 6,
+    window: '1m',
+  })(coreHandler)
+  return composed(req, res)
+}
+
 /** Exposed for tests. */
 export const __testables = {
   applyFilters,
@@ -525,4 +553,5 @@ export const __testables = {
   isoDate,
   memberFullName,
   emailShort,
+  coreHandler,
 }
