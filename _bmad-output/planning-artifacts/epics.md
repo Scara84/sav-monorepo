@@ -1014,6 +1014,78 @@ So que l'architecture « pattern générique » est validée avant prod.
 **When** je génère un export MARTINEZ
 **Then** le XLSX est produit avec les colonnes et mappings spécifiques MARTINEZ, aucun changement dans `supplierExportBuilder.ts`
 
+### Story 5.7: Cutover Make → app — parité fonctionnelle Pennylane + emails
+
+As a tech lead,
+I want que refonte-phase-2 atteigne la parité fonctionnelle avec les 2 scénarios Make actuels (Pennylane GET + emails post-soumission), sans Trello,
+So que le cutover Make peut s'effectuer sans dépendance externe résiduelle (à part Pennylane API directe).
+
+**Contexte (audit Make 2026-04-27)** : la prod actuelle (`main`) utilise 2 scénarios Make :
+- Scenario 3197846 — `APP SAV CLIENT = Facture Pennylane GET` (récup facture Pennylane par référence + email du client, avec validation double facteur)
+- Scenario 3203836 — `APP SAV SERVER - MAILS TRELLO` (à la soumission : email sav@fruitstock.eu + carte Trello + accusé client)
+
+Décisions cutover (2026-04-27) :
+- **Trello** : tué — le back-office Vue (`/admin/sav` Liste + Détail) couvre le besoin opérationnel.
+- **Pennylane** : option A — réimplémentation native côté refonte-phase-2 (pas de proxy Make).
+- **Emails** : portés sur `client/api/_lib/clients/smtp.ts` existant.
+
+**Acceptance Criteria:**
+
+**AC #1 — Endpoint `GET /api/invoices/lookup` (remplace Make scenario 1)**
+**Given** un client externe (anon, pas de session)
+**When** il GET `/api/invoices/lookup?ref=<invoice_number>&email=<customer_email>`
+**Then** le handler `invoiceLookupHandler` :
+1. Valide `ref` (regex F-NNNN-NNNNN ou tolérant) + `email` (z.string().email()) via Zod
+2. Appelle Pennylane API (retrieveinvoice) via un client Node officiel ou fetch wrappé
+3. Vérifie que `email` est dans `invoice.customer.emails`
+4. Si KO ref → 400 INVOICE_NOT_FOUND
+5. Si KO email → 400 EMAIL_MISMATCH
+6. Si OK → 200 `{ invoice: {...} }` (même payload que Make scenario 1)
+**And** rate limit appliqué (5 req/min/IP) pour éviter brute-force d'emails
+**And** logs `invoice.lookup.success/.failed` (anonymisés sur l'email)
+
+**AC #2 — Endpoint `POST /api/webhooks/capture` (déjà existant Story 2.2) déclenche les emails post-INSERT**
+**Given** un INSERT réussi dans `sav` via `capture_sav_from_webhook`
+**When** le handler termine sans erreur
+**Then** déclenche 2 emails via `sendMail()` (`smtp.ts`) :
+1. Email interne à `sav@fruitstock.eu` : sujet `Demande SAV {special_mention} - {invoice.label}`, contenu HTML avec table des items + lien dossier OneDrive
+2. Email accusé réception au client : sujet `Demande SAV Facture {invoice_number}`, contenu HTML « Bonjour {name}, nous confirmons... »
+**And** les emails sont envoyés en best-effort (un échec SMTP ne fait pas échouer le webhook capture, log d'erreur)
+**And** les templates HTML reproduisent fidèlement ceux du scenario 2 Make (test snapshot)
+
+**AC #3 — Suppression Trello (pas d'intégration ajoutée)**
+**Given** la prod cutover refonte-phase-2
+**When** un nouveau SAV arrive
+**Then** aucune carte Trello n'est créée — le back-office Vue (Liste SAV) joue le rôle de kanban opérationnel via les filtres et la pagination.
+
+**AC #4 — Variables d'environnement**
+**Given** le déploiement
+**When** `npx vercel dev` ou Vercel Production démarre
+**Then** les env vars suivantes sont requises et documentées :
+- `PENNYLANE_API_KEY` (nouvelle — récup facture)
+- `PENNYLANE_API_BASE_URL` (par défaut `https://app.pennylane.com/api/external/v1`)
+- `SMTP_HOST`, `SMTP_PORT`, `SMTP_SECURE`, `SMTP_USER`, `SMTP_PASSWORD` (déjà partiellement utilisées par magic-link)
+- `SMTP_FROM_SAV` (nouvelle — adresse from des emails SAV, ex `sav@fruitstock.eu`)
+- `SMTP_NOTIFY_INTERNAL` (nouvelle — destinataire interne, ex `sav@fruitstock.eu`)
+
+**AC #5 — Tests**
+- 6+ tests unitaires `invoice-lookup.spec.ts` : happy path, ref invalide, email mismatch, Pennylane 404, Pennylane 500, rate limit
+- 4+ tests unitaires `capture-emails.spec.ts` : email interne envoyé, accusé client envoyé, échec SMTP n'empêche pas le 200, templates HTML respectent le format
+
+**AC #6 — Migration phase de double-écriture**
+**Given** la story 5.7 mergée en preview/staging stable
+**When** le scenario Make 2 est en parallèle
+**Then** Make scenario 2 est modifié (par Antho via UI Make) pour AUSSI POST sur `https://<URL staging>/api/webhooks/capture` en plus de son flow actuel email + Trello + accusé. Cette modification ne casse pas l'existant. Période de validation min 1 semaine.
+
+**AC #7 — Cutover effectif**
+**Given** la phase double-écriture validée (≥ 100 SAV en cohérence DB Supabase ↔ Trello/email)
+**When** Antho lance le cutover :
+1. Frontend (déjà sur l'URL prod après merge refonte-phase-2 → main) appelle `/api/invoices/lookup` au lieu du webhook Make scenario 1
+2. Frontend POST `/api/webhooks/capture` au lieu du webhook Make scenario 2
+3. Make scenario 2 désactivé (`isPaused: true`)
+4. Make scenario 1 désactivé (Pennylane natif prend le relais)
+**Then** zéro dépendance Make en runtime. Les 2 scenarios restent en `disabled` pendant 30 j puis sont supprimés.
+
 ---
 
 ## Epic 6: Espace self-service adhérent + responsable + notifications
