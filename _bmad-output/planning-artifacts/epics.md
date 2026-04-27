@@ -1014,6 +1014,90 @@ So que l'architecture « pattern générique » est validée avant prod.
 **When** je génère un export MARTINEZ
 **Then** le XLSX est produit avec les colonnes et mappings spécifiques MARTINEZ, aucun changement dans `supplierExportBuilder.ts`
 
+### Story 5.8: Refonte auth opérateurs — magic link sur `operators` (suppression MSAL utilisateur)
+
+As a tech lead,
+I want que les opérateurs Fruitstock se loggent sur le back-office via magic link email (sans nécessiter de compte Microsoft 365 individuel) tout en conservant l'accès machine-to-machine du backend à Microsoft Graph (OneDrive, etc.) via service principal,
+So que l'app puisse être utilisée par des employés qui n'ont pas (ou ne veulent pas avoir) de compte M365, tout en gardant la sécurité, traçabilité et révocation rapide de l'auth.
+
+**Contexte décisionnel (2026-04-27)** : décision prise après tentative d'onboarding MSAL : exiger un compte Microsoft 365 individuel par opérateur n'est pas acceptable côté produit (charge admin Fruitstock, opérateurs externes/saisonniers). Le service principal Microsoft est conservé pour les appels backend (Graph API OneDrive, Pennylane futur). L'auth utilisateur passe sur magic link email, en réutilisant la mécanique existante des adhérents (`client/api/auth/magic-link/`).
+
+**Acceptance Criteria:**
+
+**AC #1 — Schema `operators` adapté**
+**Given** la migration `2026MMDD_operators_magic_link.sql`
+**When** elle s'applique
+**Then** :
+1. Colonne `azure_oid` rendue **nullable** (rétrocompat — les opérateurs déjà créés via MSAL gardent leur OID, mais ne sera plus utilisé pour l'auth)
+2. Aucun ajout de colonne password (magic link only)
+3. Index `idx_operators_email_active` (email) WHERE is_active=true créé pour le lookup magic-link
+4. Documentation in-migration : le mécanisme d'auth est désormais `magic_link_tokens` réutilisé (table existante) avec discriminant `target_kind='operator'` (à ajouter à `magic_link_tokens` si pas déjà présent)
+
+**AC #2 — Endpoint `POST /api/auth/operator/login` (request magic link)**
+**Given** un email opérateur
+**When** POST `/api/auth/operator/login` `{ email }`
+**Then** :
+1. Validation Zod email
+2. Lookup `operators` par email + is_active=true
+3. Si trouvé : génération token magic-link (réutilise infra `magic-link-token-issue.ts`), envoi email avec lien `/admin/login/verify?token=<jwt>`, réponse 200 (sans révéler l'existence du compte — anti-énumération)
+4. Si pas trouvé : même réponse 200 (anti-énumération), pas d'email envoyé
+5. Rate limit (5 req/min/IP) anti-spam
+
+**AC #3 — Endpoint `GET /api/auth/operator/verify`**
+**Given** un click sur le lien magic-link
+**When** GET `/api/auth/operator/verify?token=<jwt>`
+**Then** :
+1. Vérifie le token (signature, expiration ≤ 15 min, single-use)
+2. Marque le token consommé en DB
+3. Émet cookie session opérateur 8h (TTL configurable, voir AC #6)
+4. Logue `operator_login_magic_link` dans `auth_events`
+5. Redirect 302 vers `/admin`
+
+**AC #4 — Frontend page login**
+**Given** un opérateur non authentifié qui tape `/admin/sav`
+**When** la route Vue détecte l'absence de cookie session
+**Then** redirect vers `/admin/login` qui affiche :
+1. Champ email + bouton « Recevoir mon lien de connexion »
+2. Après submit : message « Si votre compte existe, un lien vient d'être envoyé à <email> »
+3. Mention « Le lien expire dans 15 min »
+4. Pas de champ password, pas de bouton "Sign in with Microsoft"
+
+**AC #5 — Suppression du flow MSAL utilisateur**
+**Given** la story livrée
+**When** un opérateur est sur `/admin/login`
+**Then** :
+1. Les routes `/api/auth/msal/login` et `/api/auth/msal/callback` sont **supprimées**
+2. Les env vars `MICROSOFT_TENANT_ID/CLIENT_ID/CLIENT_SECRET` sont conservées (utilisées par le backend pour Graph API — service principal)
+3. Le code de `client/api/_lib/auth/msal.ts` est **réduit** au strict nécessaire pour Graph (acquisition de token client_credentials machine-to-machine), pas d'auth utilisateur
+
+**AC #6 — Configuration TTL session**
+**Given** la variable d'env `OPERATOR_SESSION_TTL_HOURS` (défaut 8)
+**When** un cookie session est émis
+**Then** son TTL est `OPERATOR_SESSION_TTL_HOURS * 3600` secondes
+
+**AC #7 — UI admin opérateurs (basique, pas de page dédiée V1)**
+**Given** la table `operators`
+**When** un nouvel employé doit être ajouté
+**Then** documentation `docs/operator-onboarding.md` explique :
+1. Comment ajouter un opérateur via SQL Studio (SQL prêt-à-coller)
+2. Comment désactiver un opérateur (`UPDATE is_active = false`)
+3. Une page UI dédiée (Admin → Opérateurs) sera traitée en Story Epic 6 ou plus tard
+
+**AC #8 — Tests**
+- 5+ tests unitaires `operator-login.spec.ts` : email valide → token émis, email inexistant → 200 (anti-énum, pas d'email envoyé), rate limit, format invalide.
+- 5+ tests unitaires `operator-verify.spec.ts` : token valide → session, token expiré → 401, token déjà consommé → 401, signature invalide → 401, opérateur désactivé après émission → 401.
+
+**AC #9 — Migration pas-de-régression**
+**Given** la base actuelle (Story 5.3) qui contient potentiellement déjà des opérateurs créés via MSAL
+**When** la migration de Story 5.8 s'applique
+**Then** les opérateurs existants restent valides (leur ligne `operators` reste en place avec azure_oid nullable mais conservé). Au premier login post-migration, ils utilisent magic link au lieu de MSAL.
+
+**Effort estimé** : 2-3 jours dev + 1 jour test/doc.
+
+**Priorité** : à faire **avant** le cutover Make (5.7) et le merge prod, pour éviter de basculer les employés sur MSAL qu'on enlèvera après. Idéalement avant 5.4/5.5/5.6 aussi pour onboarder les premiers vrais utilisateurs en magic-link directement.
+
+---
+
 ### Story 5.7: Cutover Make → app — parité fonctionnelle Pennylane + emails
 
 As a tech lead,

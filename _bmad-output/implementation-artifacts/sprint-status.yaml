@@ -425,6 +425,7 @@ development_status:
   5-5-job-cron-alertes-seuil-produit-config-admin: ready-for-dev
   5-6-ajout-d-un-deuxieme-fournisseur-validation-architecture: ready-for-dev
   5-7-cutover-make-pennylane-emails: backlog  # ajoutée 2026-04-27 suite audit Make + décisions cutover
+  5-8-refonte-auth-operateurs-magic-link: backlog  # ajoutée 2026-04-27 suite décision : pas de M365 par employé, magic link sur operators (réutilise infra adhérents). PRIORITÉ : avant 5.7 et avant onboarding réel d'opérateurs.
   epic-5-retrospective: optional
 
   # ──────────────────────────────────────────────────────────────

@@ -87,6 +87,14 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
   })
 
   if (!operator) {
+    // [DEV ONLY] log explicite de l'azure_oid + email pour faciliter
+    // l'onboarding du premier opérateur. À retirer après refonte auth.
+    logger.warn('[DEV ONBOARDING] MSAL denied — copy these values to register operator', {
+      requestId,
+      azure_oid: identity.azureOid,
+      email: identity.email,
+      display_name: identity.displayName,
+    })
     const deniedEvent: Parameters<typeof logAuthEvent>[0] = {
       eventType: 'msal_denied',
       emailHash: createHash('sha256').update(identity.email).digest('hex'),
