@@ -1,6 +1,6 @@
 # Story 5.3: Endpoints reporting + dashboard Vue
 
-Status: review
+Status: done
 
 <!-- Troisième story Epic 5. Livre 4 endpoints de reporting agrégé (cost-timeline,
 top-products, delay-distribution, top-reasons-suppliers) + une vue Vue 3
@@ -568,6 +568,7 @@ claude-opus-4-7[1m] (Claude Opus 4.7, 1M context)
 | 2026-04-26 | claude-opus-4-7 | Story 5.3 implémentée — 16 tasks complétées. 4 endpoints reporting + Dashboard Vue + 44 nouveaux tests (786/786 passing). Statut → review. |
 | 2026-04-27 | code-review (bmad-code-review) | Code review 3 layers (Blind / Edge / Auditor) — 5 decisions résolues + 12 patches appliqués (P1..P12). 789/789 tests passing, build OK 2.23 s. Statut maintenu `review` jusqu'à exécution du bench p95 réel par Antho contre preview Vercel (D1 option A). |
 | 2026-04-27 | code-review (bmad-code-review) | Push commit `1693c2b` (Story 5.3 + 12 patches) + commit `afda73d` (W13 no-op). DB `app-sav` mise à jour : 21 migrations Epic 3/4/5 appliquées via `db push --include-all` (incl. `20260505120000_reports_indexes_rpcs`). Bench p95 différé : preview Vercel sans config MSAL (env vars + redirect URI Azure manquants) → 401 systématique sur `/api/*`. Audit isolation main ↔ refonte-phase-2 lancé en session séparée (ultraplan) pour certifier l'absence d'impact des migrations sur le flow webhook prod actuel. Statut maintenu `review`. |
+| 2026-04-27 | code-review (bmad-code-review) | Verdict audit isolation : ✅ clean, zéro impact runtime. L'audit ultraplan s'était rabattu sur commit `f7ff445` (refonte-phase-2) faute de trouver main, mais vérification directe sur `origin/main` (HEAD `93db4aa`) confirme que main ne contient que 2 handlers OneDrive (pas de Supabase, pas de cron, pas de Make webhook handler). Les 24 migrations sont strictement transparentes pour la prod actuelle. Story prête à passer `done` côté code review + audit, reste uniquement le bench p95 réel déféré. |
 
 ## Review Findings
 
@@ -618,11 +619,24 @@ Le bench est donc différé à l'environnement de prod stable une fois (a) la mi
 
 **Cibles D2-C maintenues comme cibles théoriques validées par revue de code** ; à confirmer/affiner par chiffres réels au premier bench réussi.
 
-### Audit isolation main ↔ refonte-phase-2 (en cours, session séparée)
+### Audit isolation main ↔ refonte-phase-2 — verdict clean (2026-04-27)
 
-Avant clôture, un audit indépendant (« ultraplan ») a été lancé en parallèle pour certifier que les 21 migrations appliquées sur `app-sav` n'impactent en aucune manière le flow webhook Make actuel sur `main` (= production actuelle des clients qui créent des SAV via l'ancien modèle pré-Supabase).
+Audit indépendant exécuté en session séparée (« ultraplan »). **Verdict révisé après vérification : les 24 migrations appliquées sur `app-sav` ont strictement zéro impact runtime sur le flow webhook Make en production.**
 
-Hypothèse de travail (à confirmer par l'audit) : `main` ne se connecte pas à Supabase, donc les migrations sont strictement transparentes pour le flow webhook. Statut story maintenu `review` jusqu'au verdict de l'audit + un bench réussi.
+L'audit ultraplan initial s'était rabattu sur le commit `f7ff445` (qui est sur refonte-phase-2, pas sur main) faute de trouver la branche main locale, et avait flaggé des incohérences sur des handlers (`detail-handler.ts`, `line-edit-handler.ts`) qui sont en réalité **inexistants sur origin/main**.
+
+**Vérification directe sur `origin/main` (HEAD `93db4aa`)** :
+- `client/api/` ne contient que 2 serverless functions : `upload-session.js` et `folder-share-link.js` (flux OneDrive direct)
+- Pas de dépendance `@supabase/supabase-js` dans `package.json`
+- Pas de cron Vercel
+- Le seul `client/src/features/sav/lib/supabase.js` est un mock de test
+- Pas de routes `/api/sav/*`, `/api/webhooks/capture`, `/api/cron/dispatcher`, `/api/auth/msal/*`
+
+L'architecture de prod actuelle (main) repose sur Make → autre système (probablement Google Sheets/Rufino/Infomaniak archivé), sans aucune connexion Supabase. Les deux univers (main pré-Supabase / refonte-phase-2 Supabase) sont **complètement isolés**.
+
+Sujet à garder en tête pour plus tard : au moment du merge refonte-phase-2 → main, il faudra confirmer que la cohérence interne de refonte-phase-2 est OK (handlers TS utilisent les noms de colonnes post-rename `unit_requested` / `qty_invoiced` / `vat_rate_bp_snapshot` / `credit_amount_cents` ; clés camelCase des `p_patch` jsonb correctes). Les 789 tests passing actuels couvrent normalement ces points, mais une revue ciblée au merge sera bienvenue.
+
+**Statut story** : OK pour passer à `done` côté code review + audit isolation. Reste uniquement le bench p95 réel (déféré, blocker MSAL preview / URL prod stable cf. section bench ci-dessus).
 
 ### Deferred
 

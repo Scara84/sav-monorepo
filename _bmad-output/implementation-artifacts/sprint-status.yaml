@@ -38,7 +38,7 @@
 # - Une story passe par 'review' avant 'done' (via bmad-code-review)
 
 generated: 2026-04-18
-last_updated: 2026-04-25
+last_updated: 2026-04-27
 # 2026-04-25 : session polish moyen — 8 W## résolus (cohérence settings,
 # retry PDF Graph API, micro-fixes DB/UX). 6 commits atomiques sur
 # refonte-phase-2 (à pusher séparément quand prêt) :
@@ -420,7 +420,7 @@ development_status:
   epic-5: in-progress  # démarré 2026-04-24 avec Story 5.1
   5-1-architecture-export-generique-config-rufino-migration: done
   5-2-endpoint-export-fournisseur-ui-back-office: done
-  5-3-endpoints-reporting-dashboard-vue: review
+  5-3-endpoints-reporting-dashboard-vue: done
   5-4-export-csv-reporting-ad-hoc: ready-for-dev
   5-5-job-cron-alertes-seuil-produit-config-admin: ready-for-dev
   5-6-ajout-d-un-deuxieme-fournisseur-validation-architecture: ready-for-dev
