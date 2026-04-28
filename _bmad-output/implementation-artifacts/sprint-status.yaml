@@ -1,5 +1,5 @@
 # generated: 2026-04-18
-# last_updated: 2026-04-28 (Story 5.4 second-pass CR — done)
+# last_updated: 2026-04-28 (Story 5.5 CR — done)
 # project: sav-monorepo
 # project_key: NOKEY
 # tracking_system: file-system
@@ -422,7 +422,7 @@ development_status:
   5-2-endpoint-export-fournisseur-ui-back-office: done
   5-3-endpoints-reporting-dashboard-vue: done
   5-4-export-csv-reporting-ad-hoc: done  # DS+CR complets 2026-04-27 (3 patches initiaux). Second-pass CR adversarial 3 couches 2026-04-28 → 14 patches additionnels appliqués (P1 CSV-injection, P2 formatEurFr round, P3 format ambigu, P4 member nullable, P5 revoke 30s, P6 q-routing anchored, P7 aborted statut discriminé, P8 hashFilters canon, P9 downloading counter, P10 truncation log warn, P11 supplier trim, P12 Excel cap 32k, P13 EMPTY_RESULT, P14 toast auto-dismiss) + 3 defers W53-W55. Suite 866/866 verte, bundle 460.44 KB ≡ baseline.
-  5-5-job-cron-alertes-seuil-produit-config-admin: ready-for-dev
+  5-5-job-cron-alertes-seuil-produit-config-admin: done  # 2026-04-28 CR adversarial 3 couches : 2 décisions tranchées + 29 patches + 11 defers W57-W67. Migration hardening 20260507140000 (S1 GRANT/REVOKE, R10 soft-delete filter, D6 bigint, D8 immutable trigger, RPC update_settings_threshold_alert + RPC enqueue_threshold_alert transactionnelle). Runner refactor try/catch per-product + normalize emails + NaN/SafeInteger guards + .gte boundary + CRLF strip + APP_BASE_URL fail-fast prod + order received_at + alerts_failed. PATCH handler via RPC + 23505→409 CONCURRENT_PATCH + rate-limit 10/15min/op + Zod .strict + notes control-chars refine. UI selectTab preserve null + formHydrated/formIsValid + onBeforeUnmount toast. AC #5 amendée (logo image différé V2). 912/912 Vitest (+7), typecheck 0, lint:business 0, build 460.72 KB stable. E2E AC #15 complet 2026-04-28 (steps 1-4+6 SQL/curl, step 5 UI via Chrome DevTools MCP) : W67 résolu, voir 5-5-validation-e2e.md + screenshots 5-5-step5-0{1,2,3}-*.png. Migration Story 5.8 `20260506130000_operators_magic_link` appliquée sur préview au passage (manquait).
   5-6-ajout-d-un-deuxieme-fournisseur-validation-architecture: ready-for-dev
   5-7-cutover-make-pennylane-emails: backlog  # ajoutée 2026-04-27 suite audit Make + décisions cutover
   5-8-refonte-auth-operateurs-magic-link: done  # DS+CR complets 2026-04-27, magic link sur operators (réutilise infra adhérents). 5 patches CR appliqués + 11 items deferred. Suite 795/795 verte.

@@ -19,6 +19,9 @@
         <router-link :to="{ name: 'admin-export-history' }" class="nav-link">
           <span aria-hidden="true">📦</span> Exports
         </router-link>
+        <router-link :to="{ name: 'admin-settings' }" class="nav-link">
+          <span aria-hidden="true">⚙️</span> Paramètres
+        </router-link>
       </nav>
     </header>
     <main class="bo-main">

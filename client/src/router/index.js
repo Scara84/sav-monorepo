@@ -61,6 +61,13 @@ const routes = [
         name: 'admin-dashboard',
         component: () => import('@/features/back-office/views/DashboardView.vue'),
       },
+      {
+        // Story 5.5 — admin settings versionnés (V1 onglet Seuils alerte produit).
+        path: 'settings',
+        name: 'admin-settings',
+        component: () => import('@/features/back-office/views/admin/SettingsAdminView.vue'),
+        meta: { requiresAuth: 'operator', roles: ['admin'] },
+      },
     ],
   },
 ]

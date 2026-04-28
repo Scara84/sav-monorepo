@@ -528,3 +528,97 @@ Tous via `/api/reports/*` (cf. `docs/api-contracts-vercel.md` §Story 5.3). Chaq
 
 - Spec : `_bmad-output/planning-artifacts/epics.md:951-973`, `prd.md:1252-1257`, `prd.md:1525-1529` (FR52-FR55, AC-2.5.3).
 - Story créatrice : `_bmad-output/implementation-artifacts/5-3-endpoints-reporting-dashboard-vue.md`.
+
+## Admin settings versionnés + cron alertes seuil produit (Epic 5 Story 5.5)
+
+### Vue d'ensemble
+
+Story 5.5 livre la détection automatique des produits dépassant un seuil
+paramétrable de SAV (PRD FR48 / AC-2.5.4) et l'écran admin associé pour
+ajuster les paramètres sans déploiement.
+
+### Cron jobs
+
+Le dispatcher quotidien `api/cron/dispatcher.ts` (1×/jour à 03:00 UTC,
+schedule `0 3 * * *`) compte désormais **4 jobs** :
+
+| Job                | Module                                  | Effet                                                    |
+| ------------------ | --------------------------------------- | -------------------------------------------------------- |
+| `cleanupRateLimits`| `cron-runners/cleanup-rate-limits.ts`   | Purge rate_limit_buckets > 2 h                           |
+| `purgeTokens`      | `cron-runners/purge-tokens.ts`          | Purge magic_link_tokens expirés                          |
+| `purgeDrafts`      | `cron-runners/purge-drafts.ts`          | Purge sav_drafts > 30 j                                  |
+| `thresholdAlerts`  | `cron-runners/threshold-alerts.ts`      | Détection seuil produit + enqueue email_outbox + dédup   |
+
+`thresholdAlerts` retourne :
+
+```ts
+{
+  products_over_threshold: number;
+  alerts_enqueued: number;
+  alerts_skipped_dedup: number;
+  settings_used: { count, days, dedup_hours };
+  duration_ms: number;
+}
+```
+
+Aucun nouveau slot Vercel cron consommé (Hobby plafond 2/jour préservé).
+
+### UI admin
+
+`features/back-office/views/admin/SettingsAdminView.vue` propose une
+structure tabbed extensible. V1 : un onglet **Seuils** dédié à
+`threshold_alert` (PRD FR48). Story 7.4 ajoutera d'autres onglets (TVA
+défaut, remise responsable, dossier OneDrive, etc.).
+
+Layout :
+
+- Form 3 champs (nombre SAV, fenêtre jours, dédup heures) + note
+  optionnelle.
+- Bouton « Enregistrer » → PATCH `/api/admin/settings/threshold_alert`
+  via composable `useAdminSettings` (pattern AbortController + toast
+  cohérent Story 5.2 useSupplierExport).
+- Tableau historique (5 dernières versions) avec ligne active highlight.
+
+### Routing
+
+```
+/admin/settings (?tab=thresholds) → SettingsAdminView (async)
+```
+
+`router/index.js` ajoute la route avec `meta.roles=['admin']` (le router
+guard rejette les sav-operator). Lien nav dans `BackOfficeLayout.vue` :
+`Liste SAV | Dashboard | Exports | Paramètres`.
+
+### Tests
+
+- `useAdminSettings.spec.ts` — 6 tests (loadHistory query string,
+  loadCurrent dérive l'item actif, updateThreshold body PATCH,
+  ROLE_NOT_ALLOWED toast FR, GATEWAY mapping 5xx, NETWORK fallback).
+- `SettingsAdminView.spec.ts` — 4 tests (initial render + valeurs
+  pré-remplies, click Enregistrer + toast success, 403 toast erreur,
+  historique rendu avec ligne active).
+- `cron/threshold-alerts.spec.ts` — 10 tests (happy path, dédup,
+  multi-produits, no operators, settings missing/invalid, idempotence,
+  outbox failure, Zod limites).
+- `emails/threshold-alert-template.spec.ts` — 8 tests (subject, vars
+  substituées, links SAV/settings, escape XSS, html bien formé).
+- `admin/settings-threshold.spec.ts` — 11 tests (PATCH happy + 400 + 403
+  + 500 ; GET history + limit défaut + 400 + 403 + 500).
+- `cron/dispatcher.spec.ts` — étendu à 3 tests (dispatcher exécute les
+  4 jobs ; un job qui throw n'arrête pas les autres).
+
+### Dépendance Epic 6.6
+
+Les emails enqueueés par `runThresholdAlerts` restent en
+`status='pending'`. Le cron `retry-emails.ts` (Story 6.6) activera la
+délivrance SMTP. V1 Epic 5 : détection + audit trail + signal admin.
+
+### Référence
+
+- Spec : `_bmad-output/planning-artifacts/epics.md:988-1003`,
+  `prd.md:1245`, `prd.md:1257`, `prd.md:1531-1532`, `prd.md:1538`
+  (FR48, FR57, AC-2.5.4).
+- Story créatrice :
+  `_bmad-output/implementation-artifacts/5-5-job-cron-alertes-seuil-produit-config-admin.md`.
+- Validation E2E préview :
+  `_bmad-output/implementation-artifacts/5-5-validation-e2e.md`.

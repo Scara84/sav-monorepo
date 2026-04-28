@@ -86,6 +86,14 @@
       "destination": "/api/pilotage?op=export-csv"
     },
     {
+      "source": "/api/admin/settings/threshold_alert",
+      "destination": "/api/pilotage?op=admin-settings-threshold-patch"
+    },
+    {
+      "source": "/api/admin/settings/threshold_alert/history",
+      "destination": "/api/pilotage?op=admin-settings-threshold-history"
+    },
+    {
       "source": "/((?!api/|assets/|src/|@vite/|@id/|@fs/|node_modules/|favicon\\.ico|robots\\.txt|.*\\.(?:js|css|vue|ts|tsx|json|map|png|jpg|jpeg|svg|ico|webp|woff2?)).*)",
       "destination": "/index.html"
     }

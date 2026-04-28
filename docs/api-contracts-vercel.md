@@ -1058,3 +1058,149 @@ du router existant, pas de nouveau slot).
 `export.csv.fetch_failed`. Champ `filters_hash` (hash 8-chars non-crypto
 des filtres normalisés) corrèle les exports d'un même opérateur sans
 logger les valeurs PII (email, member_id, etc.).
+
+## Epic 5 Story 5.5 — Admin seuils + cron alertes produit
+
+### Vue d'ensemble
+
+Story 5.5 livre la détection automatique des produits dépassant un seuil
+paramétrable de SAV sur fenêtre glissante (PRD FR48 / AC-2.5.4) :
+
+- **Détection + dédup + enqueue** côté cron : `runThresholdAlerts()` étend
+  le dispatcher quotidien existant (pas de nouveau slot Vercel cron). Les
+  alertes sont enqueueées dans `email_outbox` avec `kind='threshold_alert'`.
+- **Délivrance SMTP** : prise en charge par le cron `retry-emails.ts` Epic
+  6.6 (les emails restent en `status='pending'` V1 Epic 5 — dépendance
+  documentée et acceptée).
+- **Configuration admin** : 2 endpoints dans `api/pilotage.ts`
+  (`admin-settings-threshold-patch` PATCH + `admin-settings-threshold-history` GET).
+
+### `PATCH /api/admin/settings/threshold_alert`
+
+Crée une nouvelle version active de la clé settings `threshold_alert`. Le
+trigger `trg_settings_close_previous` (migration 20260504120000) ferme
+automatiquement la version précédente.
+
+#### Auth
+
+- `withAuth({ types: ['operator'] })` au router pilotage.
+- Check manuel `role === 'admin'` dans le handler. Un sav-operator est
+  rejeté en 403 `ROLE_NOT_ALLOWED`.
+
+#### Body
+
+```json
+{ "count": 5, "days": 7, "dedup_hours": 24, "notes": "optionnel" }
+```
+
+| champ         | type          | min | max  |
+| ------------- | ------------- | --- | ---- |
+| `count`       | int           | 1   | 100  |
+| `days`        | int           | 1   | 365  |
+| `dedup_hours` | int           | 1   | 168  |
+| `notes`       | string?       | —   | 500c |
+
+#### Réponses
+
+| HTTP | `details.code`      | Signification                                          |
+| ---- | ------------------- | ------------------------------------------------------ |
+| 200  | —                   | nouvelle version créée                                 |
+| 400  | `INVALID_BODY`      | Zod failure (valeurs hors bornes, types incorrects)    |
+| 401  | `UNAUTHENTICATED`   | session absente / expirée                              |
+| 403  | `ROLE_NOT_ALLOWED`  | role != admin                                          |
+| 405  | (Allow: PATCH)      | méthode autre que PATCH                                |
+| 500  | `PERSIST_FAILED`    | INSERT settings échoué (unique violation, db down…)   |
+
+Réponse 200 :
+
+```json
+{
+  "data": {
+    "id": 99,
+    "key": "threshold_alert",
+    "value": { "count": 5, "days": 7, "dedup_hours": 24 },
+    "valid_from": "2026-04-28T10:00:00Z",
+    "valid_to": null,
+    "updated_by": 9,
+    "notes": "Tightening threshold",
+    "created_at": "2026-04-28T10:00:00Z"
+  }
+}
+```
+
+### `GET /api/admin/settings/threshold_alert/history`
+
+Liste les N dernières versions (DESC `valid_from, id`).
+
+#### Query params
+
+| param   | type | défaut | min | max |
+| ------- | ---- | ------ | --- | --- |
+| `limit` | int  | 10     | 1   | 50  |
+
+#### Réponse 200
+
+```json
+{
+  "data": {
+    "items": [
+      {
+        "id": 99,
+        "value": { "count": 5, "days": 7, "dedup_hours": 24 },
+        "valid_from": "2026-04-28T10:00:00Z",
+        "valid_to": null,
+        "notes": null,
+        "created_at": "2026-04-28T10:00:00Z",
+        "updated_by": { "id": 9, "email_display_short": "admin" }
+      }
+    ]
+  }
+}
+```
+
+L'email opérateur est tronqué au préfixe avant `@` (PII-limité, cohérent
+Epic 3 F36/F37 + Story 5.2 export-history).
+
+### Cron runner `threshold-alerts.ts`
+
+Étend `api/cron/dispatcher.ts` (3 → 4 jobs) :
+
+```ts
+await safeRun(results, 'thresholdAlerts', () => runThresholdAlerts({ requestId }), requestId)
+```
+
+Pipeline :
+
+1. Charge `settings.threshold_alert` (fail fast `SETTINGS_MISSING_THRESHOLD_ALERT`
+   si absent, `SETTINGS_INVALID_THRESHOLD_ALERT` si bornes Zod KO).
+2. Récupère opérateurs actifs (`is_active=true`, role IN admin/sav-operator)
+   en 1 lookup (pas N+1).
+3. RPC `report_products_over_threshold(p_days, p_count)` → liste produits
+   à alerter, triée DESC sav_count.
+4. Pour chaque produit :
+   - Skip si `threshold_alert_sent` contient une trace > now() − dedup_hours.
+   - Sinon : INSERT `threshold_alert_sent` (snapshot seuils utilisés) AVANT
+     INSERT outbox (audit préservé même si aucun opérateur, et idempotence
+     re-run).
+   - Render template HTML inline (`renderThresholdAlertEmail`), enqueue
+     1 row `email_outbox` par opérateur (pas de BCC — facilite retry/dédup
+     par destinataire).
+5. Retourne `{ products_over_threshold, alerts_enqueued, alerts_skipped_dedup,
+   settings_used, duration_ms }`.
+
+### Routing Vercel — rewrites ajoutés Story 5.5
+
+```
+PATCH /api/admin/settings/threshold_alert         → /api/pilotage?op=admin-settings-threshold-patch
+GET   /api/admin/settings/threshold_alert/history → /api/pilotage?op=admin-settings-threshold-history
+```
+
+`api/pilotage.ts` cap à **12/12 functions Vercel Hobby** maintenu (Story 5.5
+absorbe les 2 ops admin dans le router existant).
+
+### Dépendance Epic 6.6
+
+Les emails enqueueés (`status='pending'`) **ne sont pas envoyés V1 Epic 5**.
+Le cron `retry-emails.ts` (Story 6.6) activera la délivrance SMTP. Décision
+acceptée : la détection a déjà de la valeur (audit trail
+`threshold_alert_sent` tendances + signal admin via UI).

@@ -9,6 +9,8 @@ import { topProductsHandler } from './_lib/reports/top-products-handler'
 import { delayDistributionHandler } from './_lib/reports/delay-distribution-handler'
 import { topReasonsSuppliersHandler } from './_lib/reports/top-reasons-suppliers-handler'
 import { exportSavCsvHandler } from './_lib/reports/export-csv-handler'
+import { adminSettingsThresholdPatchHandler } from './_lib/admin/settings-threshold-patch-handler'
+import { adminSettingsThresholdHistoryHandler } from './_lib/admin/settings-threshold-history-handler'
 import type { ApiHandler, ApiRequest } from './_lib/types'
 
 /**
@@ -42,6 +44,8 @@ const ALLOWED_OPS = new Set([
   'delay-distribution',
   'top-reasons-suppliers',
   'export-csv',
+  'admin-settings-threshold-patch',
+  'admin-settings-threshold-history',
 ])
 
 function parseOp(req: ApiRequest): string | null {
@@ -145,6 +149,25 @@ const dispatch: ApiHandler = async (req, res) => {
       return
     }
     return exportSavCsvHandler(req, res)
+  }
+
+  // Story 5.5 — admin settings threshold_alert (PATCH + GET history).
+  if (op === 'admin-settings-threshold-patch') {
+    if (method !== 'PATCH') {
+      res.setHeader('Allow', 'PATCH')
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
+      return
+    }
+    return adminSettingsThresholdPatchHandler(req, res)
+  }
+
+  if (op === 'admin-settings-threshold-history') {
+    if (method !== 'GET') {
+      res.setHeader('Allow', 'GET')
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
+      return
+    }
+    return adminSettingsThresholdHistoryHandler(req, res)
   }
 
   sendError(res, 'NOT_FOUND', 'Route non disponible', requestId)

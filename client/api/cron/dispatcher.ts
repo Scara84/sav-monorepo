@@ -5,6 +5,7 @@ import { authorizeCron } from './_authorize'
 import { runCleanupRateLimits } from '../_lib/cron-runners/cleanup-rate-limits'
 import { runPurgeTokens } from '../_lib/cron-runners/purge-tokens'
 import { runPurgeDrafts } from '../_lib/cron-runners/purge-drafts'
+import { runThresholdAlerts } from '../_lib/cron-runners/threshold-alerts'
 
 /**
  * Cron unique quotidien (Story 2.3 — ajusté 2026-04-22).
@@ -40,6 +41,7 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
   await safeRun(results, 'cleanupRateLimits', () => runCleanupRateLimits({ requestId }), requestId)
   await safeRun(results, 'purgeTokens', () => runPurgeTokens({ requestId }), requestId)
   await safeRun(results, 'purgeDrafts', () => runPurgeDrafts({ requestId }), requestId)
+  await safeRun(results, 'thresholdAlerts', () => runThresholdAlerts({ requestId }), requestId)
 
   const durationMs = Date.now() - startedAt
   logger.info('cron.dispatcher.success', { requestId, results, ms: durationMs })

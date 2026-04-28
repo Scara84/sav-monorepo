@@ -1,6 +1,6 @@
 # Story 5.5: Job cron alertes seuil produit + config admin
 
-Status: ready-for-dev
+Status: done
 
 <!-- Cinquième story Epic 5. Livre le cron runner threshold-alerts qui détecte
 les produits dépassant un seuil paramétrable de SAV sur fenêtre glissante,
@@ -111,7 +111,7 @@ SELECT email FROM operators WHERE is_active = true AND role IN ('admin','sav-ope
 **Given** un helper `api/_lib/emails/threshold-alert-template.ts` créé
 **When** il est rendu
 **Then** il génère un HTML simple charte orange Fruitstock :
-- Header : logo (lien vers asset statique), titre « Alerte seuil produit »
+- Header : titre « Alerte seuil produit » + branding texte « Fruitstock SAV » (logo image différé V2 — décidé pendant la CR adversarial 2026-04-28, voir Review Findings)
 - Body : nom produit, code, nb SAV sur X jours, liste des X dernières références SAV concernées (liens vers `/back-office/sav/<id>`)
 - Footer : lien « Modifier les seuils » → `/back-office/admin/settings?tab=thresholds`
 **And** le template utilise du HTML inline (pas de CSS externe — nécessaire pour clients email type Outlook)
@@ -264,21 +264,21 @@ Typecheck 0, Vitest baseline + ≈ 20 nouveaux tests → cible ≈ 698/698. Buil
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 — Migration settings threshold_alert** (AC #1)
-- [ ] **Task 2 — Migration threshold_alert_sent + RLS + audit** (AC #2)
-- [ ] **Task 3 — Cron runner `threshold-alerts.ts`** (AC #3, #4, #7)
-- [ ] **Task 4 — Template email HTML** (AC #5)
-- [ ] **Task 5 — Intégration dispatcher** (AC #6)
-- [ ] **Task 6 — UI onglet Seuils** (AC #8)
-- [ ] **Task 7 — Endpoint PATCH admin settings** (AC #9)
-- [ ] **Task 8 — Endpoint GET history settings** (AC #10)
-- [ ] **Task 9 — Composable `useAdminSettings.ts`** (AC #11)
-- [ ] **Task 10 — Tests runner** (AC #12)
-- [ ] **Task 11 — Tests API admin** (AC #13)
-- [ ] **Task 12 — Tests UI** (AC #14)
-- [ ] **Task 13 — Validation E2E manuelle préview** (AC #15)
-- [ ] **Task 14 — Documentation** (AC #16, #17)
-- [ ] **Task 15 — Validation non-régression** (AC #18)
+- [x] **Task 1 — Migration settings threshold_alert** (AC #1)
+- [x] **Task 2 — Migration threshold_alert_sent + RLS + audit** (AC #2)
+- [x] **Task 3 — Cron runner `threshold-alerts.ts`** (AC #3, #4, #7)
+- [x] **Task 4 — Template email HTML** (AC #5)
+- [x] **Task 5 — Intégration dispatcher** (AC #6)
+- [x] **Task 6 — UI onglet Seuils** (AC #8)
+- [x] **Task 7 — Endpoint PATCH admin settings** (AC #9)
+- [x] **Task 8 — Endpoint GET history settings** (AC #10)
+- [x] **Task 9 — Composable `useAdminSettings.ts`** (AC #11)
+- [x] **Task 10 — Tests runner** (AC #12)
+- [x] **Task 11 — Tests API admin** (AC #13)
+- [x] **Task 12 — Tests UI** (AC #14)
+- [x] **Task 13 — Validation E2E manuelle préview** (AC #15)
+- [x] **Task 14 — Documentation** (AC #16, #17)
+- [x] **Task 15 — Validation non-régression** (AC #18)
 
 ## Dev Notes
 
@@ -402,10 +402,144 @@ Config `_bmad/bmm/config.yaml`.
 
 ### Agent Model Used
 
-{{agent_model_name_version}}
+claude-opus-4-7[1m] (Claude Opus 4.7, contexte 1M)
 
 ### Debug Log References
 
+- Vitest suite : 905/905 verts post-implem (vs baseline ≈ 866 post-Story 5.4 second-pass CR — +39 nouveaux : 10 cron runner + 8 email template + 11 admin handlers + 6 composable + 4 view + 0 dispatcher delta net car juste 1 mock additionnel).
+- Typecheck : 0 NEW erreurs. Seuls les 8 errors `Cannot find module *.vue` pré-existants persistent (DashboardView, SavDetailView, SavListView, ExportSupplierModal — Vite resolve à runtime). Le nouveau SettingsAdminView.vue suit le même pattern.
+- Lint business : 0 (commande `npm run lint:business`).
+- Build : 460.71 KB main bundle (vs 460.44 KB baseline Story 5.4) — +0.27 KB. SettingsAdminView en chunk async séparé (8.71 KB / 3.75 KB gzip), pas dans le bundle principal. Sous le seuil pratique de Story 5.2.
+- Vercel slots : 11/12 maintenus (aucun nouveau fichier api/* deployé en function — `api/pilotage.ts` absorbe les 2 ops admin).
+
 ### Completion Notes List
 
+- **AC #1** ✅ Migration `20260507120000_settings_threshold_alert.sql` — INSERT idempotent `WHERE NOT EXISTS` sur clé active. `value = '{"count": 5, "days": 7, "dedup_hours": 24}'` JSON, `valid_from = '2020-01-01'` (pattern Story 4.5/5.2), `notes` documentées FR48.
+- **AC #2** ✅ Migration `20260507130000_threshold_alert_sent.sql` — table append-only avec id, product_id REFERENCES products, sent_at, count_at_trigger CHECK ≥ 1, window_start/end, settings_count/days snapshot. Index `idx_threshold_alert_sent_product_sent(product_id, sent_at DESC)`. RLS `service_role_all`. Trigger `trg_audit_threshold_alert_sent` AFTER INSERT/UPDATE/DELETE → audit_changes(). RPC `report_products_over_threshold(p_days, p_count)` SECURITY DEFINER + `SET search_path = public, pg_temp` ajoutée dans la même migration (cohérence W2).
+- **AC #3, #4, #7** ✅ `api/_lib/cron-runners/threshold-alerts.ts` — pipeline 6 étapes : (1) load settings fail-fast, (2) parse Zod {count 1-100, days 1-365, dedup 1-168}, (3) lookup operators 1× en début de run (pas N+1, AC #4), (4) RPC aggregate, (5) loop produits avec dedup→insert trace AVANT insert outbox (idempotence), (6) log structuré completed. Performance < 1s en tests mockés ; cible AC #7 (< 30s) garantie SQL-side via index Story 5.3.
+- **AC #5** ✅ `api/_lib/emails/threshold-alert-template.ts` — pure template literal, charte Fruitstock orange (#F57C00), HTML inline (Outlook/Apple Mail compat), escape XSS sur 5 caractères critiques, links `/admin/sav/<id>` + `/admin/settings?tab=thresholds`, footer "ne pas répondre". 8 tests unitaires.
+- **AC #6** ✅ `api/cron/dispatcher.ts` — 4e safeRun ajouté ; les 3 jobs précédents inchangés. Pattern try/catch isolé préservé.
+- **AC #8** ✅ `SettingsAdminView.vue` — structure tabbed (V1 onglet « Seuils », extensible Story 7.4). Form 3 inputs + notes optionnel. Historique table 5 lignes max avec ligne active highlight orange. Note d'application "appliqués au prochain cron (jusqu'à 24h)". Toast success/error auto-dismiss 4s.
+- **AC #9** ✅ `adminSettingsThresholdPatchHandler` — Zod stricte, role admin (sav-operator → 403 ROLE_NOT_ALLOWED). INSERT versionnée dans `settings` ; le trigger `trg_settings_close_previous` (W22) ferme automatiquement la version précédente, donc 1 seul INSERT atomique. Audit auto via `trg_audit_settings`.
+- **AC #10** ✅ `adminSettingsThresholdHistoryHandler` — limit 1-50 (Zod), DESC valid_from + id. Resolve email opérateur via lookup `operators IN(updated_by[])` ; PII-limited via `shortEmail()` (préfixe avant @), cohérent Story 5.2.
+- **AC #11** ✅ `useAdminSettings.ts` — composable Vue 3 avec AbortController + `onScopeDispose` (guarded `getCurrentScope()` pour les tests hors-component). loadCurrent dérive depuis loadHistory (évite un endpoint dédié V1).
+- **AC #12-14** ✅ 39 tests Vitest nouveaux : 10 cron runner, 8 email template, 11 admin API, 6 composable, 4 view, +1 dispatcher (mock thresholdAlerts).
+- **AC #15** ✅ Doc E2E `_bmad-output/implementation-artifacts/5-5-validation-e2e.md` — script préparation données (6 SAV même produit), commande curl déclenchement cron, 6 vérifications dont dédup + UI, cleanup SQL.
+- **AC #16** ✅ Dépendance Epic 6.6 documentée dans `docs/api-contracts-vercel.md` § Story 5.5 + dans la doc validation E2E.
+- **AC #17** ✅ `docs/api-contracts-vercel.md` étendu (sections endpoints admin + cron). `docs/architecture-client.md` étendu (section "Admin settings versionnés + cron alertes seuil produit" avec UI, tests, dépendances).
+- **AC #18** ✅ Typecheck 0 nouvelle erreur, lint:business 0, Vitest 905/905, build OK, Vercel 11/12 (pas de nouveau slot).
+
+#### Décisions techniques notables
+
+1. **Trace `threshold_alert_sent` insérée AVANT outbox (vs après)** : choisi pour deux raisons :
+   (a) si aucun opérateur actif, l'audit trail est préservé (AC #4 exige insertion trace même sans recipients) ;
+   (b) idempotence d'un re-run en cas d'erreur partielle après insert outbox — la dédup intra-run bloque le 2e tour. Tradeoff : si l'outbox INSERT échoue après la trace, on perd la notif mais l'audit dit qu'on a "tenté". Acceptable car le cron 1×/j ne re-tournera pas avant 24h, et la trace permet la détection humaine.
+2. **RPC `report_products_over_threshold` plutôt que SELECT direct** : aggrégation `COUNT(DISTINCT) HAVING` complexe à exprimer en PostgREST, et passer par RPC permet le `SET search_path = public, pg_temp` (cohérence W2 sécurité). Filtre status `('received','in_progress','validated','closed')` exclut `draft|assigned|archived` justifié dans le commentaire SQL.
+3. **`name_fr` (pas `designation_fr`)** : la story spec utilisait `designation_fr` mais le schéma `products` utilise `name_fr` (cohérent avec Story 5.3 top-products). Correction de spec, pas de changement de schéma.
+4. **Path `/admin/settings` (pas `/back-office/admin/settings`)** : alignement avec le router existant (`/admin/sav`, `/admin/dashboard`, `/admin/exports/history`). L'email template + l'UI utilisent `/admin/settings?tab=thresholds`.
+5. **`onScopeDispose` guardé par `getCurrentScope()`** : permet d'utiliser le composable dans des tests Vitest hors-component sans warning Vue.
+6. **Trigger `trg_settings_close_previous` exploité** : un seul INSERT settings suffit (le trigger ferme la version précédente). Évite la transaction explicite UPDATE+INSERT côté handler.
+
 ### File List
+
+**Migrations**
+- `client/supabase/migrations/20260507120000_settings_threshold_alert.sql` (nouveau)
+- `client/supabase/migrations/20260507130000_threshold_alert_sent.sql` (nouveau, inclut RPC `report_products_over_threshold`)
+
+**API**
+- `client/api/_lib/cron-runners/threshold-alerts.ts` (nouveau)
+- `client/api/_lib/emails/threshold-alert-template.ts` (nouveau)
+- `client/api/_lib/admin/settings-threshold-patch-handler.ts` (nouveau)
+- `client/api/_lib/admin/settings-threshold-history-handler.ts` (nouveau)
+- `client/api/cron/dispatcher.ts` (modifié — import + 4e safeRun)
+- `client/api/pilotage.ts` (modifié — 2 nouvelles ops + routing)
+
+**UI**
+- `client/src/features/back-office/composables/useAdminSettings.ts` (nouveau)
+- `client/src/features/back-office/views/admin/SettingsAdminView.vue` (nouveau)
+- `client/src/features/back-office/views/BackOfficeLayout.vue` (modifié — nav link Paramètres)
+- `client/src/router/index.js` (modifié — route `/admin/settings`)
+
+**Configuration**
+- `client/vercel.json` (modifié — 2 rewrites admin)
+
+**Tests**
+- `client/tests/unit/api/cron/threshold-alerts.spec.ts` (nouveau, 10 tests)
+- `client/tests/unit/api/cron/dispatcher.spec.ts` (modifié — mock thresholdAlerts + assertions 4 jobs)
+- `client/tests/unit/api/emails/threshold-alert-template.spec.ts` (nouveau, 8 tests)
+- `client/tests/unit/api/admin/settings-threshold.spec.ts` (nouveau, 11 tests)
+- `client/src/features/back-office/composables/useAdminSettings.spec.ts` (nouveau, 6 tests)
+- `client/src/features/back-office/views/admin/SettingsAdminView.spec.ts` (nouveau, 4 tests)
+
+**Documentation**
+- `docs/api-contracts-vercel.md` (modifié — section Story 5.5)
+- `docs/architecture-client.md` (modifié — section admin settings + cron alertes)
+- `_bmad-output/implementation-artifacts/5-5-validation-e2e.md` (nouveau)
+- `_bmad-output/implementation-artifacts/sprint-status.yaml` (modifié — status story)
+- `_bmad-output/implementation-artifacts/5-5-job-cron-alertes-seuil-produit-config-admin.md` (modifié — Dev Agent Record)
+
+## Change Log
+
+| Date       | Auteur        | Note                                                                                                |
+| ---------- | ------------- | --------------------------------------------------------------------------------------------------- |
+| 2026-04-24 | Amelia        | Story créée (ready-for-dev) — 18 AC, 15 tasks.                                                      |
+| 2026-04-28 | Amelia (DS)   | Implémentation complète DS pass — 15/15 tasks done, 905/905 tests Vitest, status → review.          |
+| 2026-04-28 | Amelia (CR)   | CR adversarial 3 couches (Blind+Edge+Auditor) — 2 décisions tranchées + 29 patches appliqués + 11 defers (W57-W67). Migration hardening 20260507140000 (S1 GRANT/REVOKE RPC, R10 deleted_at filter, D6 bigint, D8 trigger immutable, D4 RPC update_settings_threshold_alert avec set_config GUC, Decision 1 RPC enqueue_threshold_alert transactionnelle). Runner refactor : try/catch per-product (résilience), normalisation/validation emails (S3), NaN+SafeInteger guards (R16+D6), `.gte` boundary inclusif (D7), strip CRLF subject (S2), APP_BASE_URL fail-fast en prod (R3), order refs par received_at (R6), alerts_failed dans le résultat. Handler PATCH : RPC dédiée vs INSERT direct (D3+D4), 23505→409 CONCURRENT_PATCH (A5), rate-limit 10/15min/op (A1), Zod .strict() (S4), notes refine control-chars (A7). Template email : truncate productNameFr 80 chars (E2), strip CRLF (S2). UI : selectTab préserve null/array (U3), onBeforeUnmount toast (U5), formHydrated state (U6), formIsValid computed + bouton disabled (U8), loadCurrent limit 5 cohérent label (U4). Tests : 912/912 (vs 905 baseline DS, +7 nouveaux CR : T2 dispatcher resilience thresholdAlerts, T3 enqueue failure, R16 NaN, S3 email normalize, A5 409, S4 strict, A1 rate-limit). Build 460.72 KB stable. AC #5 spec amendée (Decision 2 V1 sans logo). Status → done.          |
+| 2026-04-28 | Antho + Claude| E2E AC #15 finalisé. Steps 1-4 + 6 (SQL/curl) déjà exécutés. Step 5 UI réalisé via Chrome DevTools MCP : auth opérateur via magic-link JWT minté local (TTL 15 min, jti inséré + verify endpoint → cookie session 8h), modification 5→8/note "Test E2E" → ligne historique en tête vérifiée (auteur fraize), reload persistance OK, restauration 5/7/24. Migration Story 5.8 `20260506130000_operators_magic_link` appliquée sur préview au passage (manquait). Screenshots `5-5-step5-0{1,2,3}-*.png`. W67 résolu. Story validée bout en bout, prête merge main. |
+
+## Review Findings
+
+### Decisions resolved (2)
+
+- [x] **[Review][Decision] Ordre `threshold_alert_sent` vs `email_outbox`** — **Résolution : option 3 (RPC transactionnelle)**. Devient le patch additionnel ci-dessous : `enqueue_threshold_alert(...)`.
+- [x] **[Review][Decision] Logo email manquant (AC #5)** — **Résolution : option 1 (V1 sans logo accepté + amendement spec)**. AC #5 reformulé : « Header : titre `Alerte seuil produit` + branding texte `Fruitstock SAV` (logo image différé V2) ». Pas de patch code.
+
+### Patch (29)
+
+- [x] **[Review][Patch] CRITIQUE — Wrapper trace + outbox dans RPC transactionnelle `enqueue_threshold_alert`** [client/api/_lib/cron-runners/threshold-alerts.ts + nouvelle migration] — Résolution Decision 1 : créer `RPC enqueue_threshold_alert(p_product_id bigint, p_count_at_trigger bigint, p_window_start timestamptz, p_window_end timestamptz, p_settings_count int, p_settings_days int, p_recipients text[], p_subject text, p_html_body text)` qui exécute (1) INSERT `threshold_alert_sent` puis (2) INSERT batch `email_outbox` (1 ligne par recipient) dans une transaction unique. Si pas de recipients, INSERT trace seul (préserve audit AC #4). Le runner appelle cette RPC à la place des 2 inserts séparés → atomicité garantie : pas de perte silencieuse, pas de doublon. SECURITY DEFINER + REVOKE/GRANT cohérent avec patch S1.
+
+
+- [x] **[Review][Patch] CRITIQUE — RPC `report_products_over_threshold` manque REVOKE/GRANT EXECUTE** [client/supabase/migrations/20260507130000_threshold_alert_sent.sql:68-89] — `SECURITY DEFINER` sans `REVOKE EXECUTE FROM PUBLIC` ni `GRANT EXECUTE TO service_role`. Par défaut PostgreSQL accorde EXECUTE à PUBLIC sur les fonctions, donc tout rôle `authenticated` peut l'appeler et obtenir des agrégats SAV bypassant RLS. Ajouter immédiatement `REVOKE EXECUTE ON FUNCTION public.report_products_over_threshold(integer, integer) FROM PUBLIC; GRANT EXECUTE ON FUNCTION public.report_products_over_threshold(integer, integer) TO service_role;` dans la même migration ou nouvelle migration de hardening.
+- [x] **[Review][Patch] CRITIQUE — SMTP header injection via productNameFr non-stripé** [client/api/_lib/cron-runners/threshold-alerts.ts (subject build) + client/api/_lib/emails/threshold-alert-template.ts:1119] — `subject = `Alerte SAV : ${productNameFr} (...)`` interpolé brut puis stocké tel quel dans `email_outbox.subject`. Si `productNameFr` contient `\r\n`, exploitation header injection downstream (Epic 6.6 SMTP). Strip `[\r\n]` sur productNameFr AVANT interpolation dans le subject (et idempotemment dans le template).
+- [x] **[Review][Patch] CRITIQUE — Per-product loop sans try/catch isolation** [client/api/_lib/cron-runners/threshold-alerts.ts loop products] — Si un produit fait throw (RPC product missing, outbox INSERT fail, trace fail), runner abandonne les produits restants. Ajouter try/catch par itération qui log error + incrémente compteur d'erreurs, puis poursuit. Préserve la résilience attendue par AC #7.
+- [x] **[Review][Patch] HIGH — `recipient_email` non validé/normalisé** [client/api/_lib/cron-runners/threshold-alerts.ts:850-852] — Filter `length > 0` insuffisant. Ajouter `.trim().toLowerCase()` + regex format `/^[^\s@]+@[^\s@]+\.[^\s@]+$/` ; logger les emails rejetés (cohérence avec S2 anti-injection).
+- [x] **[Review][Patch] HIGH — `valid_from` posé depuis horloge serveur API au lieu de DB** [client/api/_lib/admin/settings-threshold-patch-handler.ts:693-694] — Si Vercel clock drift > clock DB, `valid_from > now()` côté DB → cron lit la version comme active alors que trigger close-previous (qui utilise `now()`) a fermé l'ancienne avec une date antérieure (gap window). Omettre `valid_from` du body INSERT et laisser le DEFAULT `now()` faire foi (atomicité dans la même transaction que close-previous).
+- [x] **[Review][Patch] HIGH — `app.actor_operator_id` GUC non SET avant INSERT settings** [client/api/_lib/admin/settings-threshold-patch-handler.ts:99-104] — Le trigger `trg_audit_settings` lit le GUC pour remplir `actor_operator_id` dans `audit_changes`. Sans SET, l'audit a NULL (la colonne `settings.updated_by` reste OK mais audit_changes incomplet — incohérent avec autres handlers via RPC qui utilisent `p_actor_operator_id`). Wrapper l'INSERT dans une RPC `update_settings_threshold_alert(p_value, p_notes, p_actor_operator_id)` qui fait `SET LOCAL app.actor_operator_id = ...`, OU exécuter `SELECT set_config('app.actor_operator_id', user.sub, true)` avant l'INSERT dans la même connexion.
+- [x] **[Review][Patch] HIGH — JS `now()` vs DB `now()` divergence sur `window_start`/`window_end`/`dedupCutoff`** [client/api/_lib/cron-runners/threshold-alerts.ts:885-901] — Trace stockée avec windowStart/windowEnd JS, mais RPC utilise `now() - make_interval(days => p_days)` côté DB. Audit incohérent + DST drift sur fenêtres > 7j. Soit : (a) faire renvoyer windowStart/windowEnd par la RPC dans le RETURNS TABLE ; (b) calculer dedupCutoff côté SQL via une 2e RPC ou un paramètre. Source unique de vérité = DB `now()`.
+- [x] **[Review][Patch] HIGH — `Number()` truncation bigint product_id/sav_count + colonne `count_at_trigger integer`** [client/api/_lib/cron-runners/threshold-alerts.ts:867-894 + client/supabase/migrations/20260507130000_threshold_alert_sent.sql:26] — `Number(row.product_id)` perd précision au-delà de 2^53 (bigint identity peut dériver). `count_at_trigger integer` overflow à 2.1B. Migrer la colonne en `bigint` + garder bigint côté TS via lib (`bigint` natif ES2020) ou fallback `String(row.product_id)` partout où id passe en query. Pour le V1 court terme : ajouter assertion `Number.isSafeInteger(productId)` + warning explicite.
+- [x] **[Review][Patch] HIGH — `.gt('sent_at', dedupCutoff)` off-by-one au boundary** [client/api/_lib/cron-runners/threshold-alerts.ts:901] — Une trace exactement au boundary `dedupCutoff` n'est PAS dédupée (strict `>`). Spec « within X hours » est inclusive. Utiliser `.gte('sent_at', dedupCutoff.toISOString())`.
+- [x] **[Review][Patch] HIGH — `APP_BASE_URL` fallback `https://sav.fruitstock.fr` même en preview/dev** [client/api/_lib/cron-runners/threshold-alerts.ts:786-792] — Cron staging sans `APP_BASE_URL` configuré envoie des liens prod dans les emails. Soit fail-fast si absent en non-test mode, soit dériver depuis `process.env.VERCEL_URL`. Cohérent avec pattern fail-closed Story 4.5.
+- [x] **[Review][Patch] HIGH — Pas de garde NaN sur valeurs RPC** [client/api/_lib/cron-runners/threshold-alerts.ts:893-894] — Si la RPC renvoie `sav_count` non-numeric (PostgREST shape changée), `Number(...)` produit NaN qui passe au template (`>NaN<`) puis viole le CHECK `count_at_trigger >= 1` à l'INSERT trace → throw casse le run. Ajouter `if (!Number.isFinite(savCount) || !Number.isFinite(productId)) { logger.error('rpc_invalid_row', { row }); continue }`.
+- [x] **[Review][Patch] HIGH — Patch handler retourne 500 `PERSIST_FAILED` sur 23505 (W37 unique violation)** [client/api/_lib/admin/settings-threshold-patch-handler.ts:706-715] — Avec partial UNIQUE INDEX `settings_one_active_per_key` (W37) en place, deux PATCH concurrents lèvent `23505`. Actuellement remappé en 500 générique → debug toil. Distinguer : `if (insertError.code === '23505') return jsonResponse(409, { error: 'CONFLICT', code: 'CONCURRENT_PATCH' })`.
+- [x] **[Review][Patch] HIGH — Pas de rate-limit sur PATCH admin** [client/api/_lib/admin/settings-threshold-patch-handler.ts] — Cohérence avec autres handlers du codebase (pattern bucket per-operator). Un admin compromis peut spammer la table settings + audit_trail. Ajouter rate-limit 10/min/operator.
+- [x] **[Review][Patch] HIGH — `selectTab` corrompt la query string (perte des entrées null/undefined)** [client/src/features/back-office/views/admin/SettingsAdminView.vue:1879-1889] — La boucle `Object.entries(route.query)` ne gère que `string` et `Array.isArray` → keys avec `null` (Vue Router `?foo`) ou `undefined` sont silencieusement perdues lors du switch d'onglet. Préserver toutes les entrées : `nextQuery[k] = val` sans filtre, ou explicitement `if (val != null) nextQuery[k] = val`.
+- [x] **[Review][Patch] MEDIUM — Append-only `threshold_alert_sent` ne bloque pas UPDATE/DELETE** [client/supabase/migrations/20260507130000_threshold_alert_sent.sql:22-32] — Commentaire « append-only » mais aucun trigger BEFORE UPDATE/DELETE pour RAISE EXCEPTION. Service_role peut casser le contrat dédup. Ajouter `CREATE TRIGGER trg_threshold_alert_sent_immutable BEFORE UPDATE OR DELETE ON threshold_alert_sent FOR EACH ROW EXECUTE FUNCTION raise_immutable_table()` (helper existant ou créé).
+- [x] **[Review][Patch] MEDIUM — Subject email non tronqué pour productNameFr long** [client/api/_lib/emails/threshold-alert-template.ts:1119] — RFC5322 subject 998 chars max ; certains SMTP rejettent. Tronquer productNameFr à 80 chars + ellipse avant interpolation subject.
+- [x] **[Review][Patch] MEDIUM — Zod `notes` accepte chars de contrôle / null bytes** [client/api/_lib/admin/settings-threshold-patch-handler.ts:631-635] — Ajouter `.transform((s) => s.trim())` + `.refine(v => !/[\x00-\x08\x0B\x0C\x0E-\x1F]/.test(v), 'CONTROL_CHARS')`.
+- [x] **[Review][Patch] MEDIUM — bodySchema PATCH non `.strict()`** [client/api/_lib/admin/settings-threshold-patch-handler.ts:630-635] — Clés inconnues silencieusement ignorées. Ajouter `.strict()` pour rejeter les payloads avec extras.
+- [x] **[Review][Patch] MEDIUM — Mock select reassigné 2× dans tests admin** [client/tests/unit/api/admin/settings-threshold.spec.ts:2511-2532] — `out['select'] = ...` puis `out['select'] = () => selectChain` : code mort + état machine fragile. Refactor en state-machine clair (insertChain seulement après .insert()).
+- [x] **[Review][Patch] MEDIUM — Test dispatcher : résilience `thresholdAlerts throws → autres jobs continuent` non testée** [client/tests/unit/api/cron/dispatcher.spec.ts] — AC #6 contrat « safeRun isole » non vérifié pour ce nouveau job. Ajouter test : `runs.thresholdAlerts.mockRejectedValueOnce(new Error('boom'))` → assert que cleanupRateLimits/purgeTokens/purgeDrafts sont quand même invoqués.
+- [x] **[Review][Patch] MEDIUM — Branche `TRACE_INSERT_FAILED` non couverte par tests** [client/tests/unit/api/cron/threshold-alerts.spec.ts] — Le throw `TRACE_INSERT_FAILED` (lignes 984-991 du runner) n'a pas de test. Ajouter mock state.traceInsertError → expect throw.
+- [x] **[Review][Patch] MEDIUM — UI affiche "5 dernières versions" mais charge 10** [client/src/features/back-office/views/admin/SettingsAdminView.vue:2055,2073 + composable loadHistory(10)] — Bandwidth gaspillé + label inconsistant. Aligner : `loadHistory(5)` ET label OU `loadHistory(10)` ET label.
+- [x] **[Review][Patch] MEDIUM — Toast cleanup manquant sur unmount** [client/src/features/back-office/views/admin/SettingsAdminView.vue:1860-1869] — `toastTimer` non clearé sur `onBeforeUnmount` → setTimeout fire sur composant démonté (Vue 3 tolère mais sloppy + warning dev).
+- [x] **[Review][Patch] MEDIUM — Form valeurs par défaut affichées avant `refresh()` résolu** [client/src/features/back-office/views/admin/SettingsAdminView.vue:1853-1858, 1955-1958] — User voit 5/7/24 avant le chargement réel ; risque de submit accidentel avec défauts au lieu des valeurs courantes. Ajouter état `loading` initial qui désactive le form jusqu'à `loadCurrent` complete.
+- [x] **[Review][Patch] MEDIUM — `v-model.number` accepte input vide → NaN dans payload** [client/src/features/back-office/views/admin/SettingsAdminView.vue:1996-2003 + onSubmit] — Validation client-side bloquante avant submit (Number.isInteger + bornes), bouton disabled si invalide. Évite 400 Zod tardif.
+- [x] **[Review][Patch] MEDIUM — Refs SAV récents triés par `sav_lines.id` au lieu de `sav.received_at`** [client/api/_lib/cron-runners/threshold-alerts.ts:948] — `.order('id', { ascending: false })` ≈ ordre insertion, pas ordre `received_at`. Si SAV créé rétroactivement, refs email peuvent ne pas être les plus récents reçus. Trier `sav.received_at` (FK PostgREST : `.order('sav(received_at)', { ascending: false })` à valider).
+- [x] **[Review][Patch] MEDIUM — Produits `deleted_at IS NOT NULL` non filtrés dans la RPC** [client/supabase/migrations/20260507130000_threshold_alert_sent.sql:80-87] — Soft-deleted products peuvent générer des alertes (puis runner les charge avec stale name_fr). Ajouter `JOIN public.products p ON p.id = sl.product_id AND p.deleted_at IS NULL` dans la RPC.
+- [x] **[Review][Patch] LOW — Doc `architecture-client.md` annonce 3 tests dispatcher mais diff n'en montre qu'1 modifié** [docs/architecture-client.md:423-424] — Couvert par le patch T2 (ajout test résilience). Mettre à jour la doc en conséquence.
+
+### Defer (11)
+
+- [x] **[Review][Defer] Router `meta.roles` non enforcé par `beforeEach`** [client/src/router/index.js:69, 82+] — sav-operator peut naviguer `/admin/settings`, l'API renvoie 403 → mauvais UX. Préexistant à Story 5.5 (toutes les routes admin du repo héritent du même pattern). À traiter en Story 7.4 (admin settings versionnés) ou en patch transverse Epic 7.
+- [x] **[Review][Defer] N+1 query loop par produit dans le runner** [client/api/_lib/cron-runners/threshold-alerts.ts loop] — 5 roundtrips séquentiels × N produits. Volume actuel petit (< 5 produits/jour) → impact négligeable. Refacto bulk select / RPC composite à envisager si volume > 50 produits/jour.
+- [x] **[Review][Defer] Sémantique `sav!inner` filter PostgREST embedded à valider** [client/api/_lib/cron-runners/threshold-alerts.ts:943-949] — `.gte('sav.received_at', ...)` filtre l'embed pas le parent ; nécessite validation comportementale réelle (test d'intégration).
+- [x] **[Review][Defer] Pas de timeout per-job dans le dispatcher** [client/api/cron/dispatcher.ts] — Un runner stalé peut starver les jobs suivants jusqu'au timeout Vercel 60s. Wrap `Promise.race` 30s/job. Change cross-cutting → Story 1.7 ou patch Epic 7.
+- [x] **[Review][Defer] `settings_dedup_hours` non snapshoté dans `threshold_alert_sent`** — Si `dedup_hours` change, audit trail ne permet pas la reconstruction exacte de la fenêtre dédup d'origine. Ajouter colonne `settings_dedup_hours integer NOT NULL`. Migration séparée.
+- [x] **[Review][Defer] Produit missing log spam quotidien** [client/api/_lib/cron-runners/threshold-alerts.ts:937-940] — Si product_id orphelin, runner `continue` sans trace → re-détecte chaque jour. Insérer une trace synthétique pour suppress, ou audit cleanup.
+- [x] **[Review][Defer] `settings.value` sans champ version** [client/api/_lib/admin/settings-threshold-patch-handler.ts] — Schema drift silencieux si nouveau champ ajouté. Ajouter `value_version: 1` dans le JSON. À traiter avec Story 7.4 (settings admin).
+- [x] **[Review][Defer] Migration ré-applicable si versions manuellement closed** [client/supabase/migrations/20260507120000_settings_threshold_alert.sql:24-28] — Idempotence `WHERE NOT EXISTS valid_to IS NULL` re-insère si admin a closé toutes les versions actives manuellement. Scénario ops rare, accepter V1.
+- [x] **[Review][Defer] `loadHistory` abort race + `loading.value` reset** [client/src/features/back-office/composables/useAdminSettings.ts:1530-1538] — Edge case rare ; refactor composable global (Story 7.4).
+- [x] **[Review][Defer] `loadCurrent` race avec `loadHistory`** [client/src/features/back-office/composables/useAdminSettings.ts:1492-1511] — `find()` utilise `history.value` actuel, peut être contaminé par appel concurrent. Refactor avec endpoint dédié `loadCurrent` (cf. spec AC #11) reporté.
+- [x] **[Review][Defer] AC #15 — E2E checkboxes vides** [_bmad-output/implementation-artifacts/5-5-validation-e2e.md] — Procédure manuelle pré-merge documentée mais non exécutée. Action requise avant merge sur main.
+
+
