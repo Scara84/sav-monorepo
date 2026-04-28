@@ -215,37 +215,74 @@ export function useApiClient() {
   }
 
   /**
-   * Envoie le payload SAV au webhook Make.com.
+   * Récupère un capture-token JWT (single-use, exp 5 min) pour authentifier
+   * un POST `/api/webhooks/capture` côté browser (Story 5.7 cutover Make).
    */
-  const submitSavWebhook = async (payload) => {
-    const webhookUrl = import.meta.env.VITE_WEBHOOK_URL_DATA_SAV
-    if (!webhookUrl) {
-      throw new Error('VITE_WEBHOOK_URL_DATA_SAV is not configured')
+  const fetchCaptureToken = async () => {
+    const fetchFn = async () => {
+      const response = await axios.get('/api/self-service/submit-token')
+      const token = response.data?.data?.token
+      if (!token) {
+        throw new Error('submit-token: réponse invalide (token manquant)')
+      }
+      return token
     }
-
-    const submitFn = async () => {
-      const response = await axios.post(webhookUrl, payload)
-      return response.data
-    }
-
-    return await withRetry(submitFn, 3, 1000)
+    return await withRetry(fetchFn, 2, 1000)
   }
 
   /**
-   * Lookup invoice details via Make.com webhook.
+   * Envoie le payload SAV à `/api/webhooks/capture` (Story 5.7 cutover Make).
+   *
+   * Étapes :
+   *   1. GET `/api/self-service/submit-token` → récupère un capture-token JWT.
+   *   2. POST `/api/webhooks/capture` avec header `X-Capture-Token: <jwt>` et
+   *      body au format `captureWebhookSchema` étendu.
+   *
+   * Le payload reçu est déjà au format adéquat (transformation faite par le
+   * caller, cf. SavView).
+   *
+   * Story 5.7 patch P2 — pas de retry sur ce POST : un 5xx ou un network
+   * partiel après INSERT RPC pourrait dupliquer la création SAV (le serveur
+   * n'a pas d'idempotency key, chaque retry refetch un nouveau token donc
+   * le webhook_inbox dédoublonné par signature ne le voit pas comme un
+   * doublon). Une seule tentative — l'utilisateur reçoit un message d'erreur
+   * et peut re-soumettre manuellement si besoin.
+   */
+  const submitSavWebhook = async (payload) => {
+    const token = await fetchCaptureToken()
+    const response = await axios.post('/api/webhooks/capture', payload, {
+      headers: {
+        'Content-Type': 'application/json',
+        'X-Capture-Token': token,
+      },
+    })
+    return response.data
+  }
+
+  /**
+   * Lookup facture Pennylane (Story 5.7 cutover Make scenario 1).
+   *
+   * GET `/api/invoices/lookup?invoiceNumber=...&email=...` (sémantique HTTP
+   * idempotente — pas de body, query string courte).
+   *
+   * Story 5.7 patch P13 — pas de retry. L'endpoint a un rate-limit serré
+   * (5/min/IP) et renvoie 503 sur Pennylane upstream timeout/5xx. Un retry
+   * automatique consommerait 3/5 du budget en cas d'incident upstream et
+   * tripperait un 429 sur la prochaine soumission utilisateur dans la même
+   * minute. L'utilisateur retape s'il le souhaite — comportement plus lisible.
    */
   const submitInvoiceLookupWebhook = async (payload) => {
-    const webhookUrl = import.meta.env.VITE_WEBHOOK_URL
-    if (!webhookUrl) {
-      throw new Error('VITE_WEBHOOK_URL is not configured')
+    const { invoiceNumber, email } = payload || {}
+    if (!invoiceNumber || !email) {
+      throw new Error('submitInvoiceLookupWebhook: invoiceNumber et email requis')
     }
-
-    const submitFn = async () => {
-      const response = await axios.post(webhookUrl, payload)
-      return response.data
+    const url = `/api/invoices/lookup?invoiceNumber=${encodeURIComponent(invoiceNumber)}&email=${encodeURIComponent(email)}`
+    const response = await axios.get(url)
+    const data = response.data
+    if (data && data.invoice && typeof data.invoice === 'object') {
+      return data.invoice
     }
-
-    return await withRetry(submitFn, 3, 1000)
+    return data
   }
 
   return {
@@ -255,6 +292,7 @@ export function useApiClient() {
     submitUploadedFileUrls,
     submitSavWebhook,
     submitInvoiceLookupWebhook,
+    fetchCaptureToken,
     withRetry,
   }
 }

@@ -364,43 +364,73 @@ describe('useApiClient', () => {
     })
   })
 
-  describe('submitSavWebhook', () => {
-    it('soumet le payload au webhook', async () => {
-      vi.stubEnv('VITE_WEBHOOK_URL_DATA_SAV', 'https://example.com/webhook')
-      const payload = { foo: 'bar' }
-      axios.post.mockResolvedValue({ data: { ok: true } })
+  describe('submitSavWebhook (Story 5.7 cutover capture-token)', () => {
+    it('GET submit-token puis POST /api/webhooks/capture avec X-Capture-Token', async () => {
+      const payload = {
+        customer: { email: 'a@b.c' },
+        invoice: { ref: 'F-2025-37039' },
+        items: [{ productCode: 'X', productName: 'P', qtyRequested: 1, unit: 'piece' }],
+        files: [],
+        metadata: {},
+      }
+      axios.get = vi
+        .fn()
+        .mockResolvedValue({ data: { data: { token: 'JWT.TOKEN', expiresIn: 300 } } })
+      axios.post.mockResolvedValue({ data: { data: { savId: 99 } } })
 
       const result = await apiClient.submitSavWebhook(payload)
 
-      expect(axios.post).toHaveBeenCalledWith('https://example.com/webhook', payload)
-      expect(result).toEqual({ ok: true })
+      expect(axios.get).toHaveBeenCalledWith('/api/self-service/submit-token')
+      expect(axios.post).toHaveBeenCalledTimes(1)
+      const [url, body, config] = axios.post.mock.calls[0]
+      expect(url).toBe('/api/webhooks/capture')
+      expect(body).toEqual(payload)
+      expect(config.headers['X-Capture-Token']).toBe('JWT.TOKEN')
+      expect(config.headers['Content-Type']).toBe('application/json')
+      expect(result).toEqual({ data: { savId: 99 } })
     })
 
-    it('throw si env manquante', async () => {
-      vi.stubEnv('VITE_WEBHOOK_URL_DATA_SAV', '')
-      await expect(apiClient.submitSavWebhook({})).rejects.toThrow(
-        'VITE_WEBHOOK_URL_DATA_SAV is not configured'
-      )
+    it('échoue si le token est manquant dans la réponse (non-retried 4xx)', async () => {
+      // Le 4xx propage sans retry — pour ce test on simule le rejet direct.
+      const err = new Error('not found')
+      err.response = { status: 404 }
+      axios.get = vi.fn().mockRejectedValue(err)
+      await expect(apiClient.submitSavWebhook({})).rejects.toThrow(/not found/)
     })
   })
 
-  describe('submitInvoiceLookupWebhook', () => {
-    it('soumet le payload invoice lookup', async () => {
-      vi.stubEnv('VITE_WEBHOOK_URL', 'https://example.com/invoice-webhook')
-      const payload = { transformedReference: '123', email: 'test@example.com' }
-      axios.post.mockResolvedValue({ data: { invoice_number: 'F-2024-001' } })
+  describe('submitInvoiceLookupWebhook (Story 5.7 cutover Pennylane v2)', () => {
+    it('GET /api/invoices/lookup?invoiceNumber=...&email=... + unwrap { invoice }', async () => {
+      axios.get = vi.fn().mockResolvedValue({
+        data: { invoice: { invoice_number: 'F-2025-37039', customer: { id: 1833 } } },
+      })
 
-      const result = await apiClient.submitInvoiceLookupWebhook(payload)
+      const result = await apiClient.submitInvoiceLookupWebhook({
+        invoiceNumber: 'F-2025-37039',
+        email: 'user@example.com',
+      })
 
-      expect(axios.post).toHaveBeenCalledWith('https://example.com/invoice-webhook', payload)
-      expect(result).toEqual({ invoice_number: 'F-2024-001' })
+      expect(axios.get).toHaveBeenCalledTimes(1)
+      const [url] = axios.get.mock.calls[0]
+      expect(url).toBe('/api/invoices/lookup?invoiceNumber=F-2025-37039&email=user%40example.com')
+      // Shape conservée pour InvoiceDetails.vue : bare invoice (unwrap).
+      expect(result).toEqual({ invoice_number: 'F-2025-37039', customer: { id: 1833 } })
     })
 
-    it('throw si env manquante', async () => {
-      vi.stubEnv('VITE_WEBHOOK_URL', '')
+    it('throw si invoiceNumber manquant', async () => {
+      await expect(apiClient.submitInvoiceLookupWebhook({ email: 'a@b.c' })).rejects.toThrow(
+        /invoiceNumber/
+      )
+    })
+
+    it('ne retry pas sur erreur 4xx (email mismatch / format invalide)', async () => {
+      const error = new Error('Email incorrect')
+      error.response = { status: 400 }
+      axios.get = vi.fn().mockRejectedValue(error)
       await expect(
-        apiClient.submitInvoiceLookupWebhook({ transformedReference: '123', email: 'a@b.c' })
-      ).rejects.toThrow('VITE_WEBHOOK_URL is not configured')
+        apiClient.submitInvoiceLookupWebhook({ invoiceNumber: 'F-2025-37039', email: 'a@b.c' })
+      ).rejects.toThrow('Email incorrect')
+      expect(axios.get).toHaveBeenCalledTimes(1)
     })
   })
 })

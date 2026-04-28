@@ -14,7 +14,8 @@
     "api/self-service/draft.ts": { "maxDuration": 10 },
     "api/sav.ts": { "maxDuration": 10 },
     "api/credit-notes.ts": { "maxDuration": 10 },
-    "api/pilotage.ts": { "maxDuration": 30 }
+    "api/pilotage.ts": { "maxDuration": 30 },
+    "api/invoices.ts": { "maxDuration": 10 }
   },
   "crons": [{ "path": "/api/cron/dispatcher", "schedule": "0 3 * * *" }],
   "rewrites": [
@@ -52,6 +53,14 @@
     {
       "source": "/api/self-service/upload-complete",
       "destination": "/api/self-service/draft?op=upload-complete"
+    },
+    {
+      "source": "/api/self-service/submit-token",
+      "destination": "/api/self-service/draft?op=submit-token"
+    },
+    {
+      "source": "/api/invoices/lookup",
+      "destination": "/api/invoices?op=lookup"
     },
     {
       "source": "/api/exports/supplier",

@@ -177,3 +177,37 @@
 - **W69 — Champ `display_name?: string` dans `SupplierExportConfig`** : V2 — élimine la duplication labels hardcodés (`'Rufino (ES)'` dans FALLBACK + tests) et règle les codes mixtes/underscore (`humanLabel('GARCIA_SL')` → `'Garcia_sl'` cosmétique). Pas requis V1 (2 fournisseurs propres, codes simples).
 - **W70 — Granularité rôle dans handlers exports** [`exports-config-list-handler.ts`, autres] : tous les handlers exports partagent `withAuth({ types: ['operator'] })` sans distinction admin/sav-operator. À aligner cross-cutting Epic 6 si besoin de durcissement (ex. `sav-viewer` lecture seule).
 - **W71 — Gestion HTTP 401 dédiée** [tous fetch composables] : code `UNAUTHORIZED` distinct + redirect `/login` non géré uniformément. Cross-cutting Epic 6 quand le pattern session-expirée sera défini globalement.
+
+## Deferred from: dev of 5-7-cutover-make-pennylane-emails (2026-04-28)
+
+- **W72 — Suppression définitive Make scenarios 3197846 + 3203836** [J+30 post-cutover, action Antho via UI Make] : les scenarios restent en `disabled` 30j pour rollback ; à supprimer définitivement après stabilisation. Cf. `docs/cutover-make-runbook.md` §5 Checklist J+30.
+- **W73 — Suppression env vars `VITE_WEBHOOK_URL` + `VITE_WEBHOOK_URL_DATA_SAV`** [J+30 post-cutover, commit séparé `client/.env.example`] : actuellement commentées avec note DEPRECATED. À déclasser totalement après stabilisation (cutover irréversible).
+- **W74 — Migration emails `sav-capture` vers `email_outbox` Epic 6 (Story 6.1+6.6)** : V1 = fire-and-forget `Promise.allSettled` après le 201 dans `webhooks/capture.ts`. Trade-off accepté par PM (cf. brief AC #2 « best-effort »). Au cutover Epic 6, refactor mineur : remplacer les 2 `sendMail()` par un `enqueueEmail()` qui pousse dans `email_outbox` avec retry queue.
+- **W75 — Validation D1/D2 forme payload Pennylane v2 list (curl preview avec vraie clé API)** : la doc indique `{ data: [...], cursor: ... }` mais shape détaillée à confirmer empiriquement. Le DS preview avec une vraie facture Fruitstock confirmera `customer.emails: string[]` + `line_items[]` + URL-encoding `:` → `%3A` (vs littéral). Adapter `pennylane.ts` si shape diverge.
+- **W76 — Communication adhérents changement format input** [D3 Story 5.7] : décision PM avant cutover entre (a) banner Home.vue 30j, (b) email Mailchimp/Sendinblue, (c) accepter les 2 formats temporairement (refusé : coût v1+v2). Action : acter avant cutover, implémenter la solution choisie.
+- **W77 — reCAPTCHA v3 / Cloudflare Turnstile sur `/api/invoices/lookup`** [V1.5 si abus détecté] : rate-limit 5/min/IP est suffisant V1 pour volumétrie ~10 SAV/jour. Surveiller logs `invoice.lookup.failed reason=email_mismatch` post-cutover ; si > 100/jour, introduire un challenge anti-bot.
+- **W78 — `sav_submit_tokens` purge cron** : index partiel actif sur `WHERE used_at IS NULL` purge naturellement les rows actives, mais les rows consommées s'accumulent indéfiniment. Cron job optionnel : `DELETE FROM sav_submit_tokens WHERE used_at IS NOT NULL OR expires_at < now() - interval '7 days'`. Volume bas (~10/jour), pas urgent.
+- **W79 — `htmlTable` legacy passé via `metadata` dans le payload capture** : conservé pour compat amont du builder côté Vue (`buildSavHtmlTable`) qui le génère avant submit. Le serveur ne le consomme pas (utilise le templating natif `sav-capture-templates.ts`). À nettoyer côté Vue quand le builder sera supprimé.
+
+## Deferred from: code review of 5-7-cutover-make-pennylane-emails (2026-04-28)
+
+- **W80 — Helper IP `rightmost` pattern utilisé en fallback rate-limit** [`client/api/invoices.ts` + `submit-token-handler.ts`] : pattern préexistant partagé avec autres endpoints (Story 5.4, 5.5). À ré-évaluer dans un audit cross-endpoint dédié (durcissement XFF parsing + `req.ip` priorité).
+- **W81 — `signCaptureToken` accepte secret de longueur arbitraire** : pattern préexistant magic-link Story 1.5. Ajouter check `secret.length >= 32` au boot du handler (cross-cutting auth).
+- **W82 — `productCode` fallback sur `productName.slice(0, 32)`** [`WebhookItemsList.vue:651`] : silencieusement remplace product_id manquant par truncated name (collisions possibles). Front pré-existant 5.7-untouched. À traiter quand l'épic refonte UI sera planifié.
+- **W83 — `unit: form.unit || 'piece'` falsy-coercion** [`WebhookItemsList.vue:658`] : empty string → 'piece'. Validation côté front à durcir avant submit.
+- **W84 — `qtyRequested: Number(form.quantity) || 0` confus côté serveur** [`WebhookItemsList.vue:657`] : 0 et NaN → 400 Zod (positive required). Validation front à durcir.
+- **W85 — Regex `F-\d{4}-\d{1,8}` permissive (années/numéros impossibles)** [`Home.vue:954` + `invoices.ts:1868`] : `F-0000-0` accepté, Pennylane retourne 404. Resserrer si bugs reportés (`F-(2020|2021|...|year+1)-\d{5,8}`).
+- **W86 — Pas de throttle SMTP per-IP côté `sendCaptureEmails`** [`webhooks/capture.ts`] : abus indirect via flood de tokens valides. Rate-limit token issue (10/min/IP) limite déjà à 600/h max. Acceptable V1.
+- **W87 — Normalisation IDN/Unicode emails** [`invoices.ts:1989-2001`] : simple `toLowerCase().trim()` ne couvre pas les variantes IDN (`ü` vs `ü`). Edge case rare ; à traiter si reporté.
+- **W88 — Edge cases NBSP/Unicode dans `invoiceNumber`** [`pennylane.ts`] : `\d` JS regex ASCII-only, validations en cascade rejettent. Mineur.
+- **W89 — `WebhookItemsList.vue` files dedup absent** : même image attachée à plusieurs forms → doublons dans payload `files[]`. Edge case UX.
+- **W90 — `fetchCaptureToken` retry 5xx → tokens orphelins en DB** : couplé à W78 (purge). Chaque retry insère une nouvelle row.
+- **W91 — `consumeCaptureToken` ne distingue pas « jamais existé » vs « consommé »** [`submit-token-handler.ts:1693-1717`] : forensics limitée. Defense-in-depth ; ajouter logs distincts par cause d'échec.
+- **W92 — `verifyCaptureToken` ne vérifie pas `iat <= now`** [`submit-token-handler.ts:1641-1684`] : minor JWT hygiene. Clock skew 30s acceptable en pratique.
+- **W93 — `email_mismatch` loggé en `info` sans alerting** [`invoices.ts:1993-1998`] : runbook §5 J+30 prévoit threshold check ; structurer en `metric.email_mismatch.count` pour alerting (PagerDuty/Sentry).
+- **W94 — Pennylane 4xx → 503 looping côté front** : alerting opérationnel à mettre en place sur `reason='pennylane_upstream'` (Sentry threshold).
+- **W95 — `alert(...)` UX bloquante dans `Home.vue`** : pré-existant, refactor en toast/banner Vue 3.
+- **W96 — `transformedReference` fallback drift entre `Home.vue` et `InvoiceDetails.vue:1037-1038`** : backwards-compat à documenter en deprecation, tracker la suppression future.
+- **W97 — Test couvrant le warn log `dual_auth_received` (CA-08)** [`capture-auth.spec.ts`] : à vérifier sur déroulé complet du fichier de test ; ajouter assertion sur `logger.warn` si manquant.
+- **W98 — Validation empirique `%3A` Pennylane filter encoding** : doublon de W75 (réfraction de la même validation curl preview). Consolider en W75 lors de la résolution.
+- **W99 — Cron purge `sav_submit_tokens`** : doublon de W78. Consolider lors de l'implémentation.

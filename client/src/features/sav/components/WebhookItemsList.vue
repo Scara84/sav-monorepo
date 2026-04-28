@@ -668,6 +668,19 @@ export default {
           return
         }
 
+        // Story 5.7 patch P14 — refuser le submit si le numéro de facture
+        // est absent : sans `invoice.ref`, les emails portent un sujet
+        // « Demande SAV Facture (facture inconnue) » embarrassant. La
+        // facture devrait toujours être présente côté UI (chargement avant
+        // d'arriver à l'écran), un manque ici signale un bug amont.
+        if (!props.facture?.invoice_number) {
+          uploadStatus.value = 'error'
+          uploadErrorMessage.value =
+            'Numéro de facture manquant — impossible de soumettre la demande'
+          globalLoading.value = false
+          return
+        }
+
         // Créer un nom de dossier unique pour cette demande de SAV
         const specialMention = props.facture?.special_mention || ''
         const sanitizedSpecialMention =
@@ -732,36 +745,9 @@ export default {
           return
         }
 
-        // Générer le tableau HTML pour Make.com
+        // Story 5.7 — htmlTable conservé en metadata (rétrocompat amont
+        // builder Vue), le serveur utilise les templates natifs.
         const htmlTable = buildSavHtmlTable(filledForms, props.items)
-
-        // ÉTAPE 2 : Préparer les payloads pour le webhook
-        const payload = filledForms.map(({ form, index }) => {
-          const images =
-            form.images && form.images.length > 0
-              ? form.images.map((img) => ({
-                  url: img.uploadedUrl || '',
-                  fileName: img.file ? img.file.name : '',
-                }))
-              : []
-          const factureItem = props.items[index] || {}
-          return {
-            ...form,
-            images: images,
-            itemIndex: index,
-            factureInfo: {
-              label: factureItem.label,
-              quantityFacturee: factureItem.quantity,
-              unit: factureItem.unit,
-              vat_rate: factureItem.vat_rate,
-              prixUnitaire:
-                factureItem.amount && factureItem.quantity
-                  ? factureItem.amount / factureItem.quantity
-                  : undefined,
-              prixTotal: factureItem.amount,
-            },
-          }
-        })
 
         // ÉTAPE 3 : Upload du fichier Excel via le backend
         const excelBase64 = generateExcelFile(filledForms, props.items, props.facture)
@@ -777,12 +763,74 @@ export default {
         // ÉTAPE 4 : Obtenir le lien de partage pour le dossier global
         const folderShareLink = await getFolderShareLink(savDossier)
 
-        // ÉTAPE 5 : Envoi au webhook avec le lien du dossier
+        // ÉTAPE 5 : Envoi au backend `/api/webhooks/capture` (Story 5.7).
+        // Le payload doit matcher `captureWebhookSchema` (cf. AC #4 + AC #7) :
+        // { customer, invoice, items, files, metadata }.
+        const captureCustomer = {
+          email: props.facture?.customer?.emails?.[0] || props.facture?.customer?.email || '',
+          ...(props.facture?.customer?.first_name
+            ? { firstName: props.facture.customer.first_name }
+            : {}),
+          ...(props.facture?.customer?.last_name
+            ? { lastName: props.facture.customer.last_name }
+            : {}),
+          ...(props.facture?.customer?.phone ? { phone: props.facture.customer.phone } : {}),
+          ...(props.facture?.customer?.name ? { fullName: props.facture.customer.name } : {}),
+          // Pennylane v2 : `customer.id` est le numeric internal ID.
+          ...(props.facture?.customer?.id !== undefined && props.facture?.customer?.id !== null
+            ? { pennylaneCustomerId: String(props.facture.customer.id) }
+            : {}),
+        }
+        const captureInvoice = props.facture?.invoice_number
+          ? {
+              ref: String(props.facture.invoice_number),
+              ...(props.facture.special_mention
+                ? { specialMention: String(props.facture.special_mention) }
+                : {}),
+              ...(props.facture.label ? { label: String(props.facture.label) } : {}),
+            }
+          : undefined
+        const captureItems = filledForms.map(({ form, index }) => {
+          const factureItem = props.items[index] || {}
+          const productName = factureItem.label || factureItem.product_name || 'Article inconnu'
+          const productCode = factureItem.product_id
+            ? String(factureItem.product_id)
+            : factureItem.code || productName.slice(0, 32)
+          const item = {
+            productCode,
+            productName,
+            qtyRequested: Number(form.quantity) || 0,
+            unit: form.unit || 'piece',
+          }
+          const cause = [form.reason, form.comment]
+            .filter((v) => v && String(v).trim().length > 0)
+            .join(' — ')
+          if (cause) item.cause = cause
+          return item
+        })
+        const captureFiles = []
+        for (const { form } of filledForms) {
+          if (form.images && form.images.length > 0) {
+            for (const img of form.images) {
+              if (img.uploadedUrl && img.file) {
+                captureFiles.push({
+                  onedriveItemId: img.uploadedUrl.split('?')[0]?.split('/').pop() || img.file.name,
+                  webUrl: img.uploadedUrl,
+                  originalFilename: img.file.name,
+                  sanitizedFilename: img.file.name,
+                  sizeBytes: img.file.size,
+                  mimeType: img.file.type || 'application/octet-stream',
+                })
+              }
+            }
+          }
+        }
         await submitSavWebhook({
-          htmlTable,
-          forms: payload,
-          facture: props.facture,
-          dossier_sav_url: folderShareLink,
+          customer: captureCustomer,
+          ...(captureInvoice ? { invoice: captureInvoice } : {}),
+          items: captureItems,
+          files: captureFiles,
+          metadata: { dossierSavUrl: folderShareLink, htmlTable },
         })
 
         filledForms.forEach(({ form }) => {

@@ -8,6 +8,7 @@ import { supabaseAdmin } from '../_lib/clients/supabase-admin'
 import { formatErrors } from '../_lib/middleware/with-validation'
 import { uploadSessionHandler } from '../_lib/self-service/upload-session-handler'
 import { uploadCompleteHandler } from '../_lib/self-service/upload-complete-handler'
+import { submitTokenHandler } from '../_lib/self-service/submit-token-handler'
 import type { ApiHandler, ApiRequest } from '../_lib/types'
 
 /**
@@ -176,30 +177,39 @@ const putGuard = authMember(
   })(putCore)
 )
 
-const ALLOWED_OPS = new Set(['draft', 'upload-session', 'upload-complete'])
+const ALLOWED_OPS = new Set(['draft', 'upload-session', 'upload-complete', 'submit-token'])
 
-function parseOp(req: ApiRequest): string | null {
+// Story 5.7 — `submit-token` est anonyme (capture-token éphémère pour le
+// front cutover Make). Les autres ops exigent une session adhérent.
+const ANONYMOUS_OPS = new Set(['submit-token'])
+
+// Story 5.7 patch P11 — return type discriminé, supprime le sentinel
+// 'invalid' qui faisait mentir le `string | null` précédent.
+type ParsedOp = { kind: 'absent' } | { kind: 'invalid' } | { kind: 'op'; value: string }
+
+function parseOp(req: ApiRequest): ParsedOp {
   const raw = (req.query as Record<string, unknown> | undefined)?.['op']
-  if (raw === undefined) return null
-  if (typeof raw === 'string') return ALLOWED_OPS.has(raw) ? raw : 'invalid'
-  if (Array.isArray(raw) && typeof raw[0] === 'string')
-    return ALLOWED_OPS.has(raw[0]) ? raw[0] : 'invalid'
-  return 'invalid'
+  if (raw === undefined) return { kind: 'absent' }
+  const candidate =
+    typeof raw === 'string' ? raw : Array.isArray(raw) && typeof raw[0] === 'string' ? raw[0] : null
+  if (candidate === null) return { kind: 'invalid' }
+  if (!ALLOWED_OPS.has(candidate)) return { kind: 'invalid' }
+  return { kind: 'op', value: candidate }
 }
 
 const dispatch: ApiHandler = async (req, res) => {
-  const op = parseOp(req)
+  const parsed = parseOp(req)
   const method = (req.method ?? 'GET').toUpperCase()
 
-  if (op === 'invalid') {
+  if (parsed.kind === 'invalid') {
     const requestId = ensureRequestId(req)
     sendError(res, 'NOT_FOUND', 'Route non disponible', requestId)
     return
   }
 
-  // op=null ou op='draft' → routage par méthode HTTP (backward-compat
-  // des appels GET/PUT /api/self-service/draft sans query op).
-  if (op === null || op === 'draft') {
+  // absent ou op='draft' → routage par méthode HTTP (backward-compat des
+  // appels GET/PUT /api/self-service/draft sans query op).
+  if (parsed.kind === 'absent' || parsed.value === 'draft') {
     if (method === 'GET') return getGuard(req, res)
     if (method === 'PUT') return putGuard(req, res)
     const requestId = ensureRequestId(req)
@@ -208,7 +218,7 @@ const dispatch: ApiHandler = async (req, res) => {
     return
   }
 
-  if (op === 'upload-session') {
+  if (parsed.value === 'upload-session') {
     if (method !== 'POST') {
       const requestId = ensureRequestId(req)
       res.setHeader('Allow', 'POST')
@@ -218,7 +228,7 @@ const dispatch: ApiHandler = async (req, res) => {
     return uploadSessionHandler(req, res)
   }
 
-  if (op === 'upload-complete') {
+  if (parsed.value === 'upload-complete') {
     if (method !== 'POST') {
       const requestId = ensureRequestId(req)
       res.setHeader('Allow', 'POST')
@@ -228,6 +238,16 @@ const dispatch: ApiHandler = async (req, res) => {
     return uploadCompleteHandler(req, res)
   }
 
+  if (parsed.value === 'submit-token') {
+    if (method !== 'GET') {
+      const requestId = ensureRequestId(req)
+      res.setHeader('Allow', 'GET')
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
+      return
+    }
+    return submitTokenHandler(req, res)
+  }
+
   const requestId = ensureRequestId(req)
   sendError(res, 'NOT_FOUND', 'Route non disponible', requestId)
 }
@@ -235,6 +255,17 @@ const dispatch: ApiHandler = async (req, res) => {
 // W40 (CR Story 5.2) — defense-in-depth : auth au niveau router en plus
 // des sub-handlers déjà auth-wrappés. Si un refactor futur retire `withAuth`
 // d'un sub-handler, l'auth reste garantie ici.
-const router: ApiHandler = withAuth({ types: ['member'] })(dispatch)
+//
+// Story 5.7 — exception : `op=submit-token` est anonyme (capture-token
+// pour le front cutover Make). On gate l'auth conditionnellement sur l'op.
+const authedDispatch: ApiHandler = withAuth({ types: ['member'] })(dispatch)
 
-export default router
+const routerGate: ApiHandler = (req, res) => {
+  const parsed = parseOp(req)
+  if (parsed.kind === 'op' && ANONYMOUS_OPS.has(parsed.value)) {
+    return dispatch(req, res)
+  }
+  return authedDispatch(req, res)
+}
+
+export default routerGate

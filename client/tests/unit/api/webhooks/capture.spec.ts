@@ -1,17 +1,20 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { createHmac } from 'node:crypto'
+import { randomUUID } from 'node:crypto'
 import { mockReq, mockRes } from '../_lib/test-helpers'
 import fixturePayload from '../../../fixtures/webhook-capture-sample.json'
 
-// --- State partagé mocké Supabase ---
+/**
+ * Story 5.7 — `webhooks/capture.ts` post-cutover Make.
+ * Tests historiques de la Story 2.2 (HMAC) refactorés en capture-token.
+ */
+
+const LINK_SECRET = 'magic-secret-at-least-32-bytes-longABCD'
+
 const db = vi.hoisted(() => ({
-  // webhook_inbox
   inboxInserts: [] as Array<Record<string, unknown>>,
   inboxUpdates: [] as Array<{ id: number; patch: Record<string, unknown> }>,
   inboxNextId: 1,
-  // audit_trail
   auditInserts: [] as Array<Record<string, unknown>>,
-  // rpc capture_sav_from_webhook
   rpcCalls: [] as Array<Record<string, unknown>>,
   rpcResult: {
     data: [{ sav_id: 42, reference: 'SAV-2026-00001', line_count: 3, file_count: 2 }] as Array<{
@@ -22,8 +25,8 @@ const db = vi.hoisted(() => ({
     }> | null,
     error: null as null | { code?: string; message?: string },
   },
-  // rate limit rpc (increment_rate_limit)
   rateLimitAllowed: true,
+  consumeCalls: [] as Array<{ jti: string }>,
 }))
 
 vi.mock('../../../../api/_lib/clients/supabase-admin', () => {
@@ -56,6 +59,22 @@ vi.mock('../../../../api/_lib/clients/supabase-admin', () => {
           },
         }
       }
+      if (table === 'sav_submit_tokens') {
+        return {
+          update: (_row: Record<string, unknown>) => ({
+            eq: (_col: string, jti: string) => ({
+              is: () => ({
+                gt: () => ({
+                  select: () => {
+                    db.consumeCalls.push({ jti })
+                    return Promise.resolve({ data: [{ jti }], error: null })
+                  },
+                }),
+              }),
+            }),
+          }),
+        }
+      }
       return {}
     },
     rpc: (fn: string, args: Record<string, unknown>) => {
@@ -78,14 +97,25 @@ vi.mock('../../../../api/_lib/clients/supabase-admin', () => {
   }
 })
 
+vi.mock('../../../../api/_lib/clients/smtp', () => ({
+  sendMail: async (args: { to: string }) => ({
+    messageId: '<msg@x>',
+    accepted: [args.to],
+    rejected: [],
+  }),
+  __resetSmtpTransporterForTests: () => undefined,
+}))
+
 import handler from '../../../../api/webhooks/capture'
+import {
+  signCaptureToken,
+  SAV_SUBMIT_TOKEN_TTL_SEC,
+} from '../../../../api/_lib/self-service/submit-token-handler'
 
-const SECRET = 'a'.repeat(64)
-
-function signBody(body: unknown): { raw: string; header: string } {
-  const raw = JSON.stringify(body)
-  const hex = createHmac('sha256', SECRET).update(raw).digest('hex')
-  return { raw, header: `sha256=${hex}` }
+function makeToken(): string {
+  const jti = randomUUID()
+  const now = Math.floor(Date.now() / 1000)
+  return signCaptureToken(jti, LINK_SECRET, now, SAV_SUBMIT_TOKEN_TTL_SEC)
 }
 
 describe('POST /api/webhooks/capture', () => {
@@ -94,20 +124,26 @@ describe('POST /api/webhooks/capture', () => {
     db.inboxUpdates = []
     db.auditInserts = []
     db.rpcCalls = []
+    db.consumeCalls = []
     db.rpcResult = {
       data: [{ sav_id: 42, reference: 'SAV-2026-00001', line_count: 3, file_count: 2 }],
       error: null,
     }
     db.rateLimitAllowed = true
     db.inboxNextId = 1
-    process.env['MAKE_WEBHOOK_HMAC_SECRET'] = SECRET
+    vi.stubEnv('MAGIC_LINK_SECRET', LINK_SECRET)
+    vi.stubEnv('NODE_ENV', 'test')
+    vi.stubEnv('SMTP_SAV_HOST', 'mail.infomaniak.com')
+    vi.stubEnv('SMTP_SAV_USER', 'sav@fruitstock.eu')
+    vi.stubEnv('SMTP_SAV_PASSWORD', 'pwd')
+    vi.stubEnv('SMTP_SAV_FROM', 'SAV Fruitstock <sav@fruitstock.eu>')
   })
 
-  it('201 + persistence quand signature OK + payload valide', async () => {
-    const { header } = signBody(fixturePayload)
+  it('201 + persistence quand capture-token valide + payload valide', async () => {
+    const token = makeToken()
     const req = mockReq({
       method: 'POST',
-      headers: { 'x-webhook-signature': header, 'x-forwarded-for': '1.2.3.4' },
+      headers: { 'x-capture-token': token, 'x-forwarded-for': '1.2.3.4' },
       body: fixturePayload,
     })
     const res = mockRes()
@@ -118,13 +154,13 @@ describe('POST /api/webhooks/capture', () => {
       data: { savId: 42, reference: 'SAV-2026-00001', lineCount: 3, fileCount: 2 },
     })
     expect(db.rpcCalls).toHaveLength(1)
+    expect(db.consumeCalls).toHaveLength(1)
     expect(db.inboxInserts).toHaveLength(1)
-    expect(db.inboxInserts[0]).toMatchObject({ source: 'make.com', signature: header })
-    // webhook_inbox marqué processed_at, error NULL (clé absente)
+    expect(db.inboxInserts[0]).toMatchObject({ source: 'sav-form' })
+    expect(String(db.inboxInserts[0]?.['signature'])).toMatch(/^capture-token:/)
     expect(db.inboxUpdates).toHaveLength(1)
     expect(db.inboxUpdates[0]?.patch).toHaveProperty('processed_at')
     expect(db.inboxUpdates[0]?.patch).not.toHaveProperty('error')
-    // Audit trail écrit (acteur système)
     expect(db.auditInserts).toHaveLength(1)
     expect(db.auditInserts[0]).toMatchObject({
       entity_type: 'sav',
@@ -134,7 +170,7 @@ describe('POST /api/webhooks/capture', () => {
     })
   })
 
-  it('401 quand signature absente', async () => {
+  it('401 quand aucun header auth (NO_AUTH_HEADER)', async () => {
     const req = mockReq({
       method: 'POST',
       headers: { 'x-forwarded-for': '1.2.3.4' },
@@ -145,56 +181,16 @@ describe('POST /api/webhooks/capture', () => {
 
     expect(res.statusCode).toBe(401)
     expect(db.rpcCalls).toHaveLength(0)
-    expect(db.inboxInserts).toHaveLength(1) // inbox écrit avant vérif
-    expect(db.inboxUpdates[0]?.patch).toMatchObject({ error: 'SIGNATURE_INVALID' })
-  })
-
-  it('401 quand signature malformée', async () => {
-    const req = mockReq({
-      method: 'POST',
-      headers: { 'x-webhook-signature': 'md5=abc', 'x-forwarded-for': '1.2.3.4' },
-      body: fixturePayload,
-    })
-    const res = mockRes()
-    await handler(req, res)
-    expect(res.statusCode).toBe(401)
-    expect(db.inboxUpdates[0]?.patch).toMatchObject({ error: 'SIGNATURE_INVALID' })
-  })
-
-  it('401 quand signature invalide (HMAC calculé avec un autre secret)', async () => {
-    const badHex = createHmac('sha256', 'wrong-secret')
-      .update(JSON.stringify(fixturePayload))
-      .digest('hex')
-    const req = mockReq({
-      method: 'POST',
-      headers: { 'x-webhook-signature': `sha256=${badHex}`, 'x-forwarded-for': '1.2.3.4' },
-      body: fixturePayload,
-    })
-    const res = mockRes()
-    await handler(req, res)
-    expect(res.statusCode).toBe(401)
-    expect(db.rpcCalls).toHaveLength(0)
-  })
-
-  it('500 quand MAKE_WEBHOOK_HMAC_SECRET absent côté serveur', async () => {
-    delete process.env['MAKE_WEBHOOK_HMAC_SECRET']
-    const req = mockReq({
-      method: 'POST',
-      headers: { 'x-webhook-signature': 'sha256=' + 'f'.repeat(64), 'x-forwarded-for': '1.2.3.4' },
-      body: fixturePayload,
-    })
-    const res = mockRes()
-    await handler(req, res)
-    expect(res.statusCode).toBe(500)
-    expect(db.inboxUpdates[0]?.patch).toMatchObject({ error: 'CONFIG_MISSING' })
+    expect(db.inboxInserts).toHaveLength(1)
+    expect(db.inboxUpdates[0]?.patch).toMatchObject({ error: 'NO_AUTH_HEADER' })
   })
 
   it('400 sur échec Zod + webhook_inbox.error rempli', async () => {
-    const badPayload = { ...fixturePayload, items: [] } // min(1) violé
-    const { header } = signBody(badPayload)
+    const badPayload = { ...fixturePayload, items: [] }
+    const token = makeToken()
     const req = mockReq({
       method: 'POST',
-      headers: { 'x-webhook-signature': header, 'x-forwarded-for': '1.2.3.4' },
+      headers: { 'x-capture-token': token, 'x-forwarded-for': '1.2.3.4' },
       body: badPayload,
     })
     const res = mockRes()
@@ -202,13 +198,10 @@ describe('POST /api/webhooks/capture', () => {
     expect(res.statusCode).toBe(400)
     expect((res.jsonBody as { error: { code: string } }).error.code).toBe('VALIDATION_FAILED')
     expect(db.rpcCalls).toHaveLength(0)
-    expect(db.inboxUpdates[0]?.patch).toHaveProperty('error')
     expect((db.inboxUpdates[0]?.patch as { error: string }).error).toMatch(/^VALIDATION_FAILED/)
   })
 
   it('2 POST identiques → 2 SAV distincts (pas de dédup côté serveur)', async () => {
-    const { header } = signBody(fixturePayload)
-
     db.rpcResult = {
       data: [{ sav_id: 100, reference: 'SAV-2026-00100', line_count: 3, file_count: 2 }],
       error: null,
@@ -217,7 +210,7 @@ describe('POST /api/webhooks/capture', () => {
     await handler(
       mockReq({
         method: 'POST',
-        headers: { 'x-webhook-signature': header, 'x-forwarded-for': '1.2.3.4' },
+        headers: { 'x-capture-token': makeToken(), 'x-forwarded-for': '1.2.3.4' },
         body: fixturePayload,
       }),
       res1
@@ -232,7 +225,7 @@ describe('POST /api/webhooks/capture', () => {
     await handler(
       mockReq({
         method: 'POST',
-        headers: { 'x-webhook-signature': header, 'x-forwarded-for': '1.2.3.4' },
+        headers: { 'x-capture-token': makeToken(), 'x-forwarded-for': '1.2.3.4' },
         body: fixturePayload,
       }),
       res2
@@ -244,49 +237,39 @@ describe('POST /api/webhooks/capture', () => {
   })
 
   it('500 quand RPC Postgres retourne une erreur', async () => {
-    const { header } = signBody(fixturePayload)
     db.rpcResult = { data: null, error: { code: 'P0001', message: 'custom raise' } }
     const req = mockReq({
       method: 'POST',
-      headers: { 'x-webhook-signature': header, 'x-forwarded-for': '1.2.3.4' },
+      headers: { 'x-capture-token': makeToken(), 'x-forwarded-for': '1.2.3.4' },
       body: fixturePayload,
     })
     const res = mockRes()
     await handler(req, res)
     expect(res.statusCode).toBe(500)
-    expect(db.inboxUpdates[0]?.patch).toHaveProperty('error')
     expect((db.inboxUpdates[0]?.patch as { error: string }).error).toMatch(/^RPC_ERROR/)
   })
 
-  // --- Patch F2 review adversarial ---
-  // Vérifie que le keyFrom utilise `req.ip` en priorité et le segment RIGHTMOST
-  // de X-Forwarded-For sinon (anti-spoofing leftmost).
-  it('rate-limit keyFrom utilise req.ip prioritairement', async () => {
-    // Le mock rate-limit ne se soucie pas de la clé exacte mais on vérifie que
-    // le handler ne crash pas quand X-Forwarded-For contient plusieurs IPs.
-    const { header } = signBody(fixturePayload)
+  it('rate-limit keyFrom utilise req.ip + fallback XFF rightmost (pas de crash)', async () => {
     const res = mockRes()
     await handler(
       mockReq({
         method: 'POST',
         headers: {
-          'x-webhook-signature': header,
+          'x-capture-token': makeToken(),
           'x-forwarded-for': 'leftmost-spoofed, 10.0.0.1, 10.0.0.2',
         },
         body: fixturePayload,
       }),
       res
     )
-    // Succès → le handler a traité la requête (clé rate-limit construite, pas crashée)
     expect(res.statusCode).toBe(201)
   })
 
   it('429 quand rate limit atteint', async () => {
     db.rateLimitAllowed = false
-    const { header } = signBody(fixturePayload)
     const req = mockReq({
       method: 'POST',
-      headers: { 'x-webhook-signature': header, 'x-forwarded-for': '1.2.3.4' },
+      headers: { 'x-capture-token': makeToken(), 'x-forwarded-for': '1.2.3.4' },
       body: fixturePayload,
     })
     const res = mockRes()

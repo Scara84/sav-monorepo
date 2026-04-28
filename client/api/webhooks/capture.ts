@@ -1,4 +1,3 @@
-import { createHmac, timingSafeEqual } from 'node:crypto'
 import { withRateLimit } from '../_lib/middleware/with-rate-limit'
 import { ensureRequestId } from '../_lib/request-id'
 import { sendError } from '../_lib/errors'
@@ -7,21 +6,32 @@ import { supabaseAdmin } from '../_lib/clients/supabase-admin'
 import { recordAudit } from '../_lib/audit/record'
 import { captureWebhookSchema, type CaptureWebhookPayload } from '../_lib/schemas/capture-webhook'
 import { formatErrors } from '../_lib/middleware/with-validation'
-import type { ApiHandler, ApiRequest, ApiResponse } from '../_lib/types'
+import { verifyCaptureToken, consumeCaptureToken } from '../_lib/self-service/submit-token-handler'
+import { sendMail } from '../_lib/clients/smtp'
+import {
+  renderSavInternalNotification,
+  renderSavCustomerAck,
+  type SavCaptureContext,
+  type SavCaptureItem,
+} from '../_lib/emails/sav-capture-templates'
+import { waitUntilOrVoid } from '../_lib/pdf/wait-until'
+import type { ApiHandler, ApiRequest } from '../_lib/types'
 
 /**
- * POST /api/webhooks/capture — Story 2.2
+ * POST /api/webhooks/capture — Story 2.2 + Story 5.7 cutover.
  *
- * Contrat :
- *   - Signé HMAC-SHA256 via header `X-Webhook-Signature: sha256=<hex>` sur le
- *     raw body (attention : JSON.stringify ≠ octets émis par Make.com).
- *   - Idempotence amont : Make.com dédupe sur (email + invoice.ref + items hash).
- *     Ce endpoint ne dédupe PAS (AC #9) — 2 POST identiques → 2 SAV distincts.
+ * Contrat post-cutover Make :
+ *   - Auth UNIQUE par capture-token JWT (header `X-Capture-Token`),
+ *     scope='sav-submit', single-use via `sav_submit_tokens`. Émis par
+ *     `/api/self-service/submit-token` (anonyme rate-limité).
+ *   - HMAC `X-Webhook-Signature` retiré (Story 5.7) — Make tué J+0,
+ *     pas de fenêtre de cohabitation. Le rollback éventuel se fait côté
+ *     front via réactivation `VITE_WEBHOOK_URL*` (Make redevient receiver
+ *     de bout en bout sans toucher à `/webhooks/capture`).
  *   - Persistence atomique via RPC Postgres `capture_sav_from_webhook`.
- *   - webhook_inbox : INSERT AVANT vérif signature (traçabilité des 401).
+ *   - webhook_inbox : INSERT AVANT vérif token (traçabilité des 401).
  */
 
-// Vercel : désactive le body-parser natif pour lire le raw body (AC #3).
 export const config = { api: { bodyParser: false } }
 
 const MAX_BODY_BYTES = 524288 // 512 KB hard cap (AC #1.2)
@@ -34,6 +44,16 @@ const coreHandler: ApiHandler = async (req, res) => {
   const requestId = ensureRequestId(req)
   const start = Date.now()
   logger.info('webhook.capture.received', { requestId, path: '/api/webhooks/capture' })
+
+  // Story 5.7 AC #5 — fail-fast prod si credentials SMTP SAV absents.
+  // En dev, les emails sont skippés silencieusement (cf. sendCaptureEmails).
+  if (process.env['NODE_ENV'] === 'production') {
+    if (!process.env['SMTP_SAV_PASSWORD'] || !process.env['SMTP_SAV_HOST']) {
+      logger.error('webhook.capture.smtp_sav_not_configured', { requestId })
+      sendError(res, 'SERVER_ERROR', 'Configuration manquante', requestId)
+      return
+    }
+  }
 
   // --- 1. Raw body ---
   let rawBody: Buffer
@@ -67,10 +87,13 @@ const coreHandler: ApiHandler = async (req, res) => {
     parseError = err instanceof Error ? err.message : String(err)
   }
 
-  // --- 3. INSERT webhook_inbox AVANT validation signature (AC #4) ---
-  const signatureHeader = readSignatureHeader(req)
+  // --- 3. INSERT webhook_inbox AVANT validation auth (AC #4) ---
+  const captureTokenHeader = readCaptureTokenHeader(req)
+  const inboxSignature: string | null = captureTokenHeader
+    ? `capture-token:${captureTokenHeader.slice(0, 8)}…`
+    : null
   const inbox = await insertInbox({
-    signature: signatureHeader,
+    signature: inboxSignature,
     payload: parseError
       ? { raw: rawBody.toString('utf8').slice(0, 2048), parse_error: parseError }
       : parsedBody,
@@ -82,18 +105,50 @@ const coreHandler: ApiHandler = async (req, res) => {
     return { id: null } as WebhookInboxHandle
   })
 
-  // --- 4. Vérif signature HMAC ---
-  const secret = process.env['MAKE_WEBHOOK_HMAC_SECRET']
-  if (!secret || secret.length === 0) {
-    logger.error('webhook.capture.secret_missing', { requestId })
+  // --- 4. Vérif capture-token (AC #8 post-cutover) ---
+  if (!captureTokenHeader) {
+    logger.warn('webhook.capture.no_auth_header', { requestId, ms: Date.now() - start })
+    await markInboxProcessed(inbox.id, 'NO_AUTH_HEADER')
+    sendError(res, 'UNAUTHENTICATED', 'Authentication requise', requestId)
+    return
+  }
+  const linkSecret = process.env['MAGIC_LINK_SECRET']
+  if (!linkSecret || linkSecret.length === 0) {
+    logger.error('webhook.capture.secret_missing', { requestId, mode: 'capture-token' })
     await markInboxProcessed(inbox.id, 'CONFIG_MISSING')
     sendError(res, 'SERVER_ERROR', 'Configuration manquante', requestId)
     return
   }
-  if (!verifyHmac(rawBody, signatureHeader, secret)) {
-    logger.warn('webhook.capture.signature_invalid', { requestId, ms: Date.now() - start })
-    await markInboxProcessed(inbox.id, 'SIGNATURE_INVALID')
-    sendError(res, 'UNAUTHENTICATED', 'Signature invalide', requestId)
+  const verify = verifyCaptureToken(captureTokenHeader, linkSecret)
+  if (!verify.ok) {
+    const reason = verify.reason
+    logger.warn('webhook.capture.capture_token_invalid', { requestId, reason })
+    await markInboxProcessed(inbox.id, `CAPTURE_TOKEN_${reason.toUpperCase()}`)
+    sendError(res, 'UNAUTHENTICATED', 'Token invalide', requestId)
+    return
+  }
+  let consumed = false
+  try {
+    consumed = await consumeCaptureToken(
+      supabaseAdmin() as unknown as { from: (table: string) => unknown },
+      verify.payload.jti
+    )
+  } catch (err) {
+    logger.error('webhook.capture.capture_token_consume_failed', {
+      requestId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    await markInboxProcessed(inbox.id, 'CAPTURE_TOKEN_CONSUME_ERROR')
+    sendError(res, 'SERVER_ERROR', 'Token persistence échouée', requestId)
+    return
+  }
+  if (!consumed) {
+    logger.warn('webhook.capture.capture_token_consumed_or_expired', {
+      requestId,
+      jtiPrefix: verify.payload.jti.slice(0, 8),
+    })
+    await markInboxProcessed(inbox.id, 'CAPTURE_TOKEN_CONSUMED')
+    sendError(res, 'UNAUTHENTICATED', 'Token déjà consommé ou expiré', requestId)
     return
   }
 
@@ -168,11 +223,26 @@ const coreHandler: ApiHandler = async (req, res) => {
         savId: row.sav_id,
         error: err instanceof Error ? err.message : String(err),
       })
-      // Ne pas échouer la requête pour un audit KO (le trigger audit_changes
-      // a déjà écrit une ligne via l'INSERT sav).
     })
 
     await markInboxProcessed(inbox.id, null)
+
+    // --- 9. Emails fire-and-forget (Story 5.7 AC #2) ---
+    // 2 emails best-effort en parallèle (Promise.allSettled). Échec SMTP
+    // ne fait PAS échouer la requête (201 déjà acquis). Vercel : on délègue
+    // à `waitUntilOrVoid` pour empêcher la lambda de geler avant complétion
+    // (cf. `_lib/pdf/wait-until.ts`).
+    const emailPromise = sendCaptureEmails({
+      payload,
+      savId: row.sav_id,
+      savReference: row.reference,
+      requestId,
+    })
+    if (process.env['NODE_ENV'] === 'test') {
+      await emailPromise
+    } else {
+      waitUntilOrVoid(emailPromise)
+    }
 
     logger.info('webhook.capture.success', {
       requestId,
@@ -226,9 +296,6 @@ interface NodeRequestLike {
 async function readRawBody(req: ApiRequest, maxBytes: number): Promise<Buffer> {
   const stream = req as unknown as NodeRequestLike
   if (typeof stream.on !== 'function') {
-    // En tests : body déjà parsé est passé via req.body. On le re-sérialise
-    // pour que les assertions HMAC fonctionnent. Le test doit signer le même
-    // JSON.stringify(req.body).
     if (req.body !== undefined && req.body !== null) {
       return Buffer.from(JSON.stringify(req.body), 'utf8')
     }
@@ -252,26 +319,11 @@ async function readRawBody(req: ApiRequest, maxBytes: number): Promise<Buffer> {
   })
 }
 
-function readSignatureHeader(req: ApiRequest): string | null {
-  const raw = req.headers['x-webhook-signature']
+function readCaptureTokenHeader(req: ApiRequest): string | null {
+  const raw = req.headers['x-capture-token']
   const v = Array.isArray(raw) ? raw[0] : raw
   if (typeof v !== 'string' || v.length === 0) return null
   return v
-}
-
-function verifyHmac(rawBody: Buffer, headerValue: string | null, secret: string): boolean {
-  if (!headerValue) return false
-  const m = /^sha256=([0-9a-f]{64})$/.exec(headerValue)
-  if (!m || m[1] === undefined) return false
-  const expected = createHmac('sha256', secret).update(rawBody).digest()
-  let given: Buffer
-  try {
-    given = Buffer.from(m[1], 'hex')
-  } catch {
-    return false
-  }
-  if (expected.length !== given.length) return false
-  return timingSafeEqual(expected, given)
 }
 
 async function insertInbox(input: {
@@ -279,7 +331,7 @@ async function insertInbox(input: {
   payload: unknown
 }): Promise<WebhookInboxHandle> {
   const row: Record<string, unknown> = {
-    source: 'make.com',
+    source: 'sav-form',
     payload: input.payload ?? null,
   }
   if (input.signature !== null) row['signature'] = input.signature
@@ -305,14 +357,121 @@ async function markInboxProcessed(inboxId: number | null, errorText: string | nu
   }
 }
 
-// Compose : rate-limit par IP (60/min). Pas de withAuth (HMAC inline).
+// ----------- emails post-INSERT (Story 5.7 AC #2) -----------
+
+interface SendCaptureEmailsArgs {
+  payload: CaptureWebhookPayload
+  savId: number
+  savReference: string
+  requestId: string
+}
+
+function isSafeHttpUrl(value: unknown): value is string {
+  if (typeof value !== 'string' || value.length === 0) return false
+  try {
+    const u = new URL(value)
+    return u.protocol === 'http:' || u.protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
+function buildCaptureContext(args: SendCaptureEmailsArgs): SavCaptureContext {
+  const { payload, savId, savReference } = args
+  const items: SavCaptureItem[] = payload.items.map((it) => {
+    const item: SavCaptureItem = {
+      productCode: it.productCode,
+      productName: it.productName,
+      qtyRequested: it.qtyRequested,
+      unit: it.unit,
+    }
+    if (it.cause !== undefined) item.cause = it.cause
+    return item
+  })
+  // Story 5.7 patch P4 — valider le scheme avant rendering pour éviter une
+  // injection `javascript:` ou phishing dans l'email opérateur.
+  const rawDossier = payload.metadata['dossierSavUrl']
+  const dossierSavUrl = isSafeHttpUrl(rawDossier) ? rawDossier : null
+  const customer: SavCaptureContext['customer'] = {
+    email: payload.customer.email,
+  }
+  if (payload.customer.fullName !== undefined) customer.fullName = payload.customer.fullName
+  if (payload.customer.firstName !== undefined) customer.firstName = payload.customer.firstName
+  if (payload.customer.lastName !== undefined) customer.lastName = payload.customer.lastName
+  if (payload.customer.phone !== undefined) customer.phone = payload.customer.phone
+  if (payload.customer.pennylaneCustomerId !== undefined) {
+    customer.pennylaneCustomerId = payload.customer.pennylaneCustomerId
+  }
+  const invoice: SavCaptureContext['invoice'] = {
+    ref: payload.invoice?.ref ?? '(facture inconnue)',
+  }
+  if (payload.invoice?.label !== undefined) invoice.label = payload.invoice.label
+  if (payload.invoice?.specialMention !== undefined) {
+    invoice.specialMention = payload.invoice.specialMention
+  }
+  return {
+    customer,
+    invoice,
+    items,
+    dossierSavUrl,
+    savId,
+    savReference,
+  }
+}
+
+async function sendCaptureEmails(args: SendCaptureEmailsArgs): Promise<void> {
+  const { payload, requestId, savId } = args
+  // Dégradation dev : si la conf SMTP SAV est absente, skip + warn.
+  if (
+    process.env['NODE_ENV'] !== 'production' &&
+    (!process.env['SMTP_SAV_PASSWORD'] || !process.env['SMTP_SAV_HOST'])
+  ) {
+    logger.warn('webhook.capture.email_skipped_dev', { requestId, savId })
+    return
+  }
+  const internalRecipient = process.env['SMTP_NOTIFY_INTERNAL'] ?? 'sav@fruitstock.eu'
+  const ctx = buildCaptureContext(args)
+  const internal = renderSavInternalNotification(ctx)
+  const customer = renderSavCustomerAck(ctx)
+
+  const tasks: Array<Promise<unknown>> = [
+    sendMail({
+      to: internalRecipient,
+      subject: internal.subject,
+      html: internal.html,
+      text: internal.text,
+      replyTo: payload.customer.email,
+      account: 'sav',
+    }).catch((err) => {
+      logger.error('webhook.capture.email_failed', {
+        requestId,
+        savId,
+        target: 'internal',
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }),
+    sendMail({
+      to: payload.customer.email,
+      subject: customer.subject,
+      html: customer.html,
+      text: customer.text,
+      account: 'sav',
+    }).catch((err) => {
+      logger.error('webhook.capture.email_failed', {
+        requestId,
+        savId,
+        target: 'customer',
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }),
+  ]
+  await Promise.allSettled(tasks)
+}
+
+// Compose : rate-limit par IP (60/min). Auth = capture-token uniquement (Story 5.7).
 //
-// NOTE sécurité : `req.ip` est posé par Vercel depuis l'IP de la connexion TCP — source
-// fiable car non spoofable par l'attaquant (seul le reverse-proxy Vercel peut l'établir).
-// On utilise aussi le **segment le plus à droite** de `X-Forwarded-For` en fallback : en
-// chaîne de proxies trustés, le rightmost est l'IP vue par le dernier hop trusté (pas le
-// leftmost qui est le client auto-déclaré, trivialement spoofable — cf. blind review
-// finding F2 Epic 2).
+// `req.ip` vient de la couche TCP Vercel (non spoofable). Fallback XFF rightmost
+// pour environnements non-Vercel (tests, dev local).
 export default withRateLimit({
   bucketPrefix: 'webhook:capture',
   keyFrom: (req: ApiRequest) => {

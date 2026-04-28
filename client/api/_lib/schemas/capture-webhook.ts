@@ -13,11 +13,17 @@ export const captureWebhookSchema = z.object({
     firstName: z.string().max(120).optional(),
     lastName: z.string().max(120).optional(),
     phone: z.string().max(32).optional(),
+    // Story 5.7 — extension parité emails Make scenario 2.
+    fullName: z.string().max(255).optional(),
+    pennylaneSourceId: z.string().max(64).optional(),
   }),
   invoice: z
     .object({
       ref: z.string().max(64),
       date: z.string().datetime().optional(),
+      // Story 5.7 — extension parité emails Make scenario 2.
+      specialMention: z.string().max(64).optional(),
+      label: z.string().max(255).optional(),
     })
     .optional(),
   items: z
@@ -26,7 +32,7 @@ export const captureWebhookSchema = z.object({
         productCode: z.string().min(1).max(64),
         productName: z.string().min(1).max(255),
         qtyRequested: z.number().positive().max(99999),
-        unit: z.enum(['kg', 'piece', 'liter']),
+        unit: z.enum(['kg', 'piece', 'liter', 'g']),
         cause: z.string().max(500).optional(),
       })
     )
