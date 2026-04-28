@@ -357,8 +357,10 @@ describe('GET /api/reports/export-csv', () => {
   })
 
   it('BOM présent : 1er octet CSV = \\xef\\xbb\\xbf', async () => {
-    state.builderState.count = 0
-    state.builderState.rows = []
+    // CR P13 — count=0 retourne JSON EMPTY_RESULT ; on force au moins 1 row
+    // pour atteindre la génération CSV.
+    state.builderState.count = 1
+    state.builderState.rows = [makeRow()]
     const res = mockRes()
     let buf: Buffer | null = null
     res.end = ((chunk?: string | Buffer) => {
@@ -372,8 +374,9 @@ describe('GET /api/reports/export-csv', () => {
   })
 
   it('CSV header en français : « Référence »;« Date réception »;…', async () => {
-    state.builderState.count = 0
-    state.builderState.rows = []
+    // CR P13 — idem ci-dessus, count > 0 pour générer le CSV.
+    state.builderState.count = 1
+    state.builderState.rows = [makeRow()]
     const res = mockRes()
     let buf: Buffer | null = null
     res.end = ((chunk?: string | Buffer) => {
@@ -389,6 +392,24 @@ describe('GET /api/reports/export-csv', () => {
     expect(headerLine).toContain('Fournisseurs')
     // 14 colonnes attendues (AC #3) — séparées par 13 `;`.
     expect((headerLine!.match(/;/g) ?? []).length).toBe(13)
+  })
+
+  // CR P13 — empty result : 200 JSON EMPTY_RESULT au lieu d'un fichier
+  // header-only que l'opérateur prendrait pour un succès silencieux.
+  it('count=0 → 200 JSON warning EMPTY_RESULT', async () => {
+    state.builderState.count = 0
+    state.builderState.rows = []
+    const res = mockRes()
+    await exportSavCsvHandler(operatorReq({}), res)
+    expect(res.statusCode).toBe(200)
+    const body = res.jsonBody as {
+      warning: string
+      row_count: number
+      message: string
+    }
+    expect(body.warning).toBe('EMPTY_RESULT')
+    expect(body.row_count).toBe(0)
+    expect(body.message).toContain('Aucun')
   })
 
   it('opérateur assigné : email `alice.martin@coop.fr` → cellule `alice.martin`', async () => {

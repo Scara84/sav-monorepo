@@ -15,8 +15,11 @@ import type { SavListFilters } from './useSavList'
 
 export type ExportFormat = 'csv' | 'xlsx'
 
+// P7 CR — `aborted` devient un statut discriminé (plutôt qu'un magic-string
+// dans `message`). La view checke `status === 'aborted'` directement, sans
+// dépendre du contenu du `message` (fragile à tout refactor / i18n).
 export interface DownloadResult {
-  status: 'downloaded' | 'switch_suggested' | 'error'
+  status: 'downloaded' | 'switch_suggested' | 'empty' | 'aborted' | 'error'
   row_count?: number
   message?: string
 }
@@ -53,7 +56,7 @@ interface ApiErrorShape {
   }
 }
 
-interface SwitchWarningShape {
+interface WarningShape {
   warning?: string
   row_count?: number
   message?: string
@@ -132,14 +135,28 @@ function triggerBrowserDownload(blob: Blob, fileName: string): void {
     a.click()
   } finally {
     doc.body.removeChild(a)
-    // Revoke après un microtick pour laisser le browser commencer le download.
-    Promise.resolve().then(() => {
+    // P5 CR — revoke différé 30s. Microtask peut être trop tôt sur Safari/FF
+    // qui initient la requête de download après le tour d'event loop courant.
+    // Si on revoke immédiatement, le blob URL est invalidé et le download
+    // échoue silencieusement (le composable retourne `'downloaded'` quand
+    // même → faux-positif côté UI). 30s couvre largement le délai navigateur.
+    const setTimeoutFn = (globalThis as unknown as { setTimeout?: typeof setTimeout }).setTimeout
+    if (typeof setTimeoutFn === 'function') {
+      setTimeoutFn(() => {
+        try {
+          urlApi.revokeObjectURL(objectUrl)
+        } catch {
+          // ignore — déjà revoke
+        }
+      }, 30_000)
+    } else {
+      // Env non-browser (test) : revoke synchrone OK
       try {
         urlApi.revokeObjectURL(objectUrl)
       } catch {
-        // ignore — déjà revoke
+        // ignore
       }
-    })
+    }
   }
 }
 
@@ -158,6 +175,12 @@ export function useSavExport(): UseSavExportApi {
   const downloading = ref(false)
   const error = ref<string | null>(null)
   let controller: AbortController | null = null
+  // P9 CR — counter d'appels en vol. Le `if (controller === ac)` seul ne
+  // protège pas contre le scénario où le 2e appel jette synchrone avant le
+  // `try` (ex. `buildExportQuery` throw) : le 1er voit `controller !== ac`
+  // dans son `finally` et ne reset jamais `downloading.value`. Avec un
+  // counter, on reset dès que `inFlight === 0`, peu importe la séquence.
+  let inFlight = 0
 
   onScopeDispose(() => {
     controller?.abort()
@@ -167,6 +190,7 @@ export function useSavExport(): UseSavExportApi {
     controller?.abort()
     const ac = new AbortController()
     controller = ac
+    inFlight++
     downloading.value = true
     error.value = null
     try {
@@ -191,16 +215,22 @@ export function useSavExport(): UseSavExportApi {
         return result
       }
 
-      // 200 + JSON → cas SWITCH_TO_XLSX
+      // 200 + JSON → cas SWITCH_TO_XLSX ou EMPTY_RESULT
       if (contentType.includes('application/json')) {
-        const body = (await res.json().catch(() => ({}))) as SwitchWarningShape
+        const body = (await res.json().catch(() => ({}))) as WarningShape
         if (body.warning === 'SWITCH_TO_XLSX') {
           const result: DownloadResult = { status: 'switch_suggested' }
           if (typeof body.row_count === 'number') result.row_count = body.row_count
           if (typeof body.message === 'string') result.message = body.message
           return result
         }
-        // 200 JSON sans warning → cas inattendu
+        // P13 CR — résultat vide signalé explicitement par le serveur.
+        if (body.warning === 'EMPTY_RESULT') {
+          const result: DownloadResult = { status: 'empty', row_count: 0 }
+          if (typeof body.message === 'string') result.message = body.message
+          return result
+        }
+        // 200 JSON sans warning connu → cas inattendu
         const msg = translate('UNKNOWN')
         error.value = msg
         return { status: 'error', message: msg }
@@ -213,14 +243,17 @@ export function useSavExport(): UseSavExportApi {
       return { status: 'downloaded' }
     } catch (e) {
       if (isAbortError(e)) {
-        // pas d'erreur user-visible — l'appelant a annulé volontairement
-        return { status: 'error', message: 'aborted' }
+        // P7 CR — statut discriminé `'aborted'` (pas un magic-string dans
+        // `message`). La view checke `result.status === 'aborted'` direct.
+        return { status: 'aborted' }
       }
       const msg = translate('NETWORK')
       error.value = msg
       return { status: 'error', message: msg }
     } finally {
-      if (controller === ac) {
+      // P9 CR — reset inconditionnel basé sur le counter (cf. note ci-dessus).
+      inFlight = Math.max(0, inFlight - 1)
+      if (inFlight === 0) {
         downloading.value = false
       }
     }

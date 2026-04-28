@@ -1,5 +1,13 @@
 # Travaux différés — sav-monorepo
 
+## Deferred from: code review of 5-4-export-csv-reporting-ad-hoc (2026-04-28 second pass)
+
+- **W53 (Edge HIGH) — `count: 'exact'` HEAD scan peut OOM/timeout sur grosses tables** : `admin.from('sav').select('id', { count: 'exact', head: true })` déclenche un COUNT(*) plein sur les filtres + JOINs. Sur dataset multi-coop ou volumes Fruitstock V2, peut consommer le budget lambda Vercel (10-30s) avant même la fetch → `QUERY_FAILED` sans rows. Fix : `count: 'planned'` (estimation pg_class rapide) puis escalade `exact` uniquement quand l'estimation flirte avec `CSV_SOFT_LIMIT_ROWS`/`HARD_LIMIT_ROWS`. Alternative : `.limit(HARD_LIMIT_ROWS+1)` sur la query data et rejeter post-fetch si length>limit. [`api/_lib/reports/export-csv-handler.ts:countQ`]
+
+- **W54 (Blind MEDIUM) — Aucun timeout (`AbortSignal.timeout`) sur les Supabase queries** : un hang DB (load, query plan dégradé, network) tient la lambda jusqu'au kill Vercel ; le rate-limit a déjà été incrémenté côté `op:sub` → l'utilisateur ne peut pas retry pendant 1 min sans avoir reçu de résultat. À transposer transversalement sur tous les handlers Epic 5 (export-supplier, reports/*). Fix : passer `{ signal: AbortSignal.timeout(45_000) }` aux clients Supabase, et décrémenter le bucket rate-limit sur hard failure. [`api/_lib/reports/export-csv-handler.ts` + transverse]
+
+- **W55 (Blind LOW) — SheetJS `xlsx` historique CVE (proto-pollution CVE-2023-30533, ReDoS CVE-2024-22363)** : on ne fait que de l'écriture (`XLSX.utils.aoa_to_sheet` + `XLSX.write`), surface d'attaque réduite, mais la lib reste sensible. À vérifier au prochain audit dépendances : confirmer version pinned ≥ 0.20.2 dans `package.json`, sinon bump ; à terme évaluer migration `exceljs` (stream writer + plus actif côté sécurité). [`api/_lib/reports/xlsx-generator.ts`]
+
 ## Deferred from: code review of 5-4-export-csv-reporting-ad-hoc (2026-04-27)
 
 - **W47 (AA2 LOW) — Streaming CSV non implémenté V1** : la spec AC #5 mentionne le streaming en chunks pour CSV ≥ 1000 lignes (`res.write` + Transfer-Encoding chunked) pour éviter spike mémoire lambda. Le contrat `ApiResponse` actuel n'expose pas `res.write()` ni `pipe()` ; on bufferise tout. Acceptable V1 (≤ 5000 lignes CSV ~500 KB sous budget 1 GB lambda confortable). Si bench réel pousse > 30k lignes, migrer vers async job + OneDrive (cf. Dev Notes Story 5.4 §"Pourquoi pas streaming XLSX ?"). [`api/_lib/reports/export-csv-handler.ts:sendBinary`]

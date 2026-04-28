@@ -64,8 +64,10 @@ const SELECT_EXPR = `
 interface RawMember {
   id: number
   first_name: string | null
-  last_name: string
-  email: string
+  // P4 CR — nullables côté DB. TS-vs-DB mismatch précédent produisait
+  // `'Prénom null'` ou cellule `'null'` quand la colonne contient NULL.
+  last_name: string | null
+  email: string | null
 }
 interface RawGroup {
   id: number
@@ -132,7 +134,11 @@ function isoDate(ts: string | null | undefined): string {
 /** Construit le nom complet membre : "Prénom Nom" ou juste "Nom". */
 function memberFullName(m: RawMember | null): string {
   if (!m) return ''
-  return m.first_name ? `${m.first_name} ${m.last_name}` : m.last_name
+  // P4 CR — coalesce explicite ; pas de `String(null)` ni `'Prénom null'`.
+  const first = m.first_name ?? ''
+  const last = m.last_name ?? ''
+  if (first && last) return `${first} ${last}`
+  return first || last
 }
 
 /**
@@ -142,11 +148,12 @@ function memberFullName(m: RawMember | null): string {
  */
 function emailShort(a: RawAssignee | null): string {
   if (!a) return ''
-  const at = a.email.indexOf('@')
-  if (at > 0) return a.email.slice(0, at)
+  const email = a.email ?? ''
+  const at = email.indexOf('@')
+  if (at > 0) return email.slice(0, at)
   // at === 0 (email malformé) ou at === -1 (pas de @) → fallback display_name
   // si dispo, sinon l'email tel quel (préférable à vide pour traçabilité).
-  return a.display_name || a.email || ''
+  return a.display_name || email || ''
 }
 
 /**
@@ -173,19 +180,34 @@ export function extractMotifs(lines: RawSavLine[] | null | undefined): string[] 
   return Array.from(seen.values())
 }
 
-/** Extrait + déduplique les supplier_code (NULL ignorés). */
+/** Extrait + déduplique les supplier_code (NULL/whitespace ignorés). */
 export function extractSuppliers(lines: RawSavLine[] | null | undefined): string[] {
   if (!lines || lines.length === 0) return []
   const seen = new Set<string>()
   const out: string[] = []
   for (const line of lines) {
     const code = line.product?.supplier_code
-    if (typeof code !== 'string' || code.length === 0) continue
-    if (seen.has(code)) continue
-    seen.add(code)
-    out.push(code)
+    if (typeof code !== 'string') continue
+    // P11 CR — trim avant check + dedup ; `'  '` ne doit pas produire
+    // une cellule `'RUFINO |   | BIOSUD'`.
+    const trimmed = code.trim()
+    if (trimmed.length === 0) continue
+    if (seen.has(trimmed)) continue
+    seen.add(trimmed)
+    out.push(trimmed)
   }
   return out
+}
+
+// P12 CR — Excel cap = 32 767 chars / cellule. Au-delà, le XLSX est corrompu
+// (cellule tronquée silencieusement par Excel à l'ouverture). On laisse une
+// marge de sécurité pour le suffixe.
+const EXCEL_CELL_MAX_CHARS = 32_000
+
+/** Tronque une cellule à `EXCEL_CELL_MAX_CHARS` avec suffixe `…` si dépassement. */
+function truncateForExcel(s: string): string {
+  if (s.length <= EXCEL_CELL_MAX_CHARS) return s
+  return `${s.slice(0, EXCEL_CELL_MAX_CHARS - 1)}…`
 }
 
 /** Aplatit une raw-row Supabase en ExportRow pour le générateur CSV/XLSX. */
@@ -196,15 +218,15 @@ export function projectExportRow(row: RawSavRow): ExportRow {
     receivedAt: isoDate(row.received_at),
     status: row.status,
     memberName: memberFullName(row.member),
-    memberEmail: row.member?.email ?? '',
+    memberEmail: row.member?.email ?? '', // P4 CR — already nullable-safe via ??
     groupName: row.group?.name ?? '',
     assigneeShort: emailShort(row.assignee),
     totalAmountFr: formatEurFr(row.total_amount_cents ?? 0),
     lineCount: lines.length,
-    motifs: extractMotifs(lines).join(' | '),
-    suppliers: extractSuppliers(lines).join(' | '),
+    motifs: truncateForExcel(extractMotifs(lines).join(' | ')),
+    suppliers: truncateForExcel(extractSuppliers(lines).join(' | ')),
     invoiceRef: row.invoice_ref ?? '',
-    tagsJoined: Array.isArray(row.tags) ? row.tags.join(' | ') : '',
+    tagsJoined: truncateForExcel(Array.isArray(row.tags) ? row.tags.join(' | ') : ''),
     closedAt: isoDate(row.closed_at),
   }
 }
@@ -259,7 +281,13 @@ interface QueryBuilder {
 }
 
 const SAV_REF_REGEX = /^SAV-\d{4}-\d{5}$/
-const HAS_5_DIGITS = /\d{5,}/
+// P6 CR — anchored : terme uniquement composé de 5+ chiffres (numéro de
+// référence partiel) ou commençant par `SAV-`. Un terme texte contenant 5
+// chiffres au milieu (ex. `'entreprise12345'`, `'facture 678901'`) repart en
+// FTS — sinon ilike sur `reference` produit un full-scan + résultats vides
+// (divergence vs SavListView, cause de bugs UX).
+const ONLY_5_DIGITS = /^\d{5,}$/
+const STARTS_WITH_SAV_PREFIX = /^SAV-\d{1,4}/i
 
 /**
  * Applique les filtres listSavQuerySchema sur le builder Supabase.
@@ -296,8 +324,9 @@ function applyFilters(builder: QueryBuilder, q: ListSavQuery): QueryBuilder {
     // référence via `?invoiceRef` ou la tag/status, ce qui couvre 95 %
     // des cas d'export. Plus complexe = défer si bench.
     const term = q.q
-    if (SAV_REF_REGEX.test(term) || HAS_5_DIGITS.test(term)) {
-      // Recherche par référence : on tolère ilike (fragment numérique).
+    if (SAV_REF_REGEX.test(term) || ONLY_5_DIGITS.test(term) || STARTS_WITH_SAV_PREFIX.test(term)) {
+      // Recherche par référence : on tolère ilike (fragment numérique pur
+      // OU préfixe `SAV-`). Tout autre terme repart en FTS — voir P6.
       const safe = term.replace(/[\\%_]/g, '\\$&')
       b = b.ilike('reference', `%${safe}%`)
     } else {
@@ -307,9 +336,25 @@ function applyFilters(builder: QueryBuilder, q: ListSavQuery): QueryBuilder {
   return b
 }
 
-/** Hash SHA-256 court (8 chars) des filtres pour log non-PII (AC #6). */
-function hashFilters(filters: object): string {
-  const json = JSON.stringify(filters, Object.keys(filters).sort())
+/**
+ * Hash court (8 chars hex) des filtres pour log non-PII (AC #6).
+ *
+ * P8 CR — canonicalisation des arrays imbriqués avant stringify : sans
+ * cela, `status: ['closed','validated']` et `status: ['validated','closed']`
+ * produisent des digests différents → corrélation logs fragmentée. On trie
+ * les valeurs primitives des arrays pour normaliser la représentation.
+ */
+function hashFilters(filters: Record<string, unknown>): string {
+  const canon: Record<string, unknown> = {}
+  for (const k of Object.keys(filters).sort()) {
+    const v = filters[k]
+    if (Array.isArray(v)) {
+      canon[k] = [...v].sort((a, b) => String(a).localeCompare(String(b)))
+    } else {
+      canon[k] = v
+    }
+  }
+  const json = JSON.stringify(canon)
   // Léger non-cryptographique mais suffisant pour logs (juste corrélation).
   let h = 0
   for (let i = 0; i < json.length; i++) h = (h * 31 + json.charCodeAt(i)) | 0
@@ -319,6 +364,10 @@ function hashFilters(filters: object): string {
 /** Format param parsing — défaut `csv`. */
 function parseFormat(req: ApiRequest): 'csv' | 'xlsx' | null {
   const raw = (req.query as Record<string, unknown> | undefined)?.['format']
+  // P3 CR — `?format=csv&format=xlsx` ambigu → null (400 INVALID_FILTERS).
+  // Pas de coerce silencieuse au premier élément : la requête est mal-formée,
+  // potentiel bug client ou pattern de scrape.
+  if (Array.isArray(raw) && raw.length > 1) return null
   const value = typeof raw === 'string' ? raw : Array.isArray(raw) ? String(raw[0] ?? '') : ''
   if (value === '' || value === 'csv') return 'csv'
   if (value === 'xlsx') return 'xlsx'
@@ -448,6 +497,25 @@ const coreHandler: ApiHandler = async (req, res) => {
       return
     }
 
+    // P13 CR — résultat vide : signaler explicitement à l'UI au lieu d'envoyer
+    // un fichier header-only que l'opérateur prend pour un succès légitime.
+    if (rowCount === 0) {
+      const durationMs = Date.now() - startedAt
+      logger.info('export.csv.empty', {
+        requestId,
+        filters_hash: filtersHash,
+        row_count: 0,
+        durationMs,
+        format,
+      })
+      res.status(200).json({
+        warning: 'EMPTY_RESULT',
+        row_count: 0,
+        message: 'Aucun SAV ne correspond aux filtres sélectionnés.',
+      })
+      return
+    }
+
     if (rowCount > CSV_SOFT_LIMIT_ROWS && format === 'csv') {
       const durationMs = Date.now() - startedAt
       logger.info('export.csv.warning', {
@@ -489,6 +557,20 @@ const coreHandler: ApiHandler = async (req, res) => {
     }
 
     const rows = (dataResult.data ?? []).map(projectExportRow)
+
+    // P10 CR — détection truncation silencieuse (TOCTOU count vs fetch, ou
+    // cap PostgREST `db-max-rows` cf. W49). On ne bloque pas l'export — le
+    // fichier reste utile — mais on log warn pour signaler l'incohérence.
+    if (rows.length < rowCount || rows.length === HARD_LIMIT_ROWS) {
+      logger.warn('export.csv.possibly_truncated', {
+        requestId,
+        filters_hash: filtersHash,
+        expected_count: rowCount,
+        fetched_count: rows.length,
+        hard_limit: HARD_LIMIT_ROWS,
+      })
+    }
+
     const cols = buildColumns()
 
     if (format === 'csv') {
@@ -553,5 +635,7 @@ export const __testables = {
   isoDate,
   memberFullName,
   emailShort,
+  truncateForExcel,
+  EXCEL_CELL_MAX_CHARS,
   coreHandler,
 }

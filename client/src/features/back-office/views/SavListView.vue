@@ -260,25 +260,46 @@ function toggleExportMenu(): void {
 function closeExportMenu(): void {
   exportMenuOpen.value = false
 }
+// P14 CR — auto-dismiss du toast success après 4s (info/error restent
+// jusqu'à action user). Token capture pour ne pas dismiss un toast plus
+// récent si l'utilisateur enchaîne plusieurs exports rapides.
+let toastDismissToken = 0
 function dismissToast(): void {
   exportToast.value = null
+  toastDismissToken++
 }
 async function runExport(format: ExportFormat): Promise<void> {
   exportMenuOpen.value = false
   exportToast.value = null
+  toastDismissToken++
   const result = await csvExport.downloadExport({
     format,
     filters: { ...list.filters, status: [...list.filters.status] },
   })
   if (result.status === 'downloaded') {
     exportToast.value = { variant: 'success', message: 'Export téléchargé.' }
+    const token = ++toastDismissToken
+    setTimeout(() => {
+      if (toastDismissToken === token && exportToast.value?.variant === 'success') {
+        exportToast.value = null
+      }
+    }, 4000)
   } else if (result.status === 'switch_suggested') {
     exportToast.value = {
       variant: 'info',
       message: `Plus de 5 000 lignes (${result.row_count ?? '?'}). L'export XLSX est recommandé.`,
       showXlsxAction: true,
     }
-  } else if (result.status === 'error' && result.message !== 'aborted') {
+  } else if (result.status === 'empty') {
+    // P13 CR — signal explicite « 0 ligne » au lieu d'un faux succès.
+    exportToast.value = {
+      variant: 'info',
+      message: result.message ?? 'Aucun SAV ne correspond aux filtres sélectionnés.',
+    }
+  } else if (result.status === 'aborted') {
+    // P7 CR — annulation user volontaire : pas de toast.
+    return
+  } else if (result.status === 'error') {
     exportToast.value = {
       variant: 'error',
       message: result.message ?? 'Erreur inattendue',

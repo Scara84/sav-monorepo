@@ -241,7 +241,9 @@ describe('useSavExport (Story 5.4 AC #11)', () => {
 
       const [r1, r2] = await Promise.all([first, second])
       expect(captured[0]!.aborted).toBe(true)
-      expect(r1.status).toBe('error') // aborted
+      // CR P7 — annulation = statut discriminé `'aborted'` (pas 'error' avec
+      // magic-string `message: 'aborted'`).
+      expect(r1.status).toBe('aborted')
       expect(r2.status).toBe('downloaded')
     })
   })

