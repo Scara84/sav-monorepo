@@ -61,14 +61,56 @@ export interface FetchHistoryParams {
   cursor?: string
 }
 
+/**
+ * CR Story 5.6 P7 — Forme alignée avec le contrat serveur
+ * `SupplierConfigEntry` exporté par `client/api/_lib/exports/supplier-configs.ts`.
+ * Maintenue dupliquée côté client pour éviter un import cross-frontière
+ * api↔src (qui ferait fuiter le contrat handler dans le bundle SPA), mais
+ * tout ajout de champ DOIT être propagé manuellement sur les deux fichiers.
+ */
+export interface SupplierConfigEntry {
+  code: string
+  label: string
+  language: 'fr' | 'es'
+}
+
+export interface SupplierConfigList {
+  suppliers: SupplierConfigEntry[]
+}
+
+/**
+ * CR Story 5.6 P6 — Fallback partagé entre `ExportSupplierModal.vue` et
+ * `ExportHistoryView.vue` quand `/config-list` est down. Source de vérité
+ * unique → un fournisseur N+1 ajouté côté serveur ne nécessite qu'une
+ * seule mise à jour ici (et idéalement à supprimer quand on aura un
+ * mécanisme « cache last-known » côté client, cf. W69).
+ */
+export const FALLBACK_SUPPLIERS: SupplierConfigEntry[] = [
+  { code: 'RUFINO', label: 'Rufino (ES)', language: 'es' },
+  { code: 'MARTINEZ', label: 'Martinez (ES)', language: 'es' },
+]
+
+function isSupplierConfigEntry(v: unknown): v is SupplierConfigEntry {
+  if (typeof v !== 'object' || v === null) return false
+  const o = v as Record<string, unknown>
+  return (
+    typeof o['code'] === 'string' &&
+    typeof o['label'] === 'string' &&
+    (o['language'] === 'fr' || o['language'] === 'es')
+  )
+}
+
 export interface UseSupplierExportApi {
   generating: Ref<boolean>
   fetchingHistory: Ref<boolean>
+  fetchingConfigList: Ref<boolean>
   generateError: Ref<string | null>
   historyError: Ref<string | null>
+  configListError: Ref<string | null>
   lastResult: Ref<ExportResult | null>
   generateExport: (params: GenerateExportParams) => Promise<ExportResult>
   fetchHistory: (params?: FetchHistoryParams) => Promise<ExportHistoryPage>
+  fetchConfigList: () => Promise<SupplierConfigList>
 }
 
 const errorMessages: Record<string, string> = {
@@ -136,16 +178,20 @@ function isAbortError(e: unknown): boolean {
 export function useSupplierExport(): UseSupplierExportApi {
   const generating = ref(false)
   const fetchingHistory = ref(false)
+  const fetchingConfigList = ref(false)
   const generateError = ref<string | null>(null)
   const historyError = ref<string | null>(null)
+  const configListError = ref<string | null>(null)
   const lastResult = ref<ExportResult | null>(null)
 
   let generateController: AbortController | null = null
   let historyController: AbortController | null = null
+  let configListController: AbortController | null = null
 
   onScopeDispose(() => {
     generateController?.abort()
     historyController?.abort()
+    configListController?.abort()
   })
 
   async function generateExport(params: GenerateExportParams): Promise<ExportResult> {
@@ -235,13 +281,69 @@ export function useSupplierExport(): UseSupplierExportApi {
     }
   }
 
+  async function fetchConfigList(): Promise<SupplierConfigList> {
+    configListController?.abort()
+    const ac = new AbortController()
+    configListController = ac
+    fetchingConfigList.value = true
+    configListError.value = null
+    try {
+      const res = await fetch('/api/exports/supplier/config-list', {
+        method: 'GET',
+        credentials: 'same-origin',
+        signal: ac.signal,
+      })
+      const body = (await res.json().catch(() => ({}))) as ApiErrorShape & {
+        data?: SupplierConfigList
+      }
+      if (!res.ok) {
+        const code = classifyHttpError(res.status, body)
+        const msg = translate(code)
+        configListError.value = msg
+        throw new Error(msg)
+      }
+      // CR Story 5.6 P9 — validation per-entry. Le cast `as` ci-dessus ne
+      // garantit pas la forme runtime ; un serveur qui retournerait
+      // `{ language: 'pt' }` ou `{ code: 42 }` passerait silencieusement
+      // sans cette guard.
+      if (!body.data || !Array.isArray(body.data.suppliers)) {
+        configListError.value = translate('UNKNOWN')
+        throw new Error(configListError.value)
+      }
+      const validSuppliers = body.data.suppliers.filter(isSupplierConfigEntry)
+      if (validSuppliers.length !== body.data.suppliers.length) {
+        // Réponse partiellement malformée — on log mais on retourne ce qui
+        // est valide plutôt que de tout rejeter (l'opérateur garde au moins
+        // les fournisseurs reconnus).
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[useSupplierExport] /config-list : ${body.data.suppliers.length - validSuppliers.length} entrées rejetées (forme invalide)`
+        )
+      }
+      return { suppliers: validSuppliers }
+    } catch (e) {
+      if (isAbortError(e)) throw e
+      if (configListError.value === null) {
+        configListError.value = translate('NETWORK')
+      }
+      throw e instanceof Error ? e : new Error(String(e))
+    } finally {
+      if (configListController === ac) {
+        fetchingConfigList.value = false
+      }
+    }
+  }
+
   return {
     generating,
     fetchingHistory,
+    fetchingConfigList,
     generateError,
     historyError,
+    configListError,
     lastResult,
     generateExport,
     fetchHistory,
+    fetchConfigList,
   }
 }

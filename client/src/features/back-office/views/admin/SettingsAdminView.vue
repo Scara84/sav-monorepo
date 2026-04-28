@@ -129,12 +129,14 @@ async function onSubmit(e: Event): Promise<void> {
   e.preventDefault()
   if (settings.saving.value || !formHydrated.value || !formIsValid.value) return
   try {
-    await settings.updateThreshold({
+    const trimmedNotes = form.value.notes.trim()
+    const payload: import('../../composables/useAdminSettings').UpdateThresholdPayload = {
       count: form.value.count,
       days: form.value.days,
       dedup_hours: form.value.dedup_hours,
-      notes: form.value.notes.trim() === '' ? undefined : form.value.notes.trim(),
-    })
+    }
+    if (trimmedNotes !== '') payload.notes = trimmedNotes
+    await settings.updateThreshold(payload)
     showToast('success', 'Seuils enregistrés. Appliqués au prochain cron (jusqu’à 24 h).')
     form.value.notes = ''
     // CR patch U4 : aligner sur le label "5 dernières versions" affiché.

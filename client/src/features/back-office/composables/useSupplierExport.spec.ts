@@ -225,4 +225,94 @@ describe('useSupplierExport (composable)', () => {
     expect(signals[0]!.aborted).toBe(true)
     expect(signals[1]!.aborted).toBe(true)
   })
+
+  // -------- Story 5.6 — fetchConfigList --------
+
+  it('Story 5.6 — fetchConfigList appelle GET /api/exports/supplier/config-list et retourne suppliers', async () => {
+    const mockFetch = vi.fn().mockResolvedValue(
+      jsonResponse(200, {
+        data: {
+          suppliers: [
+            { code: 'RUFINO', label: 'Rufino (ES)', language: 'es' },
+            { code: 'MARTINEZ', label: 'Martinez (ES)', language: 'es' },
+          ],
+        },
+      })
+    )
+    globalThis.fetch = mockFetch as unknown as typeof fetch
+
+    const exp = useSupplierExport()
+    const list = await exp.fetchConfigList()
+    expect(list.suppliers).toHaveLength(2)
+    expect(list.suppliers[0]!.code).toBe('RUFINO')
+    expect(list.suppliers[1]!.code).toBe('MARTINEZ')
+    expect(exp.fetchingConfigList.value).toBe(false)
+    expect(exp.configListError.value).toBeNull()
+    const call = mockFetch.mock.calls[0] as [string, RequestInit]
+    expect(call[0]).toBe('/api/exports/supplier/config-list')
+  })
+
+  it('Story 5.6 — fetchConfigList 500 → throws + configListError peuplé', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(jsonResponse(500, {})) as unknown as typeof fetch
+    const exp = useSupplierExport()
+    await expect(exp.fetchConfigList()).rejects.toThrow()
+    expect(exp.configListError.value).toBe(
+      'Service indisponible, réessayez dans quelques instants.'
+    )
+    // CR Story 5.6 P10 — finally remet bien fetchingConfigList à false même en erreur.
+    expect(exp.fetchingConfigList.value).toBe(false)
+  })
+
+  it('CR P10 — fetchConfigList re-invocation après erreur reset configListError au début', async () => {
+    let callCount = 0
+    globalThis.fetch = vi.fn((() => {
+      callCount += 1
+      if (callCount === 1) return Promise.resolve(jsonResponse(500, {}))
+      return Promise.resolve(
+        jsonResponse(200, {
+          data: { suppliers: [{ code: 'RUFINO', label: 'Rufino (ES)', language: 'es' }] },
+        })
+      )
+    }) as unknown as typeof fetch)
+
+    const exp = useSupplierExport()
+    await expect(exp.fetchConfigList()).rejects.toThrow()
+    expect(exp.configListError.value).not.toBeNull()
+    const list = await exp.fetchConfigList()
+    expect(list.suppliers).toHaveLength(1)
+    expect(exp.configListError.value).toBeNull()
+  })
+
+  it('CR P9 — fetchConfigList filtre les entrées malformées (language invalide, code non-string)', async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      jsonResponse(200, {
+        data: {
+          suppliers: [
+            { code: 'RUFINO', label: 'Rufino (ES)', language: 'es' },
+            { code: 'INVALID', label: 'Invalid', language: 'pt' }, // language hors union
+            { code: 42, label: 'Wrong code type', language: 'es' }, // code non-string
+            { code: 'MARTINEZ', label: 'Martinez (ES)', language: 'es' },
+          ],
+        },
+      })
+    ) as unknown as typeof fetch
+
+    const exp = useSupplierExport()
+    const list = await exp.fetchConfigList()
+    expect(list.suppliers.map((s) => s.code)).toEqual(['RUFINO', 'MARTINEZ'])
+  })
+
+  it('CR P17 — fetchConfigList passe method:GET explicite', async () => {
+    const mockFetch = vi.fn().mockResolvedValue(
+      jsonResponse(200, {
+        data: { suppliers: [{ code: 'RUFINO', label: 'Rufino (ES)', language: 'es' }] },
+      })
+    )
+    globalThis.fetch = mockFetch as unknown as typeof fetch
+
+    const exp = useSupplierExport()
+    await exp.fetchConfigList()
+    const call = mockFetch.mock.calls[0] as [string, RequestInit]
+    expect(call[1].method).toBe('GET')
+  })
 })

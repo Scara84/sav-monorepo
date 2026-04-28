@@ -1,20 +1,25 @@
 #!/usr/bin/env tsx
 /**
- * Story 5.2 AC #15 — bench p95 `POST /api/exports/supplier`.
+ * Story 5.2 / 5.6 — bench p95 `POST /api/exports/supplier`.
  *
  * Lance N appels successifs contre un déploiement préview et affiche
  * p50 / p95 / p99. Target V1 (AC-2.5.1 PRD) : p95 < 3s pour un mois de
- * données Rufino (~100-200 lignes fixture préview).
+ * données fournisseur (~100-200 lignes fixture préview).
  *
  * Usage :
  *   cd client
  *   BENCH_BASE_URL=https://sav-preview.vercel.app \
  *   BENCH_SESSION_COOKIE='sav_session=eyJhbGc…' \
- *   npx tsx scripts/bench/export-supplier.ts [count]
+ *   BENCH_ALLOW_DESTRUCTIVE=1 \
+ *   npx tsx scripts/bench/export-supplier.ts [count] [--supplier=RUFINO|MARTINEZ]
+ *
+ * Story 5.6 AC #12 — flag `--supplier` permet de bencher MARTINEZ et de
+ * vérifier empiriquement que la config alternative ne dégrade pas la
+ * perf (target identique p95 < 3s). Le rapport bench Story 5.6 mentionne
+ * les 2 fournisseurs.
  *
  * Le script est MANUEL (non CI) — à exécuter avant merge. Rapport à copier
- * dans `_bmad-output/implementation-artifacts/5-2-bench-report.md` après
- * chaque run notable.
+ * dans `_bmad-output/implementation-artifacts/5-{2,6}-bench-report.md`.
  *
  * Pas de cleanup DB : chaque run insère une ligne `supplier_exports` +
  * un fichier OneDrive `replace`. Sur la préview, c'est acceptable — sur
@@ -22,7 +27,37 @@
  */
 
 const DEFAULT_COUNT = 10
-const COUNT = Number(process.argv[2] ?? DEFAULT_COUNT)
+
+// Parsing minimaliste : on accepte un nombre positionnel (count) et un
+// flag `--supplier=CODE`. Tout le reste est ignoré.
+function parseArgs(argv: readonly string[]): { count: number; supplier: string } {
+  let count = DEFAULT_COUNT
+  let supplier = 'RUFINO'
+  for (const arg of argv) {
+    if (arg.startsWith('--supplier=')) {
+      const raw = arg.slice('--supplier='.length).trim()
+      if (raw.length > 0) supplier = raw.toUpperCase()
+      continue
+    }
+    const n = Number(arg)
+    if (Number.isFinite(n) && n > 0) count = Math.trunc(n)
+  }
+  return { count, supplier }
+}
+
+const { count: COUNT, supplier: SUPPLIER } = parseArgs(process.argv.slice(2))
+
+// CR Story 5.6 P12 — fail-fast si un code inconnu est passé (ex. typo
+// `--supplier=RUFNO`). Sans cette guard, COUNT requêtes émettent un 422
+// `UNKNOWN_SUPPLIER` et le rapport p95 mesure le coût d'un rejet, pas
+// d'un export. Liste alignée sur `_registry` de `supplier-configs.ts` —
+// à mettre à jour quand un fournisseur N+1 est ajouté.
+const KNOWN_SUPPLIERS = new Set(['RUFINO', 'MARTINEZ'])
+if (!KNOWN_SUPPLIERS.has(SUPPLIER)) {
+  console.error(`ERR: SUPPLIER inconnu (${SUPPLIER}). Connus : ${[...KNOWN_SUPPLIERS].join(', ')}`)
+  process.exit(2)
+}
+
 const BASE_URL = process.env['BENCH_BASE_URL']
 const SESSION_COOKIE = process.env['BENCH_SESSION_COOKIE']
 // W44 (CR Story 5.2) — chaque run = N INSERT DB + N upload OneDrive
@@ -42,7 +77,7 @@ if (!SESSION_COOKIE) {
 }
 if (!ALLOW_DESTRUCTIVE) {
   console.error(
-    `ERR: BENCH_ALLOW_DESTRUCTIVE=1 requis. Ce script écrit ${COUNT} lignes \`supplier_exports\` + ${COUNT} fichiers OneDrive (replace).`
+    `ERR: BENCH_ALLOW_DESTRUCTIVE=1 requis. Ce script écrit ${COUNT} lignes \`supplier_exports\` (${SUPPLIER}) + ${COUNT} fichiers OneDrive (replace).`
   )
   console.error('Vérifiez que vous ciblez bien une préview avant de relancer.')
   process.exit(2)
@@ -71,7 +106,7 @@ async function runOne(index: number): Promise<Result> {
       Cookie: SESSION_COOKIE as string,
     },
     body: JSON.stringify({
-      supplier: 'RUFINO',
+      supplier: SUPPLIER,
       period_from: '2026-01-01',
       period_to: '2026-01-31',
       format: 'XLSX',
@@ -91,7 +126,7 @@ async function runOne(index: number): Promise<Result> {
 }
 
 async function main(): Promise<void> {
-  console.log(`→ Bench export-supplier RUFINO : ${COUNT} runs contre ${BASE_URL}`)
+  console.log(`→ Bench export-supplier ${SUPPLIER} : ${COUNT} runs contre ${BASE_URL}`)
   const results: Result[] = []
   for (let i = 0; i < COUNT; i++) {
     try {

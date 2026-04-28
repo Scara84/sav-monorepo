@@ -62,6 +62,10 @@
       "destination": "/api/pilotage?op=export-history"
     },
     {
+      "source": "/api/exports/supplier/config-list",
+      "destination": "/api/pilotage?op=export-config-list"
+    },
+    {
       "source": "/api/exports/supplier/:id/download",
       "destination": "/api/pilotage?op=export-download&id=:id"
     },

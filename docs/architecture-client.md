@@ -476,6 +476,59 @@ Le builder utilise `xlsx ^0.18.5` (déjà présent, pattern Epic 4.5). Pas d'ajo
 - Story créatrice : `_bmad-output/implementation-artifacts/5-1-architecture-export-generique-config-rufino-migration.md`.
 - Débloque : Story 5.2 (endpoint + UI), Story 5.6 (preuve FR36 via ajout MARTINEZ).
 
+## Epic 5.6 — Validation empirique FR36 (pattern générique fournisseur)
+
+### Décision
+
+L'ajout du fournisseur **MARTINEZ** se fait par **pur ajout de configuration** : un nouveau fichier `martinezConfig.ts` + une entrée dans la map `supplierConfigs`. Aucune modification du moteur d'export, du handler endpoint, ni du contrat `SupplierExportConfig`. C'est la preuve exécutable que l'investissement Story 5.1 (FR36) paye et que les fournisseurs N+1 (Alvarez, Garcia, …) suivront sans dette architecturale.
+
+### Fichiers **non modifiés** (preuve FR36)
+
+- `client/api/_lib/exports/supplierExportBuilder.ts` — moteur générique (verrouillé par le test guard `supplier-export-builder.guard.spec.ts` qui re-tourne en CI à chaque story d'ajout de fournisseur).
+- `client/api/_lib/exports/export-supplier-handler.ts` — résolution config fournisseur via `resolveSupplierConfig(code)` (lookup map). Le handler est agnostique de la liste des fournisseurs supportés.
+- Contrat `SupplierExportConfig` (signatures, helpers, sanitizer, validation_lists). Le contrat couvre tous les besoins MARTINEZ V1 sans extension.
+
+### Fichiers **modifiés / créés** (delta minimal)
+
+| Fichier | Type | Rôle |
+|---|---|---|
+| `client/api/_lib/exports/martinezConfig.ts` | **créé** | Config V1 hypothétique MARTINEZ : 10 colonnes (FECHA_RECEPCION, NUM_PEDIDO, ALBARÁN, CLIENTE_FRUIT, DESCRIPCIÓN_ES, CANTIDAD, PESO_KG, PRECIO_UNIT, TOTAL, DETERIORADO), formula `TOTAL = F{row}*H{row}`, format `PESO_KG=integer` (vs Rufino decimal). |
+| `client/api/_lib/exports/supplier-configs.ts` | étendu | +1 entrée `MARTINEZ: martinezConfig` dans `supplierConfigs`. Ajout helper `listSupplierConfigs()` (pour endpoint config-list) + type auto-dérivé `KnownSupplierCode = 'RUFINO' \| 'MARTINEZ'`. |
+| `client/api/_lib/exports/exports-config-list-handler.ts` | **créé** | Handler `GET /api/exports/supplier/config-list` — 5 lignes utiles, lit dynamiquement `Object.entries(_registry)`. |
+| `client/api/pilotage.ts` | étendu | +1 op `export-config-list` dans `ALLOWED_OPS` + dispatch (zéro nouveau slot Vercel). |
+| `client/vercel.json` | étendu | +1 rewrite `/api/exports/supplier/config-list → /api/pilotage?op=export-config-list`. |
+| `client/src/features/back-office/composables/useSupplierExport.ts` | étendu | `fetchConfigList()` (+ `AbortController` dédié). |
+| `client/src/features/back-office/components/ExportSupplierModal.vue` | étendu | Select fournisseur peuplé dynamiquement via fetch + fallback hardcodé `[RUFINO, MARTINEZ]` si API KO. |
+| `client/src/features/back-office/views/ExportHistoryView.vue` | étendu | Idem pour le filtre supplier. |
+| `client/scripts/bench/export-supplier.ts` | étendu | Flag `--supplier=CODE` (défaut `RUFINO`). |
+
+### Pourquoi un endpoint `/config-list` plutôt qu'un hardcoded array UI
+
+Coût marginal : 1 op router + 5 lignes handler. Bénéfice : ajouter Alvarez (Story future N+1) ne nécessitera **aucune modification UI** — le select se peuplera tout seul. À l'inverse, sans cet endpoint, chaque story d'ajout de fournisseur coûte 2 endroits à modifier (config TS + UI hardcoded). Justifie le coût immédiat (~30 min).
+
+### Décision Option C — pas de table `supplier_translations` V1
+
+MARTINEZ V1 réutilise `validation_lists.value_es` (la même que Rufino) sans divergence — il n'y a pas de client MARTINEZ réel chez Fruitstock V1 et la config est avant tout une preuve d'architecture. Si un vrai client MARTINEZ arrive avec un besoin de traduction ES divergente (ex. `Pourri → deteriorado` vs `podrido`), faire un refacto dédié vers une table `supplier_translations(supplier_code, list_code, value, translation)`. **Pas V1 Epic 5.**
+
+### Règle pour les fournisseurs futurs
+
+> **Si l'ajout d'un fournisseur N+1 nécessite une modification de `supplierExportBuilder.ts`, c'est qu'un besoin métier réel n'est pas couvert par le contrat `SupplierExportConfig`. Action correcte : étendre le contrat (ajouter un champ à `SupplierExportConfig`, étendre les `kind` de `source`, etc.) — pas introduire un branchement spécifique fournisseur dans le builder.**
+>
+> Le test guard `supplier-export-builder.guard.spec.ts` est volontairement strict (case-insensitive `\\brufino\\b` / `\\bmartinez\\b`) : il casse à la première dérive. Si un dev contourne le guard via un tableau ou un mapping pour cacher le hardcode, c'est une code smell à signaler en review.
+
+### Tests Story 5.6
+
+- `martinez-config.spec.ts` (5 tests) : happy path MARTINEZ, MARTINEZ vs RUFINO diff (preuve config-driven), filtre SQL `supplier_code='MARTINEZ'`, format `integer` PESO_KG, re-check guard.
+- `export-supplier.spec.ts` (+ 2 tests) : 201 happy path MARTINEZ, lowercased `martinez → MARTINEZ`.
+- `useSupplierExport.spec.ts` (+ 2 tests) : `fetchConfigList()` OK / 500.
+- `ExportSupplierModal.spec.ts` (+ 3 tests) : config-list OK affiche 2 options, KO → fallback + toast warning, sélection MARTINEZ → submit body avec `supplier='MARTINEZ'`.
+
+### Référence
+
+- Spec : `_bmad-output/planning-artifacts/epics.md:1005-1015`, `prd.md:1226-1227` (FR36).
+- Story créatrice : `_bmad-output/implementation-artifacts/5-6-ajout-d-un-deuxieme-fournisseur-validation-architecture.md`.
+- Bench : `_bmad-output/implementation-artifacts/5-6-bench-report.md`.
+
 ## Dashboard pilotage (Epic 5 Story 5.3)
 
 ### Stack

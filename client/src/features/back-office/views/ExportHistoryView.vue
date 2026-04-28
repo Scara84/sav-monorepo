@@ -1,18 +1,28 @@
 <script setup lang="ts">
 import { ref, onMounted, watch, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { useSupplierExport, type ExportHistoryItem } from '../composables/useSupplierExport'
+import {
+  useSupplierExport,
+  FALLBACK_SUPPLIERS,
+  type ExportHistoryItem,
+  type SupplierConfigEntry,
+} from '../composables/useSupplierExport'
 
 /**
- * Story 5.2 AC #14 — Vue dédiée historique des exports fournisseurs.
+ * Story 5.2 / 5.6 — Vue dédiée historique des exports fournisseurs.
  *
  * Pagination cursor-based (pattern Story 3.3 SavListView). Filtre
  * `?supplier=` en query string. Route protégée par
  * `meta.requiresAuth='operator'` + roles ['admin','sav-operator']
  * (cf. `src/router/index.js`).
+ *
+ * Story 5.6 — la liste des fournisseurs disponibles est chargée
+ * dynamiquement via `useSupplierExport.fetchConfigList()` ; fallback
+ * hardcodé en cas d'échec API. CR P1 — toast warning ajouté pour
+ * parité avec `ExportSupplierModal` (sinon échec config-list silencieux).
+ * CR P6 — `FALLBACK_SUPPLIERS` factorisé dans `useSupplierExport.ts`.
  */
 
-const SUPPLIERS = ['', 'RUFINO'] as const
 const PAGE_SIZE = 20
 
 const route = useRoute()
@@ -20,9 +30,43 @@ const router = useRouter()
 const exp = useSupplierExport()
 
 const supplier = ref<string>('')
+const supplierOptions = ref<SupplierConfigEntry[]>([])
 const items = ref<ExportHistoryItem[]>([])
 const nextCursor = ref<string | null>(null)
 const cursorStack = ref<Array<string | null>>([])
+// CR Story 5.6 P1 — toast warning pour parité avec `ExportSupplierModal`
+// (AC #6 / AC #9). Sans ce feedback, l'opérateur travaille avec une liste
+// statique sans le savoir si /config-list est down (ex. token expiré).
+const toastMessage = ref<string | null>(null)
+// CR Story 5.6 P3 — flag pour suppression de la première fire du watcher
+// `supplier` pendant le setup initial (hydrateFromQuery + loadConfigList).
+// Sans cela, watcher fire un `load(null)` concurrent qui est abortée par
+// l'`await load(null)` explicite ligne suivante.
+let suppressNextSupplierWatch = false
+
+async function loadConfigList(): Promise<void> {
+  try {
+    const list = await exp.fetchConfigList()
+    supplierOptions.value = list.suppliers.length > 0 ? list.suppliers : FALLBACK_SUPPLIERS
+  } catch (e) {
+    if (e instanceof Error && e.name === 'AbortError') {
+      // CR Story 5.6 P18 — defensive fallback (idem modal).
+      if (supplierOptions.value.length === 0) supplierOptions.value = FALLBACK_SUPPLIERS
+      return
+    }
+    supplierOptions.value = FALLBACK_SUPPLIERS
+    // CR Story 5.6 P1 — feedback explicite (parité modal).
+    toastMessage.value = 'Impossible de charger la liste — valeurs par défaut.'
+  }
+  // CR Story 5.6 P4 — révoquer une sélection deep-link `?supplier=TOTO`
+  // qui ne correspond à aucun fournisseur connu (option fantôme dans le
+  // select + filtre serveur sur code invalide → 0 résultats trompeurs).
+  if (supplier.value && !supplierOptions.value.some((s) => s.code === supplier.value)) {
+    suppressNextSupplierWatch = true
+    supplier.value = ''
+    toastMessage.value = `Filtre fournisseur « ${route.query['supplier']} » inconnu — réinitialisé.`
+  }
+}
 
 function hydrateFromQuery(): void {
   const s = route.query['supplier']
@@ -85,12 +129,28 @@ function goBack(): void {
 const isEmpty = computed(() => !exp.fetchingHistory.value && items.value.length === 0)
 
 onMounted(async () => {
+  // CR Story 5.6 P3 — ordre rigoureux pour éviter race watcher-vs-load :
+  //  1. hydrateFromQuery → set supplier (peut déclencher watcher en
+  //     microtâche, on bloque via suppressNextSupplierWatch).
+  //  2. loadConfigList → peut révoquer la sélection si supplier inconnu
+  //     (P4) ; pose aussi suppressNextSupplierWatch.
+  //  3. load(null) explicite → unique requête historique.
+  suppressNextSupplierWatch = true
   hydrateFromQuery()
   cursorStack.value = []
+  await loadConfigList()
   await load(null)
+  // Reset le flag (au cas où aucune mutation supplier n'a eu lieu — le
+  // watcher reprend son comportement normal au prochain changement
+  // utilisateur).
+  suppressNextSupplierWatch = false
 })
 
 watch(supplier, async (v) => {
+  if (suppressNextSupplierWatch) {
+    suppressNextSupplierWatch = false
+    return
+  }
   // W45 (CR Story 5.2) — merger avec la query existante au lieu d'écraser :
   // un deep-link portant d'autres params (tracking, debug, etc.) reste
   // intact lors d'un changement de filtre.
@@ -114,12 +174,15 @@ watch(supplier, async (v) => {
       <h1>Historique des exports fournisseurs</h1>
     </header>
 
+    <p v-if="toastMessage" class="export-history-view__toast" role="status">{{ toastMessage }}</p>
+
     <section class="filters">
       <label>
         <span>Fournisseur</span>
         <select v-model="supplier" aria-label="Filtrer par fournisseur">
-          <option v-for="s in SUPPLIERS" :key="s" :value="s">
-            {{ s === '' ? 'Tous' : s }}
+          <option value="">Tous</option>
+          <option v-for="s in supplierOptions" :key="s.code" :value="s.code">
+            {{ s.label }}
           </option>
         </select>
       </label>

@@ -39,6 +39,17 @@ function sampleHistory(items: unknown[] = []): unknown {
   return { data: { items, next_cursor: null } }
 }
 
+function sampleConfigList(): unknown {
+  return {
+    data: {
+      suppliers: [
+        { code: 'RUFINO', label: 'Rufino (ES)', language: 'es' },
+        { code: 'MARTINEZ', label: 'Martinez (ES)', language: 'es' },
+      ],
+    },
+  }
+}
+
 function globalStubs() {
   return {
     'router-link': {
@@ -52,6 +63,9 @@ describe('ExportSupplierModal.vue', () => {
 
   beforeEach(() => {
     globalThis.fetch = vi.fn(((url: string) => {
+      if (String(url).startsWith('/api/exports/supplier/config-list')) {
+        return Promise.resolve(jsonResponse(200, sampleConfigList()))
+      }
       if (String(url).startsWith('/api/exports/supplier/history')) {
         return Promise.resolve(jsonResponse(200, sampleHistory()))
       }
@@ -94,6 +108,9 @@ describe('ExportSupplierModal.vue', () => {
     let resolveFetch: (v: Response) => void = () => undefined
     const pending = new Promise<Response>((resolve) => (resolveFetch = resolve))
     globalThis.fetch = vi.fn(((url: string) => {
+      if (String(url).startsWith('/api/exports/supplier/config-list')) {
+        return Promise.resolve(jsonResponse(200, sampleConfigList()))
+      }
       if (String(url).startsWith('/api/exports/supplier/history')) {
         return Promise.resolve(jsonResponse(200, sampleHistory()))
       }
@@ -119,6 +136,9 @@ describe('ExportSupplierModal.vue', () => {
 
   it('affiche message FR pour UNKNOWN_SUPPLIER', async () => {
     globalThis.fetch = vi.fn(((url: string) => {
+      if (String(url).startsWith('/api/exports/supplier/config-list')) {
+        return Promise.resolve(jsonResponse(200, sampleConfigList()))
+      }
       if (String(url).startsWith('/api/exports/supplier/history')) {
         return Promise.resolve(jsonResponse(200, sampleHistory()))
       }
@@ -189,6 +209,9 @@ describe('ExportSupplierModal.vue', () => {
       },
     ])
     globalThis.fetch = vi.fn(((url: string) => {
+      if (String(url).startsWith('/api/exports/supplier/config-list')) {
+        return Promise.resolve(jsonResponse(200, sampleConfigList()))
+      }
       if (String(url).startsWith('/api/exports/supplier/history')) {
         return Promise.resolve(jsonResponse(200, history))
       }
@@ -250,6 +273,9 @@ describe('ExportSupplierModal.vue', () => {
   // W50 (CR Story 5.2) — historyLoadFailed distingue échec vs vide.
   it('W50 fetchHistory en erreur affiche le banner historyLoadFailed', async () => {
     globalThis.fetch = vi.fn(((url: string) => {
+      if (String(url).startsWith('/api/exports/supplier/config-list')) {
+        return Promise.resolve(jsonResponse(200, sampleConfigList()))
+      }
       if (String(url).startsWith('/api/exports/supplier/history')) {
         return Promise.resolve(jsonResponse(500, {}))
       }
@@ -265,5 +291,119 @@ describe('ExportSupplierModal.vue', () => {
     expect(mountedWrapper.html()).not.toContain('Aucun export pour ce fournisseur')
     // Banner d'erreur de l'historique présent.
     expect(mountedWrapper.html()).toContain('Service indisponible')
+  })
+
+  // -------- Story 5.6 — config-list dynamique --------
+
+  it('Story 5.6 — fetchConfigList OK : select contient RUFINO + MARTINEZ avec labels', async () => {
+    mountedWrapper = mount(ExportSupplierModal, {
+      props: { open: true },
+      global: { stubs: globalStubs() },
+    })
+    await flushPromises()
+    const options = mountedWrapper.findAll('select option')
+    expect(options).toHaveLength(2)
+    expect((options[0]!.element as HTMLOptionElement).value).toBe('RUFINO')
+    expect(options[0]!.text()).toBe('Rufino (ES)')
+    expect((options[1]!.element as HTMLOptionElement).value).toBe('MARTINEZ')
+    expect(options[1]!.text()).toBe('Martinez (ES)')
+  })
+
+  it('Story 5.6 — fetchConfigList KO : fallback hardcodé + toast warning', async () => {
+    globalThis.fetch = vi.fn(((url: string) => {
+      if (String(url).startsWith('/api/exports/supplier/config-list')) {
+        return Promise.resolve(jsonResponse(500, {}))
+      }
+      if (String(url).startsWith('/api/exports/supplier/history')) {
+        return Promise.resolve(jsonResponse(200, sampleHistory()))
+      }
+      return Promise.resolve(jsonResponse(201, sampleResult()))
+    }) as unknown as typeof fetch)
+
+    mountedWrapper = mount(ExportSupplierModal, {
+      props: { open: true },
+      global: { stubs: globalStubs() },
+    })
+    await flushPromises()
+    // Fallback : 2 options (RUFINO + MARTINEZ).
+    const options = mountedWrapper.findAll('select option')
+    expect(options).toHaveLength(2)
+    expect((options[0]!.element as HTMLOptionElement).value).toBe('RUFINO')
+    expect((options[1]!.element as HTMLOptionElement).value).toBe('MARTINEZ')
+    // Toast warning visible.
+    expect(mountedWrapper.html()).toContain('valeurs par défaut')
+  })
+
+  it('Story 5.6 — sélection MARTINEZ → submit body avec supplier=MARTINEZ', async () => {
+    const fetchSpy = vi.fn(((url: string, init?: RequestInit) => {
+      if (String(url).startsWith('/api/exports/supplier/config-list')) {
+        return Promise.resolve(jsonResponse(200, sampleConfigList()))
+      }
+      if (String(url).startsWith('/api/exports/supplier/history')) {
+        return Promise.resolve(jsonResponse(200, sampleHistory()))
+      }
+      return Promise.resolve(
+        jsonResponse(201, {
+          data: {
+            ...((sampleResult() as { data: unknown }).data as object),
+            supplier_code: 'MARTINEZ',
+          },
+        })
+      )
+    }) as unknown as typeof fetch)
+    globalThis.fetch = fetchSpy
+
+    mountedWrapper = mount(ExportSupplierModal, {
+      props: { open: true },
+      global: { stubs: globalStubs() },
+    })
+    await flushPromises()
+    const select = mountedWrapper.find('select')
+    await select.setValue('MARTINEZ')
+    await flushPromises()
+    await mountedWrapper.find('form').trigger('submit.prevent')
+    await flushPromises()
+
+    // Trouve le call POST /api/exports/supplier (sans /history ni /config-list)
+    const postCall = (fetchSpy.mock.calls as Array<[string, RequestInit | undefined]>).find(
+      ([url, init]) =>
+        String(url) === '/api/exports/supplier' &&
+        ((init as RequestInit | undefined)?.method ?? 'GET').toUpperCase() === 'POST'
+    )
+    expect(postCall).toBeDefined()
+    const body = JSON.parse(String(postCall![1]!.body)) as { supplier: string }
+    expect(body.supplier).toBe('MARTINEZ')
+  })
+
+  it('CR P15 — mount(open=false) puis setProps(open=true) peuple correctement le select', async () => {
+    const fetchSpy = vi.fn(((url: string) => {
+      if (String(url).startsWith('/api/exports/supplier/config-list')) {
+        return Promise.resolve(jsonResponse(200, sampleConfigList()))
+      }
+      if (String(url).startsWith('/api/exports/supplier/history')) {
+        return Promise.resolve(jsonResponse(200, sampleHistory()))
+      }
+      return Promise.resolve(jsonResponse(500, {}))
+    }) as unknown as typeof fetch)
+    globalThis.fetch = fetchSpy
+
+    // Mount avec open=false : onMounted ne déclenche RIEN (cf. guard
+    // `if (props.open)`). Le composable est néanmoins instancié.
+    mountedWrapper = mount(ExportSupplierModal, {
+      props: { open: false },
+      global: { stubs: globalStubs() },
+    })
+    await flushPromises()
+    expect(fetchSpy).not.toHaveBeenCalled()
+
+    // Première ouverture via setProps : le watcher(open) doit déclencher
+    // loadConfigList puis loadHistory. Le select doit ensuite contenir
+    // les 2 options (Rufino + Martinez).
+    await mountedWrapper.setProps({ open: true })
+    await flushPromises()
+    const options = mountedWrapper.findAll('select option')
+    expect(options).toHaveLength(2)
+    expect((options[0]!.element as HTMLOptionElement).value).toBe('RUFINO')
+    expect((options[1]!.element as HTMLOptionElement).value).toBe('MARTINEZ')
   })
 })

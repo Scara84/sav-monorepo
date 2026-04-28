@@ -2,16 +2,19 @@
 import { ref, onMounted, computed, nextTick, watch } from 'vue'
 import {
   useSupplierExport,
+  FALLBACK_SUPPLIERS,
   type ExportHistoryItem,
   type ExportResult,
+  type SupplierConfigEntry,
 } from '../composables/useSupplierExport'
 
 /**
- * Story 5.2 AC #9/#10 — Modal de déclenchement export fournisseur.
+ * Story 5.2 / 5.6 — Modal de déclenchement export fournisseur.
  *
  * Composant Vue 3 Composition API + TypeScript. Affiche :
- *  - Select fournisseur (V1 hardcodé RUFINO ; Story 5.6 ajoute MARTINEZ via
- *    endpoint config-list côté API).
+ *  - Select fournisseur (Story 5.6 : peuplé dynamiquement via
+ *    `useSupplierExport.fetchConfigList()` ; fallback hardcodé en cas
+ *    d'échec API).
  *  - Date-range (défaut : mois précédent clos via firstDayOfPrevMonth /
  *    lastDayOfPrevMonth).
  *  - Bouton Générer (spinner pendant requête).
@@ -39,12 +42,14 @@ const emit = defineEmits<{
   (e: 'generated', result: ExportResult): void
 }>()
 
-const SUPPLIERS = ['RUFINO'] as const
+// Story 5.6 / CR P6 — `FALLBACK_SUPPLIERS` factorisé dans
+// `useSupplierExport.ts` (source unique partagée avec ExportHistoryView).
 const HISTORY_LIMIT = 10
 
 const exp = useSupplierExport()
 
-const supplier = ref<string>(SUPPLIERS[0])
+const suppliers = ref<SupplierConfigEntry[]>([])
+const supplier = ref<string>('')
 const periodFrom = ref<string>('')
 const periodTo = ref<string>('')
 const history = ref<ExportHistoryItem[]>([])
@@ -68,6 +73,37 @@ function lastDayOfPrevMonth(now = new Date()): Date {
 function resetDates(): void {
   periodFrom.value = toInputDate(firstDayOfPrevMonth())
   periodTo.value = toInputDate(lastDayOfPrevMonth())
+}
+
+async function loadConfigList(): Promise<void> {
+  try {
+    const list = await exp.fetchConfigList()
+    if (list.suppliers.length === 0) {
+      // Réponse API vide (improbable) : on tombe sur le fallback pour
+      // que l'opérateur puisse au moins voir RUFINO/MARTINEZ.
+      suppliers.value = FALLBACK_SUPPLIERS
+      toastMessage.value = 'Liste des fournisseurs vide — valeurs par défaut affichées.'
+    } else {
+      suppliers.value = list.suppliers
+    }
+  } catch (e) {
+    if (e instanceof Error && e.name === 'AbortError') {
+      // CR Story 5.6 P18 — defensive fallback : si AbortError successifs
+      // empêchent toute réponse non-abortée d'arriver (unmount répété),
+      // garantir au moins le fallback pour ne pas afficher un select vide.
+      if (suppliers.value.length === 0) suppliers.value = FALLBACK_SUPPLIERS
+      return
+    }
+    // Story 5.6 AC #6 — fallback hardcodé + toast warning. L'opérateur
+    // garde la possibilité d'exporter même si /config-list est down.
+    suppliers.value = FALLBACK_SUPPLIERS
+    toastMessage.value = 'Impossible de charger la liste — valeurs par défaut.'
+  }
+  // Sélection initiale = premier fournisseur disponible. Si l'opérateur
+  // a déjà un choix valide dans la liste reçue, on le préserve.
+  if (!supplier.value || !suppliers.value.some((s) => s.code === supplier.value)) {
+    supplier.value = suppliers.value[0]?.code ?? ''
+  }
 }
 
 async function loadHistory(): Promise<void> {
@@ -179,27 +215,53 @@ async function focusFirst(): Promise<void> {
   items[0]?.focus()
 }
 
-onMounted(() => {
+// CR Story 5.6 P2 — élimine le double `loadHistory` au mount/re-open :
+//   - À l'ouverture initiale, `loadConfigList` set `supplier.value` ('' →
+//     'RUFINO'). Le `watch(supplier)` fire en microtâche et appelle
+//     `loadHistory`. Avant ce patch, on appelait aussi `loadHistory`
+//     explicitement → 2 requêtes, la 1re abortée pour rien.
+//   - À la ré-ouverture, `supplier.value` ne change pas, le watcher ne
+//     fire pas. On a alors besoin d'un appel explicite pour rafraîchir.
+// Stratégie : flag `pendingExplicitHistoryLoad`. La fonction `refreshOnOpen`
+// pose le flag, attend `nextTick` (qui flush le watcher si supplier a
+// changé). Si le flag est consommé (par le watcher), rien à faire ;
+// sinon on call explicit.
+let pendingExplicitHistoryLoad = false
+
+async function refreshOnOpen(): Promise<void> {
+  pendingExplicitHistoryLoad = true
+  await loadConfigList()
+  await nextTick()
+  if (pendingExplicitHistoryLoad) {
+    pendingExplicitHistoryLoad = false
+    void loadHistory()
+  }
+}
+
+onMounted(async () => {
   resetDates()
   if (props.open) {
-    void loadHistory()
+    await refreshOnOpen()
     void focusFirst()
   }
 })
 
 watch(
   () => props.open,
-  (v) => {
+  async (v) => {
     if (v) {
       resetDates()
       toastMessage.value = null
-      void loadHistory()
+      await refreshOnOpen()
       void focusFirst()
     }
   }
 )
 
 watch(supplier, () => {
+  if (pendingExplicitHistoryLoad) {
+    pendingExplicitHistoryLoad = false
+  }
   void loadHistory()
 })
 
@@ -233,7 +295,7 @@ function onClose(): void {
         <label>
           <span>Fournisseur</span>
           <select v-model="supplier" :disabled="exp.generating.value" aria-label="Fournisseur">
-            <option v-for="s in SUPPLIERS" :key="s" :value="s">{{ s }}</option>
+            <option v-for="s in suppliers" :key="s.code" :value="s.code">{{ s.label }}</option>
           </select>
         </label>
 

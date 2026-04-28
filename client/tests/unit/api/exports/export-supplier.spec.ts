@@ -473,6 +473,50 @@ describe('POST /api/exports/supplier — export-supplier-handler', () => {
     expect(uploadCallCount.value).toBe(1)
   })
 
+  // ---------------- Story 5.6 — MARTINEZ ----------------------------------
+
+  it('Story 5.6 — 201 happy path MARTINEZ : insert supplier_code=MARTINEZ', async () => {
+    state.insertRow = {
+      ...state.insertRow,
+      supplier_code: 'MARTINEZ',
+      file_name: 'MARTINEZ_2026-02-01_2026-02-28.xlsx',
+    }
+    state.buildResult = {
+      buffer: Buffer.from('xlsx'),
+      file_name: 'MARTINEZ_2026-02-01_2026-02-28.xlsx',
+      line_count: 47,
+      total_amount_cents: 250000n,
+    }
+    const res = mockRes()
+    await exportSupplierHandler(
+      operatorReq({
+        supplier: 'MARTINEZ',
+        period_from: '2026-02-01',
+        period_to: '2026-02-28',
+        format: 'XLSX',
+      }),
+      res
+    )
+    expect(res.statusCode).toBe(201)
+    expect(state.lastInsertPayload?.['supplier_code']).toBe('MARTINEZ')
+    expect(state.lastInsertPayload?.['file_name']).toBe('MARTINEZ_2026-02-01_2026-02-28.xlsx')
+  })
+
+  it('Story 5.6 — 201 lowercased "martinez" → uppercased à MARTINEZ', async () => {
+    state.insertRow = { ...state.insertRow, supplier_code: 'MARTINEZ' }
+    const res = mockRes()
+    await exportSupplierHandler(
+      operatorReq({
+        supplier: 'martinez',
+        period_from: '2026-02-01',
+        period_to: '2026-02-28',
+      }),
+      res
+    )
+    expect(res.statusCode).toBe(201)
+    expect(state.lastInsertPayload?.['supplier_code']).toBe('MARTINEZ')
+  })
+
   it('CR P8 — 500 si placeholder == valeur exacte `/PLACEHOLDER_EXPORTS_ROOT` seulement (pas startsWith)', async () => {
     // Un admin qui configure `/PLACEHOLDER_EXPORTS_ROOT_BIS` ne doit plus
     // être rejeté par fail-closed (le champ est considéré renseigné).
