@@ -16,6 +16,7 @@ import { renderSavCommentAdded } from './sav-comment-added'
 import { renderSavInProgress } from './sav-in-progress'
 import { renderSavReceivedOperator } from './sav-received-operator'
 import { renderSavValidated } from './sav-validated'
+import { renderWeeklyRecap, type WeeklyRecapEmailData } from './weekly-recap'
 import type {
   CommentAddedEmailData,
   OperatorAlertEmailData,
@@ -24,7 +25,11 @@ import type {
   TransitionEmailData,
 } from './types'
 
-export type EmailTemplateData = TransitionEmailData | OperatorAlertEmailData | CommentAddedEmailData
+export type EmailTemplateData =
+  | TransitionEmailData
+  | OperatorAlertEmailData
+  | CommentAddedEmailData
+  | WeeklyRecapEmailData
 
 export function renderEmailTemplate(
   kind: string,
@@ -43,6 +48,8 @@ export function renderEmailTemplate(
       return renderSavReceivedOperator(data as OperatorAlertEmailData)
     case 'sav_comment_added':
       return renderSavCommentAdded(data as CommentAddedEmailData)
+    case 'weekly_recap':
+      return renderWeeklyRecap(data as WeeklyRecapEmailData)
     default:
       return null
   }
@@ -55,4 +62,5 @@ export const TRANSACTIONAL_KINDS: ReadonlyArray<TransactionalKind> = [
   'sav_cancelled',
   'sav_received_operator',
   'sav_comment_added',
+  'weekly_recap',
 ]

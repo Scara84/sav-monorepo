@@ -68,3 +68,4 @@ export type TransactionalKind =
   | 'sav_cancelled'
   | 'sav_received_operator'
   | 'sav_comment_added'
+  | 'weekly_recap'

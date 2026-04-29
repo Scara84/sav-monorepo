@@ -365,6 +365,97 @@ describe('runRetryEmails (Story 6.6)', () => {
     expect(update!.patch['last_error']).toBe('member_opt_out')
   })
 
+  // ── HARDENING B3 (CR Story 6.7 Step 4) — opt-out runtime weekly_recap ──
+  // Story 6.7 a étendu retry-emails.ts pour traiter `kind='weekly_recap'`
+  // avec un check spécifique sur `notification_prefs.weekly_recap` (opt-in
+  // explicite, default false post-backfill 6.1) au lieu de `status_updates`.
+  // Ces 2 cas régressent ce branch (retry-emails.ts:323).
+  it('B3 (X) kind=weekly_recap + member.weekly_recap=false → status=cancelled, last_error=member_opt_out, no SMTP', async () => {
+    state.outboxRows = [
+      makeRow({
+        id: 1,
+        kind: 'weekly_recap',
+        recipient_member_id: 100,
+        subject: 'Récap SAV — Groupe Aix',
+        template_data: {
+          memberId: 100,
+          memberFirstName: 'Alice',
+          groupName: 'Groupe Aix',
+          recap: [
+            {
+              id: 2001,
+              reference: 'SAV-2026-02001',
+              status: 'in_progress',
+              receivedAt: '2026-04-28T10:00:00Z',
+              totalAmountCents: 4567,
+              memberFirstName: 'Marie',
+              memberLastName: 'Dupont',
+            },
+          ],
+          periodStart: '2026-04-27T00:00:00.000Z',
+          periodEnd: '2026-05-01T03:00:00.000Z',
+        },
+      }),
+    ]
+    state.membersById.set(100, {
+      id: 100,
+      notification_prefs: { status_updates: true, weekly_recap: false },
+    })
+    const r = await runRetryEmails({ requestId: 'req-1' })
+    expect(r.skipped_optout).toBe(1)
+    expect(r.sent).toBe(0)
+    expect(state.sendMailCalls).toHaveLength(0)
+    const update = state.outboxUpdates.find((u) => u.id === 1)
+    expect(update).toBeDefined()
+    expect(update!.patch['status']).toBe('cancelled')
+    expect(update!.patch['last_error']).toBe('member_opt_out')
+  })
+
+  it('B3 (Y) kind=weekly_recap + member.weekly_recap=true → SMTP send, no cancel', async () => {
+    state.outboxRows = [
+      makeRow({
+        id: 1,
+        kind: 'weekly_recap',
+        recipient_member_id: 100,
+        subject: 'Récap SAV — Groupe Aix',
+        template_data: {
+          memberId: 100,
+          memberFirstName: 'Alice',
+          groupName: 'Groupe Aix',
+          recap: [
+            {
+              id: 2001,
+              reference: 'SAV-2026-02001',
+              status: 'in_progress',
+              receivedAt: '2026-04-28T10:00:00Z',
+              totalAmountCents: 4567,
+              memberFirstName: 'Marie',
+              memberLastName: 'Dupont',
+            },
+          ],
+          periodStart: '2026-04-27T00:00:00.000Z',
+          periodEnd: '2026-05-01T03:00:00.000Z',
+        },
+      }),
+    ]
+    // Note : status_updates=false MAIS weekly_recap=true → l'envoi doit
+    // procéder car le kind weekly_recap utilise sa propre pref, pas
+    // status_updates.
+    state.membersById.set(100, {
+      id: 100,
+      notification_prefs: { status_updates: false, weekly_recap: true },
+    })
+    const r = await runRetryEmails({ requestId: 'req-1' })
+    expect(r.skipped_optout).toBe(0)
+    expect(r.sent).toBe(1)
+    expect(state.sendMailCalls).toHaveLength(1)
+    // Aucun cancel injecté.
+    const cancelUpdate = state.outboxUpdates.find(
+      (u) => u.patch['status'] === 'cancelled' && u.id === 1
+    )
+    expect(cancelUpdate).toBeUndefined()
+  })
+
   it('AC#3 (f) opt-out IGNORÉ pour kinds opérateur (sav_received_operator)', async () => {
     state.outboxRows = [
       makeRow({

@@ -266,7 +266,7 @@ export async function runRetryEmails({
         .filter((id): id is number => id !== null && id !== undefined)
     )
   )
-  const memberPrefs = new Map<number, { status_updates: boolean }>()
+  const memberPrefs = new Map<number, { status_updates: boolean; weekly_recap: boolean }>()
   if (memberIds.length > 0) {
     const { data: membersData, error: membersErr } = await admin
       .from('members')
@@ -284,9 +284,13 @@ export async function runRetryEmails({
       }>) {
         const prefs = m.notification_prefs ?? {}
         const statusUpdates = prefs['status_updates']
+        const weeklyRecap = prefs['weekly_recap']
         memberPrefs.set(m.id, {
           // Default true si pref absent (cohérent avec backfill 6.1).
           status_updates: statusUpdates === false ? false : true,
+          // Story 6.7 — `weekly_recap` est OPT-IN explicite : default false
+          // (cohérent avec migration 20260509120000 backfill `weekly_recap=false`).
+          weekly_recap: weeklyRecap === true ? true : false,
         })
       }
     }
@@ -313,7 +317,12 @@ export async function runRetryEmails({
           if (isMemberKind && row.recipient_member_id !== null) {
             const pref = memberPrefs.get(row.recipient_member_id)
             const memberMissing = pref === undefined
-            const optedOut = pref?.status_updates === false
+            // Story 6.7 — `weekly_recap` utilise sa propre pref (opt-in explicite).
+            // Tous les autres MEMBER_KINDS utilisent `status_updates` (opt-out).
+            const optedOut =
+              row.kind === 'weekly_recap'
+                ? pref?.weekly_recap === false
+                : pref?.status_updates === false
             if (memberMissing || optedOut) {
               const lastError = memberMissing ? 'member_not_found' : 'member_opt_out'
               const { error: cancelErr } = await admin
