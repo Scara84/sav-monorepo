@@ -491,6 +491,19 @@ development_status:
   epic-6-retrospective: optional
 
   # ──────────────────────────────────────────────────────────────
+  # Hardening Epic 6 — découvert lors de la session E2E demo 2026-04-29.
+  # Trois bugs P0/P1 ont passé CR adversarial 3-layer + trace PASS car les
+  # Vitest mocks PostgREST retournaient des shapes fictives (line_count,
+  # has_credit_note, motif_sav) qui ne correspondent pas au vrai schema DB.
+  # Les bugs fixés en session : W109 (magic-link UI lit query au lieu du hash),
+  # W110 (sav-list embed counts vs columns inexistantes), W111 (sav-detail drop
+  # motif_sav inexistant). Trou de couverture : pas de test d'intégration vrai-DB.
+  # Aussi découvert : 12 migrations non appliquées sur Supabase preview (last:
+  # 20260505120000 vs codebase 20260510140000) — bloque E2E Story 6.6/6.7.
+  # ──────────────────────────────────────────────────────────────
+  w113-hardening-epic-6-integration-coverage: backlog  # 2026-04-29 Découverte session E2E demo. (1) Apply 12 migrations missing sur Supabase preview/prod (20260506120000 → 20260510140000). (2) Ajouter tests d'intégration vrai-DB minimum 1 par handler self-service (sav-list, sav-detail, preferences) — exécutés en CI via Supabase local Docker ou preview branche éphémère. (3) Audit script handler-vs-schema : parse les SELECT_EXPR PostgREST de tous les handlers et vérifie chaque colonne contre information_schema (CI gate). (4) Re-run E2E 6.6 transitions transactional emails et 6.7 weekly recap manuel via WEEKLY_RECAP_BYPASS_FRIDAY=true une fois migrations appliquées. Bugs fixés en session : W109 MagicLinkLandingView lit window.location.hash au lieu de route.query.token + history.replaceState pour purger fragment + 2 cas Vitest régression ; W110 sav-list-handler PostgREST embed `sav_lines(count)` / `credit_notes(count)` au lieu de columns inexistantes line_count/has_credit_note + adaptation 9 mocks Vitest ; W111 sav-detail-handler drop motif_sav du select sav_lines (column inexistante DDL — projection retourne motif: null). Suite Vitest 1294/1294 GREEN post-fixes (+2 W109 cas), typecheck 0, lint:business 0.
+
+  # ──────────────────────────────────────────────────────────────
   # Epic 7: Administration, RGPD, intégration ERP, cutover prod
   # ──────────────────────────────────────────────────────────────
   epic-7: backlog

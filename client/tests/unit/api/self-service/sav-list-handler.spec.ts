@@ -31,8 +31,9 @@ const db = vi.hoisted(() => ({
     member_id: number
     received_at: string
     total_amount_cents: number
-    line_count: number
-    has_credit_note: boolean
+    // W110 — handler reads via PostgREST embed counts, not as scalar columns.
+    sav_lines?: Array<{ count: number }>
+    credit_notes?: Array<{ count: number }>
   }>,
   selectError: null as null | { message: string },
   rateLimitAllowed: true,
@@ -136,8 +137,8 @@ describe('GET /api/self-service/sav — sav-list-handler (Story 6.2)', () => {
         member_id: 42,
         received_at: '2026-04-25T10:00:00Z',
         total_amount_cents: 12500,
-        line_count: 3,
-        has_credit_note: false,
+        sav_lines: [{ count: 3 }],
+        credit_notes: [{ count: 0 }],
       },
     ]
     const req = mockReq({ method: 'GET', cookies: { sav_session: memberToken(42) } })
@@ -218,8 +219,8 @@ describe('GET /api/self-service/sav — sav-list-handler (Story 6.2)', () => {
         member_id: 42,
         received_at: '2026-04-25T10:00:00Z',
         total_amount_cents: 1000,
-        line_count: 1,
-        has_credit_note: false,
+        sav_lines: [{ count: 1 }],
+        credit_notes: [{ count: 0 }],
       },
       {
         id: 2,
@@ -228,8 +229,8 @@ describe('GET /api/self-service/sav — sav-list-handler (Story 6.2)', () => {
         member_id: 42,
         received_at: '2026-04-24T10:00:00Z',
         total_amount_cents: 2000,
-        line_count: 1,
-        has_credit_note: false,
+        sav_lines: [{ count: 1 }],
+        credit_notes: [{ count: 0 }],
       },
       {
         id: 3,
@@ -238,8 +239,8 @@ describe('GET /api/self-service/sav — sav-list-handler (Story 6.2)', () => {
         member_id: 42,
         received_at: '2026-04-23T10:00:00Z',
         total_amount_cents: 3000,
-        line_count: 1,
-        has_credit_note: false,
+        sav_lines: [{ count: 1 }],
+        credit_notes: [{ count: 0 }],
       },
     ]
     const req = mockReq({
@@ -266,8 +267,8 @@ describe('GET /api/self-service/sav — sav-list-handler (Story 6.2)', () => {
         member_id: 42,
         received_at: '2026-04-25T10:00:00Z',
         total_amount_cents: 1000,
-        line_count: 1,
-        has_credit_note: false,
+        sav_lines: [{ count: 1 }],
+        credit_notes: [{ count: 0 }],
       },
       {
         id: 2,
@@ -276,8 +277,8 @@ describe('GET /api/self-service/sav — sav-list-handler (Story 6.2)', () => {
         member_id: 42,
         received_at: '2026-04-24T10:00:00Z',
         total_amount_cents: 2000,
-        line_count: 1,
-        has_credit_note: false,
+        sav_lines: [{ count: 1 }],
+        credit_notes: [{ count: 0 }],
       },
       {
         id: 3,
@@ -286,8 +287,8 @@ describe('GET /api/self-service/sav — sav-list-handler (Story 6.2)', () => {
         member_id: 42,
         received_at: '2026-04-23T10:00:00Z',
         total_amount_cents: 3000,
-        line_count: 1,
-        has_credit_note: false,
+        sav_lines: [{ count: 1 }],
+        credit_notes: [{ count: 0 }],
       },
     ]
     const req = mockReq({
@@ -313,8 +314,8 @@ describe('GET /api/self-service/sav — sav-list-handler (Story 6.2)', () => {
         member_id: 42,
         received_at: '2026-04-25T10:00:00Z',
         total_amount_cents: 1000,
-        line_count: 1,
-        has_credit_note: false,
+        sav_lines: [{ count: 1 }],
+        credit_notes: [{ count: 0 }],
       },
       {
         id: 2,
@@ -323,8 +324,8 @@ describe('GET /api/self-service/sav — sav-list-handler (Story 6.2)', () => {
         member_id: 99,
         received_at: '2026-04-24T10:00:00Z',
         total_amount_cents: 2000,
-        line_count: 1,
-        has_credit_note: false,
+        sav_lines: [{ count: 1 }],
+        credit_notes: [{ count: 0 }],
       },
     ]
     const req = mockReq({ method: 'GET', cookies: { sav_session: memberToken(42) } })

@@ -155,7 +155,7 @@ const coreHandler: ApiHandler = async (req, res) => {
       lines:sav_lines (
         id, product_name_snapshot, product_code_snapshot,
         qty_invoiced, qty_requested, unit_invoiced, unit_requested,
-        motif_sav, validation_status, validation_message
+        validation_status, validation_message
       ),
       files:sav_files (
         id, sanitized_filename, original_filename, mime_type, size_bytes,

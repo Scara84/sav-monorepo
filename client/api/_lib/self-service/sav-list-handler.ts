@@ -69,8 +69,9 @@ interface RawRow {
   status: string
   received_at: string
   total_amount_cents: number
-  line_count?: number | null
-  has_credit_note?: boolean | null
+  // PostgREST embed `sav_lines(count)` returns `[{count: N}]` (W110 fix).
+  sav_lines?: Array<{ count: number }> | null
+  credit_notes?: Array<{ count: number }> | null
   members?: {
     first_name: string | null
     last_name: string | null
@@ -126,8 +127,8 @@ function projectRow(row: RawRow, includeMember: boolean): SelfServiceSavListItem
     status: row.status,
     receivedAt: row.received_at,
     totalAmountCents: row.total_amount_cents,
-    lineCount: row.line_count ?? 0,
-    hasCreditNote: row.has_credit_note === true,
+    lineCount: row.sav_lines?.[0]?.count ?? 0,
+    hasCreditNote: (row.credit_notes?.[0]?.count ?? 0) > 0,
   }
   if (includeMember) {
     // Privacy NFR Story 6.5 AC #3+#5 — uniquement first_name/last_name,
@@ -140,8 +141,11 @@ function projectRow(row: RawRow, includeMember: boolean): SelfServiceSavListItem
   return item
 }
 
+// W110 fix — `line_count` and `has_credit_note` are NOT columns on `sav`;
+// they are derived via PostgREST embedded counts on the FK children
+// `sav_lines.sav_id` and `credit_notes.sav_id`.
 const SELECT_EXPR_SELF =
-  'id, reference, status, received_at, total_amount_cents, line_count, has_credit_note'
+  'id, reference, status, received_at, total_amount_cents, sav_lines(count), credit_notes(count)'
 
 // Story 6.5 — pour scope=group, on jointe `members(first_name, last_name)` — JAMAIS `email`.
 // CR P2 (2026-04-29) — `!inner` hint OBLIGATOIRE : sans lui, Postgrest applique

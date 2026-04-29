@@ -52,6 +52,15 @@ function readQueryParam(value: string | string[] | undefined): string | undefine
   return undefined
 }
 
+function readTokenFromHash(): string | undefined {
+  if (typeof window === 'undefined') return undefined
+  const hash = window.location.hash
+  if (!hash || hash.length < 2) return undefined
+  const params = new URLSearchParams(hash.slice(1))
+  const t = params.get('token')
+  return t && t.length > 0 ? t : undefined
+}
+
 onMounted(async () => {
   // Performance NFR-P6 — mark dès le mount pour mesurer landing → list.
   if (typeof performance !== 'undefined' && typeof performance.mark === 'function') {
@@ -62,12 +71,26 @@ onMounted(async () => {
     }
   }
 
-  const token = readQueryParam(route.query['token'] as string | string[] | undefined)
+  // Token is in URL fragment (`#token=...`) — fragments never travel in Referer
+  // headers, preventing third-party scripts loaded on this page from leaking it.
+  // Backend contract: api/auth/magic-link/issue.ts:buildMagicUrl.
+  const token =
+    readTokenFromHash() ?? readQueryParam(route.query['token'] as string | string[] | undefined)
   const redirectQuery = readQueryParam(route.query['redirect'] as string | string[] | undefined)
 
   if (!token) {
     state.value = 'error'
     return
+  }
+
+  // Strip token from history so it cannot be replayed via back-button.
+  if (typeof window !== 'undefined' && window.history?.replaceState) {
+    try {
+      const { pathname, search } = window.location
+      window.history.replaceState(null, '', pathname + search)
+    } catch {
+      /* ignore */
+    }
   }
 
   try {
