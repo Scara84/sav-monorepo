@@ -1,5 +1,15 @@
 # Travaux différés — sav-monorepo
 
+## Deferred from: code review of 6-6-envoi-emails-transactionnels (2026-04-29)
+
+- **W6.6-N1 (Hardening NIT) — `BACKOFF_CAP_MS = 24h` sur 5 attempts max** : le cap 24h dans `computeBackoffMs` est dead code en V1 (avec `MAX_ATTEMPTS=5`, le worst-case `2^5 * 60s = 32 min` n'atteint jamais 24h). Conservé pour forward-compat si MAX_ATTEMPTS bump (kinds critiques tolérant > 5). OK en V1, à nettoyer si pas utilisé Epic 7. [`client/api/_lib/cron-runners/retry-emails.ts:75`]
+
+- **W6.6-N4 (Test NIT) — concurrency test timing flake** : `AC#6 (h) concurrency=5` mesure `elapsed >= 80ms` avec hang 50ms × 10. Sur runner CI lent, peut flake. Mitigation : si flake observé, bump hang 50ms → 100ms (préserve la logique mais double la fenêtre tolérante). [`client/tests/unit/api/cron/retry-emails.spec.ts:333`]
+
+- **W6.6-I5 (Hardening MEDIUM) — SMTP connection leak sur withTimeout** : nodemailer ne supporte pas AbortController. Quand `withTimeout` reject à 10s, la promise `transporter.sendMail` continue et la TCP connection peut rester ouverte côté nodemailer (pool interne). Sur volumes V1 (~80 emails/jour) impact négligeable car runtime Vercel recyclé après 60s. Mitigation post-V1 (~+10 LOC) : recreate transporter par batch via `transporter.close()` ou bump `socketTimeout` dans `_lib/clients/smtp.ts`. [`client/api/_lib/cron-runners/retry-emails.ts:withTimeout`, `client/api/_lib/clients/smtp.ts`]
+
+- **W6.6-Layer1-NIT (Audit RGPD INFO) — `messageId` loggé en clair dans cron logs** : `cron.retry-emails.sent` et variantes loguent `messageId` (ex `<msg-abc123@infomaniak.fr>`). Ce n'est pas une PII directe mais permet de corréler logs ↔ emails Infomaniak. À évaluer pour audit RGPD : soit garder (utile au debug en prod), soit hasher (`sha256(messageId).slice(0,8)`) si la rétention logs > 30j. *Audit RGPD à faire post-merge.* [`client/api/_lib/cron-runners/retry-emails.ts:logger.info('cron.retry-emails.sent')`]
+
 ## Deferred from: code review of 6-5-scope-etendu-responsable-de-groupe (2026-04-29)
 
 - **W6.5-0 (Auditor MEDIUM) — AC #4 tri `member_last_name ASC` non implémenté** : la spec AC #4 mentionne "tri par received_at DESC (défaut) ou member_last_name ASC". Le handler `sav-list-handler.ts` ne pose que `.order('received_at', desc).order('id', desc)` ; aucun query param `sort` exposé. Décision CR (2026-04-29) : déféré — faible valeur fonctionnelle V1, le tri received_at couvre 95% du besoin opérationnel (manager voit les SAV groupe les plus récents en premier). Si feedback utilisateur réclame, à ajouter en story polish (~5 lignes : Zod `sort: z.enum(['received_at_desc','last_name_asc']).default('received_at_desc')` + query.order conditionnel + 1 test). [`client/api/_lib/self-service/sav-list-handler.ts:330-341`]

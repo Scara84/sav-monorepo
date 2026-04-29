@@ -232,16 +232,23 @@ const coreHandler: ApiHandler = async (req, res) => {
     // ne fait PAS échouer la requête (201 déjà acquis). Vercel : on délègue
     // à `waitUntilOrVoid` pour empêcher la lambda de geler avant complétion
     // (cf. `_lib/pdf/wait-until.ts`).
-    const emailPromise = sendCaptureEmails({
-      payload,
-      savId: row.sav_id,
-      savReference: row.reference,
-      requestId,
-    })
+    //
+    // Story 6.6 AC #2 : en parallèle, enqueue les alertes opérateur outbox
+    // (kind=sav_received_operator) via RPC `enqueue_new_sav_alerts` —
+    // pattern fire-and-forget (RPC throw n'altère pas le 201).
+    const sideEffectPromise = Promise.allSettled([
+      sendCaptureEmails({
+        payload,
+        savId: row.sav_id,
+        savReference: row.reference,
+        requestId,
+      }),
+      enqueueNewSavAlerts(row.sav_id, requestId),
+    ])
     if (process.env['NODE_ENV'] === 'test') {
-      await emailPromise
+      await sideEffectPromise
     } else {
-      waitUntilOrVoid(emailPromise)
+      waitUntilOrVoid(sideEffectPromise)
     }
 
     logger.info('webhook.capture.success', {
@@ -466,6 +473,36 @@ async function sendCaptureEmails(args: SendCaptureEmailsArgs): Promise<void> {
     }),
   ]
   await Promise.allSettled(tasks)
+}
+
+// ----------- Story 6.6 — enqueue alertes opérateur (fire-and-forget) -----------
+
+/**
+ * Story 6.6 AC #2 — appelle la RPC `enqueue_new_sav_alerts(p_sav_id)` qui
+ * broadcast 1 ligne email_outbox kind=sav_received_operator par opérateur
+ * actif. Best-effort : si la RPC throw, on log mais on ne propage pas
+ * (le 201 est déjà acquis, le SAV existe en base).
+ */
+async function enqueueNewSavAlerts(savId: number, requestId: string): Promise<void> {
+  try {
+    const { error } = await supabaseAdmin().rpc('enqueue_new_sav_alerts', { p_sav_id: savId })
+    if (error) {
+      logger.error('webhook.capture.enqueue_new_sav_alerts_failed', {
+        requestId,
+        savId,
+        message: error.message,
+        code: error.code,
+      })
+      return
+    }
+    logger.info('webhook.capture.enqueue_new_sav_alerts_ok', { requestId, savId })
+  } catch (err) {
+    logger.error('webhook.capture.enqueue_new_sav_alerts_exception', {
+      requestId,
+      savId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+  }
 }
 
 // Compose : rate-limit par IP (60/min). Auth = capture-token uniquement (Story 5.7).
