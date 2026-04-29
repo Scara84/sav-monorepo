@@ -38,7 +38,50 @@
 # - Une story passe par 'review' avant 'done' (via bmad-code-review)
 
 generated: 2026-04-18
-last_updated: 2026-04-28
+last_updated: 2026-04-29
+# 2026-04-29 : Epic 6 contextualisation complète — 7 stories créées ready-for-dev.
+# 6.1 enrichissement email_outbox (placeholder Story 3.5 → V1 retry queue) +
+#     vérification CHECK schéma JSONB notification_prefs + idx partiel
+#     weekly_recap_optin. Migration additive, zéro régression Stories 3-5.
+#     11 AC, tests SQL only.
+# 6.2 landing magic-link `/monespace/auth` + liste SAV adhérent `/monespace`.
+#     NFR-P6 < 10s clic→liste. Consolidation router op-based dans
+#     `api/self-service/draft.ts` (3 nouvelles ops `me`, `sav-list`,
+#     `sav-detail` placeholder) — cap Vercel 12/12 préservé. RLS member_id
+#     filter app-side + DB defense. 15 AC.
+# 6.3 détail SAV adhérent + commentaires bidirectionnels + fichiers.
+#     Réutilise pipeline upload Graph API Story 2.4 (extension upload-complete
+#     pour branchement savReference). Migration `sav_files.uploaded_by_*`
+#     additionnelle. RLS sav_files/sav_comments authenticated.
+#     Producteur email_outbox kind=`sav_comment_added`. 17 AC.
+# 6.4 téléchargement PDF bon SAV (extension `pdfRedirectHandler` Story 4.4
+#     polymorphique member/operator) + page préférences notifications
+#     (toggle status_updates + weekly_recap, PATCH JSONB merge).
+#     Cap Vercel inchangé (op `preferences` dans router self-service).
+#     14 AC.
+# 6.5 scope étendu responsable de groupe (onglets `/monespace`, query param
+#     `scope=group` sur sav-list, RLS group_manager_scope, défense-en-profondeur
+#     re-check DB `is_group_manager` au runtime, privacy email exclu).
+#     13 AC.
+# 6.6 envoi emails transactionnels via outbox + retry. Runner `retry-emails.ts`
+#     intégré au dispatcher quotidien Vercel Hobby (cron 1/jour — trade-off
+#     documenté). 8 templates pures `_lib/emails/transactional/*`. Backoff
+#     exponentiel 1→16min cap 5 attempts. Multi-compte SMTP `noreply|sav`
+#     via colonne `account` Story 5.7. Opt-out check `notification_prefs`.
+#     Concurrency 5 + try/catch per-row. Migration RPC `transition_sav_status`
+#     pour ajouter `template_data` JSONB + nouvelle RPC `enqueue_new_sav_alerts`
+#     pour broadcast operator. 12 AC.
+# 6.7 récap hebdo responsable opt-in. Runner `weekly-recap.ts` intégré
+#     dispatcher (guard `getUTCDay()===5`). Template `transactional/
+#     weekly-recap.ts`. Index UNIQUE dédup `(recipient_member_id,
+#     date_trunc('week', created_at)) WHERE kind='weekly_recap'`. 10 AC.
+# Ordre dev recommandé : 6.1 (foundation schéma) bloquant tout → 6.2 (landing+
+# liste, débloque 6.3-6.5) → 6.3 + 6.4 + 6.5 en parallèle → 6.6 (consommateur,
+# bénéficie producteurs 6.3) → 6.7 (dépend templates 6.6).
+# Cap Vercel 12/12 préservé sur tout l'Epic 6 (consolidation op-based dans
+# `api/self-service/draft.ts` + extension `pdfRedirectHandler` polymorphique).
+# Cron Hobby 1/jour préservé (1 dispatcher quotidien étendu — pas de slot crons
+# supplémentaire). Privacy NFR : `members.email` jamais exposé côté responsable.
 # 2026-04-28 : Story 5.6 → review (validation empirique FR36). Ajout
 # MARTINEZ = pur config (martinezConfig.ts + entry map) + endpoint
 # /config-list dynamique. ZERO modif supplierExportBuilder.ts (guard CI
@@ -437,14 +480,14 @@ development_status:
   # ──────────────────────────────────────────────────────────────
   # Epic 6: Espace self-service adhérent + responsable + notifications
   # ──────────────────────────────────────────────────────────────
-  epic-6: backlog
-  6-1-migration-email-outbox-preferences-notifications: backlog
-  6-2-landing-magic-link-liste-sav-adherent: backlog
-  6-3-detail-sav-adherent-commentaires-bidirectionnels-fichiers: backlog
-  6-4-telechargement-pdf-bon-sav-preferences-notifications: backlog
-  6-5-scope-etendu-responsable-de-groupe: backlog
-  6-6-envoi-emails-transactionnels-transitions-nouveau-sav-via-outbox-retry: backlog
-  6-7-recap-hebdomadaire-responsable-opt-in: backlog
+  epic-6: in-progress  # contextualisation 7 stories ready-for-dev 2026-04-29
+  6-1-migration-email-outbox-preferences-notifications: ready-for-dev
+  6-2-landing-magic-link-liste-sav-adherent: ready-for-dev
+  6-3-detail-sav-adherent-commentaires-bidirectionnels-fichiers: ready-for-dev
+  6-4-telechargement-pdf-bon-sav-preferences-notifications: ready-for-dev
+  6-5-scope-etendu-responsable-de-groupe: ready-for-dev
+  6-6-envoi-emails-transactionnels-transitions-nouveau-sav-via-outbox-retry: ready-for-dev
+  6-7-recap-hebdomadaire-responsable-opt-in: ready-for-dev
   epic-6-retrospective: optional
 
   # ──────────────────────────────────────────────────────────────
