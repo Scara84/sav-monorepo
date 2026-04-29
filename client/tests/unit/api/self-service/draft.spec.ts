@@ -281,4 +281,41 @@ describe('GET/PUT /api/self-service/draft', () => {
     expect(res.statusCode).toBe(405)
     expect((res.jsonBody as { error: { code: string } }).error.code).toBe('METHOD_NOT_ALLOWED')
   })
+
+  // Story 6.4 AC #12 — `op=preferences` est reconnu par parseOp + ALLOWED_OPS
+  // et dispatche GET vs PATCH côté handler (method autre que GET/PATCH → 405
+  // avec `Allow: GET, PATCH`). Validation du contrat de routage sans toucher
+  // au preferences-handler lui-même (déjà couvert par sa spec dédiée).
+  it('Story 6.4 AC#12 — POST /preferences → 405 METHOD_NOT_ALLOWED, Allow: GET, PATCH', async () => {
+    const res = mockRes()
+    await handler(
+      mockReq({
+        method: 'POST',
+        cookies: { sav_session: memberToken(42) },
+        query: { op: 'preferences' },
+      }),
+      res
+    )
+    expect(res.statusCode).toBe(405)
+    expect((res.jsonBody as { error: { code: string } }).error.code).toBe('METHOD_NOT_ALLOWED')
+    // Le router doit annoncer GET et PATCH comme méthodes valides
+    // (mockRes lowercase les noms de header, cf. test-helpers).
+    const allow = (res.headers as Record<string, string | string[] | number | undefined>)['allow']
+    const allowStr = typeof allow === 'string' ? allow : Array.isArray(allow) ? allow.join(',') : ''
+    expect(allowStr).toMatch(/GET.*PATCH|PATCH.*GET/)
+  })
+
+  it('Story 6.4 AC#12 — op inconnue → 404 NOT_FOUND (parseOp invalid)', async () => {
+    const res = mockRes()
+    await handler(
+      mockReq({
+        method: 'GET',
+        cookies: { sav_session: memberToken(42) },
+        query: { op: 'preferenсes' }, // cyrillique 'с' au lieu de 'c' (anti-typo silent)
+      }),
+      res
+    )
+    expect(res.statusCode).toBe(404)
+    expect((res.jsonBody as { error: { code: string } }).error.code).toBe('NOT_FOUND')
+  })
 })

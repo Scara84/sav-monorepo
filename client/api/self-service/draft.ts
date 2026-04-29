@@ -9,6 +9,11 @@ import { formatErrors } from '../_lib/middleware/with-validation'
 import { uploadSessionHandler } from '../_lib/self-service/upload-session-handler'
 import { uploadCompleteHandler } from '../_lib/self-service/upload-complete-handler'
 import { submitTokenHandler } from '../_lib/self-service/submit-token-handler'
+import { meHandler } from '../_lib/self-service/me-handler'
+import { savListHandler } from '../_lib/self-service/sav-list-handler'
+import { savDetailHandler } from '../_lib/self-service/sav-detail-handler'
+import { savCommentHandler } from '../_lib/self-service/sav-comment-handler'
+import { preferencesHandler } from '../_lib/self-service/preferences-handler'
 import type { ApiHandler, ApiRequest } from '../_lib/types'
 
 /**
@@ -177,11 +182,23 @@ const putGuard = authMember(
   })(putCore)
 )
 
-const ALLOWED_OPS = new Set(['draft', 'upload-session', 'upload-complete', 'submit-token'])
+const ALLOWED_OPS = new Set([
+  'draft',
+  'upload-session',
+  'upload-complete',
+  'submit-token',
+  'me',
+  'sav-list',
+  'sav-detail',
+  'sav-comment',
+  'preferences',
+])
 
 // Story 5.7 — `submit-token` est anonyme (capture-token éphémère pour le
 // front cutover Make). Les autres ops exigent une session adhérent.
-const ANONYMOUS_OPS = new Set(['submit-token'])
+// Story 6.2 — `me` est "anonyme côté router" (accepte member ET operator,
+// le handler `meHandler` valide manuellement le JWT via verifyJwt).
+const ANONYMOUS_OPS = new Set(['submit-token', 'me'])
 
 // Story 5.7 patch P11 — return type discriminé, supprime le sentinel
 // 'invalid' qui faisait mentir le `string | null` précédent.
@@ -246,6 +263,58 @@ const dispatch: ApiHandler = async (req, res) => {
       return
     }
     return submitTokenHandler(req, res)
+  }
+
+  if (parsed.value === 'me') {
+    if (method !== 'GET') {
+      const requestId = ensureRequestId(req)
+      res.setHeader('Allow', 'GET')
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
+      return
+    }
+    return meHandler(req, res)
+  }
+
+  if (parsed.value === 'sav-list') {
+    if (method !== 'GET') {
+      const requestId = ensureRequestId(req)
+      res.setHeader('Allow', 'GET')
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
+      return
+    }
+    return savListHandler(req, res)
+  }
+
+  if (parsed.value === 'sav-detail') {
+    if (method !== 'GET') {
+      const requestId = ensureRequestId(req)
+      res.setHeader('Allow', 'GET')
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
+      return
+    }
+    return savDetailHandler(req, res)
+  }
+
+  if (parsed.value === 'sav-comment') {
+    if (method !== 'POST') {
+      const requestId = ensureRequestId(req)
+      res.setHeader('Allow', 'POST')
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
+      return
+    }
+    return savCommentHandler(req, res)
+  }
+
+  if (parsed.value === 'preferences') {
+    // Story 6.4 — single op router, dispatch GET vs PATCH côté handler
+    // (cf. AC #12, pattern Story 5.5 admin-settings-threshold).
+    if (method !== 'GET' && method !== 'PATCH') {
+      const requestId = ensureRequestId(req)
+      res.setHeader('Allow', 'GET, PATCH')
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
+      return
+    }
+    return preferencesHandler(req, res)
   }
 
   const requestId = ensureRequestId(req)

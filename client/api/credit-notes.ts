@@ -19,6 +19,10 @@ import type { ApiHandler, ApiRequest, ApiResponse } from './_lib/types'
  *   GET  /api/credit-notes/:number/pdf             → op=pdf&number=:number
  *   POST /api/credit-notes/:number/regenerate-pdf  → op=regenerate&number=:number
  *
+ * Story 6.4 — extension self-service :
+ *   - op=pdf accepte member ET operator (filtrage RLS dans le handler core)
+ *   - op=regenerate reste operator-only (cf. AC #5 — coût lambda OneDrive)
+ *
  * Budget Vercel Hobby : ce fichier porte le compteur à 12 serverless
  * functions (limite max du plan). Tout nouvel endpoint Epic 5+ devra
  * soit réutiliser ce dispatcher, soit fusionner avec un existant.
@@ -46,7 +50,7 @@ function parseNumber(req: ApiRequest): string | null {
   return null
 }
 
-const dispatch: ApiHandler = async (req, res) => {
+const dispatchInner: ApiHandler = async (req, res) => {
   const requestId = ensureRequestId(req)
   const method = (req.method ?? 'GET').toUpperCase()
 
@@ -84,6 +88,13 @@ const dispatch: ApiHandler = async (req, res) => {
       sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
       return
     }
+    // Story 6.4 AC #5 — regenerate reste operator-only. Bien que le router
+    // accepte member pour op=pdf, on rejette explicitement ici. Le handler
+    // core a aussi son propre check defense-in-depth.
+    if (req.user && req.user.type !== 'operator') {
+      sendError(res, 'FORBIDDEN', 'Session opérateur requise', requestId)
+      return
+    }
     if (numberInput === null) {
       sendError(res, 'VALIDATION_FAILED', 'Numéro invalide', requestId, {
         code: 'INVALID_CREDIT_NOTE_NUMBER',
@@ -96,6 +107,10 @@ const dispatch: ApiHandler = async (req, res) => {
   sendError(res, 'NOT_FOUND', 'Route non disponible', requestId)
 }
 
-const router: ApiHandler = withAuth({ types: ['operator'] })(dispatch)
+// Story 6.4 — `withAuth({ types: ['operator', 'member'] })` au niveau router.
+// Le filtrage fin (member ne voit que ses propres credit_notes) est dans le
+// handler core via la jointure embedded `sav!inner`. Op `regenerate` impose
+// `operator` via un check explicite ci-dessus.
+const router: ApiHandler = withAuth({ types: ['operator', 'member'] })(dispatchInner)
 
 export default router

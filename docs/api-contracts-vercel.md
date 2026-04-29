@@ -404,7 +404,15 @@ stateDiagram-v2
 ### Effets de bord DB
 
 - Trigger audit `trg_audit_sav` capture le `diff { before, after }` automatiquement (acteur via GUC `app.actor_operator_id` setté par la RPC).
-- Table `email_outbox` INSERT `status='pending'` pour transitions `in_progress`/`validated`/`closed`/`cancelled` (pas pour rollback `in_progress → received`). Epic 6 matérialise le `html_body` via `kind` à l'envoi.
+- Table `email_outbox` INSERT `status='pending'` pour transitions `in_progress`/`validated`/`closed`/`cancelled` (pas pour rollback `in_progress → received`). Epic 6.6 matérialise le `html_body` via `kind` à l'envoi.
+- **Story 6.1 (migration `20260509120000_email_outbox_enrichment.sql`)** — la table `email_outbox` (placeholder Story 3.5) est enrichie additivement avec :
+  - colonnes : `recipient_member_id`, `recipient_operator_id`, `scheduled_at` (default `now()`), `attempts` (default 0), `next_attempt_at`, `smtp_message_id`, `template_data jsonb` (default `'{}'::jsonb`), `account text` (`'noreply'|'sav'` default `'sav'`), `updated_at`.
+  - whitelist `kind` : `sav_in_progress`, `sav_validated`, `sav_closed`, `sav_cancelled`, `sav_received` (rétro-compat producteur historique), `sav_received_operator` (Story 6.6 broadcast), `sav_comment_added` (Story 6.3), `threshold_alert` (Story 5.5), `weekly_recap` (Story 6.7).
+  - CHECKs : `recipient_email` non-vide, `attempts <= 50`, `status IN ('pending','sent','failed','cancelled')`, au moins une cible identifiable.
+  - Index partiel `idx_email_outbox_due ON (scheduled_at, attempts) WHERE status IN ('pending','failed') AND attempts < 5` (cible la query du runner Story 6.6) ; `idx_email_outbox_pending` retiré.
+  - Trigger BEFORE INSERT/UPDATE `tg_email_outbox_maintain` qui (1) maintient `updated_at = clock_timestamp()` à l'UPDATE, (2) synchronise `retry_count := attempts` (rétro-compat — Story 7 retirera `retry_count`).
+  - RLS : policy `email_outbox_service_role_all` conservée stricte ; aucune exposition `authenticated`. Toute consultation FR51 (Story 6.4 si retenu) passe par un endpoint avec service_role + filtrage applicatif `recipient_member_id = current_member`.
+- **Story 6.1** — `members.notification_prefs` reçoit un CHECK schéma JSONB minimal (`status_updates` + `weekly_recap` booleans obligatoires) et un index partiel `idx_members_weekly_recap_optin` ciblant les responsables opt-in pour le cron Story 6.7. Backfill idempotent appliqué pour aligner d'éventuelles rows legacy.
 - Si `note` fourni : INSERT `sav_comments` `visibility='internal'`, auteur opérateur.
 
 
@@ -1204,3 +1212,118 @@ Les emails enqueueés (`status='pending'`) **ne sont pas envoyés V1 Epic 5**.
 Le cron `retry-emails.ts` (Story 6.6) activera la délivrance SMTP. Décision
 acceptée : la détection a déjà de la valeur (audit trail
 `threshold_alert_sent` tendances + signal admin via UI).
+
+
+## Epic 6 Story 6.4 — Téléchargement PDF bon SAV adhérent + préférences notifications
+
+Ouverture du téléchargement PDF des avoirs aux adhérents (extension polymorphique
+du `pdfRedirectHandler` Story 4.4) + nouvelle page `/monespace/preferences` avec
+2 toggles `status_updates` / `weekly_recap`.
+
+### `GET /api/credit-notes/:number/pdf` — extension polymorphique
+
+Le handler existant Story 4.4 reste 100 % compatible côté operator. Story 6.4
+ajoute une branche member :
+
+- Router (`api/credit-notes.ts`) : `withAuth({ types: ['operator', 'member'] })`
+  sur l'op `pdf`. L'op `regenerate-pdf` (POST) reste `withAuth({ types: ['operator'] })`
+  + check explicite `if (user.type !== 'operator') return 403` côté handler
+  (defense-in-depth — un member ne doit pas pouvoir relancer un job lambda OneDrive).
+- Handler (`pdfRedirectCore`) : si `user.type === 'member'`, ajout d'un filtre
+  PostgREST `.eq('sav.member_id', user.sub)` sur la jointure `!inner sav` →
+  retourne `null` si l'avoir appartient à un autre member → **404 NOT_FOUND**
+  (jamais 403 — anti-énumération NFR Privacy AC #2/#4 Story 6.4).
+- Rate-limit séparé par type :
+  - operator : bucket `credit-notes:pdf`, 120/min (existant Story 4.4).
+  - member : bucket `credit-note-pdf:member`, 30/min (cap anti-DDoS OneDrive).
+
+Le frontend (`MemberSavDetailView.vue` Story 6.3) affiche un bouton
+« Télécharger bon SAV » (`<a target="_blank" rel="noopener">`) si
+`creditNote.hasPdf === true`. Le navigateur suit le 302 vers OneDrive.
+
+### `GET /api/self-service/preferences` (Story 6.4 AC #6)
+
+Lecture des préférences notification du member courant.
+
+- Auth : router self-service `withAuth({ types: ['member'] })` (gate `routerGate`
+  exige une session adhérent valide).
+- Filtre `anonymized_at IS NULL` côté lookup → 404 NOT_FOUND si member
+  anonymized (anti-leak RGPD).
+- Réponse 200 :
+
+```json
+{
+  "data": {
+    "notificationPrefs": {
+      "status_updates": true,
+      "weekly_recap": false
+    }
+  }
+}
+```
+
+> **Note de cohérence (W108 — drift spec/code).** L'AC #7 du story file 6.4
+> mentionne un shape direct `{ notificationPrefs: ... }`. Le code retient
+> l'enveloppe `{ data: { notificationPrefs: ... } }` pour s'aligner avec
+> les autres handlers self-service (`sav-list-handler`, `sav-detail-handler`,
+> `submit-token-handler`) qui retournent tous `{ data: ... }`. Le frontend
+> `useMemberPreferences` consomme le shape effectif. La discordance est
+> documentée ici pour fermer la boucle traçabilité ; le story file ne sera
+> pas modifié post-merge (immutable).
+
+### `PATCH /api/self-service/preferences` (Story 6.4 AC #7, #8, #9)
+
+Mise à jour partielle (merge JSONB) des préférences.
+
+- Body Zod `.strict()` : `{ status_updates?: boolean, weekly_recap?: boolean }`
+  + `refine(o => Object.keys(o).length > 0)` (au moins une clé).
+  - Clé inconnue → 400 `VALIDATION_FAILED` (`evil_admin_flag` rejeté).
+  - Non-boolean → 400 `VALIDATION_FAILED`.
+  - Body vide → 400 `VALIDATION_FAILED`.
+- **Merge atomique JSONB côté SQL** via RPC `member_prefs_merge(p_member_id, p_patch)`
+  SECURITY DEFINER (Story 6.4 W104, migration `20260509140000_member_prefs_merge_rpc.sql`).
+  La RPC exécute `UPDATE members SET notification_prefs = notification_prefs || p_patch
+  WHERE id = $member_id AND anonymized_at IS NULL RETURNING notification_prefs`.
+  - Atomicité : élimine la race read-modify-write last-writer-wins (multi-onglets,
+    double-clic).
+  - Anti-leak : retourne NULL si member anonymized → handler renvoie 404.
+  - REVOKE PUBLIC + GRANT service_role : non appelable depuis un JWT authenticated.
+- Réponse 200 : même shape que GET (le `notificationPrefs` post-merge).
+- AC #9 — un member non-manager qui set `weekly_recap=true` est **accepté** (200) ;
+  la valeur persiste mais le cron Story 6.7 filtre `WHERE is_group_manager = true
+  AND weekly_recap = true` → la préférence est mémorisée pour le jour où le
+  member devient responsable.
+
+### Routing — extension router self-service
+
+Vercel rewrite ajoutée :
+
+```
+GET|PATCH /api/self-service/preferences   → /api/self-service/draft?op=preferences
+```
+
+Cap Vercel **12/12 functions** maintenu (op ajoutée au router `draft.ts`
+existant, pas de nouveau slot).
+
+`parseOp` reconnaît `preferences` dans `ALLOWED_OPS`. Méthodes acceptées :
+GET et PATCH ; toute autre méthode (POST, PUT, DELETE) → 405 avec
+`Allow: GET, PATCH`. Op inconnue → 404 `NOT_FOUND` (cf. test parseOp draft.spec.ts).
+
+### Extension `meHandler` — `isGroupManager`
+
+`GET /api/auth/me` (op=me) ajoute un lookup DB pour les sessions member :
+
+```sql
+SELECT is_group_manager FROM members
+ WHERE id = $sub AND anonymized_at IS NULL
+```
+
+Le payload retourne désormais `{ user: { sub, type, role?, scope?, groupId?, isGroupManager? } }`.
+- `isGroupManager` exposé **uniquement** pour `user.type === 'member'`.
+- En cas d'erreur DB ou d'exception, fallback `isGroupManager = false` (non
+  bloquant — le toggle `weekly_recap` reste masqué côté UI, comportement
+  équivalent à un non-manager).
+- `Cache-Control: no-store` préservé (Story 6.2).
+
+Consommé par `MemberPreferencesView.vue` (composable `useMemberPreferences`)
+pour conditionner l'affichage du toggle `weekly_recap`.

@@ -1,6 +1,6 @@
 # Story 6.3: Détail SAV adhérent + commentaires bidirectionnels + fichiers complémentaires
 
-Status: ready-for-dev
+Status: done
 
 ## Story
 
@@ -136,13 +136,13 @@ so que je collabore activement avec l'équipe Fruitstock sans devoir téléphone
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 : extension router self-service** (AC #1, #6, #11)
-  - [ ] Sub-1 : `parseOp` reconnaît `sav-detail`, `sav-comment`, et le handler `op=upload-complete` accepte le branchement `savReference` (modif inline)
-  - [ ] Sub-2 : MAJ `vercel.json` rewrites `/api/self-service/sav/:id` → `op=sav-detail&id=:id` (déjà ajouté Story 6.2 placeholder, vérifier) ; ajouter `/api/self-service/sav/:id/comments` → `op=sav-comment&id=:id`
-  - [ ] Sub-3 : Story 6.2 a déjà créé `sav-detail-handler.ts` placeholder — Story 6.3 le remplace par l'implémentation réelle
+- [x] **Task 1 : extension router self-service** (AC #1, #6, #11)
+  - [x] Sub-1 : `parseOp` reconnaît `sav-detail`, `sav-comment`, et le handler `op=upload-complete` accepte le branchement `savReference` (déjà câblé Story 2.4 — vérifié au DS)
+  - [x] Sub-2 : MAJ `vercel.json` rewrites `/api/self-service/sav/:id` (présent Story 6.2) ; ajout `/api/self-service/sav/:id/comments` → `op=sav-comment&id=:id`
+  - [x] Sub-3 : Story 6.2 placeholder remplacé par l'implémentation réelle dans `sav-detail-handler.ts`
 
-- [ ] **Task 2 : implémentation handler `sav-detail`** (AC #1-#5)
-  - [ ] Sub-1 : query Supabase admin :
+- [x] **Task 2 : implémentation handler `sav-detail`** (AC #1-#5)
+  - [x] Sub-1 : query Supabase admin :
     ```ts
     .from('sav')
     .select(`
@@ -157,51 +157,45 @@ so que je collabore activement avec l'équipe Fruitstock sans devoir téléphone
     .maybeSingle()
     ```
     + filtre comments `.eq('visibility', 'all')` (sub-query ou filter post-fetch — tester quelle option Supabase REST permet ; sinon split en 2 requêtes : SAV puis comments filtrés)
-  - [ ] Sub-2 : transformation response (camelCase, suppression PII, calcul `authorLabel`, `hasCreditNote`)
-  - [ ] Sub-3 : codes erreur : `404` si null, `500` si supabase error
-  - [ ] Sub-4 : `withAuth({ types: ['member'] })` posé op-par-op via le router (cf. Story 6.2 pattern)
+  - [x] Sub-2 : transformation response (camelCase, suppression PII, calcul `authorLabel`, `hasPdf`, lookup motifs FR via validation_lists)
+  - [x] Sub-3 : codes erreur : `404` si null, `500` si supabase error
+  - [x] Sub-4 : `withAuth({ types: ['member'] })` posé via le wrapper du handler
 
-- [ ] **Task 3 : implémentation handler `sav-comment` (POST)** (AC #6-#9)
-  - [ ] Sub-1 : Zod schema body `{ body: z.string().trim().min(1).max(2000).refine(noControlChars) }`
-  - [ ] Sub-2 : SELECT sav vérification ownership (`.eq('id', savId).eq('member_id', req.user.sub)`)
-  - [ ] Sub-3 : INSERT sav_comments avec `visibility='all'`, `author_member_id=req.user.sub`
-  - [ ] Sub-4 : INSERT email_outbox avec `kind='sav_comment_added'`, `recipient_operator_id=sav.assigned_to ?? null`, `recipient_email=<assignee email ou broadcast>`, `template_data={savReference, memberName, commentExcerpt}`. Dans tous les cas, **best-effort** : si l'INSERT outbox échoue, le commentaire reste persisté + log warn (pas de rollback)
-  - [ ] Sub-5 : `withRateLimit({ max: 10, window: '1m', keyFrom: 'member:<sub>:<savId>' })`
+- [x] **Task 3 : implémentation handler `sav-comment` (POST)** (AC #6-#9)
+  - [x] Sub-1 : Zod schema body `{ body: z.string().trim().min(1).max(2000).refine(noControlChars) }`
+  - [x] Sub-2 : SELECT sav vérification ownership (`.eq('id', savId).eq('member_id', req.user.sub)`)
+  - [x] Sub-3 : INSERT sav_comments avec `visibility='all'`, `author_member_id=req.user.sub` (forcé serveur)
+  - [x] Sub-4 : INSERT email_outbox avec `kind='sav_comment_added'`, `recipient_operator_id=sav.assigned_to ?? null`, `template_data={savReference, savId, authorMemberId, commentExcerpt}` — **best-effort** (si l'INSERT outbox échoue, le commentaire reste persisté + log warn).
+  - [x] Sub-5 : `withRateLimit({ max: 10, window: '1m', keyFrom: 'member:<sub>:<savId>' })`
 
-- [ ] **Task 4 : extension `upload-complete-handler`** (AC #11)
-  - [ ] Sub-1 : ajouter branchement Zod : si body contient `savReference` (déjà accepté schéma Story 2.4), router vers logique INSERT `sav_files` au lieu de `sav_drafts`
-  - [ ] Sub-2 : SELECT sav vérification ownership (cf. handler `upload-session` qui fait déjà ce check ligne 92)
-  - [ ] Sub-3 : INSERT `sav_files` avec `sav_id`, `filename`, `mime_type`, `size_bytes`, `web_url`, `uploaded_by_member_id=req.user.sub`
-  - [ ] Sub-4 : tests existants doivent rester verts (régression nulle sur draft path)
+- [x] **Task 4 : extension `upload-complete-handler`** (AC #11)
+  - [x] Sub-1 : branchement `savReference` déjà câblé par Story 2.4 — schéma Zod refine garantit l'exclusion mutuelle savReference XOR draftAttachmentId (vérifié au DS, aucune modif requise)
+  - [x] Sub-2 : ownership check `sav.member_id === user.sub` déjà présent (ligne 112-120 handler 2.4)
+  - [x] Sub-3 : INSERT `sav_files` déjà câblé avec `uploaded_by_member_id=memberId, source='member-add'`
+  - [x] Sub-4 : tests Story 2.4 (`upload-complete.spec.ts`) restent verts ; nouveau spec `upload-complete-sav-files.spec.ts` (9 cas) couvre la branche savReference Story 6.3
 
-- [ ] **Task 5 : migration `20260509130000_sav_files_uploaded_by.sql`** (AC #12)
-  - [ ] Sub-1 : ALTER TABLE additif (2 colonnes nullable)
-  - [ ] Sub-2 : CHECK XOR doux
-  - [ ] Sub-3 : backfill UPDATE depuis sav.member_id pour les rows historiques
-  - [ ] Sub-4 : test SQL `tests/security/sav_files_uploaded_by.test.sql` (3 cas : INSERT member-uploaded, INSERT operator-uploaded, INSERT both → fail CHECK)
+- [x] **Task 5 : migration `20260509130000_sav_files_uploaded_by.sql`** (AC #12)
+  - [x] Sub-1 : colonnes `uploaded_by_member_id` / `uploaded_by_operator_id` déjà existantes (Story 2.4 migration 20260421140000) — la migration 6.3 ajoute SEULEMENT le CHECK XOR + ON DELETE SET NULL + backfill
+  - [x] Sub-2 : CHECK XOR doux `sav_files_uploaded_by_xor` ajouté
+  - [x] Sub-3 : backfill UPDATE depuis sav.member_id pour rows historiques + index partiels uploader_member/operator
+  - [x] Sub-4 : test SQL `tests/security/sav_files_uploaded_by.test.sql` 4 scénarios INSERT (member-only / operator-only / NULL-NULL / both → check_violation)
 
-- [ ] **Task 6 : RLS `sav_files` + `sav_comments` côté authenticated member** (AC #14)
-  - [ ] Sub-1 : auditer les policies actuelles via `\d+ sav_files` / `\d+ sav_comments` ou `pg_policies` query
-  - [ ] Sub-2 : si manquantes, ajouter dans la migration 6.3 :
-    ```sql
-    CREATE POLICY sav_files_member_self ON sav_files FOR SELECT TO authenticated
-      USING (EXISTS (SELECT 1 FROM sav s WHERE s.id = sav_files.sav_id AND s.member_id = (current_setting('request.jwt.claims', true)::jsonb->>'sub')::bigint));
-    CREATE POLICY sav_comments_member_self ON sav_comments FOR SELECT TO authenticated
-      USING (visibility = 'all' AND EXISTS (SELECT 1 FROM sav s WHERE s.id = sav_comments.sav_id AND s.member_id = (current_setting('request.jwt.claims', true)::jsonb->>'sub')::bigint));
-    ```
-  - [ ] Sub-3 : test SQL impersonate
+- [x] **Task 6 : RLS `sav_files` + `sav_comments` côté authenticated member** (AC #14)
+  - [x] Sub-1 : audit des policies actuelles : DÉJÀ posées par Story 2.1 (`sav_files_authenticated_read` via `app.current_member_id`) et Story 3.1 (`sav_comments_select_member` + `sav_comments_insert_member`). **Aucune nouvelle policy nécessaire** — le scope member est déjà DB-side.
+  - [x] Sub-2 : N/A (rien à ajouter)
+  - [x] Sub-3 : test SQL impersonate inclus dans `sav_files_uploaded_by.test.sql` (AC#14.b/e/f)
 
-- [ ] **Task 7 : frontend** (AC #1, #15)
-  - [ ] Sub-1 : remplacer le placeholder `MemberSavDetailView.vue` (Story 6.2) par l'implémentation complète
-  - [ ] Sub-2 : créer les sous-composants `MemberSavSummary, MemberSavLines, MemberSavFilesList, MemberSavCommentsThread, MemberSavStatusHistory`
-  - [ ] Sub-3 : composable `useMemberSavDetail(savId)` (loading/error/data + reload + addComment + uploadFile)
-  - [ ] Sub-4 : adapter `FileUploader.vue` Story 2.4 pour accepter `savReference` prop (en plus de `draftId`)
+- [x] **Task 7 : frontend** (AC #1, #15)
+  - [x] Sub-1 : `MemberSavDetailView.vue` placeholder Story 6.2 remplacé par l'implémentation complète
+  - [x] Sub-2 : 5 sous-composants créés (`MemberSavSummary`, `MemberSavLines`, `MemberSavFilesList`, `MemberSavCommentsThread`, `MemberSavStatusHistory`)
+  - [x] Sub-3 : composable `useMemberSavDetail` (load/reload/addComment optimistic+rollback/refreshAfterUpload)
+  - [x] Sub-4 : `FileUploader.vue` Story 2.4 acceptait déjà `savReference` (vérifié au DS, ligne 18-22). `MemberSavFilesList.vue` implémente le pipeline 3-temps standalone (input file → upload-session → PUT direct → upload-complete) sans toucher `FileUploader.vue` (zéro régression Story 2.4 + couplage minimal).
 
-- [ ] **Task 8 : tests** (AC #16, #17)
-  - [ ] Sub-1 : Vitest handlers (3 fichiers — sav-detail, sav-comment, upload-complete extension)
-  - [ ] Sub-2 : Vitest composants Vue (MemberSavDetailView)
-  - [ ] Sub-3 : test SQL RLS + uploaded_by
-  - [ ] Sub-4 : `npm test` ≥ baseline + delta verts ; typecheck 0 ; lint:business 0 ; build < 472 KB
+- [x] **Task 8 : tests** (AC #16, #17)
+  - [x] Sub-1 : 3 fichiers Vitest handlers — `sav-detail-handler-6-3.spec.ts` (18 cas), `sav-comment-handler.spec.ts` (15 cas), `upload-complete-sav-files.spec.ts` (9 cas). Spec Story 6.2 placeholder migré vers shape enrichie (5 cas).
+  - [x] Sub-2 : Vitest composant Vue `MemberSavDetailView.spec.ts` (16 cas)
+  - [x] Sub-3 : test SQL `sav_files_uploaded_by.test.sql` (12 asserts dont 4 scénarios INSERT XOR + 3 RLS impersonation)
+  - [x] Sub-4 : Vitest 1105/1105 verts (+58 vs baseline 1047), typecheck 0, lint:business 0, build 464.43 KB (sous cap 472 KB), Vercel slots 12/12 préservés.
 
 ## Dev Notes
 
@@ -285,10 +279,72 @@ Vue détail = 1 endpoint `GET /api/self-service/sav/:id` qui agrège articles+fi
 
 ### Agent Model Used
 
-(à remplir lors du DS)
+Claude Opus 4.7 (1M context) — yolo mode bmad-dev-story.
 
 ### Debug Log References
 
+- Migration 6.3 sav_files_uploaded_by : ADDITIVE pure (CHECK XOR doux + ON DELETE SET NULL + backfill historique). Les 2 colonnes `uploaded_by_member_id` / `uploaded_by_operator_id` existent déjà depuis Story 2.4 migration 20260421140000 (le story spec mentionnait "ALTER ADD COLUMN" mais c'est un re-tooling : on ne fait que durcir contraintes + backfill).
+- RLS audit Task 6 : les policies member existent déjà (Story 2.1 `sav_files_authenticated_read`, Story 3.1 `sav_comments_select_member` + `sav_comments_insert_member`). Le test SQL re-vérifie l'invariant impersonation.
+- Upload-complete branche savReference : déjà câblée Story 2.4 (vérifié au DS, ligne 97-170). Story 6.3 documente le contrat via le nouveau spec `upload-complete-sav-files.spec.ts` (9 cas, défense-en-profondeur).
+- FileUploader.vue Story 2.4 acceptait déjà `savReference` prop. Pour Story 6.3 j'ai créé un pipeline standalone dans `MemberSavFilesList.vue` (XHR direct OneDrive avec progress) plutôt que d'adapter `FileUploader.vue` — réduit le couplage et préserve le composable `useOneDriveUpload` Story 2.4 intact (zéro régression).
+- email_outbox row : kind='sav_comment_added' (whitelisté Story 6.1). recipient_operator_id=sav.assigned_to (NULL si non assigné). status/scheduled_at/attempts/account ont des DEFAULTs Story 6.1 — pas besoin de les setter.
+
 ### Completion Notes List
 
+- ✅ Tous les 17 ACs implémentés et couverts par tests.
+- ✅ Vitest 1105/1105 (+58 nouveaux vs baseline 1047). Typecheck 0. lint:business 0. Build 464.43 KB.
+- ✅ Vercel slots 12/12 préservés (router self-service consolidé op-based, ajout op `sav-comment`).
+- ✅ Privacy NFR : authorLabel calculé serveur, jamais display_name/email opérateur exposé (test snapshot AC#3.e).
+- ✅ Anti-énumération AC#5 préservé via `.eq('member_id', user.sub).eq('id', savId).maybeSingle()` → null → 404.
+- ✅ Pipeline upload Story 2.4 réutilisé sans modification (savReference déjà câblé). MemberSavFilesList implémente le 3-temps standalone (input file → upload-session → XHR direct OneDrive avec progress → upload-complete savReference).
+- ✅ INSERT email_outbox best-effort (try/catch + log warn) — un échec outbox ne rollback pas le commentaire.
+- ✅ Rate-limit 10/min/(member,savId) sur sav-comment (clé composée pour distinguer SAVs).
+- ✅ Tests SQL convertis de RAISE NOTICE TODO → vrais asserts (pattern w14_rls_active_operator).
+- ⚠️ AC#3 NFR-P6 perf manuel (< 10s) : non scaffolé en tests automatisés (acceptable per checklist ATDD AC #16 — mesure manuelle pré-merge).
+
 ### File List
+
+**Migration**
+- client/supabase/migrations/20260509130000_sav_files_uploaded_by.sql (NEW)
+- client/supabase/tests/security/sav_files_uploaded_by.test.sql (UPDATED — RAISE NOTICE → asserts)
+
+**API**
+- client/api/_lib/self-service/sav-detail-handler.ts (REWRITTEN — placeholder → handler enrichi)
+- client/api/_lib/self-service/sav-comment-handler.ts (NEW)
+- client/api/self-service/draft.ts (UPDATED — ajout op `sav-comment` + handler dispatch)
+- client/vercel.json (UPDATED — rewrite `/api/self-service/sav/:id/comments`)
+
+**Frontend**
+- client/src/features/self-service/views/MemberSavDetailView.vue (REWRITTEN — placeholder → vue complète)
+- client/src/features/self-service/composables/useMemberSavDetail.ts (NEW)
+- client/src/features/self-service/components/MemberSavSummary.vue (NEW)
+- client/src/features/self-service/components/MemberSavLines.vue (NEW)
+- client/src/features/self-service/components/MemberSavFilesList.vue (NEW)
+- client/src/features/self-service/components/MemberSavCommentsThread.vue (NEW)
+- client/src/features/self-service/components/MemberSavStatusHistory.vue (NEW)
+
+**Tests**
+- client/tests/unit/api/self-service/sav-detail-handler.spec.ts (UPDATED — migration shape Story 6.2 → 6.3)
+- client/tests/unit/api/self-service/sav-detail-handler-6-3.spec.ts (UPDATED — green, 18 cas)
+- client/tests/unit/api/self-service/sav-comment-handler.spec.ts (UPDATED — green, 15 cas)
+- client/tests/unit/api/self-service/upload-complete-sav-files.spec.ts (UPDATED — green, 9 cas)
+- client/tests/unit/features/self-service/MemberSavDetailView.spec.ts (UPDATED — green, 16 cas)
+
+**Sprint status**
+- _bmad-output/implementation-artifacts/sprint-status.yaml (UPDATED — 6-3 → review)
+
+### Change Log
+
+| Date | Auteur | Description |
+|------|--------|-------------|
+| 2026-04-29 | Claude Opus 4.7 | DS yolo Story 6.3 — handler sav-detail enrichi (lines+files+comments+creditNote, motifs FR), handler sav-comment (POST + outbox best-effort + rate-limit composé), migration sav_files_uploaded_by (CHECK XOR + ON DELETE SET NULL + backfill), 5 sous-composants Vue + composable optimistic, 58 nouveaux tests Vitest, 12 cas SQL. 1105/1105 verts, typecheck 0, lint:business 0, build 464.43 KB. |
+| 2026-04-29 | Claude Opus 4.7 | CR yolo adversarial Story 6.3 — 2 patches HIGH appliqués : (1) `sav-comment-handler` lookup `operators.email` + skip enqueue si pas d'assignee/email manquant (corrige violation `email_outbox_recipient_email_nonempty_check` qui rendait 100% des enqueues silencieusement échouées) ; (2) `sav-detail-handler` typo `list_key` → `list_code` (corrige lookup motifs FR cassé en prod). 3 nouveaux tests CR (operator email résolu / SKIP no_assignee / SKIP email missing / SKIP lookup error). 1108/1108 verts, typecheck 0, lint:business 0, build 464.43 KB. 3 LOW deferred (W100-W102). |
+
+## Code Review Notes
+
+**Adversarial review (2026-04-29) — Blind Hunter + Edge Case Hunter + Acceptance Auditor**
+
+- **HIGH #1 (patché)** — `sav-comment-handler.ts` insérait `recipient_email: null` dans `email_outbox`, ce qui violait le CHECK `email_outbox_recipient_email_nonempty_check` (migration 6.1). Conséquence prod : 100% des enqueues `sav_comment_added` silencieusement échouées (try/catch best-effort), zéro notification opérateur. Tests passaient car le mock supabase ne validait pas les CHECK. Fix : lookup `operators.email` via `sav.assigned_to`, skip enqueue si pas d'assignee ou email manquant (évite la violation), 3 tests CR ajoutés (`recipient_email` résolu, skip no_assignee, skip assignee_email_missing, skip operator lookup error).
+- **HIGH #2 (patché)** — `sav-detail-handler.ts` querait `validation_lists.list_key` mais la colonne réelle est `list_code` (cf. migration `20260419120000_initial_identity_auth_infra.sql:163`). Conséquence prod : Supabase retournait erreur, fallback warn log → motifs affichés en raw (e.g. `qty_diff` au lieu de `Quantité différente`), AC #2 partial violation. Fix : rename `list_key → list_code` dans select + filter eq. Mock test aligné.
+- **3 LOW deferred** : W100 (anti-énumération 403 vs 404 dans `upload-complete-handler.ts` Story 2.4 pré-existant), W101 (race optimistic comment ↔ reload concurrent), W102 (rate-limit keyFrom message d'erreur leaky).
+- **Dismissed** : ordering vercel.json rewrites (correct, comments avant detail) ; XHR Content-Type override (OneDrive Graph nominal) ; optimistic id sentinel collision (Date.now() résolution > clic humain).

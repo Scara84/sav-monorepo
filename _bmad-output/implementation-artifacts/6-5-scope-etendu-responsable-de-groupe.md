@@ -1,6 +1,6 @@
 # Story 6.5: Scope étendu responsable de groupe (vue SAV groupe + commentaire)
 
-Status: ready-for-dev
+Status: done
 
 ## Story
 
@@ -97,7 +97,7 @@ so that je coordonne mon groupe et repère les problèmes de lot sans appeler un
         )
       );
     ```
-    **And** si absente → l'ajouter dans la migration Story 6.5 `20260509140000_rls_group_manager_scope.sql`
+    **And** si absente → l'ajouter dans la migration Story 6.5 `20260509150000_rls_group_manager_scope.sql` (timestamp `_140000` occupé par `member_prefs_merge_rpc.sql` Story 6.4 → décalé à `_150000`)
     **And** test SQL `tests/security/sav_group_manager_rls.test.sql` impersonate manager → voit ses SAV + ceux de son groupe ; impersonate adhérent normal → voit uniquement les siens
 
 11. **Given** un responsable dont le rôle est révoqué (`is_group_manager` repassé à `false` côté admin)
@@ -125,46 +125,113 @@ so that je coordonne mon groupe et repère les problèmes de lot sans appeler un
 
 ## Tasks / Subtasks
 
-- [ ] **Task 1 : extension handler `sav-list` scope group** (AC #2-#4)
-  - [ ] Sub-1 : Zod schema query : ajouter `scope: z.enum(['self', 'group']).default('self')` + `q: z.string().min(1).max(100).optional()` + `received_after/before: z.string().datetime().optional()`
-  - [ ] Sub-2 : si scope=group → check `req.user.role === 'group-manager' AND req.user.groupId AND req.user.scope === 'group'`
-  - [ ] Sub-3 : DÉFENSE-EN-PROFONDEUR re-check DB `SELECT is_group_manager FROM members WHERE id = req.user.sub` — si false → 403 `SCOPE_REVOKED`
-  - [ ] Sub-4 : query Supabase `.eq('group_id', req.user.groupId).neq('member_id', req.user.sub)` + filtre `q` ilike sur `members.last_name` (jointure existante)
-  - [ ] Sub-5 : exclude `members.email` du SELECT response (déjà OK Story 6.2 — vérifier)
+- [x] **Task 1 : extension handler `sav-list` scope group** (AC #2-#4)
+  - [x] Sub-1 : Zod schema query — `scope/q/received_after/received_before` ajoutés
+  - [x] Sub-2 : gating Layer 1 (JWT) → 403 SCOPE_NOT_AUTHORIZED si claim incomplet
+  - [x] Sub-3 : Layer 2 re-check DB → 403 SCOPE_REVOKED via `requireActiveManager()`
+  - [x] Sub-4 : query `.eq('group_id', X).neq('member_id', Y)` + ilike `members.last_name` + escape `%`/`_`/`\`
+  - [x] Sub-5 : `SELECT_EXPR_GROUP` exclut explicitement `email` (assertion test)
 
-- [ ] **Task 2 : extension handler `sav-detail` scope group** (AC #5, #6)
-  - [ ] Sub-1 : query polymorphique : `OR member_id = req.user.sub OR (group_id = req.user.groupId AND req.user.role === 'group-manager')` — implémentation Supabase via `.or('member_id.eq.X,group_id.eq.Y')` (+ check côté serveur que role est bien manager)
-  - [ ] Sub-2 : DÉFENSE-EN-PROFONDEUR re-check DB `is_group_manager` (helper partagé avec sav-list)
-  - [ ] Sub-3 : exclude `members.email` du response
+- [x] **Task 2 : extension handler `sav-detail` scope group** (AC #5, #6)
+  - [x] Sub-1 : query polymorphique `.or('member_id.eq.X,group_id.eq.Y')` quand `canActAsManager`
+  - [x] Sub-2 : Layer 2 re-check DB déclenché UNIQUEMENT si `accessedAsManager` (cost-aware)
+  - [x] Sub-3 : `member: { firstName, lastName }` exposé uniquement quand `accessedAsManager` ; jamais `email`
 
-- [ ] **Task 3 : extension handler `sav-comment`** (AC #7)
-  - [ ] Sub-1 : check ownership polymorphique (own OR group as manager)
-  - [ ] Sub-2 : INSERT email_outbox enqueue pour `recipient_member_id = sav.member_id` (l'adhérent propriétaire) + opérateur si assigned, sauf si `sav.member_id === req.user.sub`
-  - [ ] Sub-3 : `kind='sav_comment_added'` (déjà whitelisté Story 6.1)
+- [x] **Task 3 : extension handler `sav-comment`** (AC #7)
+  - [x] Sub-1 : ownership polymorphique + Layer 2 + cross-group guard explicite
+  - [x] Sub-2 : 2e enqueue `recipient_member_id = sav.member_id` quand manager comment SAV tiers ; skip si commenter == owner
+  - [x] Sub-3 : `kind='sav_comment_added'` réutilisé ; lookup `members.email` avec guard `anonymized_at IS NULL`
 
-- [ ] **Task 4 : RLS DB** (AC #10)
-  - [ ] Sub-1 : audit `pg_policies` — vérifier présence `sav_group_manager_scope`
-  - [ ] Sub-2 : si absente, créer migration `20260509140000_rls_group_manager_scope.sql` qui pose les 4 policies (sav, sav_lines, sav_files, sav_comments) — pattern architecture.md ligne 988-1002
-  - [ ] Sub-3 : test SQL impersonate
+- [x] **Task 4 : RLS DB** (AC #10)
+  - [x] Sub-1 : audit `pg_policies` — `sav_authenticated_read` couvre déjà via `app_is_group_manager_of()`, `sav_comments_select_group_manager` idem
+  - [x] Sub-2 : migration `20260509150000_rls_group_manager_scope.sql` (timestamp décalé : 140000 occupé par member_prefs_merge_rpc) — 4 policies nommées explicitement, idempotent (DROP IF EXISTS + CREATE)
+  - [x] Sub-3 : test SQL `sav_group_manager_rls.test.sql` — 5 cas (presence + manager actif + manager hors-groupe + adhérent normal + manager révoqué)
 
-- [ ] **Task 5 : helper `requireActiveManager()`** (AC #11)
-  - [ ] Sub-1 : créer `client/api/_lib/auth/manager-check.ts` exporté `async function requireActiveManager(memberId: number): Promise<boolean>` qui SELECT depuis `members` et retourne le bool
-  - [ ] Sub-2 : caller pattern dans handlers : `if (req.user.scope === 'group' && !(await requireActiveManager(req.user.sub))) return sendError(res, 'SCOPE_REVOKED', ...)`
-  - [ ] Sub-3 : tests unitaires (member actif manager, member révoqué, member inexistant)
+- [x] **Task 5 : helper `requireActiveManager()`** (AC #11)
+  - [x] Sub-1 : `client/api/_lib/auth/manager-check.ts` créé avec guard `anonymized_at IS NULL` + fail-closed sur erreur Supabase
+  - [x] Sub-2 : intégré dans 3 handlers (sav-list, sav-detail, sav-comment)
+  - [x] Sub-3 : 6 cas dans `manager-check.spec.ts` (actif/révoqué/anonymisé/inexistant/erreur DB/memberId invalide)
 
-- [ ] **Task 6 : frontend — onglets liste** (AC #1, #8)
-  - [ ] Sub-1 : extension `MemberSavListView.vue` avec `<TabsBar>` conditionnel
-  - [ ] Sub-2 : composable `useMemberSavList({ scope })` paramétré
-  - [ ] Sub-3 : compteurs onglets (2 fetch parallèles légers `meta.count`)
+- [x] **Task 6 : frontend — onglets liste** (AC #1, #8)
+  - [x] Sub-1 : `<TabsBar>` inline dans `MemberSavListView.vue` conditionnel sur `isGroupManager`
+  - [x] Sub-2 : `useMemberSavList(scope)` paramétré ; deux instances cohabitent (cache léger inter-onglets)
+  - [x] Sub-3 : compteurs `(N)` rendus depuis `meta.count` ; group fetch lazy au mount manager
 
-- [ ] **Task 7 : frontend — détail badge groupe** (AC #9)
-  - [ ] Sub-1 : extension `MemberSavDetailView.vue` : si `useMe().scope === 'group' AND sav.member_id !== useMe().sub` → afficher badge « SAV de votre groupe — {firstName} {lastName} »
+- [x] **Task 7 : frontend — détail badge groupe** (AC #9)
+  - [x] Sub-1 : badge `data-testid="group-sav-badge"` rendu via présence `data.member` (signal serveur)
 
-- [ ] **Task 8 : tests** (AC #12, #13)
-  - [ ] Sub-1 : étendre les 4 specs handlers (sav-list, sav-detail, sav-comment, manager-check)
-  - [ ] Sub-2 : étendre `MemberSavListView.spec.ts`
-  - [ ] Sub-3 : créer test SQL RLS
-  - [ ] Sub-4 : `npm test`, typecheck, lint, build
+- [x] **Task 8 : tests** (AC #12, #13)
+  - [x] Sub-1 : 3 specs Story 6.5 dédiées (`-6-5.spec.ts` pattern aligné sur `-6-3.spec.ts`) → 18 cas API + 6 cas helper = 24 nouveaux cas verts
+  - [x] Sub-2 : `MemberSavListView.spec.ts` étendu avec 4 cas Story 6.5 (no-tabs / tabs-counters / switch-tab / search q) — 11 cas total verts
+  - [x] Sub-3 : `sav_group_manager_rls.test.sql` 5 cas RLS (peut être lancé via `psql` sur préprod avec les fixtures rolled-back)
+  - [x] Sub-4 : `npm run typecheck` 0, `npm run lint:business` 0, `npm test` **1168/1168 verts**, `npm run build` 464.55 KB < 472 KB cap
+
+### Review Findings (CR adversarial 3-layer — 2026-04-29)
+
+**Sources** : Blind Hunter (17 findings) + Edge Case Hunter (22 findings) + Acceptance Auditor (13 ACs audit). Post-dedup et triage : 3 decision-needed + 9 patch + 12 defer + 6 dismiss.
+
+#### Decisions needed (résolution requise avant patches)
+
+- [x] **[Review][Decision] D1 — RLS source-of-truth divergence : `members.group_id` (RLS) vs `sav.group_id` (handler)** — *Décision CR 2026-04-29 : Option 2 retenue — RLS aligné sur `sav.group_id` (cohérent avec handler + Risk doc Story 6.5 « manager garde l'accès à l'ancien groupe jusqu'à expiration cookie »). Migration 20260509150000 réécrite. Sémantique « SAV figé au groupe de création » assumée.* — La policy `sav_group_manager_scope` (migration 20260509150000) lookup `members.group_id` côté propriétaire, alors que les handlers `sav-list/detail/comment` filtrent sur `sav.group_id` (colonne dénormalisée posée à création). Si un admin transfère un membre vers un autre groupe, `sav.group_id` (figé) et `members.group_id` (à jour) divergent → handler permet l'accès via `sav.group_id`, RLS bloquerait via `members.group_id`. Story 6.5 Dev Notes "Risques + mitigations" accepte explicitement le risque "manager garde l'accès à l'ancien groupe jusqu'à expiration cookie (24h)" mais ne tranche pas la source-of-truth. **Choix requis :** (a) handler aligne sur `members.group_id` via subselect (cohérent avec RLS, slow); (b) RLS aligne sur `sav.group_id` (cohérent avec handler, modifie migration); (c) trigger backfill `sav.group_id := members.group_id` sur UPDATE members (rétro-compat); (d) accepter divergence et documenter explicitement.
+
+- [x] **[Review][Decision] D2 — SAV legacy avec `sav.group_id = NULL` invisible aux managers** — *Décision CR 2026-04-29 : résolu par D1 — RLS ajoute `sav.group_id IS NOT NULL` explicite, comportement cohérent handler/RLS. Pas de backfill : un SAV sans group_id est traité comme « SAV individuel » (rare/legacy) non visible en scope group, par design.* — Une SAV créée avant l'ajout de la colonne `sav.group_id` (ou si trigger pas appliqué) a `sav.group_id = NULL`. Le `.or('member_id.eq.X,group_id.eq.5')` ne match pas (NULL ≠ 5) → manager ne voit jamais ces SAV. Lié à D1. **Choix requis :** (a) backfill SQL `UPDATE sav SET group_id = m.group_id FROM members m WHERE sav.member_id = m.id AND sav.group_id IS NULL`; (b) accepter et documenter (les SAV legacy sont rares, MVP); (c) refactor handler pour utiliser subselect via `members` (couvre les NULL via members.group_id).
+
+- [x] **[Review][Decision] D3 — AC #4 tri `member_last_name ASC` non implémenté** — *Décision CR 2026-04-29 : déféré → W6.5-0 dans deferred-work.md. Faible valeur fonctionnelle V1, le tri received_at DESC couvre 95% du besoin opérationnel.* — L'AC #4 spec mentionne explicitement "tri par received_at DESC (défaut) ou member_last_name ASC". Le handler ne pose que `.order('received_at', desc)` — aucun query param `sort` exposé, aucun test de tri alternatif. **Choix requis :** (a) implémenter maintenant (~5 lignes : Zod `sort: z.enum(['received_at_desc','last_name_asc']).default('received_at_desc')` + query.order conditionnel + 1 test); (b) déférer en story de polish UX (faible valeur fonctionnelle V1).
+
+#### Patches (à appliquer)
+
+- [ ] **[Review][Patch] P1 — `requireActiveManager` ne re-check pas `groupId` JWT vs DB** — `manager-check.ts:33-49` ne valide que `is_group_manager + anonymized_at`. Si admin transfère un manager entre groupes (Group A → B), JWT figé sur `groupId=A` 24h → manager voit toujours SAV de groupe A. Fix : retourner `{ active: boolean, groupId: number | null }` et caller assert `dbGroupId === claimedGroupId` ; sinon 403 SCOPE_REVOKED. [`client/api/_lib/auth/manager-check.ts:33-49`]
+
+- [ ] **[Review][Patch] P2 — Postgrest nested ilike `members.last_name` ne filtre pas (LEFT JOIN par défaut)** — `sav-list-handler.ts:328-330` : sans hint `!inner`, Postgrest applique l'ilike comme filtre LEFT JOIN — les SAV dont le member ne match pas restent retournés avec `members: null`. Le mock test (lignes 76-83) filtre côté JS et masque le bug. Fix : remplacer `members:members!sav_member_id_fkey ( ... )` par `members:members!sav_member_id_fkey!inner ( ... )` dans `SELECT_EXPR_GROUP`. À valider empiriquement contre Supabase. [`client/api/_lib/self-service/sav-list-handler.ts:133, 328`]
+
+- [ ] **[Review][Patch] P3 — Escape ilike incomplet (manque `*`, `,`, `(`, `)`, `.`)** — `sav-list-handler.ts:328` : regex `/[\\%_]/g` n'échappe que 3 chars. Postgrest peut interpréter `*` comme wildcard selon version supabase-js. Fix : `q.replace(/[%_*\\]/g, '\\$&')` + reject control chars via Zod refine `.refine(s => /^[\p{L}\p{N}\s\-']+$/u.test(s))`. [`client/api/_lib/self-service/sav-list-handler.ts:328`]
+
+- [ ] **[Review][Patch] P4 — Frontend race condition : tab switch + search inflight pile up** — `MemberSavListView.vue` : pas d'AbortController, switch self↔group rapide ou submit search avant fin du fetch précédent provoque race (last-resolves-wins). Fix : ajouter AbortController + request token comparé au resolve. [`client/src/features/self-service/views/MemberSavListView.vue:1838-1865, 1892-1909`]
+
+- [ ] **[Review][Patch] P5 — `loadMore` sur onglet group perd le filtre `q`** — `MemberSavListView.vue:1867-1870` : `groupList.loadMore()` réutilise `useMemberSavList`'s URL builder qui n'a jamais reçu le `q` (passé via `refetchGroupWithQuery` direct fetch, pas via le composable). Page suivante retourne TOUTES les SAV groupe → mélange filtré + non-filtré. Fix : ajouter `lastQ` au composable `useMemberSavList` parallèle à `lastStatusFilter`, accepter `q` dans `load()` et `fetchPage()`. [`client/src/features/self-service/composables/useMemberSavList.ts:42, 79-94`]
+
+- [ ] **[Review][Patch] P6 — Logger expose `error.message` Supabase (PII leak potentiel)** — Plusieurs handlers logent `message: err.message` avec messages Supabase qui peuvent contenir l'email/last_name dans certains cas (ex: contrainte unique violée). Fix : sanitize/truncate, log uniquement `error.code` ou hash. Auditeurs concernés : sav-list/detail/comment + manager-check. [`client/api/_lib/auth/manager-check.ts:39-44`, `client/api/_lib/self-service/sav-comment-handler.ts:179-187, 245-254`]
+
+- [ ] **[Review][Patch] P7 — Pas de test runtime sur le response body pour scope=self (uniquement assertion sur selectExpr)** — `sav-list-handler-6-5.spec.ts:268-291` assert `db.capturedFilters.selectExpr` ne contient pas `email` mais ne teste PAS qu'une réponse mock contenant `email` injecté ne fuiterait pas. Fix : ajouter test où le mock retourne `members: { ..., email: 'leak@test' }` puis assert `JSON.stringify(body)` ne contient pas `leak@test`. [`client/tests/unit/api/self-service/sav-list-handler-6-5.spec.ts:268-291`]
+
+- [ ] **[Review][Patch] P8 — `keyFrom` rate-limit retourne undefined sur id non-entier → bypass rate-limit sur 400s** — `sav-comment-handler.ts:268-273` : si `id="abc"` ou `"200foo"` → `Number(id)` = NaN → `keyFrom` retourne undefined → rate-limit skippé. Attaquant peut spam 10000 POST 400 sans cap. Fix : utiliser `keyFrom: req => req.user ? \`member:${req.user.sub}\` : undefined` (rate-limit globalement par member, pas par savId). [`client/api/_lib/self-service/sav-comment-handler.ts:268-279`]
+
+- [ ] **[Review][Patch] P9 — Doc Tasks AC #10 référence migration `20260509140000` mais le fichier réel est `_150000`** — Inconsistance documentation (story file Task 4 sub-2 + Dev Notes vs migration filename). Fix : update Tasks/AC #10 reference dans story file + sprint-status comment.
+
+#### Deferred (pre-existing OR forward-coupled OR low-severity hardening)
+
+- [x] **[Review][Defer] W1 — `.or()` cursor precedence fragile post-refactor** — currently safe but dépend du fait que sav-list ne mixe pas ownership .or() avec cursor .or(). Si refactor unifie sur pattern detail/comment, risque de bug pagination cross-group. Mitigation : test integration end-to-end Postgrest. *Pre-existing pattern Story 6.2.*
+
+- [x] **[Review][Defer] W2 — Outbox `commentExcerpt` non sanitisé HTML** — Story 6.6 (sender) gérera le rendering HTML-escape côté template. Documenté en deferred-work. *Forward-coupled Story 6.6.*
+
+- [x] **[Review][Defer] W3 — Membres anonymisés (RGPD) toujours surface dans group lists** — pas de filtre `members.anonymized_at IS NULL` sur la jointure `SELECT_EXPR_GROUP`. Couplé Story 7.6 (RGPD anonymisation). *Forward-coupled Story 7.6.*
+
+- [x] **[Review][Defer] W4 — Layer 2 skipped quand manager consulte SON propre SAV (revoke not caught)** — documenté Risk #2 dans Dev Agent Record. Comportement intentionnel (path Story 6.3 inchangé) mais pas de test explicite. Acceptable. *Documented residual risk.*
+
+- [x] **[Review][Defer] W5 — `decodeCursor` ne borne pas l'`id` upper limit** — pre-existing Story 6.2, pas introduit par 6.5. *Pre-existing Story 6.2.*
+
+- [x] **[Review][Defer] W6 — Mock `.or()` parser permissif (false-green risk)** — le mock split `,` naïvement, ne supporte pas `and(...)` nested. Tests passent même si production diverge. Mitigation future : test integration avec Supabase test container. *Test improvement, low priority.*
+
+- [x] **[Review][Defer] W7 — `groupQ` persiste cross-tab switch (UX)** — quand user switch group → self → group, l'input garde "Martin" mais data shown est unfiltered. Confusing mais pas bloquant. *UX polish.*
+
+- [x] **[Review][Defer] W8 — `onSearchSubmit` ignore `lastStatusFilter`** — re-fetch sans status param → backend retourne all statuses → client filter visibleRows refait le travail. Inefficace mais fonctionnel. *UX/perf polish.*
+
+- [x] **[Review][Defer] W9 — Timing leak via `requireActiveManager` latency (anti-énum partiel)** — manager peut probe SAV IDs et distinguer "exists in group" (slow ~5-15ms) vs "not found" (fast). Faible severity, mitigation hardening future (constant-time check). *Future hardening.*
+
+- [x] **[Review][Defer] W10 — Optimistic comment double-submit race (concurrent submits drop)** — pre-existing Story 6.3, pas introduit par 6.5. *Pre-existing Story 6.3.*
+
+- [x] **[Review][Defer] W11 — Pas de check CSRF/Origin visible sur POST** — concern projet-wide (cookie session SameSite). À traiter en story sécurité dédiée. *Project-wide concern.*
+
+- [x] **[Review][Defer] W12 — RLS `jwt.claims->>'sub'::bigint` throws sur claim non-numérique** — fail-noisy (500), pas fail-open (pas de leak). Hardening : helper SQL fonction `app.jwt_sub_or_null()`. *Low-severity hardening.*
+
+#### Dismissed (false positives ou cosmétiques)
+
+- E9 (`is_group_manager IS NULL` fail-closed) : déjà correct via `=== true` strict
+- E14 (`useMemberSavList('group')` instantiated unconditionally) : micro-opt négligeable
+- E17 (`excerpt.slice(0,197)` unicode emoji split) : cosmétique sur preview email
+- E20 (`sav_comments_group_manager_scope` SELECT only) : INSERT/UPDATE/DELETE bloqués par autres mécanismes (handler validate visibility=all, append-only)
+- B9 (useMemberSavList error string dead branch) : cosmétique
+- E16 (formatErrors generic message) : pattern projet, pas de regression
 
 ## Dev Notes
 
@@ -224,10 +291,83 @@ Story 6.5 modifie 3 handlers existants (`sav-list`, `sav-detail`, `sav-comment`)
 
 ### Agent Model Used
 
-(à remplir lors du DS)
+claude-opus-4-7 (1M context) — DS pass single-context, mode bmad-dev-story.
 
 ### Debug Log References
 
+- `npm run typecheck` : 0 erreur (après fix typing logger.warn `LogFields` exactOptionalPropertyTypes — `role: user.role ?? 'unset'`)
+- `npm run lint:business` : 0 erreur
+- `npm test` (full suite) : **1168 tests verts / 109 specs**, dont 18 nouveaux Story 6.5
+- `npm run build` : index 464.55 KB < 472 KB cap (AC #13)
+- `npx eslint --fix` sur les 8 fichiers Story 6.5 : prettier auto-fix appliqué (formatage uniquement, pas de logique)
+
 ### Completion Notes List
 
+**Décisions techniques notables (à valider en CR) :**
+
+1. **Migration timestamp** — `20260509140000` était déjà occupé par `member_prefs_merge_rpc.sql`. La migration RLS est posée à `20260509150000_rls_group_manager_scope.sql` (créneau libre suivant, ordering préservé).
+
+2. **RLS Layer 3 — additif et nommé explicitement** — l'audit a confirmé que `sav_authenticated_read` (Story 2.1) couvrait déjà fonctionnellement le scope manager via `app_is_group_manager_of()`, et `sav_comments_select_group_manager` (Story 3.1) couvrait sav_comments. La migration ajoute néanmoins 4 policies nommées `<table>_group_manager_scope` (sav, sav_lines, sav_files, sav_comments) car (a) la story spécifie ce nom verbatim AC #10, (b) le pattern utilise `request.jwt.claims->>'sub'` (au lieu de `app.current_member_id` GUC) pour matcher un futur client Supabase JWT-based, (c) traçabilité audit. Multiple SELECT policies s'OR-ent, donc additif sans régression.
+
+3. **Codes erreur SCOPE_NOT_AUTHORIZED / SCOPE_REVOKED** — ajoutés à `ErrorCode` union (errors.ts), tous deux mappés sur HTTP 403. Préféré à un sous-code dans `details` car les tests assertent `body.error.code` directement (pattern existant 5.x).
+
+4. **Privacy email — triple enforcement** — (a) handler n'inclut PAS `email` dans `SELECT_EXPR_GROUP`, (b) tests assertent `JSON.stringify(body)` ne contient pas `email`, (c) tests assertent que `db.capturedFilters.selectExpr` ne contient pas `email`. Defense-in-depth contre une future modification accidentelle.
+
+5. **Layer 2 cost-aware sur sav-detail/sav-comment** — `requireActiveManager()` n'est appelé QUE si `accessedAsManager === true` (i.e. le SAV trouvé n'appartient pas au user). Pour un manager consultant son propre SAV : pas de coût (`accessedAsManager=false`). Pour sav-list, le check est posé en amont de la query (cas exclusif scope=group).
+
+6. **Cross-group defense-in-depth explicite** — sur sav-detail / sav-comment, après le `.or('member_id.eq.X,group_id.eq.Y')`, on vérifie `sav.group_id !== user.groupId` explicitement et 404 si mismatch. Théoriquement impossible vu le filtre Postgrest, mais blinde un cas où le filtre serait mal interprété.
+
+7. **Frontend — deux instances composable cohabitent** — `selfList = useMemberSavList('self')` + `groupList = useMemberSavList('group')`. Évite un re-fetch full sur chaque switch de tab et préserve l'état pagination. Group fetch est lazy au mount (uniquement si manager).
+
+8. **Tests scope=group dans specs séparées** — pattern `sav-{list,detail,comment}-handler-6-5.spec.ts` aligné sur `sav-detail-handler-6-3.spec.ts`. Évite de réécrire le mock chainable hardcodé des specs Story 6.2/6.3 (mocks séparés plus simples + isolés).
+
+9. **Frontend — `useMe` inline** — pas de composable `useMe.ts` partagé créé (pattern existant `useMemberPreferences` inline le fetch `/api/auth/me`). Cohérence préservée. Si une 3e view doit l'utiliser, refactoriser en composable ailleurs.
+
+10. **Test RLS SQL** — non lancé localement (pas de stack Supabase locale en cours). Le fichier SQL est rolled-back en `BEGIN/ROLLBACK` et conforme au pattern projet (`self_service_sav_rls.test.sql`, `sav_files_uploaded_by.test.sql`). À exécuter en CI/préprod via `psql -f`.
+
+**Risques résiduels identifiés (à reviewer en CR) :**
+
+- Le mock test `sav-detail-handler-6-5.spec.ts` `.or()` parser ne supporte qu'un format strict `member_id.eq.X,group_id.eq.Y`. Si l'implémentation handler change le format de `.or()`, les tests passent silencieusement vides (return null). À blinder en CR ou via assertion `db.capturedOrFilter` plus stricte.
+- L'`accessedAsManager` est dérivé de `canActAsManager && sav.member_id !== memberId`. Si `sav.member_id === memberId` ET le user est manager, on saute Layer 2. Acceptable car le SAV est strictement le sien (path Story 6.3 inchangé), mais documenter en CR.
+- Le ilike `members.last_name` est posté via la jointure Postgrest. Si la jointure n'est pas inner-applied, des SAV sans `members` (orphelins théoriques) pourraient être retournés. Privacy NFR : pas de leak d'email vu le SELECT scopé. Stat anomalie : `members.id` est NOT NULL FK sur `sav.member_id`, donc orphelin théoriquement impossible.
+
 ### File List
+
+**Fichiers créés :**
+- `client/api/_lib/auth/manager-check.ts` — helper Layer 2
+- `client/supabase/migrations/20260509150000_rls_group_manager_scope.sql` — 4 RLS policies nommées
+- `client/supabase/tests/security/sav_group_manager_rls.test.sql` — 5 cas RLS impersonate
+- `client/tests/unit/api/_lib/auth/manager-check.spec.ts` — 6 cas
+- `client/tests/unit/api/self-service/sav-list-handler-6-5.spec.ts` — 8 cas
+- `client/tests/unit/api/self-service/sav-detail-handler-6-5.spec.ts` — 5 cas
+- `client/tests/unit/api/self-service/sav-comment-handler-6-5.spec.ts` — 5 cas
+
+**Fichiers modifiés :**
+- `client/api/_lib/errors.ts` — ajout `SCOPE_NOT_AUTHORIZED` + `SCOPE_REVOKED` (403)
+- `client/api/_lib/self-service/sav-list-handler.ts` — extension scope=group + filtres q/dates + Layer 2
+- `client/api/_lib/self-service/sav-detail-handler.ts` — query polymorphique + member exposé conditionnel
+- `client/api/_lib/self-service/sav-comment-handler.ts` — ownership polymorphique + 2e outbox enqueue
+- `client/src/features/self-service/composables/useMemberSavList.ts` — paramètre `scope` + `member` field optionnel
+- `client/src/features/self-service/composables/useMemberSavDetail.ts` — `member?` field sur `MemberSavDetail`
+- `client/src/features/self-service/views/MemberSavListView.vue` — TabsBar + filtre q + colonne Adhérent
+- `client/src/features/self-service/views/MemberSavDetailView.vue` — badge groupe + computed `memberFullName`
+- `client/tests/unit/features/self-service/MemberSavListView.spec.ts` — 4 cas Story 6.5 ajoutés ; existing 7 cas adaptés au double fetch (me + sav)
+
+## Change Log
+
+- 2026-04-29 (DS) — Story 6.5 implementation complète : RLS group manager scope (Layer 3), helper requireActiveManager (Layer 2), 3 handlers étendus avec polymorphic ownership + privacy email, frontend tabs liste + badge détail. 24 nouveaux tests verts (1168 total), build 464.55 KB.
+
+- 2026-04-29 (CR) — Code Review adversarial 3-layer (Blind + Edge + Auditor). 30 findings post-dedup → 3 decision-needed résolus + 9 patches appliqués + 12 deferred + 6 dismissed. **Patches majeurs :**
+  - **D1+D2** : RLS aligné sur `sav.group_id` (source-of-truth applicative) + guard `IS NOT NULL` (Option 2 retenue, cohérent avec Risk doc Story 6.5)
+  - **P1** : `requireActiveManager()` retourne `{ active, groupId }` ; callers assert `groupId DB === groupId JWT` → bloque manager transféré entre groupes
+  - **P2** : `members:members!sav_member_id_fkey!inner` hint pour que ilike `last_name` filtre effectivement (LEFT JOIN par défaut → silently fail)
+  - **P3** : Charset Zod strict pour `q` (`/^[\p{L}\p{N}\s\-']+$/u`) + escape ilike étendu à `*`
+  - **P4** : AbortController dans `useMemberSavList` pour annuler les fetches inflight cross-tab/search
+  - **P5** : `lastQ` mémorisé dans le composable → `loadMore` préserve le filtre
+  - **P6** : Logger sanitize — `errorCode` (sans PII) au lieu de `error.message` brut
+  - **P7** : Tests runtime body assertion email leak (defense-in-depth scope=self + scope=group avec valeur SNEAK_EMAIL distinctive)
+  - **P8** : `keyFrom` rate-limit simplifié `member:<sub>` → empêche bypass via NaN
+  - **P9** : Doc Tasks AC #10 timestamp aligné `_150000`
+  - **D3** : Tri `member_last_name ASC` déféré (W6.5-0) — faible valeur fonctionnelle V1
+  - 12 W6.5-1..W6.5-12 documentés dans deferred-work.md
+  - **2 nouveaux tests** ajoutés (P7) : suite **1170/1170 verts** (+2 vs DS), typecheck 0, lint:business 0, build 464.55 KB inchangé.

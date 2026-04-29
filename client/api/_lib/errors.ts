@@ -13,6 +13,9 @@ export type ErrorCode =
   | 'BUSINESS_RULE'
   | 'SERVER_ERROR'
   | 'DEPENDENCY_DOWN'
+  // Story 6.5 — scope group (responsable de groupe) sub-codes
+  | 'SCOPE_NOT_AUTHORIZED'
+  | 'SCOPE_REVOKED'
 
 export interface ErrorEnvelope {
   error: {
@@ -36,6 +39,9 @@ const STATUS_BY_CODE: Record<ErrorCode, number> = {
   BUSINESS_RULE: 422,
   SERVER_ERROR: 500,
   DEPENDENCY_DOWN: 503,
+  // Story 6.5 — scope group (responsable de groupe)
+  SCOPE_NOT_AUTHORIZED: 403,
+  SCOPE_REVOKED: 403,
 }
 
 export function httpStatus(code: ErrorCode): number {

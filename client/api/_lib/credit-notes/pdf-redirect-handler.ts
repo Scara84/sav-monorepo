@@ -13,8 +13,11 @@ import type { ApiHandler, ApiRequest, ApiResponse } from '../types'
  *   - 202 pending si la génération async n'est pas encore terminée
  *   - 404 si l'avoir n'existe pas
  *
- * V1 : accès opérateur uniquement. Story 6.4 ouvrira au self-service
- * adhérent (même endpoint + filtrage RLS).
+ * Story 6.4 — extension polymorphique member/operator :
+ *   - operator (Story 4.4) → comportement inchangé, accès à toutes les credit_notes
+ *   - member (Story 6.4)   → filtrage anti-énumération via jointure `sav!inner`
+ *     sur `sav.member_id = user.sub` ; mismatch → 404 NOT_FOUND (jamais 403,
+ *     pour ne pas leaker l'existence d'un avoir d'un autre adhérent).
  *
  * Le `:number` accepte deux formats :
  *   - bigint (ex: `42`)         → lookup sur `credit_notes.number`
@@ -37,6 +40,8 @@ interface CreditNoteRow {
   number_formatted: string
   pdf_web_url: string | null
   issued_at: string
+  // Story 6.4 — projection PostgREST embedded jointure inner sav (member path)
+  sav?: { member_id: number; cancelled_at: string | null } | null
 }
 
 // Story 4.5 AC #7 : si `pdf_web_url IS NULL` et `issued_at >= STALE_THRESHOLD_MS`,
@@ -48,8 +53,9 @@ function pdfRedirectCore(numberInput: string): ApiHandler {
   return async (req: ApiRequest, res: ApiResponse) => {
     const requestId = ensureRequestId(req)
     const user = req.user
-    if (!user || user.type !== 'operator') {
-      sendError(res, 'FORBIDDEN', 'Session opérateur requise', requestId)
+    // Story 6.4 — accepte member ET operator (le filtrage fin se fait via la query).
+    if (!user || (user.type !== 'operator' && user.type !== 'member')) {
+      sendError(res, 'FORBIDDEN', 'Session requise', requestId)
       return
     }
 
@@ -82,12 +88,35 @@ function pdfRedirectCore(numberInput: string): ApiHandler {
 
     try {
       const admin = supabaseAdmin()
-      const { data, error } = await admin
+      // Story 6.4 — projection conditionnelle :
+      //   - operator : projection minimale (Story 4.4 régression)
+      //   - member   : ajoute `sav!inner ( member_id, cancelled_at )` pour
+      //                permettre `.eq('sav.member_id', user.sub)` (anti-leak).
+      const baseProjection = 'id, number, number_formatted, pdf_web_url, issued_at'
+      const memberProjection = `${baseProjection}, sav:sav!inner ( member_id, cancelled_at )`
+      const isMember = user.type === 'member'
+      let queryBuilder: {
+        eq: (col: string, val: unknown) => unknown
+        limit?: (n: number) => unknown
+        maybeSingle: () => Promise<{ data: unknown; error: { message: string } | null }>
+      }
+      const initial = admin
         .from('credit_notes')
-        .select('id, number, number_formatted, pdf_web_url, issued_at')
+        .select(isMember ? memberProjection : baseProjection)
         .eq(lookupColumn, lookupValue)
-        .limit(1)
-        .maybeSingle()
+      queryBuilder = initial as unknown as typeof queryBuilder
+      if (isMember) {
+        // Filtre embedded PostgREST sur la jointure inner — si pas de match,
+        // la row complète est null (anti-énumération NOT_FOUND).
+        queryBuilder = queryBuilder.eq('sav.member_id', user.sub) as unknown as typeof queryBuilder
+      }
+      // Compat avec mocks de tests qui n'exposent pas .limit() : appliquer
+      // .limit(1) seulement si dispo.
+      const finalBuilder =
+        typeof queryBuilder.limit === 'function'
+          ? (queryBuilder.limit(1) as unknown as typeof queryBuilder)
+          : queryBuilder
+      const { data, error } = await finalBuilder.maybeSingle()
       if (error) {
         logger.error('credit_note.pdf.query_failed', {
           requestId,
@@ -168,7 +197,8 @@ function pdfRedirectCore(numberInput: string): ApiHandler {
         requestId,
         creditNoteId: row.id,
         number: row.number,
-        actorOperatorId: user.sub,
+        actorType: user.type,
+        actorSub: user.sub,
       })
       res.setHeader('Location', row.pdf_web_url)
       res.setHeader('Cache-Control', 'no-store')
@@ -186,13 +216,29 @@ function pdfRedirectCore(numberInput: string): ApiHandler {
 
 export function pdfRedirectHandler(numberInput: string): ApiHandler {
   const core = pdfRedirectCore(numberInput)
-  return withRateLimit({
+  // Story 6.4 — rate-limit dépend du type de session :
+  //   - operator : 120/min (Story 4.4 inchangé)
+  //   - member   : 30/min (anti-DDoS OneDrive 302, AC #3)
+  // On pose deux middlewares chaînés conditionnels via un wrapper.
+  const operatorLimited: ApiHandler = withRateLimit({
     bucketPrefix: 'credit-notes:pdf',
     keyFrom: (r: ApiRequest) =>
       r.user && r.user.type === 'operator' ? `op:${r.user.sub}` : undefined,
     max: 120,
     window: '1m',
   })(core)
+  const memberLimited: ApiHandler = withRateLimit({
+    bucketPrefix: 'credit-note-pdf:member',
+    keyFrom: (r: ApiRequest) =>
+      r.user && r.user.type === 'member' ? `member:${r.user.sub}` : undefined,
+    max: 30,
+    window: '1m',
+  })(core)
+  const dispatch: ApiHandler = (req, res) => {
+    if (req.user && req.user.type === 'member') return memberLimited(req, res)
+    return operatorLimited(req, res)
+  }
+  return dispatch
 }
 
 export { NUMBER_FORMATTED_RE, NUMBER_BIGINT_RE, PDF_STALE_THRESHOLD_MS }

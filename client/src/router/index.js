@@ -35,6 +35,38 @@ const routes = [
     meta: { requiresAuth: false },
   },
   {
+    // Story 6.2 — landing magic-link adhérent. Pas d'auth (la verify endpoint
+    // est appelée par la page elle-même, pose le cookie, puis router.replace).
+    path: '/monespace/auth',
+    name: 'magic-link-landing',
+    component: () => import('@/features/self-service/views/MagicLinkLandingView.vue'),
+    meta: { requiresAuth: false },
+  },
+  {
+    // Story 6.2 — espace adhérent self-service.
+    path: '/monespace',
+    component: () => import('@/features/self-service/views/MemberSpaceLayout.vue'),
+    meta: { requiresAuth: 'magic-link' },
+    children: [
+      {
+        path: '',
+        name: 'member-sav-list',
+        component: () => import('@/features/self-service/views/MemberSavListView.vue'),
+      },
+      {
+        path: 'sav/:id',
+        name: 'member-sav-detail',
+        component: () => import('@/features/self-service/views/MemberSavDetailView.vue'),
+      },
+      {
+        // Story 6.4 — préférences notifications self-service
+        path: 'preferences',
+        name: 'member-preferences',
+        component: () => import('@/features/self-service/views/MemberPreferencesView.vue'),
+      },
+    ],
+  },
+  {
     path: '/admin',
     component: () => import('@/features/back-office/views/BackOfficeLayout.vue'),
     meta: { requiresAuth: 'operator', roles: ['admin', 'sav-operator'] },
@@ -104,15 +136,39 @@ router.beforeEach((to) => {
     }
   }
 
-  if (!maintenanceEnabled || storedBypass) {
-    return true
-  }
-
-  if (to.name !== 'Maintenance') {
+  if (maintenanceEnabled && !storedBypass && to.name !== 'Maintenance') {
     return { name: 'Maintenance' }
   }
 
   return true
+})
+
+// Story 6.2 — guard auth magic-link pour `/monespace/**`.
+// Lit `meta.requiresAuth === 'magic-link'`, fetch /api/auth/me (cookie HttpOnly).
+// Si 401 ou type !== 'member' → redirect /?reason=session_expired.
+router.beforeEach(async (to) => {
+  if (typeof window === 'undefined') return true
+  const requiresMagicLink = to.matched.some((r) => r.meta?.requiresAuth === 'magic-link')
+  if (!requiresMagicLink) return true
+
+  try {
+    const res = await fetch('/api/auth/me', {
+      method: 'GET',
+      credentials: 'include',
+      headers: { Accept: 'application/json' },
+    })
+    if (!res.ok) {
+      return { path: '/', query: { reason: 'session_expired' } }
+    }
+    const body = await res.json()
+    const user = body && typeof body === 'object' ? body.user : null
+    if (!user || user.type !== 'member') {
+      return { path: '/', query: { reason: 'session_expired' } }
+    }
+    return true
+  } catch {
+    return { path: '/', query: { reason: 'session_expired' } }
+  }
 })
 
 export default router

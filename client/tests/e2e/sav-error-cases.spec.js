@@ -111,7 +111,7 @@ test('SAV error — rate limit sur share link (429)', async ({ page }) => {
         success: true,
         uploadUrl: `${MOCK_GRAPH_HOST}/upload/${encodeURIComponent(body.filename || 'file')}`,
         storagePath: `SAV_Images/${body.savDossier || 'SAV_TEST'}/${body.filename || 'file'}`,
-        expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+        expiresAt: new Date(Date.now() + 3600000).toISOString(),
       }),
     })
   })
@@ -163,7 +163,7 @@ test('SAV error — PUT Graph échoue partiellement (500)', async ({ page }) => 
         success: true,
         uploadUrl: `${MOCK_GRAPH_HOST}/upload/${encodeURIComponent(body.filename || 'file')}`,
         storagePath: `SAV_Images/${body.savDossier || 'SAV_TEST'}/${body.filename || 'file'}`,
-        expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+        expiresAt: new Date(Date.now() + 3600000).toISOString(),
       }),
     })
   })

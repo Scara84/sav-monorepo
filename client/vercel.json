@@ -59,6 +59,26 @@
       "destination": "/api/self-service/draft?op=submit-token"
     },
     {
+      "source": "/api/auth/me",
+      "destination": "/api/self-service/draft?op=me"
+    },
+    {
+      "source": "/api/self-service/sav",
+      "destination": "/api/self-service/draft?op=sav-list"
+    },
+    {
+      "source": "/api/self-service/sav/:id/comments",
+      "destination": "/api/self-service/draft?op=sav-comment&id=:id"
+    },
+    {
+      "source": "/api/self-service/sav/:id",
+      "destination": "/api/self-service/draft?op=sav-detail&id=:id"
+    },
+    {
+      "source": "/api/self-service/preferences",
+      "destination": "/api/self-service/draft?op=preferences"
+    },
+    {
       "source": "/api/invoices/lookup",
       "destination": "/api/invoices?op=lookup"
     },
