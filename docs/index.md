@@ -38,6 +38,9 @@ La logique MSAL/Microsoft Graph a été portée dans `client/api/` (fonctions se
   - [Contrats API Vercel — upload-session + folder-share-link](./api-contracts-vercel.md) — **nouveau Epic 1**
 - **Déploiement**
   - [Guide de déploiement](./deployment-guide.md)
+- **Runbooks ops**
+  - [Cutover Make → app](./cutover-make-runbook.md) — Story 5.7
+  - [Email outbox + weekly recap](./email-outbox-runbook.md) — Stories 6.6 + 6.7
 - **Métadonnées**
   - [project-parts.json](./project-parts.json)
 
