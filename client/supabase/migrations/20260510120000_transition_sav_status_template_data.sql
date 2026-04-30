@@ -176,6 +176,10 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
+-- W114 fix : `#variable_conflict use_column` + qualified column refs partout pour
+-- éviter les ambiguïtés entre les RETURNS TABLE OUT params (sav_id, assigned_to,
+-- new_status, etc.) et les colonnes des tables (sav.*, email_outbox.*) en PG 17 strict.
+#variable_conflict use_column
 DECLARE
   v_current_status   text;
   v_current_version  bigint;
@@ -236,32 +240,17 @@ BEGIN
     END IF;
   END IF;
 
+  -- W114 fix : qualifier toutes les références sav.* pour disambiguer vs OUT params.
   UPDATE sav
      SET status       = p_new_status,
-         version      = version + 1,
-         taken_at     = CASE
-                          WHEN p_new_status = 'in_progress' AND taken_at IS NULL THEN now()
-                          ELSE taken_at
-                        END,
-         validated_at = CASE
-                          WHEN p_new_status = 'validated' THEN now()
-                          ELSE validated_at
-                        END,
-         closed_at    = CASE
-                          WHEN p_new_status = 'closed' THEN now()
-                          ELSE closed_at
-                        END,
-         cancelled_at = CASE
-                          WHEN p_new_status = 'cancelled' THEN now()
-                          ELSE cancelled_at
-                        END,
-         assigned_to  = CASE
-                          WHEN p_new_status = 'in_progress' AND assigned_to IS NULL
-                            THEN p_actor_operator_id
-                          ELSE assigned_to
-                        END
-     WHERE id = p_sav_id AND version = p_expected_version
-   RETURNING version, status, assigned_to
+         version      = sav.version + 1,
+         taken_at     = CASE WHEN p_new_status = 'in_progress' AND sav.taken_at IS NULL THEN now() ELSE sav.taken_at END,
+         validated_at = CASE WHEN p_new_status = 'validated' THEN now() ELSE sav.validated_at END,
+         closed_at    = CASE WHEN p_new_status = 'closed' THEN now() ELSE sav.closed_at END,
+         cancelled_at = CASE WHEN p_new_status = 'cancelled' THEN now() ELSE sav.cancelled_at END,
+         assigned_to  = CASE WHEN p_new_status = 'in_progress' AND sav.assigned_to IS NULL THEN p_actor_operator_id ELSE sav.assigned_to END
+     WHERE sav.id = p_sav_id AND sav.version = p_expected_version
+   RETURNING sav.version, sav.status, sav.assigned_to
      INTO v_updated_version, v_updated_status, v_updated_assigned;
 
   GET DIAGNOSTICS v_rows_affected = ROW_COUNT;
@@ -301,8 +290,11 @@ BEGIN
       v_template_data,
       'sav'
     )
-    ON CONFLICT (sav_id, kind) WHERE (status = 'pending') DO NOTHING
-    RETURNING id INTO v_email_id;
+    -- W114 fix : prédicat ON CONFLICT doit matcher EXACTEMENT l'index split P0-1.
+    -- Pour ce kind (recipient adhérent, pas d'operator) on cible
+    -- idx_email_outbox_dedup_pending_no_operator (status='pending' AND recipient_operator_id IS NULL).
+    ON CONFLICT (sav_id, kind) WHERE (status = 'pending' AND recipient_operator_id IS NULL) DO NOTHING
+    RETURNING email_outbox.id INTO v_email_id;
   END IF;
 
   IF p_note IS NOT NULL AND length(trim(p_note)) > 0 THEN
@@ -314,13 +306,15 @@ BEGIN
   -- W13 replacement : reset session-wide actor GUC.
   PERFORM set_config('app.actor_operator_id', '', false);
 
-  sav_id          := p_sav_id;
-  previous_status := v_current_status;
-  new_status      := v_updated_status;
-  new_version     := v_updated_version;
-  assigned_to     := v_updated_assigned;
-  email_outbox_id := v_email_id;
-  RETURN NEXT;
+  -- W114 fix : RETURN QUERY au lieu d'assignation OUT params (incompatible avec
+  -- #variable_conflict use_column qui résout les noms vers les colonnes).
+  RETURN QUERY SELECT
+    p_sav_id::bigint,
+    v_current_status::text,
+    v_updated_status::text,
+    v_updated_version::bigint,
+    v_updated_assigned::bigint,
+    v_email_id::bigint;
 END;
 $$;
 
@@ -468,6 +462,8 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
+-- W115 fix : variable_conflict pour disambiguer OUT param `updated` vs colonnes.
+#variable_conflict use_column
 DECLARE
   v_rows int;
 BEGIN
@@ -481,8 +477,7 @@ BEGIN
      AND status IN ('pending', 'failed');
 
   GET DIAGNOSTICS v_rows = ROW_COUNT;
-  updated := v_rows > 0;
-  RETURN NEXT;
+  RETURN QUERY SELECT (v_rows > 0)::boolean;
 END;
 $$;
 
@@ -520,28 +515,25 @@ LANGUAGE plpgsql
 SECURITY DEFINER
 SET search_path = public, pg_temp
 AS $$
+-- W115 fix : variable_conflict + qualified column refs pour disambiguer OUT params
+-- (updated, attempts, status_now) vs colonnes email_outbox (attempts, status).
+#variable_conflict use_column
 DECLARE
   v_rows int;
   v_attempts int;
   v_status text;
 BEGIN
   UPDATE email_outbox
-     SET attempts        = attempts + 1,
+     SET attempts        = email_outbox.attempts + 1,
          last_error      = NULLIF(left(COALESCE(p_error, ''), 500), ''),
          next_attempt_at = p_next_attempt_at,
-         status          = CASE
-                             WHEN p_definitive = true THEN 'failed'
-                             ELSE status
-                           END
+         status          = CASE WHEN p_definitive = true THEN 'failed' ELSE email_outbox.status END
    WHERE id = p_id
-     AND status IN ('pending', 'failed')
-   RETURNING attempts, status INTO v_attempts, v_status;
+     AND email_outbox.status IN ('pending', 'failed')
+   RETURNING email_outbox.attempts, email_outbox.status INTO v_attempts, v_status;
 
   GET DIAGNOSTICS v_rows = ROW_COUNT;
-  updated    := v_rows > 0;
-  attempts   := COALESCE(v_attempts, 0);
-  status_now := v_status;
-  RETURN NEXT;
+  RETURN QUERY SELECT (v_rows > 0)::boolean, COALESCE(v_attempts, 0), v_status;
 END;
 $$;
 
