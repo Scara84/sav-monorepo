@@ -127,6 +127,22 @@
       "destination": "/api/pilotage?op=admin-settings-threshold-history"
     },
     {
+      "source": "/api/admin/operators/:id",
+      "destination": "/api/pilotage?op=admin-operator-update&id=:id"
+    },
+    {
+      "source": "/api/admin/operators",
+      "destination": "/api/pilotage?op=admin-operators-list"
+    },
+    {
+      "source": "/api/admin/products/:id",
+      "destination": "/api/pilotage?op=admin-product-update&id=:id"
+    },
+    {
+      "source": "/api/admin/products",
+      "destination": "/api/pilotage?op=admin-products-list"
+    },
+    {
       "source": "/((?!api/|assets/|src/|@vite/|@id/|@fs/|node_modules/|favicon\\.ico|robots\\.txt|.*\\.(?:js|css|vue|ts|tsx|json|map|png|jpg|jpeg|svg|ico|webp|woff2?)).*)",
       "destination": "/index.html"
     }

@@ -12,7 +12,14 @@ import { topReasonsSuppliersHandler } from './_lib/reports/top-reasons-suppliers
 import { exportSavCsvHandler } from './_lib/reports/export-csv-handler'
 import { adminSettingsThresholdPatchHandler } from './_lib/admin/settings-threshold-patch-handler'
 import { adminSettingsThresholdHistoryHandler } from './_lib/admin/settings-threshold-history-handler'
-import type { ApiHandler, ApiRequest } from './_lib/types'
+import { adminOperatorsListHandler } from './_lib/admin/operators-list-handler'
+import { adminOperatorCreateHandler } from './_lib/admin/operator-create-handler'
+import { adminOperatorUpdateHandler } from './_lib/admin/operator-update-handler'
+import { adminProductsListHandler } from './_lib/admin/products-list-handler'
+import { adminProductCreateHandler } from './_lib/admin/product-create-handler'
+import { adminProductUpdateHandler } from './_lib/admin/product-update-handler'
+import { adminProductDeleteHandler } from './_lib/admin/product-delete-handler'
+import type { ApiHandler, ApiRequest, ApiResponse } from './_lib/types'
 
 /**
  * Story 5.2 AC #1 + Story 5.3 AC #5 — Router `/api/pilotage.ts` (Pilotage Epic 5).
@@ -53,7 +60,54 @@ const ALLOWED_OPS = new Set([
   'export-csv',
   'admin-settings-threshold-patch',
   'admin-settings-threshold-history',
+  // Story 7-3a — admin operators CRUD
+  'admin-operators-list',
+  'admin-operator-create',
+  'admin-operator-update',
+  // Story 7-3b — admin products CRUD
+  'admin-products-list',
+  'admin-product-create',
+  'admin-product-update',
+  'admin-product-delete',
 ])
+
+/**
+ * Story 7-3a AC #4 (D-10) — Set des ops réservées au rôle admin (defense-
+ * in-depth, en plus du check `withAuth({ types:['operator'] })` au router).
+ *
+ * Le dispatch consulte ce Set AVANT de déléguer au handler : si l'op est
+ * admin-only et que `req.user.role !== 'admin'`, on renvoie 403
+ * ROLE_NOT_ALLOWED. Story 5.5 ops incluses pour cohérence (les handlers
+ * 5.5 ré-vérifient aussi en interne — refacto cohérent).
+ *
+ * Story 7-3b ajoutera 'admin-products-*', 7-3c ajoutera
+ * 'admin-validation-lists-*'. Elles **ne dupliquent pas** ce helper —
+ * elles le consomment.
+ */
+const ADMIN_ONLY_OPS = new Set([
+  // Story 5.5
+  'admin-settings-threshold-patch',
+  'admin-settings-threshold-history',
+  // Story 7-3a
+  'admin-operators-list',
+  'admin-operator-create',
+  'admin-operator-update',
+  // Story 7-3b
+  'admin-products-list',
+  'admin-product-create',
+  'admin-product-update',
+  'admin-product-delete',
+])
+
+function requireAdminRole(req: ApiRequest, res: ApiResponse, requestId: string): boolean {
+  if (req.user?.role !== 'admin') {
+    sendError(res, 'FORBIDDEN', 'Rôle admin requis', requestId, {
+      code: 'ROLE_NOT_ALLOWED',
+    })
+    return false
+  }
+  return true
+}
 
 function parseOp(req: ApiRequest): string | null {
   const raw = (req.query as Record<string, unknown> | undefined)?.['op']
@@ -76,11 +130,51 @@ const dispatch: ApiHandler = async (req, res) => {
   const requestId = ensureRequestId(req)
   const method = (req.method ?? 'GET').toUpperCase()
 
-  const op = parseOp(req)
+  let op = parseOp(req)
   if (op === null) {
     sendError(res, 'NOT_FOUND', 'Route non disponible', requestId)
     return
   }
+
+  // Story 7-3a — la rewrite Vercel `/api/admin/operators` envoie toujours
+  // `op=admin-operators-list`. Pour POST sur la même URL on remappe vers
+  // `admin-operator-create` (méthode-aware). PATCH `/api/admin/operators/:id`
+  // a sa propre rewrite vers `admin-operator-update`, pas de remap.
+  //
+  // ⚠️ HARDENING W-7-3a-6 (CR B1 / G-1 challenge) — INVARIANT À PRÉSERVER ⚠️
+  // Le remap mute `op` AVANT le check `ADMIN_ONLY_OPS` ci-dessous.
+  // **Tout futur remap doit garantir que** :
+  //   (a) l'op finale (sortie du remap) reste dans ADMIN_ONLY_OPS si l'op
+  //       initiale (entrée) était admin-only — sinon un sav-operator pourrait
+  //       atteindre une op admin-only via le mauvais method/URL ;
+  //   (b) le check ADMIN_ONLY_OPS reste APRÈS tous les remaps.
+  // Pattern à éviter par défaut (anti-pattern) : ne pas dupliquer cette
+  // logique pour d'autres ops sans justification écrite. Préférer 2 URLs
+  // distinctes (cf. OQ-3 dans 7-3a CR — option éligible si cette surface
+  // d'attaque devient sensible).
+  if (op === 'admin-operators-list' && method === 'POST') {
+    op = 'admin-operator-create'
+  }
+
+  // Story 7-3b — méthode-aware remap pour `/api/admin/products` :
+  //   GET    → admin-products-list (rewrite par défaut)
+  //   POST   → admin-product-create
+  // Les opérations `:id` (PATCH/DELETE) ont leur propre rewrite et
+  // n'entrent pas dans ce remap. L'invariant ADMIN_ONLY_OPS reste
+  // respecté : toutes les ops products sont admin-only (cf. set ci-dessus).
+  if (op === 'admin-products-list' && method === 'POST') {
+    op = 'admin-product-create'
+  }
+  // PATCH vs DELETE sur `/api/admin/products/:id` : la rewrite envoie
+  // par défaut `op=admin-product-update`. Pour DELETE on remappe vers
+  // `admin-product-delete`.
+  if (op === 'admin-product-update' && method === 'DELETE') {
+    op = 'admin-product-delete'
+  }
+
+  // Story 7-3a AC #4 — D-10 : RBAC defense-in-depth. Les ops admin-only
+  // exigent role='admin' avant délégation.
+  if (ADMIN_ONLY_OPS.has(op) && !requireAdminRole(req, res, requestId)) return
 
   // Strip routing params before delegating au handler (pattern
   // `credit-notes.ts`) — les handlers sont agnostiques de ces query-params.
@@ -186,6 +280,71 @@ const dispatch: ApiHandler = async (req, res) => {
       return
     }
     return adminSettingsThresholdHistoryHandler(req, res)
+  }
+
+  // Story 7-3a — admin operators CRUD (list / create / update soft-delete).
+  if (op === 'admin-operators-list') {
+    if (method !== 'GET') {
+      res.setHeader('Allow', 'GET')
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
+      return
+    }
+    return adminOperatorsListHandler(req, res)
+  }
+
+  if (op === 'admin-operator-create') {
+    if (method !== 'POST') {
+      res.setHeader('Allow', 'POST')
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
+      return
+    }
+    return adminOperatorCreateHandler(req, res)
+  }
+
+  if (op === 'admin-operator-update') {
+    if (method !== 'PATCH') {
+      res.setHeader('Allow', 'PATCH')
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
+      return
+    }
+    return adminOperatorUpdateHandler(req, res)
+  }
+
+  // Story 7-3b — admin products CRUD (list / create / update / soft-delete).
+  if (op === 'admin-products-list') {
+    if (method !== 'GET') {
+      res.setHeader('Allow', 'GET')
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
+      return
+    }
+    return adminProductsListHandler(req, res)
+  }
+
+  if (op === 'admin-product-create') {
+    if (method !== 'POST') {
+      res.setHeader('Allow', 'POST')
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
+      return
+    }
+    return adminProductCreateHandler(req, res)
+  }
+
+  if (op === 'admin-product-update') {
+    if (method !== 'PATCH') {
+      res.setHeader('Allow', 'PATCH')
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
+      return
+    }
+    return adminProductUpdateHandler(req, res)
+  }
+
+  if (op === 'admin-product-delete') {
+    if (method !== 'DELETE') {
+      res.setHeader('Allow', 'DELETE')
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
+      return
+    }
+    return adminProductDeleteHandler(req, res)
   }
 
   sendError(res, 'NOT_FOUND', 'Route non disponible', requestId)

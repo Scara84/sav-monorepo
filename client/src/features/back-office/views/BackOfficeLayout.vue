@@ -22,6 +22,12 @@
         <router-link :to="{ name: 'admin-settings' }" class="nav-link">
           <span aria-hidden="true">⚙️</span> Paramètres
         </router-link>
+        <router-link :to="{ name: 'admin-operators' }" class="nav-link">
+          <span aria-hidden="true">👥</span> Opérateurs
+        </router-link>
+        <router-link :to="{ name: 'admin-catalog' }" class="nav-link">
+          <span aria-hidden="true">🥬</span> Catalogue
+        </router-link>
       </nav>
     </header>
     <main class="bo-main">

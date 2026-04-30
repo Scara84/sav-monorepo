@@ -100,6 +100,20 @@ const routes = [
         component: () => import('@/features/back-office/views/admin/SettingsAdminView.vue'),
         meta: { requiresAuth: 'operator', roles: ['admin'] },
       },
+      {
+        // Story 7-3a — admin opérateurs (CRUD).
+        path: 'operators',
+        name: 'admin-operators',
+        component: () => import('@/features/back-office/views/admin/OperatorsAdminView.vue'),
+        meta: { requiresAuth: 'msal', roles: ['admin'] },
+      },
+      {
+        // Story 7-3b — admin catalogue produits (CRUD).
+        path: 'catalog',
+        name: 'admin-catalog',
+        component: () => import('@/features/back-office/views/admin/CatalogAdminView.vue'),
+        meta: { requiresAuth: 'msal', roles: ['admin'] },
+      },
     ],
   },
 ]
