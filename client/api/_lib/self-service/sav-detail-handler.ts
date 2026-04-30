@@ -61,7 +61,6 @@ interface SavLineRow {
   qty_requested: number | null
   unit_invoiced: string | null
   unit_requested: string | null
-  motif_sav: string | null
   validation_status: string
   validation_message: string | null
 }
@@ -92,10 +91,6 @@ interface CreditNoteRow {
   issued_at: string
   total_ttc_cents: number
   pdf_web_url: string | null
-}
-
-interface ValidationListRow {
-  value_es: string | null
 }
 
 const VALIDATION_STATUS_FR: Record<string, string> = {
@@ -284,44 +279,15 @@ const coreHandler: ApiHandler = async (req, res) => {
       return
     }
 
-    // 3) Résolution motifs (validation_lists.value_es) — uniquement les motifs présents.
-    const motifKeys = Array.from(
-      new Set(
-        (sav.lines ?? [])
-          .map((l) => l.motif_sav)
-          .filter((m): m is string => typeof m === 'string' && m.length > 0)
-      )
-    )
-    const motifLabels = new Map<string, string>()
-    if (motifKeys.length > 0) {
-      const validationResult = (await admin
-        .from('validation_lists')
-        .select('list_code, value_es, value')
-        .eq('list_code', 'motif_sav')
-        .in('value', motifKeys)) as {
-        data: (ValidationListRow & { value: string })[] | null
-        error: { message: string } | null
-      }
-      if (validationResult.error) {
-        logger.warn('self-service.sav-detail.motif_lookup_failed', {
-          requestId,
-          errorCode: (validationResult.error as { code?: string }).code ?? 'unknown',
-        })
-        // Non bloquant — fallback sur la valeur brute.
-      } else {
-        for (const row of validationResult.data ?? []) {
-          if (row.value_es) motifLabels.set(row.value, row.value_es)
-        }
-      }
-    }
-
-    // 4) Projection sortie — privacy : aucun champ PII opérateur ni commercial interne.
+    // 3) Projection sortie — privacy : aucun champ PII opérateur ni commercial interne.
+    // W111 — `motif_sav` n'a jamais été persisté en DB (capture webhook utilise `cause` pour
+    // emails operator uniquement, pas de colonne sav_lines pour stocker). Le list_code des motifs
+    // était d'ailleurs `sav_cause` (cf. rufinoConfig.ts), pas `motif_sav`. Code mort retiré.
     const lines = (sav.lines ?? []).map((l) => ({
       id: l.id,
       description: l.product_name_snapshot ?? l.product_code_snapshot ?? '—',
       qty: l.qty_invoiced ?? l.qty_requested ?? 0,
       qtyUnit: l.unit_invoiced ?? l.unit_requested ?? 'piece',
-      motif: l.motif_sav ? (motifLabels.get(l.motif_sav) ?? l.motif_sav) : null,
       validationStatus: l.validation_status,
       validationStatusLabel: VALIDATION_STATUS_FR[l.validation_status] ?? l.validation_status,
       validationMessage: l.validation_message,

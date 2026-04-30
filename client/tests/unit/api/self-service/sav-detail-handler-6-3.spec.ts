@@ -230,8 +230,7 @@ describe('GET /api/self-service/sav/:id — sav-detail-handler ENRICHI (Story 6.
     expect(serialized).not.toMatch(/operator\.email/i)
   })
 
-  it('AC#2 lines incluent description, qty, qtyUnit, motif libellé, validationStatusLabel FR', async () => {
-    db.motifLabels.set('non_conforme', 'Non conforme')
+  it('AC#2 lines incluent description, qty, qtyUnit, validationStatusLabel FR (motif retiré W111 — code mort, jamais persisté en DB)', async () => {
     const sav = defaultSavRow()
     sav.lines = [
       {
@@ -242,7 +241,6 @@ describe('GET /api/self-service/sav/:id — sav-detail-handler ENRICHI (Story 6.
         qty_requested: 5,
         unit_invoiced: 'kg',
         unit_requested: 'kg',
-        motif_sav: 'non_conforme',
         validation_status: 'ok',
         validation_message: null,
       },
@@ -262,10 +260,10 @@ describe('GET /api/self-service/sav/:id — sav-detail-handler ENRICHI (Story 6.
       description: 'Pomme Bio',
       qty: 5,
       qtyUnit: 'kg',
-      motif: 'Non conforme',
       validationStatus: 'ok',
       validationStatusLabel: 'Vérifié OK',
     })
+    expect(body.data.lines[0]).not.toHaveProperty('motif')
   })
 
   it('AC#2 lines NE rendent PAS credit_coefficient, pieceKg, totaux ligne', async () => {
@@ -279,7 +277,6 @@ describe('GET /api/self-service/sav/:id — sav-detail-handler ENRICHI (Story 6.
         qty_requested: 1,
         unit_invoiced: 'piece',
         unit_requested: 'piece',
-        motif_sav: 'non_conforme',
         validation_status: 'warning',
         validation_message: 'En attente validation opérateur',
       },

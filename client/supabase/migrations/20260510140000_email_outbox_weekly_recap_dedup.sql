@@ -45,12 +45,16 @@ BEGIN;
 -- Deux INSERTs avec `created_at` dans la même semaine ISO produiront la
 -- même valeur de date_trunc → unique_violation sur le 2e.
 --
--- Note IMMUTABLE : `date_trunc('week', timestamptz)` est IMMUTABLE en
--- PostgreSQL ≥ 9.6 (pas de dépendance timezone runtime sur les variantes
--- timestamptz). Préfix `public.` non requis car index local à la table.
+-- Note IMMUTABLE : `date_trunc('week', timestamptz)` est STABLE (pas IMMUTABLE)
+-- en PostgreSQL — Postgres rejette son usage dans une expression d'index avec
+-- ERROR 42P17. Solution : caster `created_at AT TIME ZONE 'UTC'` qui retourne
+-- un `timestamp without time zone`, dont la signature `date_trunc(text, timestamp)`
+-- EST IMMUTABLE. Le bucket dédup reste identique côté sémantique (semaine ISO UTC).
+-- W113 correctif 2026-04-30 (le texte initial de la migration causait 42P17 lors
+-- d'un fresh apply).
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_email_outbox_weekly_recap_unique
-  ON public.email_outbox (recipient_member_id, date_trunc('week', created_at))
+  ON public.email_outbox (recipient_member_id, (date_trunc('week', (created_at AT TIME ZONE 'UTC'))))
   WHERE kind = 'weekly_recap';
 
 COMMENT ON INDEX public.idx_email_outbox_weekly_recap_unique IS

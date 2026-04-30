@@ -17,6 +17,7 @@
     "lint:business": "eslint api/_lib/business/ --ext .ts --max-warnings 0",
     "format": "prettier --write src/",
     "typecheck": "vue-tsc --noEmit",
+    "audit:schema": "node scripts/audit-handler-schema.mjs",
     "prepare": "cd .. && husky client/.husky"
   },
   "lint-staged": {
