@@ -7,7 +7,7 @@ export interface AuditRecordInput {
   actorOperatorId?: number
   actorMemberId?: number
   actorSystem?: 'cron' | 'webhook-capture' | 'migration' | string
-  diff?: { before?: unknown; after?: unknown }
+  diff?: { before?: unknown; after?: unknown; [key: string]: unknown }
   notes?: string
 }
 

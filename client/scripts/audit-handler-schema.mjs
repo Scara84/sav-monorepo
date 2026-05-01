@@ -326,6 +326,11 @@ function extractColumns(expr) {
     if (colName.includes('!')) continue // member:members!inner alias
     const clean = colName.replace(/::[a-z]+$/i, '').trim()
     if (!clean) continue
+    // PostgREST `select('*')` sélectionne toutes les colonnes — pas une drift.
+    // Story 7-6 D-2 : RGPD export require `*` pour 7 tables (member + sav +
+    // sav_lines + sav_comments + sav_files + credit_notes + auth_events) afin
+    // de retourner toutes les données AS IS sans transformation PII.
+    if (clean === '*') continue
     if (Object.prototype.hasOwnProperty.call(SCHEMA, clean)) continue // table name, not a column
     cols.add(clean)
   }

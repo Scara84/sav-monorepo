@@ -424,3 +424,245 @@ export function erpPushEntry(overrides: Partial<ErpPushEntry> = {}): ErpPushEntr
     ...overrides,
   }
 }
+
+/**
+ * Story 7-6 — fixtures RGPD export + anonymize.
+ *
+ * D-1 HMAC-SHA256 base64url + canonical-JSON tri clés alphabétique récursif.
+ * D-2 schéma export V1.0 — 7 collections obligatoires.
+ * D-9 + D-11 RPC `admin_anonymize_member` retourne aussi (depuis D-11) :
+ *   `tokens_deleted`, `drafts_deleted`, `email_pending_deleted`,
+ *   `email_sent_anonymized` en plus de `member_id`/`anonymized_at`/`hash8`/
+ *   `audit_purge_count`.
+ *
+ * Aucune migration schema introduite par ces fixtures (helpers test-only).
+ */
+
+export const RGPD_EXPORT_VERSION = '1.0' as const
+
+export interface MemberRowRgpd {
+  id: number
+  email: string
+  first_name: string | null
+  last_name: string
+  phone: string | null
+  pennylane_customer_id: string | null
+  notification_prefs: Record<string, unknown>
+  anonymized_at: string | null
+  created_at: string
+  updated_at: string
+  [key: string]: unknown
+}
+
+export function memberRowRgpd(overrides: Partial<MemberRowRgpd> = {}): MemberRowRgpd {
+  return {
+    id: 123,
+    email: 'real.member@example.com',
+    first_name: 'Jean',
+    last_name: 'Durand',
+    phone: '+33611223344',
+    pennylane_customer_id: 'pn-cust-42',
+    notification_prefs: { weekly_recap: true },
+    anonymized_at: null,
+    created_at: '2024-01-15T10:00:00Z',
+    updated_at: '2026-04-30T10:00:00Z',
+    ...overrides,
+  }
+}
+
+/** D-3 + D-9 + D-10 : member déjà anonymisé. Hash8 = `a1b2c3d4` figé fixture. */
+export function anonymizedMember(id = 123, hash8 = 'a1b2c3d4'): MemberRowRgpd {
+  return {
+    id,
+    email: `anon+${hash8}@fruitstock.invalid`,
+    first_name: null,
+    last_name: `Adhérent #ANON-${hash8}`,
+    phone: null,
+    pennylane_customer_id: null,
+    notification_prefs: {},
+    anonymized_at: '2026-04-30T12:00:00Z',
+    created_at: '2024-01-15T10:00:00Z',
+    updated_at: '2026-04-30T12:00:00Z',
+  }
+}
+
+/**
+ * D-2 — payload export V1.0 minimal mais conformant : 7 collections présentes,
+ * counts ajustables via overrides. Pas de signature (le handler signe).
+ */
+export interface RgpdExportEnvelope {
+  export_version: typeof RGPD_EXPORT_VERSION
+  export_id: string
+  exported_at: string
+  exported_by_operator_id: number
+  member_id: number
+  data: {
+    member: MemberRowRgpd
+    sav: Array<Record<string, unknown>>
+    sav_lines: Array<Record<string, unknown>>
+    sav_comments: Array<Record<string, unknown>>
+    sav_files: Array<Record<string, unknown>>
+    credit_notes: Array<Record<string, unknown>>
+    auth_events: Array<Record<string, unknown>>
+  }
+}
+
+export function rgpdExportPayload(
+  memberOverrides: Partial<MemberRowRgpd> = {},
+  collectionCounts: Partial<{
+    sav: number
+    sav_lines: number
+    sav_comments: number
+    sav_files: number
+    credit_notes: number
+    auth_events: number
+  }> = {}
+): RgpdExportEnvelope {
+  const m = memberRowRgpd(memberOverrides)
+  const counts = {
+    sav: 2,
+    sav_lines: 4,
+    sav_comments: 1,
+    sav_files: 1,
+    credit_notes: 1,
+    auth_events: 3,
+    ...collectionCounts,
+  }
+  const sav = Array.from({ length: counts.sav }, (_, i) => ({
+    id: i + 1,
+    member_id: m.id,
+    reference: `SAV-2026-${String(i + 1).padStart(4, '0')}`,
+    status: 'closed',
+    created_at: '2026-02-01T10:00:00Z',
+  }))
+  const sav_lines = Array.from({ length: counts.sav_lines }, (_, i) => ({
+    id: 1000 + i,
+    sav_id: sav[i % sav.length]?.id ?? 1,
+    product_code: 'TOM-RAP-1',
+    quantity: 1,
+    vat_rate_bp_snapshot: 550,
+  }))
+  const sav_comments = Array.from({ length: counts.sav_comments }, (_, i) => ({
+    id: 2000 + i,
+    sav_id: sav[i % sav.length]?.id ?? 1,
+    internal: true, // D-2 : comments INCLUS internal=true
+    body: 'note interne ops',
+    created_at: '2026-02-02T10:00:00Z',
+  }))
+  const sav_files = Array.from({ length: counts.sav_files }, (_, i) => ({
+    id: 3000 + i,
+    sav_id: sav[i % sav.length]?.id ?? 1,
+    original_filename: `Bon_DURAND_2026-02-${String(i + 1).padStart(2, '0')}.pdf`,
+    sanitized_filename: `bon-${i + 1}.pdf`,
+    mime_type: 'application/pdf',
+    size_bytes: 12345,
+    web_url: `https://fruitstock.sharepoint.com/file/${3000 + i}`, // D-5
+  }))
+  const credit_notes = Array.from({ length: counts.credit_notes }, (_, i) => ({
+    id: 4000 + i,
+    member_id: m.id,
+    sav_id: sav[i % sav.length]?.id ?? 1,
+    number: `AV-2026-${String(i + 1).padStart(4, '0')}`,
+    total_ttc_cents: 12000,
+  }))
+  const auth_events = Array.from({ length: counts.auth_events }, (_, i) => ({
+    id: 5000 + i,
+    member_id: m.id,
+    event: 'login',
+    email_hash: 'hash-redacted',
+    ip_hash: 'iphash-redacted',
+    created_at: '2026-04-30T10:00:00Z',
+  }))
+  return {
+    export_version: RGPD_EXPORT_VERSION,
+    export_id: 'rgpd-00000000-0000-4000-8000-000000000001',
+    exported_at: '2026-05-01T10:30:00Z',
+    exported_by_operator_id: ADMIN_ID,
+    member_id: m.id,
+    data: { member: m, sav, sav_lines, sav_comments, sav_files, credit_notes, auth_events },
+  }
+}
+
+/**
+ * Helper test : recompute HMAC-SHA256 base64url sur canonical-JSON
+ * (clés triées alphabétique récursif) sans le champ `signature`. Renvoie
+ * la string base64url. Utilisé par les specs canonical/roundtrip pour
+ * valider l'impl handler sans dépendre du module prod (qui n'existe pas
+ * encore en RED-phase).
+ */
+export function canonicalStringifyForTest(value: unknown): string {
+  if (value === null || typeof value !== 'object') return JSON.stringify(value)
+  if (Array.isArray(value)) {
+    return '[' + value.map(canonicalStringifyForTest).join(',') + ']'
+  }
+  const keys = Object.keys(value as Record<string, unknown>).sort()
+  return (
+    '{' +
+    keys
+      .map(
+        (k) =>
+          JSON.stringify(k) + ':' + canonicalStringifyForTest((value as Record<string, unknown>)[k])
+      )
+      .join(',') +
+    '}'
+  )
+}
+
+/**
+ * Vérifie un export RGPD complet (avec champ `signature`) contre un secret
+ * via canonical-JSON + HMAC-SHA256 base64url + comparaison constant-time.
+ * Utilisé en roundtrip integration tests + assertion unitaire.
+ */
+export function verifyHmac(
+  full: {
+    signature: { algorithm: string; encoding: string; value: string }
+    [key: string]: unknown
+  },
+  secret: string
+): boolean {
+  // Import dynamique node:crypto pour rester compat node20+ test runtime.
+  // eslint-disable-next-line @typescript-eslint/no-require-imports
+  const crypto = require('node:crypto') as typeof import('node:crypto')
+  if (full.signature.algorithm !== 'HMAC-SHA256') return false
+  if (full.signature.encoding !== 'base64url') return false
+  const { signature: _omitted, ...rest } = full as { signature: unknown } & Record<string, unknown>
+  void _omitted
+  const canonical = canonicalStringifyForTest(rest)
+  const expected = crypto.createHmac('sha256', secret).update(canonical).digest('base64url')
+  if (expected.length !== full.signature.value.length) return false
+  try {
+    return crypto.timingSafeEqual(Buffer.from(expected), Buffer.from(full.signature.value))
+  } catch {
+    return false
+  }
+}
+
+/**
+ * D-9 + D-11 — payload retour RPC `admin_anonymize_member`. Inclut les 4
+ * nouveaux champs ROW_COUNT D-11 (tokens_deleted/drafts_deleted/
+ * email_pending_deleted/email_sent_anonymized).
+ */
+export interface AnonymizeRpcRow {
+  member_id: number
+  anonymized_at: string
+  hash8: string
+  audit_purge_count: number
+  tokens_deleted: number
+  drafts_deleted: number
+  email_pending_deleted: number
+  email_sent_anonymized: number
+}
+
+export function anonymizeRpcRow(overrides: Partial<AnonymizeRpcRow> = {}): AnonymizeRpcRow {
+  return {
+    member_id: 123,
+    anonymized_at: '2026-05-01T10:35:00Z',
+    hash8: 'a1b2c3d4',
+    audit_purge_count: 47,
+    tokens_deleted: 2,
+    drafts_deleted: 1,
+    email_pending_deleted: 0,
+    email_sent_anonymized: 12,
+    ...overrides,
+  }
+}

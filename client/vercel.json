@@ -175,6 +175,14 @@
       "destination": "/api/pilotage?op=admin-erp-queue-list"
     },
     {
+      "source": "/api/admin/members/:id/rgpd-export",
+      "destination": "/api/pilotage?op=admin-rgpd-export&id=:id"
+    },
+    {
+      "source": "/api/admin/members/:id/anonymize",
+      "destination": "/api/pilotage?op=admin-member-anonymize&id=:id"
+    },
+    {
       "source": "/((?!api/|assets/|src/|@vite/|@id/|@fs/|node_modules/|favicon\\.ico|robots\\.txt|.*\\.(?:js|css|vue|ts|tsx|json|map|png|jpg|jpeg|svg|ico|webp|woff2?)).*)",
       "destination": "/index.html"
     }

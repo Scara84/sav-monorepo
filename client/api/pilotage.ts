@@ -28,6 +28,8 @@ import { adminSettingHistoryHandler } from './_lib/admin/setting-history-handler
 import { adminAuditTrailListHandler } from './_lib/admin/audit-trail-list-handler'
 import { adminErpQueueListHandler } from './_lib/admin/erp-queue-list-handler'
 import { adminErpPushRetryHandler } from './_lib/admin/erp-push-retry-handler'
+import { adminRgpdExportHandler } from './_lib/admin/rgpd-export-handler'
+import { adminMemberAnonymizeHandler } from './_lib/admin/member-anonymize-handler'
 import type { ApiHandler, ApiRequest, ApiResponse } from './_lib/types'
 
 /**
@@ -90,6 +92,9 @@ const ALLOWED_OPS = new Set([
   'admin-audit-trail-list',
   'admin-erp-queue-list',
   'admin-erp-push-retry',
+  // Story 7-6 — admin RGPD export signé HMAC + anonymisation adhérent
+  'admin-rgpd-export',
+  'admin-member-anonymize',
 ])
 
 /**
@@ -130,6 +135,9 @@ const ADMIN_ONLY_OPS = new Set([
   'admin-audit-trail-list',
   'admin-erp-queue-list',
   'admin-erp-push-retry',
+  // Story 7-6 — RGPD export + anonymisation (D-8 defense-in-depth)
+  'admin-rgpd-export',
+  'admin-member-anonymize',
 ])
 
 function requireAdminRole(req: ApiRequest, res: ApiResponse, requestId: string): boolean {
@@ -488,6 +496,30 @@ const dispatch: ApiHandler = async (req, res) => {
       return
     }
     return adminErpPushRetryHandler(req, res)
+  }
+
+  // Story 7-6 — admin RGPD export JSON signé HMAC + anonymisation adhérent.
+  // D-1 HMAC-SHA256 base64url canonical-JSON ; D-9 RPC PG atomique
+  // `admin_anonymize_member` ; D-11 purge cross-tables exhaustive (5 actions
+  // dans la même TX MVCC) ; D-7 recordAudit handler-side ; D-8 RBAC
+  // defense-in-depth via ADMIN_ONLY_OPS. Pas de remap méthode-aware (chaque
+  // URL a sa propre rewrite POST dédiée).
+  if (op === 'admin-rgpd-export') {
+    if (method !== 'POST') {
+      res.setHeader('Allow', 'POST')
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
+      return
+    }
+    return adminRgpdExportHandler(req, res)
+  }
+
+  if (op === 'admin-member-anonymize') {
+    if (method !== 'POST') {
+      res.setHeader('Allow', 'POST')
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
+      return
+    }
+    return adminMemberAnonymizeHandler(req, res)
   }
 
   sendError(res, 'NOT_FOUND', 'Route non disponible', requestId)
