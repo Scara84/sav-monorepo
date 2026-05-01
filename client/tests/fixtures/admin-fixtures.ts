@@ -297,3 +297,130 @@ export function settingRotateBody(
     ...overrides,
   }
 }
+
+/**
+ * Story 7-5 — fixtures `audit_trail` (read-only filtrable + diff JSONB)
+ * et `erp_push_queue` (file ERP + retry).
+ *
+ * D-1 whitelist V1 : 19 valeurs `entity_type` strict (Zod enum côté handler).
+ * Ces fixtures n'introduisent AUCUNE migration schema — la table audit_trail
+ * existe Story 1.2, erp_push_queue est out-of-scope D-10 (Story 7-1 deferred).
+ */
+export const AUDIT_ENTITY_TYPES_WHITELIST = [
+  // Triggers PG audit_changes() (suffixe pluriel)
+  'operators',
+  'settings',
+  'members',
+  'groups',
+  'validation_lists',
+  'products',
+  // recordAudit() handler-side (suffixe singulier — convention 7-3a/b/c/4)
+  'operator',
+  'setting',
+  'member',
+  'group',
+  'validation_list',
+  'product',
+  // Audit métier épic 4 + 6
+  'sav',
+  'sav_line',
+  'sav_file',
+  'sav_comment',
+  'credit_note',
+  'email_outbox',
+  // Audit ERP push (Story 7.5 retry + Story 7.2 cron)
+  'erp_push',
+  // Audit RGPD (Story 7.6 — préventif)
+  'rgpd_export',
+] as const
+
+export type AuditEntityType = (typeof AUDIT_ENTITY_TYPES_WHITELIST)[number]
+
+export interface AuditTrailEntry {
+  id: number
+  entity_type: AuditEntityType | string
+  entity_id: number
+  action: string
+  actor_operator_id: number | null
+  actor_member_id: number | null
+  actor_system: string | null
+  diff: Record<string, unknown> | null
+  notes: string | null
+  created_at: string
+  // Story 7-5 — index signature requise pour push direct dans
+  // `state.auditRows: Array<Record<string, unknown>>` côté tests RED
+  // (cohérent erp-queue-list spec).
+  [key: string]: unknown
+}
+
+export function auditTrailEntry(overrides: Partial<AuditTrailEntry> = {}): AuditTrailEntry {
+  return {
+    id: 800,
+    entity_type: 'sav',
+    entity_id: 1,
+    action: 'created',
+    actor_operator_id: ADMIN_ID,
+    actor_member_id: null,
+    actor_system: null,
+    diff: { before: null, after: { id: 1, status: 'nouveau' } },
+    notes: null,
+    created_at: '2026-04-15T10:00:00Z',
+    ...overrides,
+  }
+}
+
+/**
+ * Variantes diff jsonb couvrant les patterns observés Stories 7-3a/b/c/4 +
+ * Epic 4 (status_changed) + Story 7-5 (retry_manual).
+ */
+export const AUDIT_DIFF_VARIANTS = {
+  settingRotated: {
+    key: 'vat_rate_default',
+    before: { value: { bp: 550 }, valid_from: '2020-01-01T00:00:00Z' },
+    after: { value: { bp: 600 }, valid_from: '2026-07-01T00:00:00Z' },
+  },
+  operatorRoleChanged: {
+    before: { role: 'sav-operator' },
+    after: { role: 'admin' },
+  },
+  savStatusChanged: {
+    before: { status: 'nouveau' },
+    after: { status: 'en_cours' },
+  },
+  erpPushRetryManual: {
+    before: { status: 'failed', attempts: 3 },
+    after: { status: 'pending', attempts: 0 },
+  },
+} as const
+
+export interface ErpPushEntry {
+  id: number
+  sav_id: number
+  status: 'pending' | 'success' | 'failed'
+  attempts: number
+  last_error: string | null
+  last_attempt_at: string | null
+  next_retry_at: string | null
+  scheduled_at: string | null
+  created_at: string
+  updated_at: string
+  // Story 7-5 — index signature requise pour push direct dans
+  // `state.erpRows: Array<Record<string, unknown>>` côté tests RED.
+  [key: string]: unknown
+}
+
+export function erpPushEntry(overrides: Partial<ErpPushEntry> = {}): ErpPushEntry {
+  return {
+    id: 900,
+    sav_id: 1,
+    status: 'failed',
+    attempts: 3,
+    last_error: 'timeout: ERP /push 504 Gateway Timeout',
+    last_attempt_at: '2026-04-30T08:00:00Z',
+    next_retry_at: null,
+    scheduled_at: '2026-04-30T07:00:00Z',
+    created_at: '2026-04-30T06:00:00Z',
+    updated_at: '2026-04-30T08:00:00Z',
+    ...overrides,
+  }
+}

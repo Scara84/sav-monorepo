@@ -25,6 +25,9 @@ import { adminValidationListUpdateHandler } from './_lib/admin/validation-list-u
 import { adminSettingsListHandler } from './_lib/admin/settings-list-handler'
 import { adminSettingRotateHandler } from './_lib/admin/setting-rotate-handler'
 import { adminSettingHistoryHandler } from './_lib/admin/setting-history-handler'
+import { adminAuditTrailListHandler } from './_lib/admin/audit-trail-list-handler'
+import { adminErpQueueListHandler } from './_lib/admin/erp-queue-list-handler'
+import { adminErpPushRetryHandler } from './_lib/admin/erp-push-retry-handler'
 import type { ApiHandler, ApiRequest, ApiResponse } from './_lib/types'
 
 /**
@@ -83,6 +86,10 @@ const ALLOWED_OPS = new Set([
   'admin-settings-list',
   'admin-setting-rotate',
   'admin-setting-history',
+  // Story 7-5 — admin audit_trail filtrable + file ERP consultable + retry
+  'admin-audit-trail-list',
+  'admin-erp-queue-list',
+  'admin-erp-push-retry',
 ])
 
 /**
@@ -119,6 +126,10 @@ const ADMIN_ONLY_OPS = new Set([
   'admin-settings-list',
   'admin-setting-rotate',
   'admin-setting-history',
+  // Story 7-5 — audit_trail read-only + erp_push_queue (D-7 defense-in-depth)
+  'admin-audit-trail-list',
+  'admin-erp-queue-list',
+  'admin-erp-push-retry',
 ])
 
 function requireAdminRole(req: ApiRequest, res: ApiResponse, requestId: string): boolean {
@@ -445,6 +456,38 @@ const dispatch: ApiHandler = async (req, res) => {
       return
     }
     return adminSettingHistoryHandler(req, res)
+  }
+
+  // Story 7-5 — admin audit_trail (GET) + erp_push_queue (GET list / POST retry).
+  // D-1 whitelist entity_type + D-2 cursor pagination + D-3 bornes dates + D-7
+  // RBAC defense-in-depth + D-8 UPDATE atomique retry + D-9 audit best-effort
+  // + D-10 feature-flag erp_push_queue (503 ERP_QUEUE_NOT_PROVISIONED tant
+  // que Story 7-1 deferred).
+  if (op === 'admin-audit-trail-list') {
+    if (method !== 'GET') {
+      res.setHeader('Allow', 'GET')
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
+      return
+    }
+    return adminAuditTrailListHandler(req, res)
+  }
+
+  if (op === 'admin-erp-queue-list') {
+    if (method !== 'GET') {
+      res.setHeader('Allow', 'GET')
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
+      return
+    }
+    return adminErpQueueListHandler(req, res)
+  }
+
+  if (op === 'admin-erp-push-retry') {
+    if (method !== 'POST') {
+      res.setHeader('Allow', 'POST')
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
+      return
+    }
+    return adminErpPushRetryHandler(req, res)
   }
 
   sendError(res, 'NOT_FOUND', 'Route non disponible', requestId)

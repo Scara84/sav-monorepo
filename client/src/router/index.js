@@ -121,6 +121,20 @@ const routes = [
         component: () => import('@/features/back-office/views/admin/ValidationListsAdminView.vue'),
         meta: { requiresAuth: 'msal', roles: ['admin'] },
       },
+      {
+        // Story 7-5 — admin audit_trail filtrable (read-only D-6 immutable 3 ans).
+        path: 'audit-trail',
+        name: 'admin-audit-trail',
+        component: () => import('@/features/back-office/views/admin/AuditTrailView.vue'),
+        meta: { requiresAuth: 'msal', roles: ['admin'] },
+      },
+      {
+        // Story 7-5 — admin file ERP (D-10 feature-flag tant que 7-1 deferred).
+        path: 'erp-queue',
+        name: 'admin-erp-queue',
+        component: () => import('@/features/back-office/views/admin/ErpQueueView.vue'),
+        meta: { requiresAuth: 'msal', roles: ['admin'] },
+      },
     ],
   },
 ]

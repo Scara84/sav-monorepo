@@ -250,6 +250,20 @@ const SCHEMA = {
 // PostgREST keywords / aggregate functions that are NOT columns.
 const POSTGREST_KEYWORDS = new Set(['count', 'sum', 'avg', 'min', 'max'])
 
+/**
+ * Tables intentionnellement absentes du snapshot SCHEMA :
+ *   - `pg_tables` : catalogue système Postgres (introspection D-10 Story 7-5,
+ *      lecture seulement pour feature-flag detection — pas de DDL applicatif).
+ *   - `erp_push_queue` : table livrée par Story 7-1 (deferred — en attente
+ *      contrat ERP Fruitstock). Story 7-5 D-10 référence cette table en mode
+ *      feature-flag (handler retourne 503 ERP_QUEUE_NOT_PROVISIONED tant
+ *      qu'elle n'existe pas). Le handler n'écrit AUCUN code basé sur les
+ *      colonnes — il inspecte uniquement l'existence de la table via
+ *      `pg_tables`. Quand 7-1 livrera la migration, ajouter ici l'entrée
+ *      `erp_push_queue: [...]` SCHEMA + retirer de cet allowlist.
+ */
+const SCHEMA_ALLOWLIST_UNKNOWN_TABLES = new Set(['pg_tables', 'erp_push_queue'])
+
 // -------- File discovery --------
 const ROOT = new URL('../api/_lib', import.meta.url).pathname
 
@@ -347,6 +361,7 @@ for (const file of walk(ROOT)) {
     scanned++
     const tableCols = SCHEMA[table]
     if (!tableCols) {
+      if (SCHEMA_ALLOWLIST_UNKNOWN_TABLES.has(table)) continue
       drifts.push({ kind: 'unknown_table', file: rel, table })
       continue
     }

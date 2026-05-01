@@ -31,6 +31,12 @@
         <router-link :to="{ name: 'admin-validation-lists' }" class="nav-link">
           <span aria-hidden="true">📚</span> Listes de validation
         </router-link>
+        <router-link :to="{ name: 'admin-audit-trail' }" class="nav-link">
+          <span aria-hidden="true">🔎</span> Audit
+        </router-link>
+        <router-link :to="{ name: 'admin-erp-queue' }" class="nav-link">
+          <span aria-hidden="true">🔁</span> File ERP
+        </router-link>
       </nav>
     </header>
     <main class="bo-main">
