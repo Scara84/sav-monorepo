@@ -143,6 +143,14 @@
       "destination": "/api/pilotage?op=admin-products-list"
     },
     {
+      "source": "/api/admin/validation-lists/:id",
+      "destination": "/api/pilotage?op=admin-validation-list-update&id=:id"
+    },
+    {
+      "source": "/api/admin/validation-lists",
+      "destination": "/api/pilotage?op=admin-validation-lists-list"
+    },
+    {
       "source": "/((?!api/|assets/|src/|@vite/|@id/|@fs/|node_modules/|favicon\\.ico|robots\\.txt|.*\\.(?:js|css|vue|ts|tsx|json|map|png|jpg|jpeg|svg|ico|webp|woff2?)).*)",
       "destination": "/index.html"
     }

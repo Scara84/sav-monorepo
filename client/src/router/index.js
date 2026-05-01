@@ -114,6 +114,13 @@ const routes = [
         component: () => import('@/features/back-office/views/admin/CatalogAdminView.vue'),
         meta: { requiresAuth: 'msal', roles: ['admin'] },
       },
+      {
+        // Story 7-3c — admin listes de validation (sav_cause, bon_type, unit).
+        path: 'validation-lists',
+        name: 'admin-validation-lists',
+        component: () => import('@/features/back-office/views/admin/ValidationListsAdminView.vue'),
+        meta: { requiresAuth: 'msal', roles: ['admin'] },
+      },
     ],
   },
 ]

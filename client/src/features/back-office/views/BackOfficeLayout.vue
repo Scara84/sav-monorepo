@@ -28,6 +28,9 @@
         <router-link :to="{ name: 'admin-catalog' }" class="nav-link">
           <span aria-hidden="true">🥬</span> Catalogue
         </router-link>
+        <router-link :to="{ name: 'admin-validation-lists' }" class="nav-link">
+          <span aria-hidden="true">📚</span> Listes de validation
+        </router-link>
       </nav>
     </header>
     <main class="bo-main">

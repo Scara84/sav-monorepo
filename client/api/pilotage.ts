@@ -19,6 +19,9 @@ import { adminProductsListHandler } from './_lib/admin/products-list-handler'
 import { adminProductCreateHandler } from './_lib/admin/product-create-handler'
 import { adminProductUpdateHandler } from './_lib/admin/product-update-handler'
 import { adminProductDeleteHandler } from './_lib/admin/product-delete-handler'
+import { adminValidationListsListHandler } from './_lib/admin/validation-lists-list-handler'
+import { adminValidationListCreateHandler } from './_lib/admin/validation-list-create-handler'
+import { adminValidationListUpdateHandler } from './_lib/admin/validation-list-update-handler'
 import type { ApiHandler, ApiRequest, ApiResponse } from './_lib/types'
 
 /**
@@ -69,6 +72,10 @@ const ALLOWED_OPS = new Set([
   'admin-product-create',
   'admin-product-update',
   'admin-product-delete',
+  // Story 7-3c — admin validation_lists CRUD (pas de delete physique D-8)
+  'admin-validation-lists-list',
+  'admin-validation-list-create',
+  'admin-validation-list-update',
 ])
 
 /**
@@ -97,6 +104,10 @@ const ADMIN_ONLY_OPS = new Set([
   'admin-product-create',
   'admin-product-update',
   'admin-product-delete',
+  // Story 7-3c
+  'admin-validation-lists-list',
+  'admin-validation-list-create',
+  'admin-validation-list-update',
 ])
 
 function requireAdminRole(req: ApiRequest, res: ApiResponse, requestId: string): boolean {
@@ -170,6 +181,17 @@ const dispatch: ApiHandler = async (req, res) => {
   // `admin-product-delete`.
   if (op === 'admin-product-update' && method === 'DELETE') {
     op = 'admin-product-delete'
+  }
+
+  // Story 7-3c — méthode-aware remap pour `/api/admin/validation-lists` :
+  //   GET    → admin-validation-lists-list (rewrite par défaut)
+  //   POST   → admin-validation-list-create
+  // PATCH `/api/admin/validation-lists/:id` a sa propre rewrite vers
+  // `admin-validation-list-update`. Pas de DELETE physique exposé (D-8
+  // soft-delete via PATCH is_active=false). L'invariant ADMIN_ONLY_OPS
+  // reste respecté : toutes les ops validation_lists sont admin-only.
+  if (op === 'admin-validation-lists-list' && method === 'POST') {
+    op = 'admin-validation-list-create'
   }
 
   // Story 7-3a AC #4 — D-10 : RBAC defense-in-depth. Les ops admin-only
@@ -345,6 +367,35 @@ const dispatch: ApiHandler = async (req, res) => {
       return
     }
     return adminProductDeleteHandler(req, res)
+  }
+
+  // Story 7-3c — admin validation_lists CRUD (list / create / update soft).
+  // Pas de DELETE physique (D-8 soft-delete via PATCH is_active=false).
+  if (op === 'admin-validation-lists-list') {
+    if (method !== 'GET') {
+      res.setHeader('Allow', 'GET')
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
+      return
+    }
+    return adminValidationListsListHandler(req, res)
+  }
+
+  if (op === 'admin-validation-list-create') {
+    if (method !== 'POST') {
+      res.setHeader('Allow', 'POST')
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
+      return
+    }
+    return adminValidationListCreateHandler(req, res)
+  }
+
+  if (op === 'admin-validation-list-update') {
+    if (method !== 'PATCH') {
+      res.setHeader('Allow', 'PATCH')
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
+      return
+    }
+    return adminValidationListUpdateHandler(req, res)
   }
 
   sendError(res, 'NOT_FOUND', 'Route non disponible', requestId)

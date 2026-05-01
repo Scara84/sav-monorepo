@@ -134,3 +134,59 @@ export function productCreateBody(
     ...overrides,
   }
 }
+
+/**
+ * Story 7-3c — fixtures `validation_lists` (CRUD admin listes validation).
+ * D-7 : list_code enum strict V1 (`'sav_cause' | 'bon_type' | 'unit'`).
+ * D-8 : soft-delete via is_active=false ; value + list_code immutables.
+ * Schema FR + ES (pas de value_en — D-6 retirée).
+ */
+export type ValidationListCode = 'sav_cause' | 'bon_type' | 'unit'
+
+export interface ValidationListEntry {
+  id: number
+  list_code: ValidationListCode
+  value: string
+  value_es: string | null
+  sort_order: number
+  is_active: boolean
+  created_at: string
+  updated_at: string
+}
+
+export function validationListEntry(
+  overrides: Partial<ValidationListEntry> = {}
+): ValidationListEntry {
+  return {
+    id: 700,
+    list_code: 'sav_cause',
+    value: 'Abîmé',
+    value_es: 'estropeado',
+    sort_order: 100,
+    is_active: true,
+    created_at: '2026-04-30T10:00:00Z',
+    updated_at: '2026-04-30T10:00:00Z',
+    ...overrides,
+  }
+}
+
+export interface ValidationListCreateBodyFixture {
+  list_code: ValidationListCode
+  value: string
+  value_es?: string | null
+  sort_order?: number
+  is_active?: boolean
+}
+
+export function validationListCreateBody(
+  overrides: Partial<ValidationListCreateBodyFixture> = {}
+): ValidationListCreateBodyFixture {
+  return {
+    list_code: 'sav_cause',
+    value: 'Périmé',
+    value_es: 'caducado',
+    sort_order: 100,
+    is_active: true,
+    ...overrides,
+  }
+}
