@@ -119,12 +119,24 @@
       "destination": "/api/pilotage?op=export-csv"
     },
     {
+      "source": "/api/admin/settings/threshold_alert/history",
+      "destination": "/api/pilotage?op=admin-settings-threshold-history"
+    },
+    {
       "source": "/api/admin/settings/threshold_alert",
       "destination": "/api/pilotage?op=admin-settings-threshold-patch"
     },
     {
-      "source": "/api/admin/settings/threshold_alert/history",
-      "destination": "/api/pilotage?op=admin-settings-threshold-history"
+      "source": "/api/admin/settings/:key/history",
+      "destination": "/api/pilotage?op=admin-setting-history&key=:key"
+    },
+    {
+      "source": "/api/admin/settings/:key",
+      "destination": "/api/pilotage?op=admin-setting-rotate&key=:key"
+    },
+    {
+      "source": "/api/admin/settings",
+      "destination": "/api/pilotage?op=admin-settings-list"
     },
     {
       "source": "/api/admin/operators/:id",

@@ -16,7 +16,22 @@ import { ref, onScopeDispose, getCurrentScope, type Ref } from 'vue'
  * le composant qui consomme le composable est détruit.
  */
 
-export type AdminSettingKey = 'threshold_alert'
+/**
+ * Story 7-4 — extension : 8 clés whitelist D-1 + 3 fonctions
+ * (`fetchActiveSettings` / `rotateSetting` / `fetchSettingHistory`).
+ * Story 5.5 conserve `loadCurrent` / `loadHistory` / `updateThreshold`
+ * (D-9 backward-compat).
+ */
+export type AdminSettingKey =
+  | 'threshold_alert'
+  | 'vat_rate_default'
+  | 'group_manager_discount'
+  | 'maintenance_mode'
+  | 'company.legal_name'
+  | 'company.siret'
+  | 'company.tva_intra'
+  | 'company.legal_mentions_short'
+  | 'onedrive.pdf_folder_root'
 
 export interface ThresholdAlertValue {
   count: number
@@ -52,6 +67,28 @@ export interface UpdateThresholdPayload {
   notes?: string
 }
 
+export interface SettingActiveSummary {
+  id: number
+  key: string
+  value: unknown
+  valid_from: string
+  valid_to: string | null
+  notes: string | null
+  created_at: string
+  updated_by: { id: number; email_display_short: string | null } | null
+  versions_count: number
+}
+
+export interface SettingHistoryItemGeneric {
+  id: number
+  value: unknown
+  valid_from: string
+  valid_to: string | null
+  notes: string | null
+  created_at: string
+  updated_by: { id: number; email_display_short: string | null } | null
+}
+
 export interface UseAdminSettingsApi {
   loading: Ref<boolean>
   saving: Ref<boolean>
@@ -59,9 +96,22 @@ export interface UseAdminSettingsApi {
   history: Ref<SettingHistoryItem[]>
   loadError: Ref<string | null>
   saveError: Ref<string | null>
-  loadCurrent: (key: AdminSettingKey) => Promise<void>
-  loadHistory: (key: AdminSettingKey, limit?: number) => Promise<void>
+  loadCurrent: (key: 'threshold_alert') => Promise<void>
+  loadHistory: (key: 'threshold_alert', limit?: number) => Promise<void>
   updateThreshold: (payload: UpdateThresholdPayload) => Promise<SettingValue>
+  // Story 7-4 — admin settings versionnés génériques (8 clés whitelist D-1).
+  activeSettings: Ref<SettingActiveSummary[]>
+  fetchActiveSettings: () => Promise<void>
+  rotateSetting: (
+    key: AdminSettingKey,
+    value: unknown,
+    validFrom: string,
+    notes?: string
+  ) => Promise<unknown>
+  fetchSettingHistory: (
+    key: AdminSettingKey,
+    limit?: number
+  ) => Promise<SettingHistoryItemGeneric[]>
 }
 
 const errorMessages: Record<string, string> = {
@@ -215,6 +265,97 @@ export function useAdminSettings(): UseAdminSettingsApi {
     }
   }
 
+  // Story 7-4 — état + fonctions génériques (8 clés whitelist D-1).
+  const activeSettings = ref<SettingActiveSummary[]>([])
+
+  async function fetchActiveSettings(): Promise<void> {
+    loading.value = true
+    loadError.value = null
+    try {
+      const res = await fetch('/api/admin/settings', {
+        credentials: 'same-origin',
+      })
+      const body = (await res.json().catch(() => ({}))) as ApiErrorShape & {
+        data?: { items: SettingActiveSummary[] }
+      }
+      if (!res.ok) {
+        const msg = translate(classifyHttpError(res.status, body))
+        loadError.value = msg
+        throw new Error(msg)
+      }
+      activeSettings.value = body.data?.items ?? []
+    } catch (e) {
+      if (isAbortError(e)) throw e
+      if (loadError.value === null) loadError.value = translate('NETWORK')
+      throw e instanceof Error ? e : new Error(String(e))
+    } finally {
+      loading.value = false
+    }
+  }
+
+  async function rotateSetting(
+    key: AdminSettingKey,
+    value: unknown,
+    validFrom: string,
+    notes?: string
+  ): Promise<unknown> {
+    saving.value = true
+    saveError.value = null
+    try {
+      const payload: Record<string, unknown> = { value, valid_from: validFrom }
+      if (typeof notes === 'string' && notes.trim() !== '') payload['notes'] = notes.trim()
+      const url = `/api/admin/settings/${encodeURIComponent(key)}`
+      const res = await fetch(url, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        credentials: 'same-origin',
+        body: JSON.stringify(payload),
+      })
+      const body = (await res.json().catch(() => ({}))) as ApiErrorShape & {
+        data?: unknown
+      }
+      if (!res.ok) {
+        const msg = translate(classifyHttpError(res.status, body))
+        saveError.value = msg
+        throw new Error(msg)
+      }
+      return body.data
+    } catch (e) {
+      if (isAbortError(e)) throw e
+      if (saveError.value === null) saveError.value = translate('NETWORK')
+      throw e instanceof Error ? e : new Error(String(e))
+    } finally {
+      saving.value = false
+    }
+  }
+
+  async function fetchSettingHistory(
+    key: AdminSettingKey,
+    limit = 10
+  ): Promise<SettingHistoryItemGeneric[]> {
+    loading.value = true
+    loadError.value = null
+    try {
+      const url = `/api/admin/settings/${encodeURIComponent(key)}/history?limit=${encodeURIComponent(String(limit))}`
+      const res = await fetch(url, { credentials: 'same-origin' })
+      const body = (await res.json().catch(() => ({}))) as ApiErrorShape & {
+        data?: { items: SettingHistoryItemGeneric[] }
+      }
+      if (!res.ok) {
+        const msg = translate(classifyHttpError(res.status, body))
+        loadError.value = msg
+        throw new Error(msg)
+      }
+      return body.data?.items ?? []
+    } catch (e) {
+      if (isAbortError(e)) throw e
+      if (loadError.value === null) loadError.value = translate('NETWORK')
+      throw e instanceof Error ? e : new Error(String(e))
+    } finally {
+      loading.value = false
+    }
+  }
+
   return {
     loading,
     saving,
@@ -225,5 +366,9 @@ export function useAdminSettings(): UseAdminSettingsApi {
     loadCurrent,
     loadHistory,
     updateThreshold,
+    activeSettings,
+    fetchActiveSettings,
+    rotateSetting,
+    fetchSettingHistory,
   }
 }

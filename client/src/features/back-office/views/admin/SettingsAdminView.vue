@@ -6,25 +6,35 @@ import {
   useAdminSettings,
   type SettingHistoryItem,
   type ThresholdAlertValue,
+  type SettingActiveSummary,
+  type SettingHistoryItemGeneric,
+  type AdminSettingKey,
 } from '../../composables/useAdminSettings'
 
 /**
  * Story 5.5 AC #8 — Admin settings versionnés (V1 onglet « Seuils »).
+ * Story 7-4 D-5 — extension : ajout onglet « Général » avec 8 clés whitelist D-1.
  *
- * Onglet « Seuils » expose le formulaire d'édition de la clé
- * `threshold_alert` consommée par le cron `threshold-alerts.ts` (cron
- * dispatcher 1×/jour à 03:00 UTC). L'admin peut modifier le seuil, la
- * fenêtre, et la dédup ; les nouvelles valeurs sont appliquées au
- * prochain tour de cron (jusqu'à 24 h).
+ * Onglet « Seuils » expose le formulaire d'édition de la clé `threshold_alert`
+ * consommée par le cron `threshold-alerts.ts`. L'admin peut modifier le seuil,
+ * la fenêtre, et la dédup ; les nouvelles valeurs sont appliquées au prochain
+ * tour de cron (jusqu'à 24 h).
  *
- * Route : `/admin/settings?tab=thresholds`. La structure tabbed est
- * extensible — Story 7.4 ajoutera d'autres onglets (TVA, remise
- * responsable, dossier OneDrive, etc.).
+ * Onglet « Général » expose les 8 clés whitelist D-1 (vat_rate_default,
+ * group_manager_discount, threshold_alert read-only, maintenance_mode,
+ * company.* x4, onedrive.pdf_folder_root) avec rotation atomique INSERT-only
+ * (D-2 trigger DB) + historique collapsible 10 dernières versions (D-6).
+ *
+ * Route : `/admin/settings?tab=thresholds` (Story 5.5) ou
+ * `/admin/settings?tab=general` (Story 7-4).
  */
 
-type TabId = 'thresholds'
+type TabId = 'thresholds' | 'general'
 
-const TABS: ReadonlyArray<{ id: TabId; label: string }> = [{ id: 'thresholds', label: 'Seuils' }]
+const TABS: ReadonlyArray<{ id: TabId; label: string }> = [
+  { id: 'thresholds', label: 'Seuils' },
+  { id: 'general', label: 'Général' },
+]
 
 const route = useRoute()
 const router = useRouter()
@@ -39,10 +49,6 @@ const form = ref<ThresholdAlertValue & { notes: string }>({
   notes: '',
 })
 
-// CR patch U6 : ne pas laisser l'utilisateur soumettre les valeurs par
-// défaut affichées avant que `loadCurrent` ait réhydraté les valeurs
-// réellement actives. Le bouton est désactivé tant que `formHydrated`
-// est false.
 const formHydrated = ref(false)
 
 const toast = ref<{ kind: 'success' | 'error'; message: string } | null>(null)
@@ -57,8 +63,6 @@ function showToast(kind: 'success' | 'error', message: string): void {
   }, 4000)
 }
 
-// CR patch U5 : clear le timer du toast au démontage pour éviter une
-// mutation reactive sur composant détruit (Vue 3 tolère mais sloppy).
 onBeforeUnmount(() => {
   if (toastTimer !== null) {
     clearTimeout(toastTimer)
@@ -74,9 +78,6 @@ function hydrateFromTab(): void {
   }
 }
 
-// CR patch U3 : préserver TOUTES les entrées de query string (y compris
-// null `?foo` et arrays) lors d'un switch d'onglet. Vue Router type
-// `LocationQueryValue` couvre string | null ; on conserve tel quel.
 function selectTab(id: TabId): void {
   activeTab.value = id
   const nextQuery: Record<string, LocationQueryValue | LocationQueryValue[]> = {}
@@ -86,6 +87,11 @@ function selectTab(id: TabId): void {
   }
   nextQuery['tab'] = id
   void router.replace({ query: nextQuery })
+
+  // Lazy-fetch onglet général à la première bascule.
+  if (id === 'general' && settings.activeSettings.value.length === 0) {
+    void refreshGeneralSettings()
+  }
 }
 
 async function refresh(): Promise<void> {
@@ -107,9 +113,6 @@ async function refresh(): Promise<void> {
   }
 }
 
-// CR patch U8 : valide cliennt-side que les 3 numbers sont des entiers
-// dans les bornes Zod du serveur. Le bouton est désactivé si invalide,
-// `onSubmit` court-circuite par sécurité (clavier admin scriptable).
 const formIsValid = computed(() => {
   const { count, days, dedup_hours } = form.value
   return (
@@ -139,7 +142,6 @@ async function onSubmit(e: Event): Promise<void> {
     await settings.updateThreshold(payload)
     showToast('success', 'Seuils enregistrés. Appliqués au prochain cron (jusqu’à 24 h).')
     form.value.notes = ''
-    // CR patch U4 : aligner sur le label "5 dernières versions" affiché.
     await settings.loadHistory('threshold_alert', 5)
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') return
@@ -174,9 +176,170 @@ function formatDateTime(iso: string): string {
   }
 }
 
+// --- Story 7-4 onglet "Général" ---
+
+interface GeneralRotateForm {
+  // Pour bp keys.
+  bp: number
+  // Pour maintenance_mode.
+  enabled: boolean
+  message: string
+  // Pour string raw.
+  rawValue: string
+  // Commun.
+  validFrom: string
+  notes: string
+}
+
+/**
+ * Hardening W-7-4-3 — formatter local-time pour `<input type="datetime-local">`.
+ * `Date.toISOString()` produit une string UTC, mais `datetime-local` interprète
+ * sa value et son attribut `min` comme heure locale du navigateur. Sans ce
+ * helper, un admin Europe/Paris (UTC+2 été) verrait un default 2h en arrière
+ * et déclencherait des faux positifs 422 INVALID_VALID_FROM côté handler.
+ */
+function formatLocalDateTimeInput(d: Date): string {
+  const pad = (n: number): string => String(n).padStart(2, '0')
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`
+}
+
+function buildDefaultForm(): GeneralRotateForm {
+  // valid_from défaut = now + 1h (cohérent D-4 onboarding).
+  // Hardening W-7-4-3 : local-time YYYY-MM-DDTHH:mm (pas UTC), cohérent
+  // attribute `min` du datetime-local et avec l'UX navigateur.
+  const inOneHour = new Date(Date.now() + 60 * 60 * 1000)
+  return {
+    bp: 0,
+    enabled: false,
+    message: '',
+    rawValue: '',
+    validFrom: formatLocalDateTimeInput(inOneHour),
+    notes: '',
+  }
+}
+
+const generalRotateForms = ref<Record<string, GeneralRotateForm>>({})
+const expandedHistory = ref<Record<string, SettingHistoryItemGeneric[] | null>>({})
+
+function ensureForm(key: string, initial: SettingActiveSummary): GeneralRotateForm {
+  if (!generalRotateForms.value[key]) {
+    const form = buildDefaultForm()
+    // Hydrate avec valeur courante.
+    if (typeof initial.value === 'object' && initial.value !== null) {
+      const v = initial.value as Record<string, unknown>
+      if (typeof v['bp'] === 'number') form.bp = v['bp']
+      if (typeof v['enabled'] === 'boolean') form.enabled = v['enabled']
+      if (typeof v['message'] === 'string') form.message = v['message']
+    } else if (typeof initial.value === 'string') {
+      form.rawValue = initial.value
+    }
+    generalRotateForms.value[key] = form
+  }
+  return generalRotateForms.value[key]!
+}
+
+async function refreshGeneralSettings(): Promise<void> {
+  try {
+    await settings.fetchActiveSettings()
+    // Hydrate forms.
+    for (const item of settings.activeSettings.value) {
+      ensureForm(item.key, item)
+    }
+  } catch (e) {
+    if (e instanceof Error && e.name === 'AbortError') return
+    showToast('error', settings.loadError.value ?? 'Lecture impossible.')
+  }
+}
+
+const minValidFromAttr = computed(() => {
+  // input datetime-local : min = maintenant + 1min (D-4 client-side guard).
+  // Hardening W-7-4-3 : local-time formatter (pas UTC) cohérent UX navigateur.
+  const t = new Date(Date.now() + 60 * 1000)
+  return formatLocalDateTimeInput(t)
+})
+
+function buildValuePayload(key: string, form: GeneralRotateForm): unknown {
+  if (key === 'vat_rate_default' || key === 'group_manager_discount') {
+    return { bp: form.bp }
+  }
+  if (key === 'threshold_alert') {
+    // READ-ONLY onglet général D-9 — ne devrait pas être appelé.
+    return null
+  }
+  if (key === 'maintenance_mode') {
+    const out: Record<string, unknown> = { enabled: form.enabled }
+    if (form.message.trim() !== '') out['message'] = form.message
+    return out
+  }
+  // company.* + onedrive.* → string raw.
+  return form.rawValue
+}
+
+async function onRotate(key: string): Promise<void> {
+  const form = generalRotateForms.value[key]
+  if (!form) return
+  if (key === 'threshold_alert') {
+    showToast('error', 'Seuils alerte non éditables ici (utiliser onglet Seuils pour rotation).')
+    return
+  }
+  // D-4 client-side guard : valid_from ≥ now-5min.
+  const t = Date.parse(form.validFrom)
+  const now = Date.now()
+  if (Number.isNaN(t) || t < now - 5 * 60 * 1000) {
+    showToast('error', 'Date d’effet invalide (doit être dans le futur).')
+    return
+  }
+  // ISO format pour le handler (datetime-local n'a pas la TZ).
+  const iso = new Date(form.validFrom).toISOString()
+  try {
+    await settings.rotateSetting(
+      key as AdminSettingKey,
+      buildValuePayload(key, form),
+      iso,
+      form.notes
+    )
+    showToast('success', `Clé ${key} rotatée — applique à compter du ${formatDateTime(iso)}.`)
+    form.notes = ''
+    await refreshGeneralSettings()
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') return
+    showToast('error', settings.saveError.value ?? 'Enregistrement impossible.')
+  }
+}
+
+async function onToggleHistory(key: string): Promise<void> {
+  if (expandedHistory.value[key] !== undefined && expandedHistory.value[key] !== null) {
+    // Déjà chargé — collapse.
+    expandedHistory.value[key] = null
+    return
+  }
+  try {
+    const items = await settings.fetchSettingHistory(key as AdminSettingKey, 10)
+    expandedHistory.value[key] = items
+  } catch (err) {
+    if (err instanceof Error && err.name === 'AbortError') return
+    showToast('error', settings.loadError.value ?? 'Lecture historique impossible.')
+  }
+}
+
+function formatGeneralValue(value: unknown): string {
+  if (value === null || value === undefined) return '—'
+  if (typeof value === 'object') {
+    try {
+      return JSON.stringify(value)
+    } catch {
+      return '[object]'
+    }
+  }
+  return String(value)
+}
+
 onMounted(async () => {
   hydrateFromTab()
   await refresh()
+  if (activeTab.value === 'general') {
+    await refreshGeneralSettings()
+  }
 })
 </script>
 
@@ -317,6 +480,172 @@ onMounted(async () => {
       </section>
     </section>
 
+    <!-- Story 7-4 onglet "Général" — 8 clés whitelist D-1 -->
+    <section v-if="activeTab === 'general'" role="tabpanel" class="panel">
+      <header class="panel-header">
+        <h2>Paramètres versionnés (Général)</h2>
+        <p class="hint">
+          Chaque rotation crée une nouvelle version avec date d'effet future. L'historique intégral
+          est préservé (iso-fact preservation) — les SAV/avoirs déjà émis utilisent toujours la
+          valeur snapshot gelée à création.
+        </p>
+      </header>
+
+      <p v-if="settings.loading.value" class="status">Chargement…</p>
+      <p v-else-if="settings.activeSettings.value.length === 0" class="status muted">
+        Aucune clé settings en DB (seed initial vide).
+      </p>
+
+      <div v-else class="general-list">
+        <article v-for="item in settings.activeSettings.value" :key="item.key" class="setting-card">
+          <header class="setting-card-header">
+            <h3 class="setting-key">{{ item.key }}</h3>
+            <p class="setting-current">
+              <strong>Valeur actuelle :</strong>
+              <code>{{ formatGeneralValue(item.value) }}</code>
+              <span class="muted">
+                (depuis {{ formatDateTime(item.valid_from) }} —
+                {{ item.versions_count }} version<span v-if="item.versions_count > 1">s</span>)
+              </span>
+            </p>
+          </header>
+
+          <form
+            v-if="item.key !== 'threshold_alert'"
+            class="rotate-form"
+            @submit.prevent="onRotate(item.key)"
+          >
+            <!-- bp keys -->
+            <div
+              v-if="item.key === 'vat_rate_default' || item.key === 'group_manager_discount'"
+              class="field"
+            >
+              <label :for="`bp-${item.key}`">Valeur (bp — basis points, 550 = 5,5 %)</label>
+              <input
+                :id="`bp-${item.key}`"
+                v-model.number="ensureForm(item.key, item).bp"
+                type="number"
+                min="0"
+                max="10000"
+                step="1"
+                required
+              />
+            </div>
+
+            <!-- maintenance_mode -->
+            <div v-else-if="item.key === 'maintenance_mode'" class="field">
+              <label>
+                <input v-model="ensureForm(item.key, item).enabled" type="checkbox" />
+                Activé (bannière maintenance affichée)
+              </label>
+              <input
+                v-model="ensureForm(item.key, item).message"
+                type="text"
+                maxlength="500"
+                placeholder="Message optionnel"
+              />
+            </div>
+
+            <!-- string raw (company.*, onedrive.*) -->
+            <div v-else class="field">
+              <label :for="`raw-${item.key}`">Valeur</label>
+              <input
+                :id="`raw-${item.key}`"
+                v-model="ensureForm(item.key, item).rawValue"
+                type="text"
+                maxlength="500"
+                :placeholder="item.key === 'onedrive.pdf_folder_root' ? '/AvoirsPDF' : ''"
+                required
+              />
+            </div>
+
+            <div class="field">
+              <label :for="`valid-from-${item.key}`">Date d'effet</label>
+              <input
+                :id="`valid-from-${item.key}`"
+                v-model="ensureForm(item.key, item).validFrom"
+                type="datetime-local"
+                :min="minValidFromAttr"
+                required
+              />
+              <span class="field-hint">Doit être ≥ maintenant (D-4 strict).</span>
+            </div>
+            <div class="field">
+              <label :for="`notes-${item.key}`">Note (optionnel)</label>
+              <input
+                :id="`notes-${item.key}`"
+                v-model="ensureForm(item.key, item).notes"
+                type="text"
+                maxlength="500"
+                placeholder="Motivation"
+              />
+            </div>
+            <div class="actions">
+              <button type="submit" class="btn primary small" :disabled="settings.saving.value">
+                Rotater
+              </button>
+              <button
+                type="button"
+                class="btn ghost small"
+                :data-history-toggle="item.key"
+                @click="onToggleHistory(item.key)"
+              >
+                Historique
+              </button>
+            </div>
+          </form>
+
+          <p v-else class="muted threshold-readonly">
+            Lecture seule (clé éditable via onglet « Seuils »).
+            <button
+              type="button"
+              class="btn ghost small"
+              :data-history-toggle="item.key"
+              @click="onToggleHistory(item.key)"
+            >
+              Historique
+            </button>
+          </p>
+
+          <section
+            v-if="expandedHistory[item.key] !== undefined && expandedHistory[item.key] !== null"
+            class="history-panel"
+          >
+            <h4>Historique (10 dernières versions)</h4>
+            <table class="history-table">
+              <thead>
+                <tr>
+                  <th>Période</th>
+                  <th>Valeur</th>
+                  <th>Auteur</th>
+                  <th>Note</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr
+                  v-for="h in expandedHistory[item.key] ?? []"
+                  :key="h.id"
+                  :class="{ active: h.valid_to === null }"
+                >
+                  <td>
+                    <div>{{ formatDateTime(h.valid_from) }}</div>
+                    <div class="muted">
+                      {{ h.valid_to === null ? 'Active' : `→ ${formatDateTime(h.valid_to)}` }}
+                    </div>
+                  </td>
+                  <td>
+                    <code>{{ formatGeneralValue(h.value) }}</code>
+                  </td>
+                  <td>{{ h.updated_by?.email_display_short ?? '—' }}</td>
+                  <td>{{ h.notes ?? '—' }}</td>
+                </tr>
+              </tbody>
+            </table>
+          </section>
+        </article>
+      </div>
+    </section>
+
     <transition name="toast">
       <div v-if="toast !== null" :class="['toast', toast.kind]" role="status" aria-live="polite">
         {{ toast.message }}
@@ -425,6 +754,10 @@ onMounted(async () => {
   font-size: 0.95rem;
   cursor: pointer;
 }
+.btn.small {
+  padding: 0.4rem 0.9rem;
+  font-size: 0.85rem;
+}
 .btn.primary {
   background: #f57c00;
   color: white;
@@ -432,6 +765,11 @@ onMounted(async () => {
 }
 .btn.primary:hover:not(:disabled) {
   background: #e65100;
+}
+.btn.ghost {
+  background: #fff;
+  border: 1px solid #ccc;
+  color: #555;
 }
 .btn:disabled {
   opacity: 0.6;
@@ -499,8 +837,56 @@ onMounted(async () => {
 .toast-leave-to {
   opacity: 0;
 }
+.general-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+.setting-card {
+  border: 1px solid #eee;
+  border-radius: 6px;
+  padding: 1rem;
+  background: #fafafa;
+}
+.setting-card-header {
+  margin-bottom: 0.75rem;
+}
+.setting-key {
+  margin: 0 0 0.25rem 0;
+  font-size: 1rem;
+  font-family: monospace;
+  color: #1f2937;
+}
+.setting-current code {
+  background: #fff;
+  padding: 2px 6px;
+  border-radius: 3px;
+  border: 1px solid #ddd;
+  font-size: 0.85rem;
+}
+.rotate-form {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 0.75rem;
+}
+.rotate-form .actions {
+  grid-column: 1 / -1;
+}
+.threshold-readonly {
+  margin: 0.5rem 0;
+}
+.history-panel {
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid #eee;
+}
+.history-panel h4 {
+  margin: 0 0 0.5rem 0;
+  font-size: 0.95rem;
+}
 @media (max-width: 720px) {
-  .form {
+  .form,
+  .rotate-form {
     grid-template-columns: 1fr;
   }
 }

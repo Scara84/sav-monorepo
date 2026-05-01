@@ -190,3 +190,110 @@ export function validationListCreateBody(
     ...overrides,
   }
 }
+
+/**
+ * Story 7-4 — fixtures `settings` versionnés.
+ *
+ * D-1 whitelist V1 : 8 clés strictes (aussi exposée côté handler via Zod
+ * `z.enum([...])`).
+ * D-3 dispatch shape : value jsonb par-clé (object pour bp / threshold /
+ * maintenance, string raw pour company.* / onedrive.*).
+ *
+ * Ces fixtures ne touchent pas l'infra DB existante (table `settings` +
+ * trigger `trg_settings_close_previous` + UNIQUE INDEX `settings_one_active_per_key`).
+ */
+export type SettingKey =
+  | 'vat_rate_default'
+  | 'group_manager_discount'
+  | 'threshold_alert'
+  | 'maintenance_mode'
+  | 'company.legal_name'
+  | 'company.siret'
+  | 'company.tva_intra'
+  | 'company.legal_mentions_short'
+  | 'onedrive.pdf_folder_root'
+
+export const SETTING_KEYS_WHITELIST: readonly SettingKey[] = [
+  'vat_rate_default',
+  'group_manager_discount',
+  'threshold_alert',
+  'maintenance_mode',
+  'company.legal_name',
+  'company.siret',
+  'company.tva_intra',
+  'company.legal_mentions_short',
+  'onedrive.pdf_folder_root',
+] as const
+
+export interface SettingActiveSummary {
+  id: number
+  key: SettingKey
+  value: unknown
+  valid_from: string
+  valid_to: string | null
+  notes: string | null
+  created_at: string
+  updated_by: { id: number; email_display_short: string | null } | null
+  versions_count: number
+}
+
+export interface SettingHistoryItem {
+  id: number
+  value: unknown
+  valid_from: string
+  valid_to: string | null
+  notes: string | null
+  created_at: string
+  updated_by: { id: number; email_display_short: string | null } | null
+}
+
+export function settingActive(overrides: Partial<SettingActiveSummary> = {}): SettingActiveSummary {
+  return {
+    id: 1001,
+    key: 'vat_rate_default',
+    value: { bp: 550 },
+    valid_from: '2020-01-01T00:00:00Z',
+    valid_to: null,
+    notes: null,
+    created_at: '2020-01-01T00:00:00Z',
+    updated_by: { id: ADMIN_ID, email_display_short: 'admin' },
+    versions_count: 1,
+    ...overrides,
+  }
+}
+
+export function settingHistoryItem(
+  overrides: Partial<SettingHistoryItem> = {}
+): SettingHistoryItem {
+  return {
+    id: 1001,
+    value: { bp: 550 },
+    valid_from: '2020-01-01T00:00:00Z',
+    valid_to: null,
+    notes: null,
+    created_at: '2020-01-01T00:00:00Z',
+    updated_by: { id: ADMIN_ID, email_display_short: 'admin' },
+    ...overrides,
+  }
+}
+
+export interface SettingRotateBodyFixture {
+  value: unknown
+  valid_from: string
+  notes?: string
+}
+
+/**
+ * Body PATCH /api/admin/settings/:key — par défaut shape `vat_rate_default`
+ * (`{bp:int}`) avec valid_from futur (now + 1h).
+ */
+export function settingRotateBody(
+  overrides: Partial<SettingRotateBodyFixture> = {}
+): SettingRotateBodyFixture {
+  const future = new Date(Date.now() + 60 * 60 * 1000).toISOString()
+  return {
+    value: { bp: 600 },
+    valid_from: future,
+    ...overrides,
+  }
+}

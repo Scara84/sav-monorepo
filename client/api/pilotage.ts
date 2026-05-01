@@ -22,6 +22,9 @@ import { adminProductDeleteHandler } from './_lib/admin/product-delete-handler'
 import { adminValidationListsListHandler } from './_lib/admin/validation-lists-list-handler'
 import { adminValidationListCreateHandler } from './_lib/admin/validation-list-create-handler'
 import { adminValidationListUpdateHandler } from './_lib/admin/validation-list-update-handler'
+import { adminSettingsListHandler } from './_lib/admin/settings-list-handler'
+import { adminSettingRotateHandler } from './_lib/admin/setting-rotate-handler'
+import { adminSettingHistoryHandler } from './_lib/admin/setting-history-handler'
 import type { ApiHandler, ApiRequest, ApiResponse } from './_lib/types'
 
 /**
@@ -76,6 +79,10 @@ const ALLOWED_OPS = new Set([
   'admin-validation-lists-list',
   'admin-validation-list-create',
   'admin-validation-list-update',
+  // Story 7-4 — admin settings versionnés (D-1 whitelist 8 clés, D-2 INSERT-only)
+  'admin-settings-list',
+  'admin-setting-rotate',
+  'admin-setting-history',
 ])
 
 /**
@@ -108,6 +115,10 @@ const ADMIN_ONLY_OPS = new Set([
   'admin-validation-lists-list',
   'admin-validation-list-create',
   'admin-validation-list-update',
+  // Story 7-4
+  'admin-settings-list',
+  'admin-setting-rotate',
+  'admin-setting-history',
 ])
 
 function requireAdminRole(req: ApiRequest, res: ApiResponse, requestId: string): boolean {
@@ -193,6 +204,13 @@ const dispatch: ApiHandler = async (req, res) => {
   if (op === 'admin-validation-lists-list' && method === 'POST') {
     op = 'admin-validation-list-create'
   }
+
+  // Story 7-4 — `/api/admin/settings*` :
+  //   GET    /api/admin/settings              → admin-settings-list (rewrite par défaut)
+  //   PATCH  /api/admin/settings/:key         → admin-setting-rotate (rewrite dédiée)
+  //   GET    /api/admin/settings/:key/history → admin-setting-history (rewrite dédiée)
+  // Pas de remap méthode-aware nécessaire (chaque URL/op a sa propre rewrite).
+  // Invariant ADMIN_ONLY_OPS respecté : les 3 ops settings 7-4 sont admin-only.
 
   // Story 7-3a AC #4 — D-10 : RBAC defense-in-depth. Les ops admin-only
   // exigent role='admin' avant délégation.
@@ -396,6 +414,37 @@ const dispatch: ApiHandler = async (req, res) => {
       return
     }
     return adminValidationListUpdateHandler(req, res)
+  }
+
+  // Story 7-4 — admin settings versionnés (list / rotate PATCH / history GET).
+  // D-1 whitelist 8 clés (Zod handler-side). D-2 INSERT-only via trigger DB
+  // W22 + UNIQUE INDEX W37. D-7 audit double-write (trigger PG + recordAudit
+  // handler best-effort).
+  if (op === 'admin-settings-list') {
+    if (method !== 'GET') {
+      res.setHeader('Allow', 'GET')
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
+      return
+    }
+    return adminSettingsListHandler(req, res)
+  }
+
+  if (op === 'admin-setting-rotate') {
+    if (method !== 'PATCH') {
+      res.setHeader('Allow', 'PATCH')
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
+      return
+    }
+    return adminSettingRotateHandler(req, res)
+  }
+
+  if (op === 'admin-setting-history') {
+    if (method !== 'GET') {
+      res.setHeader('Allow', 'GET')
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
+      return
+    }
+    return adminSettingHistoryHandler(req, res)
   }
 
   sendError(res, 'NOT_FOUND', 'Route non disponible', requestId)
