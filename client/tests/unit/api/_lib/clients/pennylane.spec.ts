@@ -39,7 +39,7 @@ afterEach(() => {
   vi.useRealTimers()
 })
 
-describe('PL-01 happy path : invoice trouvée → data[0]', () => {
+describe('PL-01 happy path : invoice trouvée → items[0]', () => {
   it('appelle GET /customer_invoices avec filter encodé + Authorization Bearer', async () => {
     const invoice: PennylaneInvoice = {
       invoice_number: 'F-2025-37039',
@@ -53,7 +53,7 @@ describe('PL-01 happy path : invoice trouvée → data[0]', () => {
     }
     mockFetch(
       () =>
-        new Response(JSON.stringify({ data: [invoice] }), {
+        new Response(JSON.stringify({ items: [invoice] }), {
           status: 200,
           headers: { 'content-type': 'application/json' },
         })
@@ -68,7 +68,9 @@ describe('PL-01 happy path : invoice trouvée → data[0]', () => {
     expect(calls.length).toBe(1)
     const url = calls[0]!.url
     // Filter encodé : `:` → `%3A`
-    expect(url).toContain('filter=invoice_number%3Aeq%3AF-2025-37039')
+    expect(url).toContain(
+      'filter=%5B%7B%22field%22%3A%22invoice_number%22%2C%22operator%22%3A%22eq%22%2C%22value%22%3A%22F-2025-37039%22%7D%5D'
+    )
     expect(url).toContain('limit=1')
     expect(url.startsWith('https://app.pennylane.com/api/external/v2/customer_invoices')).toBe(true)
     const headers = calls[0]!.init?.headers as Record<string, string>
@@ -95,11 +97,11 @@ describe('PL-02 timeout 8s → PennylaneTimeoutError', () => {
   })
 })
 
-describe('PL-03 data: [] → null', () => {
+describe('PL-03 items: [] → null', () => {
   it('résultat vide retourne null (pas throw)', async () => {
     mockFetch(
       () =>
-        new Response(JSON.stringify({ data: [] }), {
+        new Response(JSON.stringify({ items: [] }), {
           status: 200,
           headers: { 'content-type': 'application/json' },
         })
@@ -150,9 +152,9 @@ describe('PL-06 PENNYLANE_API_KEY missing → fail-fast', () => {
 })
 
 describe('encodePennylaneFilter helper', () => {
-  it('encode field:op:value avec %3A pour les colons', () => {
+  it('encode le filtre v2 en JSON array URL-encoded', () => {
     expect(encodePennylaneFilter('invoice_number', 'eq', 'F-2025-37039')).toBe(
-      'invoice_number%3Aeq%3AF-2025-37039'
+      '%5B%7B%22field%22%3A%22invoice_number%22%2C%22operator%22%3A%22eq%22%2C%22value%22%3A%22F-2025-37039%22%7D%5D'
     )
   })
 })

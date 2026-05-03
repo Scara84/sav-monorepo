@@ -56,6 +56,10 @@ export interface PennylaneInvoice {
     phone?: string | null
     billing_address?: Record<string, unknown> | null
   }
+  /** v2 expose `invoice_lines` comme sub-resource `{url}` côté list. Le client
+   *  fait un GET séparé pour matérialiser un array, et alias `line_items` pour
+   *  rester compatible avec les consommateurs front (InvoiceDetails.vue). */
+  invoice_lines?: Array<Record<string, unknown>> | { url?: string }
   line_items?: Array<Record<string, unknown>>
   currency_amount?: string | number | null
   currency_amount_before_tax?: string | number | null
@@ -67,8 +71,9 @@ export interface PennylaneInvoice {
 }
 
 interface PennylaneListResponse {
-  data?: PennylaneInvoice[]
-  cursor?: string | null
+  items?: PennylaneInvoice[]
+  has_more?: boolean
+  next_cursor?: string | null
 }
 
 export class PennylaneUnauthorizedError extends Error {
@@ -96,24 +101,16 @@ export class PennylaneTimeoutError extends Error {
 }
 
 /**
- * URL-encode `field:op:value` pour le query param `filter`.
+ * URL-encode le filtre Pennylane v2.
  *
- * Pennylane v2 attend la syntaxe `filter=invoice_number:eq:F-2025-37039`
- * dans l'URL. Le caractère `:` n'est pas un séparateur réservé en query
- * string (RFC 3986 §3.4) mais certains reverse-proxies / WAF peuvent
- * normaliser de façon imprévisible — encoder explicitement `%3A` est
- * la voie sûre (Pennylane décode bien `%3A` côté serveur).
+ * Pennylane v2 attend désormais un JSON array du type
+ * `[{"field":"invoice_number","operator":"eq","value":"F-2025-37039"}]`.
+ * L'ancienne syntaxe colon-separated `field:op:value` retourne 400 depuis
+ * un breaking change côté Pennylane (constaté 2026-05-03 lors de l'UAT V1).
  */
 export function encodePennylaneFilter(field: string, op: 'eq' | 'in', value: string): string {
-  // `value` peut contenir des caractères spéciaux (e.g. `F-2025-37039` est OK,
-  // mais on protège pour le cas générique). On encode field/value via
-  // encodeURIComponent puis on remplace `%3A` par … `%3A` (no-op visuel,
-  // ça documente l'intention).
-  const safeField = encodeURIComponent(field)
-  const safeValue = encodeURIComponent(value)
-  // Le séparateur `:` est encodé en `%3A` — Pennylane reçoit la string
-  // décodée par son framework et la parse comme `field:op:value`.
-  return `${safeField}%3A${op}%3A${safeValue}`
+  const filterPayload = [{ field, operator: op, value }]
+  return encodeURIComponent(JSON.stringify(filterPayload))
 }
 
 /**
@@ -204,13 +201,99 @@ export async function findInvoiceByNumber(invoiceNumber: string): Promise<Pennyl
     )
   }
 
-  const data = Array.isArray(json.data) ? json.data : []
-  if (data.length === 0) return null
-  // Story 5.7 patch P6 — `:eq:` filter doit retourner 0 ou 1 row. Un
-  // `length > 1` est anormal côté Pennylane (numéro facture en théorie
-  // unique) → log warn pour observabilité, on retourne quand même `data[0]`.
-  if (data.length > 1) {
-    logger.warn('pennylane.lookup.multi_match', { count: data.length })
+  const items = Array.isArray(json.items) ? json.items : []
+  if (items.length === 0) return null
+  // `eq` filter doit retourner 0 ou 1 row. Un `length > 1` est anormal côté
+  // Pennylane (numéro facture en théorie unique) → log warn pour observabilité,
+  // on retourne quand même `items[0]`.
+  if (items.length > 1) {
+    logger.warn('pennylane.lookup.multi_match', { count: items.length })
   }
-  return data[0] ?? null
+  const invoice = items[0]
+  if (!invoice) return null
+  // v2 ne retourne que `customer: { id, url }` côté list. On enrichit avec
+  // un GET séparé pour récupérer `emails` (nécessite scope Customers).
+  if (invoice.customer && !Array.isArray(invoice.customer.emails) && invoice.customer.id) {
+    try {
+      const cust = await fetchCustomer(baseUrl, apiKey, invoice.customer.id)
+      if (cust) Object.assign(invoice.customer, cust)
+    } catch (err) {
+      logger.warn('pennylane.customer_fetch_failed', {
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+  }
+  // v2 retourne `invoice_lines: { url }` (sub-resource). On matérialise l'array
+  // pour le front qui consomme `line_items`.
+  if (
+    invoice.invoice_lines &&
+    !Array.isArray(invoice.invoice_lines) &&
+    typeof invoice.invoice_lines.url === 'string'
+  ) {
+    try {
+      const lines = await fetchSubResource(invoice.invoice_lines.url, apiKey)
+      if (Array.isArray(lines)) {
+        invoice.invoice_lines = lines
+        invoice.line_items = lines
+      }
+    } catch (err) {
+      logger.warn('pennylane.invoice_lines_fetch_failed', {
+        error: err instanceof Error ? err.message : String(err),
+      })
+    }
+  } else if (Array.isArray(invoice.invoice_lines) && !invoice.line_items) {
+    invoice.line_items = invoice.invoice_lines
+  }
+  return invoice
+}
+
+async function fetchCustomer(
+  baseUrl: string,
+  apiKey: string,
+  id: number | string
+): Promise<Record<string, unknown> | null> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
+  try {
+    const res = await fetch(`${baseUrl}/customers/${id}`, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
+      signal: controller.signal,
+    })
+    clearTimeout(timer)
+    if (!res.ok) {
+      logger.warn('pennylane.customer_fetch_non_ok', { status: res.status })
+      return null
+    }
+    return (await res.json()) as Record<string, unknown>
+  } catch (err) {
+    clearTimeout(timer)
+    throw err
+  }
+}
+
+/** Fetch un sub-resource Pennylane v2 et retourne le tableau `items` (ou null). */
+async function fetchSubResource(
+  url: string,
+  apiKey: string
+): Promise<Array<Record<string, unknown>> | null> {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), FETCH_TIMEOUT_MS)
+  try {
+    const res = await fetch(url, {
+      method: 'GET',
+      headers: { Authorization: `Bearer ${apiKey}`, Accept: 'application/json' },
+      signal: controller.signal,
+    })
+    clearTimeout(timer)
+    if (!res.ok) {
+      logger.warn('pennylane.sub_resource_fetch_non_ok', { status: res.status, url })
+      return null
+    }
+    const json = (await res.json()) as { items?: Array<Record<string, unknown>> }
+    return Array.isArray(json.items) ? json.items : null
+  } catch (err) {
+    clearTimeout(timer)
+    throw err
+  }
 }
