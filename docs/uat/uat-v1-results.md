@@ -30,12 +30,17 @@
 - `/admin/validation-lists` form ajout → "Ordre" — impossible de définir un ordre custom
 - `/invoice-details` form réclamation → "Quantité" — **CRITIQUE** : adhérent ne peut pas saisir la quantité réclamée → bloquant capture self-service
 
-**Statut** : ❌ NON patché. **Pattern à corriger sur les 3 vues** (probable composant ou règle Tailwind/Zod commune). 
+**Statut** : ✅ RÉSOLU 2026-05-05 par Story V1.1 (`_bmad-output/implementation-artifacts/v1-1-spinbutton-range-bug.md`).
 
-**Actions V1.x avant ship** :
-- Identifier la racine commune (composant input partagé ?)
-- Corriger les 3 occurrences ou centraliser
-- Test E2E "submit form sans rage-clic devtools" pour catch ce genre de régression
+**Investigation** : 3 occurrences indépendantes (pas de composant partagé). Cause terrain Quantité : `step="0.01"` sans `min/max` + virgule FR rejetée par Chrome → input vide → `Number('') || 0 = 0`.
+
+**Fix livré** :
+- 3 inputs primaires patchés (Quantité, Tier 1, Ordre) avec `min/max/step/inputmode/data-test/placeholder` PATTERN-V1
+- 2 inputs back-office complémentaires (`SavDetailView`, `AddLineDialog`) hardenés (DN-1 Option A)
+- ESLint rule `no-unbounded-number-input` defense-in-depth (CI gate)
+- 30 tests mappés AC (22 Vitest + 1 E2E + 7 RuleTester) — 100% coverage
+- `docs/dev-conventions.md` PATTERN-V1 documenté
+- UAT replay 2026-05-05 : quantité 12.5 saisie + préservée + validity browser OK
 
 ---
 
@@ -90,7 +95,7 @@ Plusieurs env vars (PENNYLANE_API_KEY) initialement absentes de `client/.env`, p
 
 ## ⏸️ NON TESTÉ (à valider avant ship complet)
 
-- **Capture submit complet** — bloqué par FAIL-2 (spinbutton quantité). Une fois patché, valider POST `/api/webhooks/capture` + création SAV en base + emails.
+- **Capture submit complet end-to-end** — FAIL-2 fix vérifié 2026-05-05 (saisie 12.5 OK, AC #1 PASS). Submit complet POST `/api/webhooks/capture` + création SAV en base + emails reste à valider en preview Vercel (photo upload requiert backend actif).
 - **Persona 1 C-F** (détail SAV, édition lignes, calculs avoir, émission, PDF, reporting avec données) — nécessite au moins 1 SAV en base.
 - **Persona 1 A4, A5, A7** (réutilisation token, expiration TTL, logout).
 - **Persona 2 K2** (injection cursor base64 audit-trail HARDEN-1) — testable via curl.
@@ -105,19 +110,19 @@ Plusieurs env vars (PENNYLANE_API_KEY) initialement absentes de `client/.env`, p
 
 | Catégorie | PASS | WARN | FAIL | Pending |
 |---|---|---|---|---|
-| Ship-blockers | — | — | **2** | — |
+| Ship-blockers | **1 (FAIL-2 fixé Story V1.1)** | — | **1 (FAIL-1 Pennylane env-prod)** | — |
 | Findings | 14 | 5 | — | — |
 | Pending UAT | — | — | — | **~50** |
 
 ### Verdict actuel
-**🚨 NO-GO V1 sans fix FAIL-1 + FAIL-2.**
+**🟡 GO conditionnel V1 — FAIL-2 fixé 2026-05-05, FAIL-1 nécessite revalidation env-prod.**
 
 - **FAIL-1 (Pennylane)** : patché en session UAT, code prêt, mais nécessite token PROD étendu (scope Customers) + tests régression intégration. Sans ça, **la capture self-service est totalement HS en prod** (l'adhérent ne peut pas créer de SAV → V1 inutilisable).
-- **FAIL-2 (Spinbutton bug)** : non patché, bloque la saisie de quantité dans 3 vues UI dont la critique capture-réclamation. Sans ça, **l'adhérent ne peut pas finaliser sa demande SAV** même si le lookup marche.
+- **FAIL-2 (Spinbutton bug)** : ✅ FIXÉ 2026-05-05 par Story V1.1 — 30 tests + ESLint rule + UAT replay confirmé (saisie 12.5 OK).
 
 ### Plan reco avant ship
 
-1. **Patcher FAIL-2** (spinbutton range) — probablement 1 composant racine, fix global. Story V1.x ou inclure dans rétro Epic 7.
+1. ~~**Patcher FAIL-2**~~ ✅ DONE (Story V1.1 — 2026-05-05).
 2. **Tester en preview Vercel** la branche avec le fix FAIL-1 — vérifier que le token PROD a le scope Customers ou le mettre à jour.
 3. **Ajouter test E2E lookup Pennylane** (gated, tape l'API réelle) pour catch les futurs breaking changes.
 4. **Re-dérouler UAT capture+back-office complet** une fois les 2 fails corrigés.

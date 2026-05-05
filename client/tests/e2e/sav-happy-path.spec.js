@@ -116,3 +116,65 @@ test('SAV happy path (flow 2 étapes OneDrive upload session)', async ({ page })
   await expect(page).toHaveURL(/sav-confirmation/)
   await expect(page.getByText('Demande SAV envoyée avec succès !')).toBeVisible()
 })
+
+/**
+ * Story V1.1 AC #1(b) RED-PHASE — ATDD: Quantité value preservation after spinbutton fix.
+ *
+ * Asserts that after the V1.1 fix:
+ *   - The quantity input accepts "12.5" without silent coercion to 0.
+ *   - toHaveValue('12.5') passes before submit.
+ *   - The input is identifiable via data-test="sav-form-quantity-0".
+ *
+ * This test is RED before the fix (data-test selector not found / value coerced).
+ * It turns GREEN after V1.1 patch to WebhookItemsList.vue.
+ *
+ * D-4: extended in existing sav-happy-path.spec.js, no new E2E file created.
+ */
+test('V1.1 AC#1 — quantity input accepts 12.5 and preserves value (no coercion to 0)', async ({
+  page,
+}) => {
+  // Route stubs identical to happy path
+  await page.route('**/api/upload-session', async (route) => {
+    const body = route.request().postDataJSON() || {}
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({
+        success: true,
+        uploadUrl: `https://mock-graph.local/upload/${encodeURIComponent(body.filename || 'file')}`,
+        storagePath: `SAV_Images/SAV_TEST/${body.filename || 'file'}`,
+        expiresAt: new Date(Date.now() + 3600000).toISOString(),
+      }),
+    })
+  })
+
+  await page.route('**/api/folder-share-link', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ success: true, shareLink: 'https://mock-share.local/folder' }),
+    })
+  })
+
+  await page.route('**/webhook', async (route) => {
+    await route.fulfill({
+      status: 200,
+      contentType: 'application/json',
+      body: JSON.stringify({ ok: true }),
+    })
+  })
+
+  const invoice = buildInvoice()
+  const webhookResponse = encodeURIComponent(JSON.stringify(invoice))
+  await page.goto(`/invoice-details?webhookResponse=${webhookResponse}&email=test@example.com`)
+
+  await expect(page.getByText('Détail de la facture')).toBeVisible()
+
+  const firstItem = page.locator('ul.space-y-6 > li').first()
+  await firstItem.getByRole('button', { name: 'Signaler un problème' }).click()
+
+  // V1.1 AC #1(b): fill 12.5 and assert value preserved BEFORE submit
+  const quantityInput = firstItem.locator('[data-test="sav-form-quantity-0"]')
+  await quantityInput.fill('12.5')
+  await expect(quantityInput).toHaveValue('12.5')
+})

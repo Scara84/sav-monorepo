@@ -250,6 +250,11 @@
                 <input
                   type="number"
                   step="0.01"
+                  min="0.01"
+                  max="9999.99"
+                  inputmode="decimal"
+                  :data-test="`sav-form-quantity-${index}`"
+                  placeholder="ex: 1.5"
                   v-model="getSavForm(index).quantity"
                   :disabled="getSavForm(index).filled"
                   class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 disabled:bg-gray-100"

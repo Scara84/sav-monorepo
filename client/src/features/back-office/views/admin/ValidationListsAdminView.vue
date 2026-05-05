@@ -287,7 +287,16 @@ onMounted(() => {
         </div>
         <div class="field">
           <label for="vl-create-sort">Ordre</label>
-          <input id="vl-create-sort" v-model.number="form.sort_order" type="number" min="0" />
+          <input
+            id="vl-create-sort"
+            v-model.number="form.sort_order"
+            type="number"
+            min="0"
+            max="9999"
+            step="1"
+            inputmode="numeric"
+            data-test="validation-list-create-sort-order"
+          />
         </div>
         <div class="actions">
           <button
@@ -343,6 +352,9 @@ onMounted(() => {
                 :data-test="`validation-list-edit-sort-order-${entry.id}`"
                 type="number"
                 min="0"
+                max="9999"
+                step="1"
+                inputmode="numeric"
                 class="edit-input"
               />
             </td>

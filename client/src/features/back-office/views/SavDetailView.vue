@@ -686,6 +686,7 @@ function backToList(): void {
                     v-model="editDraft[l.id]!.unitPriceEuros"
                     type="number"
                     min="0"
+                    max="999999.99"
                     step="0.01"
                     placeholder="€"
                     :aria-label="`Prix unitaire HT, ligne ${l.lineNumber ?? l.position}`"

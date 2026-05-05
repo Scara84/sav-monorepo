@@ -66,6 +66,7 @@
     "autoprefixer": "^10.4.13",
     "eslint": "^8.45.0",
     "eslint-config-prettier": "^8.8.0",
+    "eslint-plugin-local-rules": "file:eslint-plugin-local-rules",
     "eslint-plugin-prettier": "^5.5.5",
     "eslint-plugin-vue": "^9.14.1",
     "happy-dom": "^17.6.3",
@@ -110,6 +111,12 @@
         "env": {
           "browser": true,
           "es2022": true
+        },
+        "plugins": [
+          "local-rules"
+        ],
+        "rules": {
+          "local-rules/no-unbounded-number-input": "error"
         }
       },
       {

@@ -206,6 +206,7 @@ function submit(): void {
               v-model="form.unitPriceEuros"
               type="number"
               min="0"
+              max="999999.99"
               step="0.01"
               :aria-invalid="!!errors.unitPriceEuros"
               :aria-describedby="errors.unitPriceEuros ? 'err-price' : undefined"

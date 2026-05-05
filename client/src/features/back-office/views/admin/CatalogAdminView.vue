@@ -249,6 +249,7 @@ onMounted(() => {
             type="number"
             min="0"
             max="10000"
+            step="1"
           />
         </div>
         <div class="field">
@@ -268,6 +269,11 @@ onMounted(() => {
             v-model.number="form.first_tier_price_cents"
             type="number"
             min="0"
+            max="99999999"
+            step="1"
+            inputmode="numeric"
+            data-test="product-create-tier1"
+            placeholder="ex: 350"
           />
         </div>
         <div class="actions">
