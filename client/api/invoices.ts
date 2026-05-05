@@ -4,13 +4,18 @@ import { ensureRequestId } from './_lib/request-id'
 import { sendError } from './_lib/errors'
 import { logger } from './_lib/logger'
 import { hashEmail } from './_lib/auth/magic-link'
-import { createHash } from 'node:crypto'
+import { createHash, timingSafeEqual } from 'node:crypto'
 import {
   findInvoiceByNumber,
   PennylaneTimeoutError,
   PennylaneUnauthorizedError,
   PennylaneUpstreamError,
 } from './_lib/clients/pennylane'
+import { ensureFolderExists, createUploadSession } from './_lib/onedrive-ts'
+import { sanitizeFilename, sanitizeSavDossier } from './_lib/sanitize-ts'
+import { isMimeAllowed } from './_lib/mime-ts'
+import fileLimits from '../shared/file-limits.json'
+import { formatErrors } from './_lib/middleware/with-validation'
 import type { ApiHandler, ApiRequest } from './_lib/types'
 
 /**
@@ -30,7 +35,47 @@ import type { ApiHandler, ApiRequest } from './_lib/types'
  *     cross-utilisateur si même invoice cachée pour 2 IPs distinctes)
  */
 
-const ALLOWED_OPS = new Set(['lookup'])
+const ALLOWED_OPS = new Set(['lookup', 'upload-session', 'folder-share-link'])
+
+/**
+ * V1.2 hotfix 2026-05-05 — restauration endpoints publics anonymes upload-session + folder-share-link
+ * supprimés par f5cfc0e (cap Hobby 12-fn) sans propagation côté client.
+ * Multiplexés ici (slot invoices) plutôt que via webhooks/capture.ts (qui a bodyParser:false).
+ * Auth API-key X-API-Key (legacy contract conservé). Rate-limit par IP comme lookup.
+ */
+
+function safeEqualStr(a: string, b: string): boolean {
+  const ba = Buffer.from(a, 'utf8')
+  const bb = Buffer.from(b, 'utf8')
+  if (ba.length !== bb.length) return false
+  return timingSafeEqual(ba, bb)
+}
+
+function requireApiKey(req: ApiRequest): boolean {
+  const expected = process.env['API_KEY']
+  if (!expected) return false
+  const headerKey = req.headers['x-api-key']
+  const provided = Array.isArray(headerKey) ? headerKey[0] : headerKey
+  if (typeof provided === 'string' && safeEqualStr(provided, expected)) return true
+  const authHeader = req.headers['authorization']
+  const auth = Array.isArray(authHeader) ? authHeader[0] : authHeader
+  if (typeof auth === 'string' && auth.startsWith('Bearer ')) {
+    const tok = auth.substring(7).trim()
+    if (safeEqualStr(tok, expected)) return true
+  }
+  return false
+}
+
+const uploadSessionBodySchema = z.object({
+  filename: z.string().min(1).max(255),
+  mimeType: z.string().min(1).max(127),
+  size: z.number().int().positive(),
+  savDossier: z.string().min(1).max(255),
+})
+
+const folderShareBodySchema = z.object({
+  savDossier: z.string().min(1).max(255),
+})
 
 const lookupQuerySchema = z.object({
   invoiceNumber: z
@@ -182,25 +227,148 @@ const lookupCore: ApiHandler = async (req, res) => {
 
 // Rate-limit : 5 req/min/IP (clé IP brute non hashée — la table buckets
 // hashe en interne via SHA-256, cf. with-rate-limit.ts:55).
+function ipKeyFrom(req: ApiRequest): string {
+  if (req.ip && req.ip.length > 0) return req.ip
+  const fwd = req.headers['x-forwarded-for']
+  const joined = Array.isArray(fwd) ? fwd.join(',') : fwd
+  if (typeof joined === 'string' && joined.length > 0) {
+    const parts = joined
+      .split(',')
+      .map((p) => p.trim())
+      .filter((p) => p.length > 0)
+    const rightmost = parts[parts.length - 1]
+    if (rightmost) return rightmost
+  }
+  return 'unknown'
+}
+
 const lookupGuarded: ApiHandler = withRateLimit({
   bucketPrefix: 'invoice-lookup:ip',
-  keyFrom: (req: ApiRequest) => {
-    if (req.ip && req.ip.length > 0) return req.ip
-    const fwd = req.headers['x-forwarded-for']
-    const joined = Array.isArray(fwd) ? fwd.join(',') : fwd
-    if (typeof joined === 'string' && joined.length > 0) {
-      const parts = joined
-        .split(',')
-        .map((p) => p.trim())
-        .filter((p) => p.length > 0)
-      const rightmost = parts[parts.length - 1]
-      if (rightmost) return rightmost
-    }
-    return 'unknown'
-  },
+  keyFrom: ipKeyFrom,
   max: 5,
   window: '1m',
 })(lookupCore)
+
+const uploadSessionCore: ApiHandler = async (req, res) => {
+  const requestId = ensureRequestId(req)
+  if ((req.method ?? 'GET').toUpperCase() !== 'POST') {
+    res.setHeader('Allow', 'POST')
+    sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
+    return
+  }
+  if (!requireApiKey(req)) {
+    sendError(res, 'FORBIDDEN', 'API key invalide ou manquante', requestId)
+    return
+  }
+  const drivePath = process.env['MICROSOFT_DRIVE_PATH']
+  if (!drivePath) {
+    logger.error('upload-session.config_missing', { requestId })
+    sendError(res, 'SERVER_ERROR', 'Configuration manquante', requestId)
+    return
+  }
+  const parsed = uploadSessionBodySchema.safeParse(req.body)
+  if (!parsed.success) {
+    sendError(res, 'VALIDATION_FAILED', 'Body invalide', requestId, formatErrors(parsed.error))
+    return
+  }
+  const body = parsed.data
+  if (!isMimeAllowed(body.mimeType)) {
+    sendError(res, 'VALIDATION_FAILED', `Type MIME non autorisé : ${body.mimeType}`, requestId)
+    return
+  }
+  if (body.size > fileLimits.maxFileSizeBytes) {
+    sendError(res, 'VALIDATION_FAILED', `Taille > ${fileLimits.maxFileSizeMb} Mo`, requestId)
+    return
+  }
+  const sanitizedFolder = sanitizeSavDossier(body.savDossier)
+  if (!sanitizedFolder) {
+    sendError(res, 'VALIDATION_FAILED', 'savDossier invalide', requestId)
+    return
+  }
+  const sanitizedFilename = sanitizeFilename(body.filename)
+  if (!sanitizedFilename) {
+    sendError(res, 'VALIDATION_FAILED', 'filename invalide après sanitization', requestId)
+    return
+  }
+  const folderPath = `${drivePath}/${sanitizedFolder}`
+  try {
+    const parentFolderId = await ensureFolderExists(folderPath)
+    const session = await createUploadSession({ parentFolderId, filename: sanitizedFilename })
+    res.status(200).json({
+      success: true,
+      uploadUrl: session.uploadUrl,
+      expiresAt: session.expirationDateTime,
+      storagePath: `${folderPath}/${sanitizedFilename}`,
+    })
+  } catch (err) {
+    logger.error('upload-session.graph_failed', {
+      requestId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    sendError(res, 'DEPENDENCY_DOWN', 'OneDrive indisponible', requestId)
+  }
+}
+
+const folderShareLinkCore: ApiHandler = async (req, res) => {
+  const requestId = ensureRequestId(req)
+  if ((req.method ?? 'GET').toUpperCase() !== 'POST') {
+    res.setHeader('Allow', 'POST')
+    sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
+    return
+  }
+  if (!requireApiKey(req)) {
+    sendError(res, 'FORBIDDEN', 'API key invalide ou manquante', requestId)
+    return
+  }
+  const drivePath = process.env['MICROSOFT_DRIVE_PATH']
+  if (!drivePath) {
+    sendError(res, 'SERVER_ERROR', 'Configuration manquante', requestId)
+    return
+  }
+  const parsed = folderShareBodySchema.safeParse(req.body)
+  if (!parsed.success) {
+    sendError(res, 'VALIDATION_FAILED', 'Body invalide', requestId, formatErrors(parsed.error))
+    return
+  }
+  const sanitized = sanitizeSavDossier(parsed.data.savDossier)
+  if (!sanitized) {
+    sendError(res, 'VALIDATION_FAILED', 'savDossier invalide', requestId)
+    return
+  }
+  const folderPath = `${drivePath}/${sanitized}`
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const legacy = require('./_lib/onedrive.js') as {
+      getShareLinkForFolderPath: (path: string) => Promise<{ link?: { webUrl?: string } }>
+    }
+    const result = await legacy.getShareLinkForFolderPath(folderPath)
+    const webUrl = result?.link?.webUrl
+    if (!webUrl) {
+      throw new Error('Graph API: webUrl manquant dans la réponse share-link')
+    }
+    res.status(200).json({ success: true, shareLink: webUrl })
+  } catch (err) {
+    logger.error('folder-share-link.graph_failed', {
+      requestId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    sendError(res, 'DEPENDENCY_DOWN', 'OneDrive indisponible', requestId)
+  }
+}
+
+const uploadSessionGuarded: ApiHandler = withRateLimit({
+  bucketPrefix: 'upload-session:ip',
+  keyFrom: ipKeyFrom,
+  max: 30,
+  window: '1m',
+})(uploadSessionCore)
+
+const folderShareLinkGuarded: ApiHandler = withRateLimit({
+  bucketPrefix: 'folder-share-link:ip',
+  keyFrom: ipKeyFrom,
+  max: 10,
+  window: '1m',
+})(folderShareLinkCore)
 
 const dispatch: ApiHandler = async (req, res) => {
   const op = parseOp(req)
@@ -210,10 +378,15 @@ const dispatch: ApiHandler = async (req, res) => {
     return
   }
   if (op === 'lookup') return lookupGuarded(req, res)
-  // Future ops viennent ici.
+  if (op === 'upload-session') return uploadSessionGuarded(req, res)
+  if (op === 'folder-share-link') return folderShareLinkGuarded(req, res)
   const requestId = ensureRequestId(req)
   sendError(res, 'NOT_FOUND', 'Route non disponible', requestId)
 }
 
 export default dispatch
-export { lookupCore as __lookupCore }
+export {
+  lookupCore as __lookupCore,
+  uploadSessionCore as __uploadSessionCore,
+  folderShareLinkCore as __folderShareLinkCore,
+}

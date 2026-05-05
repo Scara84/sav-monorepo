@@ -83,6 +83,14 @@
       "destination": "/api/invoices?op=lookup"
     },
     {
+      "source": "/api/upload-session",
+      "destination": "/api/invoices?op=upload-session"
+    },
+    {
+      "source": "/api/folder-share-link",
+      "destination": "/api/invoices?op=folder-share-link"
+    },
+    {
       "source": "/api/exports/supplier",
       "destination": "/api/pilotage?op=export-supplier"
     },
