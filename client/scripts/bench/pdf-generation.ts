@@ -2,7 +2,7 @@
 /**
  * Story 4.5 AC #11 — bench rendu PDF bon SAV.
  *
- * Lance N rendus consécutifs de `CreditNotePdf` via
+ * Lance N rendus consécutifs de `buildCreditNotePdf` via
  * `@react-pdf/renderer.renderToBuffer` (upload OneDrive mocké) et affiche
  * p50 / p95 / p99.
  *
@@ -11,11 +11,14 @@
  *
  * Target V1 : p95 < 2s, p99 < 10s. Le script print un `⚠` si p95 > 2s
  * mais ne fail pas (CI non-bloquant V1).
+ *
+ * V1.3 HARDEN-1 — lazy `await import('@react-pdf/renderer')` inside async
+ * main() for spec consistency with PATTERN-V3 (defense-in-depth), even though
+ * tsx runs ESM natively (no CJS cold-start risk here). Also updated call site
+ * to use `buildCreditNotePdf(ReactPDF, props)` after V1.3 rename.
  */
-import * as ReactPDF from '@react-pdf/renderer'
-
 import {
-  CreditNotePdf,
+  buildCreditNotePdf,
   type CreditNotePdfProps,
   type CreditNotePdfLine,
 } from '../../api/_lib/pdf/CreditNotePdf'
@@ -89,12 +92,18 @@ function percentile(sorted: number[], p: number): number {
 }
 
 async function main(): Promise<void> {
+  // V1.3 HARDEN-1 — lazy import for PATTERN-V3 consistency (defense-in-depth).
+  // tsx runs in ESM so there is no cold-start risk here, but keeping the lazy
+  // pattern ensures the bench exercises the same code path as the serverless lambda.
+  const ReactPDF = await import('@react-pdf/renderer')
+
   console.log(`🏁 PDF bench — ${COUNT} rendus…`)
   const durations: number[] = []
   let bytes = 0
   for (let i = 0; i < COUNT; i++) {
     const t0 = Date.now()
-    const element = CreditNotePdf(props)
+    // V1.3 HARDEN-1 — use updated factory signature: buildCreditNotePdf(reactPdfModule, props)
+    const element = buildCreditNotePdf(ReactPDF, props)
     const buffer = await (
       ReactPDF as unknown as {
         renderToBuffer: (el: unknown) => Promise<Buffer>

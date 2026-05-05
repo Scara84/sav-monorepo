@@ -20,13 +20,18 @@
  *     `PDF_UPLOAD_FAILED` + `throw` (credit_note reste `pdf_web_url IS NULL`
  *     → endpoint `POST /regenerate-pdf` permet la relance manuelle AC #8).
  */
-import * as ReactPDF from '@react-pdf/renderer'
+// V1.3 PATTERN-V3 — plus de top-level `import * as ReactPDF from '@react-pdf/renderer'`.
+// Le module ESM-only est chargé en lazy via `await import()` à l'intérieur de
+// `getReactPdf()` avec cache module-level (1 seul chargement par lifetime lambda).
+// Cela brise la chain de transitivité qui causait ERR_REQUIRE_ESM au cold-start
+// Vercel (build CJS) sans modifier les importers upstream (emit-handler.ts, etc.).
+import type * as ReactPDFType from '@react-pdf/renderer'
 
 import { supabaseAdmin } from '../clients/supabase-admin'
 import { logger } from '../logger'
 import { resolveSettingAt, type SettingRow } from '../business/settingsResolver'
 import {
-  CreditNotePdf,
+  buildCreditNotePdf,
   type CreditNotePdfCompany,
   type CreditNotePdfLine,
   type CreditNotePdfProps,
@@ -79,8 +84,31 @@ export function __setGeneratePdfDepsForTests(deps: GenerateDeps): void {
   __deps = deps
 }
 
-function getRender(): RenderToBuffer {
+// V1.3 HARDEN-5 — test accessor to inspect/reset the lazy module cache.
+// Used in regression tests to assert that `getReactPdf()` was NOT called when
+// `__deps.renderToBuffer` injection bypasses the lazy import path.
+export function __getReactPdfCacheForTests(): typeof ReactPDFType | null {
+  return _reactPdfCache
+}
+export function __resetReactPdfCacheForTests(): void {
+  _reactPdfCache = null
+}
+
+// V1.3 PATTERN-V3 — lazy module cache (module-level, 1 seul await import() par
+// lifetime lambda). Le premier call déclenche le chargement ESM ; les appels
+// suivants retournent le cache. Compatible CJS Node 18/20 : `import()` dynamique
+// est supporté depuis CJS (retourne une Promise) contrairement à `require()` sync.
+let _reactPdfCache: typeof ReactPDFType | null = null
+async function getReactPdf(): Promise<typeof ReactPDFType> {
+  if (_reactPdfCache === null) {
+    _reactPdfCache = (await import('@react-pdf/renderer')) as typeof ReactPDFType
+  }
+  return _reactPdfCache
+}
+
+async function getRender(): Promise<RenderToBuffer> {
   if (__deps.renderToBuffer !== undefined) return __deps.renderToBuffer
+  const ReactPDF = await getReactPdf()
   return ReactPDF.renderToBuffer as unknown as RenderToBuffer
 }
 function getUpload(): UploadFn {
@@ -99,7 +127,6 @@ function defaultSleep(ms: number): Promise<void> {
 }
 
 async function defaultRefreshGraphToken(): Promise<unknown> {
-  // eslint-disable-next-line @typescript-eslint/no-require-imports
   const graph = require('../graph.js') as { forceRefreshAccessToken: () => Promise<unknown> }
   return graph.forceRefreshAccessToken()
 }
@@ -530,8 +557,25 @@ export async function generateCreditNotePdfAsync(args: GenerateCreditNotePdfArgs
 
   let buffer: Buffer
   try {
-    const renderElement = CreditNotePdf(props)
-    buffer = await getRender()(renderElement as unknown as React.ReactElement)
+    // V1.3 PATTERN-V3 — résoudre le module ESM-only en lazy (1 seul await
+    // import() par lifetime lambda via cache module-level `_reactPdfCache`).
+    // `getRender()` court-circuite vers `__deps.renderToBuffer` si injecté
+    // (Story 4.5 test injection contrat — préservé ici).
+    //
+    // V1.3 HARDEN-5 — if `__deps.renderToBuffer` is injected, skip `getReactPdf()`
+    // and `buildCreditNotePdf()` entirely. The injected mock does not read its argument
+    // (vi.fn() returning Buffer.from(...) unconditionally), so passing null is safe.
+    // This ensures test envs without @react-pdf/renderer installed don't fail despite
+    // the injection.
+    const render = await getRender()
+    if (__deps.renderToBuffer !== undefined) {
+      // Test injection path — skip lazy ESM import + buildCreditNotePdf entirely.
+      buffer = await render(null as unknown as React.ReactElement)
+    } else {
+      const ReactPDF = await getReactPdf()
+      const renderElement = buildCreditNotePdf(ReactPDF, props)
+      buffer = await render(renderElement as unknown as React.ReactElement)
+    }
   } catch (err) {
     logger.error('PDF_RENDER_FAILED', {
       requestId: request_id,

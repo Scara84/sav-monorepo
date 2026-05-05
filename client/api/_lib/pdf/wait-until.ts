@@ -25,7 +25,6 @@ let cachedFn: WaitUntilFn | null = null
 function resolveWaitUntil(): WaitUntilFn {
   if (cachedFn !== null) return cachedFn
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const mod = require('@vercel/functions') as { waitUntil?: WaitUntilFn }
     if (typeof mod.waitUntil === 'function') {
       cachedFn = mod.waitUntil

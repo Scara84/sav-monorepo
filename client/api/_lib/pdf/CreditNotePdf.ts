@@ -16,10 +16,17 @@
  * gris ligne `#CCCCCC`, A4 portrait (210×297 mm), marges 15 mm haut/bas
  * et 12 mm gauche/droite (Story 4.5 AC #1). Fonts built-in `Helvetica`
  * (pas d'embed TTF — évite +500 Ko bundle serveur, AC #12).
+ *
+ * V1.3 — Story V1.3 PATTERN-V3 : suppression de l'import statique
+ * `@react-pdf/renderer` au top-level. Le module ESM-only était évalué
+ * au module-load via `require()` CJS dans le bundle Vercel → ERR_REQUIRE_ESM
+ * au cold-start. Refactoré en factory `buildCreditNotePdf(reactPdfModule, props)`
+ * qui reçoit le module déjà résolu en lazy par `generate-credit-note-pdf.ts`.
+ * `import type` est conservé pour les types (effacés à la compilation).
  */
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 import * as React from 'react'
-import { Document, Page, Text, View, StyleSheet } from '@react-pdf/renderer'
+// V1.3 — import type uniquement (effacé à la compilation, zéro runtime require)
+import type * as ReactPDFType from '@react-pdf/renderer'
 
 import { formatEurFromCents, formatDateFr } from './formatEurPdf'
 
@@ -103,7 +110,9 @@ export interface CreditNotePdfProps {
 }
 
 // ---------------------------------------------------------------
-// Styles charte Fruitstock
+// Constantes charte Fruitstock (pas de StyleSheet au top-level —
+// V1.3 PATTERN-V3 : StyleSheet.create() déplacé dans buildCreditNotePdf
+// pour éviter l'évaluation au module-load via require() CJS Vercel)
 // ---------------------------------------------------------------
 
 const FRUITSTOCK_ORANGE = '#F57C00'
@@ -111,144 +120,149 @@ const TEXT_DARK = '#222222'
 const ROW_BORDER = '#CCCCCC'
 const ROW_ALT = '#F7F7F7'
 
-const styles = StyleSheet.create({
-  page: {
-    fontFamily: 'Helvetica',
-    fontSize: 9,
-    color: TEXT_DARK,
-    paddingTop: 42, // 15 mm
-    paddingBottom: 42,
-    paddingLeft: 34, // 12 mm
-    paddingRight: 34,
-  },
-  header: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-    alignItems: 'flex-start',
-    borderBottom: `1pt solid ${FRUITSTOCK_ORANGE}`,
-    paddingBottom: 6,
-    marginBottom: 10,
-  },
-  logo: {
-    width: 40,
-    height: 40,
-    backgroundColor: FRUITSTOCK_ORANGE,
-    justifyContent: 'center',
-    alignItems: 'center',
-  },
-  logoText: {
-    fontSize: 10,
-    color: '#FFFFFF',
-    fontFamily: 'Helvetica-Bold',
-  },
-  companyBlock: {
-    textAlign: 'right',
-    fontSize: 8.5,
-    lineHeight: 1.35,
-  },
-  companyName: {
-    fontFamily: 'Helvetica-Bold',
-    fontSize: 10,
-    marginBottom: 2,
-    color: FRUITSTOCK_ORANGE,
-  },
-  title: {
-    textAlign: 'center',
-    fontSize: 18,
-    fontFamily: 'Helvetica-Bold',
-    marginVertical: 10,
-    color: TEXT_DARK,
-  },
-  refBlock: {
-    flexDirection: 'row',
-    marginBottom: 10,
-  },
-  refCol: {
-    flex: 1,
-    lineHeight: 1.4,
-  },
-  refLabel: {
-    fontFamily: 'Helvetica-Bold',
-  },
-  // Table
-  table: {
-    marginTop: 6,
-    borderTop: `0.5pt solid ${ROW_BORDER}`,
-    borderBottom: `0.5pt solid ${ROW_BORDER}`,
-  },
-  tableHeader: {
-    flexDirection: 'row',
-    backgroundColor: FRUITSTOCK_ORANGE,
-    color: '#FFFFFF',
-    fontFamily: 'Helvetica-Bold',
-    paddingVertical: 4,
-    paddingHorizontal: 3,
-  },
-  tableRow: {
-    flexDirection: 'row',
-    borderTop: `0.25pt solid ${ROW_BORDER}`,
-    paddingVertical: 3,
-    paddingHorizontal: 3,
-  },
-  tableRowAlt: {
-    backgroundColor: ROW_ALT,
-  },
-  colLineNo: { width: 18, textAlign: 'center' },
-  colCode: { width: 50 },
-  colName: { flex: 1 },
-  colQtyReq: { width: 40, textAlign: 'right' },
-  colUnit: { width: 28, textAlign: 'center' },
-  colQtyInv: { width: 40, textAlign: 'right' },
-  colPriceHt: { width: 55, textAlign: 'right' },
-  colCoef: { width: 38, textAlign: 'right' },
-  colAmount: { width: 60, textAlign: 'right' },
-  // Totaux
-  totalsWrap: {
-    flexDirection: 'row',
-    justifyContent: 'flex-end',
-    marginTop: 12,
-  },
-  totals: {
-    width: 220,
-    fontSize: 9.5,
-    lineHeight: 1.55,
-  },
-  totalsRow: {
-    flexDirection: 'row',
-    justifyContent: 'space-between',
-  },
-  totalsRowStrong: {
-    fontFamily: 'Helvetica-Bold',
-    fontSize: 11,
-    color: FRUITSTOCK_ORANGE,
-    borderTop: `0.5pt solid ${ROW_BORDER}`,
-    paddingTop: 3,
-    marginTop: 3,
-  },
-  // Footer
-  footer: {
-    position: 'absolute',
-    bottom: 18,
-    left: 34,
-    right: 34,
-    fontSize: 7.5,
-    color: '#666666',
-    textAlign: 'center',
-    borderTop: `0.5pt solid ${ROW_BORDER}`,
-    paddingTop: 4,
-    lineHeight: 1.3,
-  },
-  footerLine: {},
-  pageNumber: {
-    marginTop: 2,
-  },
-  // Note "lignes non-comptabilisées"
-  notesBlock: {
-    marginTop: 6,
-    fontSize: 8,
-    color: '#8A4400',
-  },
-})
+type PDFStyleSheet = Record<string, unknown>
+
+/** Construit les styles via StyleSheet.create() du module passé en paramètre. */
+function buildStyles(StyleSheet: typeof ReactPDFType.StyleSheet): PDFStyleSheet {
+  return StyleSheet.create({
+    page: {
+      fontFamily: 'Helvetica',
+      fontSize: 9,
+      color: TEXT_DARK,
+      paddingTop: 42, // 15 mm
+      paddingBottom: 42,
+      paddingLeft: 34, // 12 mm
+      paddingRight: 34,
+    },
+    header: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+      alignItems: 'flex-start',
+      borderBottom: `1pt solid ${FRUITSTOCK_ORANGE}`,
+      paddingBottom: 6,
+      marginBottom: 10,
+    },
+    logo: {
+      width: 40,
+      height: 40,
+      backgroundColor: FRUITSTOCK_ORANGE,
+      justifyContent: 'center',
+      alignItems: 'center',
+    },
+    logoText: {
+      fontSize: 10,
+      color: '#FFFFFF',
+      fontFamily: 'Helvetica-Bold',
+    },
+    companyBlock: {
+      textAlign: 'right',
+      fontSize: 8.5,
+      lineHeight: 1.35,
+    },
+    companyName: {
+      fontFamily: 'Helvetica-Bold',
+      fontSize: 10,
+      marginBottom: 2,
+      color: FRUITSTOCK_ORANGE,
+    },
+    title: {
+      textAlign: 'center',
+      fontSize: 18,
+      fontFamily: 'Helvetica-Bold',
+      marginVertical: 10,
+      color: TEXT_DARK,
+    },
+    refBlock: {
+      flexDirection: 'row',
+      marginBottom: 10,
+    },
+    refCol: {
+      flex: 1,
+      lineHeight: 1.4,
+    },
+    refLabel: {
+      fontFamily: 'Helvetica-Bold',
+    },
+    // Table
+    table: {
+      marginTop: 6,
+      borderTop: `0.5pt solid ${ROW_BORDER}`,
+      borderBottom: `0.5pt solid ${ROW_BORDER}`,
+    },
+    tableHeader: {
+      flexDirection: 'row',
+      backgroundColor: FRUITSTOCK_ORANGE,
+      color: '#FFFFFF',
+      fontFamily: 'Helvetica-Bold',
+      paddingVertical: 4,
+      paddingHorizontal: 3,
+    },
+    tableRow: {
+      flexDirection: 'row',
+      borderTop: `0.25pt solid ${ROW_BORDER}`,
+      paddingVertical: 3,
+      paddingHorizontal: 3,
+    },
+    tableRowAlt: {
+      backgroundColor: ROW_ALT,
+    },
+    colLineNo: { width: 18, textAlign: 'center' },
+    colCode: { width: 50 },
+    colName: { flex: 1 },
+    colQtyReq: { width: 40, textAlign: 'right' },
+    colUnit: { width: 28, textAlign: 'center' },
+    colQtyInv: { width: 40, textAlign: 'right' },
+    colPriceHt: { width: 55, textAlign: 'right' },
+    colCoef: { width: 38, textAlign: 'right' },
+    colAmount: { width: 60, textAlign: 'right' },
+    // Totaux
+    totalsWrap: {
+      flexDirection: 'row',
+      justifyContent: 'flex-end',
+      marginTop: 12,
+    },
+    totals: {
+      width: 220,
+      fontSize: 9.5,
+      lineHeight: 1.55,
+    },
+    totalsRow: {
+      flexDirection: 'row',
+      justifyContent: 'space-between',
+    },
+    totalsRowStrong: {
+      fontFamily: 'Helvetica-Bold',
+      fontSize: 11,
+      color: FRUITSTOCK_ORANGE,
+      borderTop: `0.5pt solid ${ROW_BORDER}`,
+      paddingTop: 3,
+      marginTop: 3,
+    },
+    // Footer
+    footer: {
+      position: 'absolute',
+      bottom: 18,
+      left: 34,
+      right: 34,
+      fontSize: 7.5,
+      color: '#666666',
+      textAlign: 'center',
+      borderTop: `0.5pt solid ${ROW_BORDER}`,
+      paddingTop: 4,
+      lineHeight: 1.3,
+    },
+    footerLine: {},
+    pageNumber: {
+      marginTop: 2,
+    },
+    // Note "lignes non-comptabilisées"
+    notesBlock: {
+      marginTop: 6,
+      fontSize: 8,
+      color: '#8A4400',
+    },
+  })
+}
 
 // ---------------------------------------------------------------
 // Helpers UI
@@ -288,10 +302,29 @@ function titleForBonType(bon: BonType): string {
 }
 
 // ---------------------------------------------------------------
-// Composant principal
+// Factory principale — V1.3 PATTERN-V3
 // ---------------------------------------------------------------
 
-export function CreditNotePdf(props: CreditNotePdfProps): React.ReactElement {
+/**
+ * Factory `buildCreditNotePdf` (V1.3 refactor) — reçoit le module
+ * `@react-pdf/renderer` déjà résolu en lazy par `generate-credit-note-pdf.ts`
+ * et construit l'arbre React PDF (Document > Page > ...).
+ *
+ * Pattern V1.3 D-3 :
+ *   const ReactPDF = await getReactPdf()  // lazy cache dans generate-credit-note-pdf.ts
+ *   const element = buildCreditNotePdf(ReactPDF, props)
+ *   const render = ReactPDF.renderToBuffer
+ *   buffer = await render(element)
+ *
+ * 1 seul await import() par lifetime lambda, partagé entre les 2 fichiers
+ * (le cache module-level `_reactPdfCache` vit dans generate-credit-note-pdf.ts).
+ */
+export function buildCreditNotePdf(
+  reactPdfModule: typeof ReactPDFType,
+  props: CreditNotePdfProps
+): React.ReactElement {
+  const { Document, Page, Text, View, StyleSheet } = reactPdfModule
+  const styles = buildStyles(StyleSheet)
   const { creditNote, sav, member, group, lines, company, is_group_manager } = props
 
   // On filtre les lignes sans montant calculé. Elles apparaissent dans le
@@ -315,18 +348,27 @@ export function CreditNotePdf(props: CreditNotePdfProps): React.ReactElement {
     h(
       Page,
       { size: 'A4', style: styles.page, wrap: true },
-      renderHeader(company),
+      renderHeader(View, Text, styles, company),
       h(Text, { style: styles.title }, titleForBonType(creditNote.bon_type)),
-      renderReferences(creditNote, sav, clientName, group),
-      renderTable(lines),
-      ghostLines > 0 ? renderGhostWarning(ghostLines) : null,
-      renderTotals(creditNote, is_group_manager),
-      renderFooter(company)
+      renderReferences(View, Text, styles, creditNote, sav, clientName, group),
+      renderTable(View, Text, styles, lines),
+      ghostLines > 0 ? renderGhostWarning(Text, styles, ghostLines) : null,
+      renderTotals(View, Text, styles, creditNote, is_group_manager),
+      renderFooter(View, Text, styles, company)
     )
   )
 }
 
-function renderHeader(company: CreditNotePdfCompany): React.ReactElement {
+type PDFStyles = PDFStyleSheet
+type PDFView = typeof ReactPDFType.View
+type PDFText = typeof ReactPDFType.Text
+
+function renderHeader(
+  View: PDFView,
+  Text: PDFText,
+  styles: PDFStyles,
+  company: CreditNotePdfCompany
+): React.ReactElement {
   return h(
     View,
     { style: styles.header, fixed: true },
@@ -344,6 +386,9 @@ function renderHeader(company: CreditNotePdfCompany): React.ReactElement {
 }
 
 function renderReferences(
+  View: PDFView,
+  Text: PDFText,
+  styles: PDFStyles,
   cn: CreditNotePdfCreditNote,
   sav: CreditNotePdfSav,
   clientName: string,
@@ -390,7 +435,12 @@ function renderReferences(
   )
 }
 
-function renderTable(lines: readonly CreditNotePdfLine[]): React.ReactElement {
+function renderTable(
+  View: PDFView,
+  Text: PDFText,
+  styles: PDFStyles,
+  lines: readonly CreditNotePdfLine[]
+): React.ReactElement {
   const header = h(
     View,
     { style: styles.tableHeader, fixed: true },
@@ -447,7 +497,7 @@ function renderTable(lines: readonly CreditNotePdfLine[]): React.ReactElement {
   return h(View, { style: styles.table }, header, ...body)
 }
 
-function renderGhostWarning(count: number): React.ReactElement {
+function renderGhostWarning(Text: PDFText, styles: PDFStyles, count: number): React.ReactElement {
   return h(
     Text,
     { style: styles.notesBlock },
@@ -455,7 +505,13 @@ function renderGhostWarning(count: number): React.ReactElement {
   )
 }
 
-function renderTotals(cn: CreditNotePdfCreditNote, isGroupManager: boolean): React.ReactElement {
+function renderTotals(
+  View: PDFView,
+  Text: PDFText,
+  styles: PDFStyles,
+  cn: CreditNotePdfCreditNote,
+  isGroupManager: boolean
+): React.ReactElement {
   const rows: React.ReactElement[] = [
     h(
       View,
@@ -493,7 +549,12 @@ function renderTotals(cn: CreditNotePdfCreditNote, isGroupManager: boolean): Rea
   return h(View, { style: styles.totalsWrap }, h(View, { style: styles.totals }, ...rows))
 }
 
-function renderFooter(company: CreditNotePdfCompany): React.ReactElement {
+function renderFooter(
+  View: PDFView,
+  Text: PDFText,
+  styles: PDFStyles,
+  company: CreditNotePdfCompany
+): React.ReactElement {
   return h(
     View,
     { style: styles.footer, fixed: true },

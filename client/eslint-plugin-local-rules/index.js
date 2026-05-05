@@ -14,9 +14,12 @@
  * add it to the `rules` map below.
  */
 const noUnboundedNumberInput = require('../.eslintrc-rules/no-unbounded-number-input')
+// V1.3 PATTERN-V3 — defense-in-depth against ERR_REQUIRE_ESM cold-start
+const noEagerEsmImport = require('../.eslintrc-rules/no-eager-esm-import')
 
 module.exports = {
   rules: {
     'no-unbounded-number-input': noUnboundedNumberInput,
+    'no-eager-esm-import': noEagerEsmImport,
   },
 }

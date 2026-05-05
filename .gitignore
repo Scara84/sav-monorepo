@@ -79,6 +79,9 @@ _bmad-output/implementation-artifacts/*
 !_bmad-output/implementation-artifacts/phase-*/
 !_bmad-output/implementation-artifacts/phase-*/*.yaml
 !_bmad-output/implementation-artifacts/phase-*/*.md
+!_bmad-output/test-artifacts/
+_bmad-output/test-artifacts/*
+!_bmad-output/test-artifacts/*.md
 _bmad-input
 .agents/
 .claude

@@ -13,14 +13,45 @@
  *   - la structure de l'élément React suffit à valider la présence
  *     des chaînes attendues (la compilation PDF elle-même est testée
  *     empiriquement par AC #8.5 manuel + bench AC #11)
+ *
+ * V1.3 — Adapté suite au refactor PATTERN-V3 `CreditNotePdf.ts` :
+ * `CreditNotePdf(props)` → `buildCreditNotePdf(reactPdfModule, props)`.
+ * Le module @react-pdf/renderer est passé en mock minimal (StyleSheet stub
+ * + composants PDF stub via React.createElement string passthrough).
+ * Permet au test de rester synchrone sans charger le vrai module ESM.
  */
 import { describe, it, expect } from 'vitest'
+import * as React from 'react'
 import {
-  CreditNotePdf,
+  buildCreditNotePdf,
   type CreditNotePdfProps,
   type CreditNotePdfLine,
   type CreditNotePdfCompany,
 } from '../../../../../api/_lib/pdf/CreditNotePdf'
+import type * as ReactPDFType from '@react-pdf/renderer'
+
+// -------------------------------------------------------
+// Minimal stub of @react-pdf/renderer module
+// (V1.3 — buildCreditNotePdf takes the module as parameter)
+// Document, Page, Text, View sont des wrappers React simples qui
+// propagent props.children pour que collectText() puisse les walker.
+// StyleSheet.create() retourne l'objet style tel quel (pass-through).
+// -------------------------------------------------------
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+function makePdfComponentStub(name: string): (props: any) => React.ReactElement {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  return ({ children }: { children?: React.ReactNode }) => React.createElement(name, {}, children)
+}
+
+const reactPdfModuleMock = {
+  Document: makePdfComponentStub('Document'),
+  Page: makePdfComponentStub('Page'),
+  Text: makePdfComponentStub('Text'),
+  View: makePdfComponentStub('View'),
+  StyleSheet: {
+    create: <T extends Record<string, unknown>>(styles: T): T => styles,
+  },
+} as unknown as typeof ReactPDFType
 
 // -------------------------------------------------------
 // Walker d'arbre React → collecte de strings.
@@ -114,7 +145,7 @@ function baseProps(overrides: Partial<CreditNotePdfProps> = {}): CreditNotePdfPr
 }
 
 function renderText(props: CreditNotePdfProps): string {
-  return collectText(CreditNotePdf(props)).join(' ')
+  return collectText(buildCreditNotePdf(reactPdfModuleMock, props)).join(' ')
 }
 
 // -------------------------------------------------------

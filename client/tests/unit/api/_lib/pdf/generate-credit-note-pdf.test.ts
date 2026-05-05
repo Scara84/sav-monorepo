@@ -161,6 +161,8 @@ vi.mock('../../../../../api/_lib/clients/supabase-admin', () => {
 import {
   generateCreditNotePdfAsync,
   __setGeneratePdfDepsForTests,
+  __getReactPdfCacheForTests,
+  __resetReactPdfCacheForTests,
 } from '../../../../../api/_lib/pdf/generate-credit-note-pdf'
 
 // Helpers fixtures -------------------------------------------------------
@@ -570,5 +572,40 @@ describe('generateCreditNotePdfAsync (Story 4.5 AC #10)', () => {
     expect(attempts).toBe(3)
     expect(refreshCalls).toBe(2)
     expect(db.capturedUpdate).toBeNull()
+  })
+
+  it('HARDEN-5 — __deps.renderToBuffer injected → getReactPdf() is NOT called (lazy import bypassed)', async () => {
+    // Regression test: when `__deps.renderToBuffer` is injected in tests,
+    // `getReactPdf()` must NOT be called. This ensures test environments without
+    // @react-pdf/renderer installed do not fail despite the injection.
+    //
+    // Strategy: reset the module-level cache to null before the call, then assert
+    // it is still null after the call completes (proving `getReactPdf()` did not run).
+    seedHappyPath()
+
+    // Reset the lazy module cache to null — if getReactPdf() runs, the cache
+    // would no longer be null after the call.
+    __resetReactPdfCacheForTests()
+    expect(__getReactPdfCacheForTests()).toBeNull()
+
+    __setGeneratePdfDepsForTests({
+      renderToBuffer: async (_el: unknown) => Buffer.from('%PDF-MOCK-HARDEN-5'),
+      upload: async () => ({ itemId: 'harden-5-item', webUrl: 'https://x/harden5.pdf' }),
+    })
+
+    await generateCreditNotePdfAsync({
+      credit_note_id: 100,
+      sav_id: 10,
+      request_id: 'req-harden5',
+    })
+
+    // The cache must still be null — proves getReactPdf() was NOT called.
+    expect(__getReactPdfCacheForTests()).toBeNull()
+
+    // Normal post-conditions still hold
+    expect(db.capturedUpdate).toEqual({
+      pdf_onedrive_item_id: 'harden-5-item',
+      pdf_web_url: 'https://x/harden5.pdf',
+    })
   })
 })

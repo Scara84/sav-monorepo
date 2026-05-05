@@ -39,8 +39,14 @@ jobs:
       - name: Typecheck
         run: npm run typecheck
 
+      - name: Lint ESM-only guards (PATTERN-V3 defense-in-depth)
+        run: npm run lint:esm
+
       - name: Unit tests
         run: npm test -- --run
+
+      - name: DPIA gate (Story 7-7 — blocker avant merge main)
+        run: npm run verify:dpia
 
       - name: Build
         run: npm run build
