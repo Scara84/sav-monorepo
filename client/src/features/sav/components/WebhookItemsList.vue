@@ -504,6 +504,7 @@ import { useImageUpload } from '../composables/useImageUpload.js'
 import { useApiClient } from '../composables/useApiClient.js'
 import { useExcelGenerator } from '../composables/useExcelGenerator.js'
 import { buildSavHtmlTable } from '../lib/buildSavHtmlTable.js'
+import { buildCaptureItemPrices } from '../lib/buildCaptureItemPrices.js'
 
 export default {
   name: 'WebhookItemsList',
@@ -811,6 +812,13 @@ export default {
             .filter((v) => v && String(v).trim().length > 0)
             .join(' — ')
           if (cause) item.cause = cause
+
+          // Story 4.7 — Inject Pennylane invoice line prices into the capture payload.
+          // buildCaptureItemPrices extracts the 5 price fields from the Pennylane line
+          // already in component state. See lib/buildCaptureItemPrices.js for the full
+          // mapping rationale (unit_amount → unitPriceHtCents, vat_rate → vatRateBp, etc.)
+          Object.assign(item, buildCaptureItemPrices(factureItem))
+
           return item
         })
         const captureFiles = []

@@ -441,7 +441,7 @@ development_status:
   3-7-tags-commentaires-duplication-fichiers-additionnels: done
   # Carry-over créés (backlog) :
   3-6b-triggers-compute-sav-line-credit-et-ui-edition-ligne: done  # 2026-04-24 DS + CR adversarial 3 couches (Blind+Edge+Auditor). 13/13 AC ✅. 7 patches CR appliqués (P1 MISSING_FIELD, P2 locale FR virgule, P3 reset-null update_sav_line, P4 refreshSafe hors try/catch, P5 confirmFn doc, P7 cleanup editDraft, P9 FORBIDDEN_FIELD F52). Migration 20260430120000 CR patches. 628/628 Vitest, typecheck 0, lint 0, build 459.64 KB.
-  3-7b-ui-tags-compose-duplicate-upload-operateur: backlog             # dépend Epic 6 self-service
+  3-7b-ui-tags-compose-duplicate-upload-operateur: done                # 2026-05-06 pipeline CHECKPOINT (Opus story+CR, Sonnet ATDD+dev, Haiku trace). 2 HIGH+M-1+M-3+M-6 fixes adversarial review appliqués. 1733/1734 vitest GREEN. Hand-off Story 6.6 (D-6 template Resend mapping) documenté non-bloquant.
   epic-3-retrospective: done
 
   # ──────────────────────────────────────────────────────────────
@@ -461,6 +461,17 @@ development_status:
   4-4-emission-atomique-n-avoir-bon-sav: done
   4-5-template-pdf-charte-fruitstock-generation-serverless: done
   4-6-test-de-charge-sequence-d-avoir: done
+  # Stories Epic 4 — extension capture pricing (créées 2026-05-06 post-Story 3.7b)
+  # Audit Explore agent post-3.7b a révélé que l'UI back-office /admin/sav/:id affiche "PU HT : —"
+  # partout : la capture flow (Story 2.2/2.4 + Make.com webhook) n'inclut PAS les prix de la facture
+  # client dans le payload. Le membre voit ses prix au moment du form (lookup Pennylane), mais le
+  # webhook envoyé à Vercel ne contient que productCode/qtyRequested/unit/cause. La RPC
+  # capture_sav_from_webhook INSERT donc unit_price_ht_cents=NULL. L'opérateur retape tout. PM
+  # confirme 2026-05-06 : flow attendu = capture des prix facture pour calcul remboursement client +
+  # import per-SAV (pas catalogue global) d'un fichier fournisseur pour calcul marge. Spec brutes
+  # créées, à reprendre en sessions /bmad-story-pipeline séparées.
+  4-7-capture-prix-facture-client-webhook-extension: done  # Ship-blocker post-cutover. Étendre captureWebhookSchema (unitPriceHtCents/vatRateBp/qtyInvoiced/invoiceLineId optionnels rétrocompat) + RPC capture_sav_from_webhook INSERT ces colonnes + colonne sav_lines.invoice_line_id traçabilité. Coordination OPS Make.com flow (lookup Pennylane + merger payload). Trigger freeze unit_price_ht_cents reste actif (gel post-INSERT préservé). 6 ACs (schema, RPC, colonne, OPS Make, tests 3 scénarios capture, E2E preview member→opérateur). 4 OOS (backfill SAV existants V1.1, validation anti-tampering V2, prix achat fournisseur=Story 4.8, multi-currency V2). Estimation S=0.5j code + 1j coord OPS = ~1.5j calendaire. Source : `_bmad-output/implementation-artifacts/4-7-capture-prix-facture-client-webhook-extension.md`. Bloque Story 4.8 (sans prix vente, marge inutile). Découverte cross-story regression validation_messages overwrite — V1.1 followup tracké dans story doc section 'Cross-story regression discovered'. unitInvoiced tightened to enum (OQ-2) — Make doit traduire Pennylane-native strings.
+  4-8-import-prix-fournisseur-per-sav: backlog               # Bloquée par Story 4.7. Per-SAV (PAS catalogue global — précision PM : prix négociés spécifiques par commande). Migration sav_lines + supplier_purchase_price_ht_cents/supplier_reference/imported_at/source. 2 endpoints (POST import preview + PATCH apply). UI modal upload→preview matched/unmatched→confirm→UPDATE transactionnel. Affichage marge unit. + total SAV dans tableau lignes. RBAC operator+admin bypass + RLS group scope (pattern 7-3a/b/c). Sanitize CSV-injection (pattern 5.4 P1). 8 ACs + 7 OOS (fuzzy match V2, format Pennylane direct V2, historique imports V2, marge TTC V2, alertes marge négative V2, multi-fournisseurs V1.x, export marge PDF V2). PATTERN-NEW à poser : import per-entity pricing parse→preview→confirm. Estimation M=2.5j calendaire. Source : `_bmad-output/implementation-artifacts/4-8-import-prix-fournisseur-per-sav.md`. Débloque feature complète "traiter SAV bout en bout avec visibilité rentabilité".
   epic-4-retrospective: optional
 
   # ──────────────────────────────────────────────────────────────

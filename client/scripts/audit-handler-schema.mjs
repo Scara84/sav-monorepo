@@ -215,9 +215,12 @@ const SCHEMA = {
     'piece_to_kg_weight_g',
     'validation_message',
     'line_number',
+    'invoice_line_id', // Story 4.7 — identifiant ligne facture Pennylane source
   ],
   sav_reference_sequence: ['year', 'last_number'],
   sav_submit_tokens: ['jti', 'issued_at', 'expires_at', 'used_at', 'ip_hash', 'user_agent'],
+  // Story 3.7b PATTERN-D — server-side upload-session→savId binding (migration 20260514120000)
+  sav_upload_sessions: ['id', 'sav_id', 'operator_id', 'expires_at', 'created_at'],
   settings: ['id', 'key', 'value', 'valid_from', 'valid_to', 'updated_by', 'notes', 'created_at'],
   supplier_exports: [
     'id',
