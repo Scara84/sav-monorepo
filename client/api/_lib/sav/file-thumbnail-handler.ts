@@ -61,6 +61,7 @@ function sanitizeForLog(value: unknown): string {
 interface SavFileRow {
   id: number
   onedrive_item_id: string
+  web_url: string | null
   mime_type: string
   sav_id: number
   sav: { group_id: number | null } | null
@@ -97,7 +98,7 @@ export function fileThumbnailHandler(fileId: number): ApiHandler {
     const admin = supabaseAdmin()
     const { data: fileRow, error: fileError } = await admin
       .from('sav_files')
-      .select('id, onedrive_item_id, mime_type, sav_id, sav:sav(group_id)')
+      .select('id, onedrive_item_id, web_url, mime_type, sav_id, sav:sav(group_id)')
       .eq('id', fileId)
       .maybeSingle()
 
@@ -198,6 +199,7 @@ export function fileThumbnailHandler(fileId: number): ApiHandler {
     }
 
     const onedriveItemId = row.onedrive_item_id
+    const webUrl = row.web_url
 
     // ── Step f: Get access token via ESM-imported graph module ────────────────
     // graphModule is imported at module-level (ESM), allowing Vitest vi.mock()
@@ -223,7 +225,22 @@ export function fileThumbnailHandler(fileId: number): ApiHandler {
     }
 
     // ── Step g: Build Graph URL ───────────────────────────────────────────────
-    const graphUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${onedriveItemId}/thumbnails/0/medium/content`
+    // PATTERN-V5 — Resolve via /shares/u!{base64url(webUrl)}/driveItem when web_url
+    // is available (capture flow legacy stockait filename comme onedrive_item_id —
+    // bug data Story 5-7 ; webUrl est canonique). Fallback /drives/.../items/...
+    // pour rétro-compat (Story 4.5 PDFs où onedrive_item_id est un vrai Graph ID).
+    let graphUrl: string
+    if (webUrl && webUrl.length > 0) {
+      const base64Url = Buffer.from(webUrl, 'utf-8')
+        .toString('base64')
+        .replace(/=+$/, '')
+        .replace(/\+/g, '-')
+        .replace(/\//g, '_')
+      const shareId = `u!${base64Url}`
+      graphUrl = `https://graph.microsoft.com/v1.0/shares/${shareId}/driveItem/thumbnails/0/medium/content`
+    } else {
+      graphUrl = `https://graph.microsoft.com/v1.0/drives/${driveId}/items/${onedriveItemId}/thumbnails/0/medium/content`
+    }
 
     // ── Step h/i: Fetch Graph (with AbortController timeout 5s) ──────────────
     let graphResponse: Response
