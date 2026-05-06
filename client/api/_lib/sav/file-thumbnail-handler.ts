@@ -317,18 +317,33 @@ export function fileThumbnailHandler(fileId: number): ApiHandler {
 
     // ── Step k: Handle Graph error responses (5xx, other non-ok) ─────────────
     if (!graphResponse.ok) {
+      // V1.5 DEBUG (temporaire) : capturer body Graph pour diagnostic preview
+      let graphBody = ''
+      try {
+        graphBody = (await graphResponse.text()).slice(0, 500)
+      } catch {
+        graphBody = '<read failed>'
+      }
       logger.warn('sav.file.thumbnail.graph_unavailable', {
         requestId,
         fileId,
         status: graphResponse.status,
+        graphBody,
+        graphUrl: graphUrl.slice(0, 200),
       })
-      sendJson(
-        res,
-        503,
-        'GRAPH_UNAVAILABLE',
-        'Service de vignettes temporairement indisponible',
-        requestId
-      )
+      // DEBUG temporaire — expose graphStatus + graphBody dans la response
+      res.status(503).json({
+        error: {
+          code: 'GRAPH_UNAVAILABLE',
+          message: 'Service de vignettes temporairement indisponible',
+          requestId,
+          debug: {
+            graphStatus: graphResponse.status,
+            graphBody,
+            graphUrlPreview: graphUrl.slice(0, 200),
+          },
+        },
+      })
       return
     }
 
