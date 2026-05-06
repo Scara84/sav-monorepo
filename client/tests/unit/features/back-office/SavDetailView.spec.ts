@@ -173,7 +173,7 @@ describe('SavDetailView (Story 3.4)', () => {
     expect(w.text()).toContain('SAV introuvable')
   })
 
-  it('TV-03 (F34 CR) : image avec webUrl SharePoint whitelistée → <img> présent', async () => {
+  it('TV-03 (F34 CR) : image avec webUrl SharePoint whitelistée → <img> présent (via proxy V1.5)', async () => {
     mockFetch({
       data: {
         sav: {
@@ -200,7 +200,11 @@ describe('SavDetailView (Story 3.4)', () => {
     })
     const w = await mountDetail()
     await flushPromises()
-    const imgs = w.findAll('img').filter((i) => i.attributes('src')?.includes('sharepoint.com'))
+    // V1.5 PATTERN-V5: imgSrc() routes through backend proxy, not SharePoint direct.
+    // The <img> src is now /api/sav/files/:id/thumbnail (no sharepoint.com in src).
+    const imgs = w
+      .findAll('img')
+      .filter((i) => i.attributes('src')?.includes('/api/sav/files/1/thumbnail'))
     expect(imgs.length).toBeGreaterThan(0)
   })
 
@@ -264,7 +268,8 @@ describe('SavDetailView (Story 3.4)', () => {
     })
     const w = await mountDetail()
     await flushPromises()
-    const img = w.find('img[src*="sharepoint.com"]')
+    // V1.5 PATTERN-V5: imgSrc() uses proxy URL /api/sav/files/:id/thumbnail (not sharepoint.com directly)
+    const img = w.find('img[src*="/api/sav/files/3/thumbnail"]')
     expect(img.exists()).toBe(true)
     // Simule l'échec de chargement
     await img.trigger('error')
@@ -274,12 +279,11 @@ describe('SavDetailView (Story 3.4)', () => {
     expect(retryBtn).toBeDefined()
     await retryBtn!.trigger('click')
     await flushPromises()
-    // L'URL.searchParams.set doit avoir ajouté `_r=1` après le tempauth existant.
-    const imgAfter = w.find('img[src*="sharepoint.com"]')
+    // Après retry, le proxy URL doit avoir `?_r=1` (cache-bust via retryKey counter)
+    const imgAfter = w.find('img[src*="/api/sav/files/3/thumbnail"]')
     if (imgAfter.exists()) {
       const src = imgAfter.attributes('src') ?? ''
       expect(src).toContain('_r=1')
-      expect(src).toContain('tempauth=token')
     }
   })
 })

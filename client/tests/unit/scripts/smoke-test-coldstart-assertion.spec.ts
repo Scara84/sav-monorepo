@@ -58,7 +58,7 @@ describe('assertColdStartHealthy — smoke-test cold-start step (AC #6(e))', () 
     expect(result.status).toBe('PASS')
   })
 
-  it('(ii) both endpoints return 401 → step PASS', async () => {
+  it('(ii) all three endpoints return 401 → step PASS', async () => {
     const { assertColdStartHealthy } = (await import(
       '../../../scripts/cutover/smoke-test'
     )) as unknown as {
@@ -68,11 +68,12 @@ describe('assertColdStartHealthy — smoke-test cold-start step (AC #6(e))', () 
     const http = makeHttpMock({
       '/api/sav': 401,
       '/api/credit-notes': 401,
+      '/api/sav/files/0/thumbnail': 401,
     })
     const result = await assertColdStartHealthy('https://preview.vercel.app', http)
     expect(result.status).toBe('PASS')
-    // Both endpoints must have been checked
-    expect((http.get as ReturnType<typeof vi.fn>).mock.calls.length).toBe(2)
+    // All three endpoints must have been checked (V1.5 added /api/sav/files/0/thumbnail)
+    expect((http.get as ReturnType<typeof vi.fn>).mock.calls.length).toBe(3)
   })
 
   it('(iii) /api/sav returns 500 → step FAIL + log SMOKE_COLDSTART_FAIL|api/sav|500', async () => {

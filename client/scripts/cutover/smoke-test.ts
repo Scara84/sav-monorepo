@@ -140,7 +140,7 @@ export async function assertColdStartHealthy(
   previewUrl: string,
   http: HttpClient
 ): Promise<StepResult> {
-  const endpoints = ['/api/sav', '/api/credit-notes']
+  const endpoints = ['/api/sav', '/api/credit-notes', '/api/sav/files/0/thumbnail']
 
   for (const path of endpoints) {
     const url = `${previewUrl}${path}`

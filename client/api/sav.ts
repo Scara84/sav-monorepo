@@ -13,6 +13,7 @@ import {
   savDuplicateHandler,
 } from './_lib/sav/productivity-handlers'
 import { emitCreditNoteHandler } from './_lib/credit-notes/emit-handler'
+import { fileThumbnailHandler } from './_lib/sav/file-thumbnail-handler'
 import type { ApiHandler, ApiRequest, ApiResponse } from './_lib/types'
 
 /**
@@ -86,6 +87,13 @@ function parseLineId(req: ApiRequest): number | null {
   return parseBigintId(str)
 }
 
+function parseFileId(req: ApiRequest): number | null {
+  const raw = (req.query as Record<string, unknown> | undefined)?.['fileId']
+  if (raw === undefined || raw === null) return null
+  const str = Array.isArray(raw) ? String(raw[0]) : String(raw)
+  return parseBigintId(str)
+}
+
 // F19/F95 (CR Epic 3) : `op` doit provenir des rewrites vercel.json.
 // Absence = requête directe sur /api/sav (list) — autorisée, défaut `list`.
 // Une valeur inconnue doit retourner 404 explicite au lieu de silently
@@ -100,6 +108,7 @@ const ALLOWED_OPS = new Set([
   'comments',
   'duplicate',
   'credit-notes',
+  'file-thumbnail',
 ])
 
 function parseOp(req: ApiRequest): string | null {
@@ -124,6 +133,7 @@ const dispatch: ApiHandler = async (req, res) => {
   }
   const savId = parseSavId(req)
   const lineId = parseLineId(req)
+  const fileId = parseFileId(req)
 
   // Nettoyage : le router ne doit pas polluer `req.query` des handlers avec
   // nos params de routing.
@@ -132,6 +142,7 @@ const dispatch: ApiHandler = async (req, res) => {
     delete q['op']
     delete q['id']
     delete q['lineId']
+    delete q['fileId']
   }
 
   // op=list → GET /api/sav
@@ -142,6 +153,20 @@ const dispatch: ApiHandler = async (req, res) => {
       return
     }
     return listSavHandler(req, res)
+  }
+
+  // Story V1.5 — op=file-thumbnail → GET /api/sav/files/:id/thumbnail
+  if (op === 'file-thumbnail') {
+    if (method !== 'GET') {
+      res.setHeader('Allow', 'GET')
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
+      return
+    }
+    if (fileId === null) {
+      sendError(res, 'VALIDATION_FAILED', 'ID fichier invalide ou manquant', requestId)
+      return
+    }
+    return fileThumbnailHandler(fileId)(req, res)
   }
 
   // Toutes les autres ops exigent un savId valide.

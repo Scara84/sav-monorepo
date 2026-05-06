@@ -387,25 +387,15 @@ function retryImg(id: number): void {
   delete imgErrored.value[id]
 }
 
-// F39 (CR Epic 3) : cache-bust via URL.searchParams.set pour préserver le
-// fragment `#` et les tokens signés SharePoint (`tempauth`, `guestaccesstoken`).
-// Fallback string concat si le parser URL échoue (URL exotique).
+// V1.5 PATTERN-V5 — imgSrc() redirige vers le proxy backend `/api/sav/files/:id/thumbnail`
+// au lieu du webUrl SharePoint direct (fix Chrome ORB cross-origin block).
+// Cache-bust `?_r=N` préservé sur l'URL proxy pour le bouton Réessayer.
+// Le webUrl SharePoint direct reste utilisé UNIQUEMENT pour le bouton "Ouvrir" (<a href>).
 function imgSrc(file: { id: number; webUrl: string }): string {
   const key = retryKey.value[file.id] ?? 0
-  if (key === 0) return file.webUrl
-  if (typeof URL === 'undefined') {
-    return `${file.webUrl}${file.webUrl.includes('?') ? '&' : '?'}_r=${key}`
-  }
-  try {
-    const url = new URL(
-      file.webUrl,
-      typeof window !== 'undefined' ? window.location.href : undefined
-    )
-    url.searchParams.set('_r', String(key))
-    return url.toString()
-  } catch {
-    return `${file.webUrl}${file.webUrl.includes('?') ? '&' : '?'}_r=${key}`
-  }
+  const proxyUrl = `/api/sav/files/${file.id}/thumbnail`
+  if (key === 0) return proxyUrl
+  return `${proxyUrl}?_r=${key}`
 }
 
 function formatEur(cents: number | null | undefined): string {

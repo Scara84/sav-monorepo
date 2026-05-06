@@ -84,6 +84,7 @@ const SCHEMA = {
     'claimed_at',
   ],
   groups: ['id', 'code', 'name', 'created_at', 'updated_at', 'deleted_at'],
+  operator_groups: ['operator_id', 'group_id', 'created_at'],
   magic_link_tokens: [
     'jti',
     'member_id',
