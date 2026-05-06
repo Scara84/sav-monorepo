@@ -241,6 +241,88 @@ describe('buildCaptureItemPrices', () => {
       const result = buildCaptureItemPrices({ unit_amount: 1, quantity: 1, unit: 'kg' })
       expect(result.vatRateBp).toBeUndefined()
     })
+
+    it('parses Pennylane V2 coded "FR_55" → 5.5% → 550 bp', () => {
+      const result = buildCaptureItemPrices({
+        unit_amount: 7.83,
+        vat_rate: 'FR_55',
+        quantity: 1,
+        unit: 'piece',
+      })
+      expect(result.vatRateBp).toBe(550)
+    })
+
+    it('parses "FR_200" → 20% → 2000 bp', () => {
+      const result = buildCaptureItemPrices({
+        unit_amount: 1,
+        vat_rate: 'FR_200',
+        quantity: 1,
+        unit: 'piece',
+      })
+      expect(result.vatRateBp).toBe(2000)
+    })
+
+    it('parses "FR_100" → 10% → 1000 bp', () => {
+      const result = buildCaptureItemPrices({
+        unit_amount: 1,
+        vat_rate: 'FR_100',
+        quantity: 1,
+        unit: 'piece',
+      })
+      expect(result.vatRateBp).toBe(1000)
+    })
+
+    it('parses "FR_21" → 2.1% → 210 bp', () => {
+      const result = buildCaptureItemPrices({
+        unit_amount: 1,
+        vat_rate: 'FR_21',
+        quantity: 1,
+        unit: 'piece',
+      })
+      expect(result.vatRateBp).toBe(210)
+    })
+
+    it('returns no vatRateBp on unparseable vat_rate string', () => {
+      const result = buildCaptureItemPrices({
+        unit_amount: 1,
+        vat_rate: 'GARBAGE',
+        quantity: 1,
+        unit: 'kg',
+      })
+      expect(result.vatRateBp).toBeUndefined()
+    })
+  })
+
+  describe('(c-bis) parseVatRateToBp helper export', () => {
+    it('handles numeric input', async () => {
+      const { parseVatRateToBp } = await import('../buildCaptureItemPrices.js')
+      expect(parseVatRateToBp(5.5)).toBe(550)
+      expect(parseVatRateToBp(20)).toBe(2000)
+      expect(parseVatRateToBp(0)).toBe(0)
+    })
+
+    it('handles numeric string input', async () => {
+      const { parseVatRateToBp } = await import('../buildCaptureItemPrices.js')
+      expect(parseVatRateToBp('5.5')).toBe(550)
+      expect(parseVatRateToBp('20')).toBe(2000)
+    })
+
+    it('handles Pennylane coded strings', async () => {
+      const { parseVatRateToBp } = await import('../buildCaptureItemPrices.js')
+      expect(parseVatRateToBp('FR_55')).toBe(550)
+      expect(parseVatRateToBp('FR_200')).toBe(2000)
+      expect(parseVatRateToBp('FR_100')).toBe(1000)
+      expect(parseVatRateToBp('FR_21')).toBe(210)
+      expect(parseVatRateToBp('FR_0')).toBe(0)
+    })
+
+    it('returns null for null/undefined/empty/garbage', async () => {
+      const { parseVatRateToBp } = await import('../buildCaptureItemPrices.js')
+      expect(parseVatRateToBp(null)).toBeNull()
+      expect(parseVatRateToBp(undefined)).toBeNull()
+      expect(parseVatRateToBp('')).toBeNull()
+      expect(parseVatRateToBp('GARBAGE')).toBeNull()
+    })
   })
 
   describe('invoiceLineId', () => {

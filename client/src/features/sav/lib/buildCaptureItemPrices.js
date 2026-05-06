@@ -79,6 +79,40 @@ export function mapPennylaneUnit(pennylaneUnit) {
 }
 
 /**
+ * Parse a Pennylane V2 `vat_rate` value into basis points.
+ *
+ * Pennylane returns coded strings (e.g. "FR_55" for 5.5%, "FR_200" for 20%)
+ * where the trailing integer is `rate × 10`. We also tolerate plain numeric
+ * input for forward compatibility.
+ *
+ * @param {string|number|null|undefined} vatRate
+ * @returns {number|null}  basis points (0..10000), or null when unparseable
+ */
+export function parseVatRateToBp(vatRate) {
+  if (vatRate == null) return null
+  if (typeof vatRate === 'number' && Number.isFinite(vatRate)) {
+    return Math.round(vatRate * 100)
+  }
+  const str = String(vatRate).trim()
+  if (str === '') return null
+  // Try direct numeric (e.g. "5.5") first.
+  const direct = Number(str)
+  if (Number.isFinite(direct)) {
+    return Math.round(direct * 100)
+  }
+  // Pennylane coded format: "FR_55", "FR_200", etc. — match trailing digits.
+  const match = str.match(/_(\d+(?:\.\d+)?)$/)
+  if (match) {
+    const codeNum = Number(match[1])
+    if (Number.isFinite(codeNum)) {
+      // FR_55 → 55 → /10 → 5.5% → ×100 → 550 bp
+      return Math.round((codeNum / 10) * 100)
+    }
+  }
+  return null
+}
+
+/**
  * Build the 5 price-related fields for a capture payload item from a Pennylane
  * invoice line already in component state.
  *
@@ -114,10 +148,14 @@ export function buildCaptureItemPrices(factureItem) {
     prices.unitPriceHtCents = Math.round(unitAmountEuros * 100)
   }
 
-  // vatRateBp: Pennylane vat_rate is a percentage (e.g. 5.5, 20) → basis points
-  const vatRatePercent = factureItem.vat_rate != null ? Number(factureItem.vat_rate) : null
-  if (vatRatePercent != null && Number.isFinite(vatRatePercent)) {
-    prices.vatRateBp = Math.round(vatRatePercent * 100)
+  // vatRateBp: Pennylane V2 returns vat_rate as a country-coded string like
+  // "FR_55" (5.5%), "FR_200" (20%), "FR_100" (10%), "FR_21" (2.1%). The format
+  // is "<COUNTRY>_<rate × 10>" where rate is in percent. We parse the trailing
+  // digits and divide by 10 → percent → × 100 → basis points.
+  // Numeric input (e.g. raw 5.5) is also tolerated for forward compatibility.
+  const vatRateBp = parseVatRateToBp(factureItem.vat_rate)
+  if (vatRateBp != null) {
+    prices.vatRateBp = vatRateBp
   }
 
   // qtyInvoiced: the quantity on the invoice line (may differ from member qtyRequested)
