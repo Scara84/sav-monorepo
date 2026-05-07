@@ -198,7 +198,7 @@ const SCHEMA = {
     'qty_requested',
     'qty_invoiced',
     'unit_requested',
-    'unit_price_ht_cents',
+    'unit_price_ttc_cents',
     'vat_rate_bp_snapshot',
     'credit_coefficient_bp',
     'total_ht_cents',

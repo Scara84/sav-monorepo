@@ -153,7 +153,7 @@ export const martinezConfig: SupplierExportConfig = {
     {
       key: 'PRECIO_UNIT',
       header: 'PRECIO_UNIT',
-      source: { kind: 'field', path: 'unit_price_ht_cents' },
+      source: { kind: 'field', path: 'unit_price_ttc_cents' },
       format: 'cents-to-euros',
       width: W_PRECIO_UNIT,
     },

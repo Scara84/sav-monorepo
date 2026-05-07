@@ -95,7 +95,7 @@ function baseLine(overrides: Partial<CreditNotePdfLine> = {}): CreditNotePdfLine
     unit_requested: 'kg',
     qty_invoiced: 2,
     unit_invoiced: 'kg',
-    unit_price_ht_cents: 500,
+    unit_price_ttc_cents: 500,
     credit_coefficient: 1,
     credit_coefficient_label: 'TOTAL 100%',
     credit_amount_cents: 1000,

@@ -209,7 +209,7 @@ function seedHappyPath(): void {
       unit_requested: 'kg',
       qty_invoiced: 2,
       unit_invoiced: 'kg',
-      unit_price_ht_cents_snapshot: 500,
+      unit_price_ttc_cents_snapshot: 500,
       credit_coefficient: 1,
       credit_coefficient_label: 'TOTAL',
       credit_amount_cents: 1000,

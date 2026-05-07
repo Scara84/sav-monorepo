@@ -61,7 +61,7 @@ function toSavLineInput(l: {
   unitRequested: string
   qtyInvoiced: number | null
   unitInvoiced: string | null
-  unitPriceHtCents: number | null
+  unitPriceTtcCents: number | null
   vatRateBpSnapshot: number | null
   creditCoefficient: number
   pieceToKgWeightG: number | null
@@ -75,7 +75,7 @@ function toSavLineInput(l: {
     unit_invoiced: (l.unitInvoiced && UNITS.has(l.unitInvoiced)
       ? l.unitInvoiced
       : null) as SavLineInput['unit_invoiced'],
-    unit_price_ht_cents: l.unitPriceHtCents,
+    unit_price_ttc_cents: l.unitPriceTtcCents,
     vat_rate_bp_snapshot: l.vatRateBpSnapshot,
     credit_coefficient: l.creditCoefficient,
     piece_to_kg_weight_g: l.pieceToKgWeightG,
@@ -178,7 +178,7 @@ function beginEditLine(l: SavDetailLine): void {
     unitRequested: l.unitRequested,
     qtyInvoiced: l.qtyInvoiced !== null ? String(l.qtyInvoiced) : '',
     unitInvoiced: l.unitInvoiced ?? '',
-    unitPriceEuros: l.unitPriceHtCents !== null ? (l.unitPriceHtCents / 100).toFixed(2) : '',
+    unitPriceEuros: l.unitPriceTtcCents !== null ? (l.unitPriceTtcCents / 100).toFixed(2) : '',
     creditCoefficient: String(l.creditCoefficient),
     pieceToKgWeightG: l.pieceToKgWeightG !== null ? String(l.pieceToKgWeightG) : '',
   }
@@ -227,7 +227,7 @@ async function saveEditLine(l: SavDetailLine): Promise<void> {
   }
   if (!isEmptyDraftField(draft.unitPriceEuros)) {
     const cents = Math.round(parseLocaleNumber(draft.unitPriceEuros) * 100)
-    if (Number.isFinite(cents) && cents !== l.unitPriceHtCents) patch['unitPriceHtCents'] = cents
+    if (Number.isFinite(cents) && cents !== l.unitPriceTtcCents) patch['unitPriceTtcCents'] = cents
   }
   if (!isEmptyDraftField(draft.creditCoefficient)) {
     const c = parseLocaleNumber(draft.creditCoefficient)
@@ -292,7 +292,7 @@ async function handleAddLineCreate(body: {
   productNameSnapshot: string
   qtyRequested: number
   unitRequested: 'kg' | 'piece' | 'liter'
-  unitPriceHtCents?: number
+  unitPriceTtcCents?: number
   vatRateBpSnapshot?: number
   creditCoefficient?: number
 }): Promise<void> {
@@ -976,7 +976,7 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
               <th scope="col">Produit</th>
               <th scope="col">Qté demandée</th>
               <th scope="col">Qté facturée</th>
-              <th scope="col">PU HT</th>
+              <th scope="col">PU TTC</th>
               <th scope="col">Coef.</th>
               <th scope="col">Avoir</th>
               <th scope="col">Validation</th>
@@ -1045,7 +1045,7 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
                     {{ l.qtyInvoiced !== null ? (l.unitInvoiced ?? l.unitRequested) : '' }}
                   </span>
                 </td>
-                <!-- PU HT -->
+                <!-- PU TTC -->
                 <td>
                   <input
                     v-if="lineEdit.editingLineId.value === l.id && editDraft[l.id]"
@@ -1055,12 +1055,12 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
                     max="999999.99"
                     step="0.01"
                     placeholder="€"
-                    :aria-label="`Prix unitaire HT, ligne ${l.lineNumber ?? l.position}`"
+                    :aria-label="`Prix unitaire TTC, ligne ${l.lineNumber ?? l.position}`"
                     class="cell-input"
                     @keydown.enter.prevent="saveEditLine(l)"
                     @keydown.esc.prevent="cancelEditLine"
                   />
-                  <span v-else>{{ formatEur(l.unitPriceHtCents) }}</span>
+                  <span v-else>{{ formatEur(l.unitPriceTtcCents) }}</span>
                 </td>
                 <!-- Coefficient -->
                 <td>
@@ -1646,6 +1646,23 @@ a:focus-visible {
   padding: 0.5rem;
   border-bottom: 1px solid #eee;
   font-size: 0.875rem;
+}
+/* Min-widths colonnes en mode édition — évite la troncature des inputs. */
+.lines-table th:nth-child(4),
+.lines-table td:nth-child(4) {
+  min-width: 90px; /* Qté demandée */
+}
+.lines-table th:nth-child(5),
+.lines-table td:nth-child(5) {
+  min-width: 145px; /* Qté facturée + select unité */
+}
+.lines-table th:nth-child(6),
+.lines-table td:nth-child(6) {
+  min-width: 100px; /* PU TTC */
+}
+.lines-table th:nth-child(7),
+.lines-table td:nth-child(7) {
+  min-width: 80px; /* Coef. */
 }
 .validation-badge {
   padding: 0.125rem 0.375rem;

@@ -2,7 +2,7 @@
   "version": 1,
   "generated_at": "2026-04-25",
   "provenance": "synthetic-prd-derived",
-  "note": "V1 = 20+ cas synthétiques dérivés PRD §FR21-FR28. V1.1 = remplacement par cas réels Excel historique au shadow run Epic 7. NE PAS modifier le 'version' sans mettre à jour scripts/fixtures/gen-sql-fixture-cases.ts + trigger PG compute_sav_line_credit + step CI check-fixture-sql-sync.",
+  "note": "V1 = 20+ cas synthétiques dérivés PRD §FR21-FR28. V1.1 = remplacement par cas réels Excel historique au shadow run Epic 7. NE PAS modifier le 'version' sans mettre à jour scripts/fixtures/gen-sql-fixture-cases.ts + trigger PG compute_sav_line_credit + step CI check-fixture-sql-sync. V1.8 (2026-05-16) — recompute des credit_amount_cents avec conversion TTC → HT (rename unit_price_ht_cents → unit_price_ttc_cents).",
   "schema_lock": {
     "$comment": "Changer version en 2 nécessite nouveau pipeline miroir CI + review schéma SavLineInput/SavLineComputed"
   },
@@ -12,19 +12,19 @@
       "label": "Happy path kg coefficient TOTAL",
       "ac_covered": ["AC#2.5"],
       "mirror_sql": true,
-      "comment": "10 kg × 250 c × 1.0 = 2500 c",
+      "comment": "10 kg × 250 c × 1.0 = 2370 c (V1.8 TTC→HT)",
       "input": {
         "qty_requested": 10,
         "unit_requested": "kg",
         "qty_invoiced": 10,
         "unit_invoiced": "kg",
-        "unit_price_ht_cents": 250,
+        "unit_price_ttc_cents": 250,
         "vat_rate_bp_snapshot": 550,
         "credit_coefficient": 1,
         "piece_to_kg_weight_g": null
       },
       "expected": {
-        "credit_amount_cents": 2500,
+        "credit_amount_cents": 2370,
         "validation_status": "ok",
         "validation_message": null
       }
@@ -34,19 +34,19 @@
       "label": "Happy path kg coefficient 50%",
       "ac_covered": ["AC#2.5"],
       "mirror_sql": false,
-      "comment": "5 kg × 800 c × 0.5 = 2000 c",
+      "comment": "5 kg × 800 c × 0.5 = 1895 c (V1.8 TTC→HT)",
       "input": {
         "qty_requested": 5,
         "unit_requested": "kg",
         "qty_invoiced": 5,
         "unit_invoiced": "kg",
-        "unit_price_ht_cents": 800,
+        "unit_price_ttc_cents": 800,
         "vat_rate_bp_snapshot": 550,
         "credit_coefficient": 0.5,
         "piece_to_kg_weight_g": null
       },
       "expected": {
-        "credit_amount_cents": 2000,
+        "credit_amount_cents": 1895,
         "validation_status": "ok",
         "validation_message": null
       }
@@ -56,19 +56,19 @@
       "label": "Happy path piece coefficient libre 0.35",
       "ac_covered": ["AC#2.5"],
       "mirror_sql": true,
-      "comment": "12 pcs × 150 c × 0.35 = 630 c",
+      "comment": "12 pcs × 150 c × 0.35 = 596 c (V1.8 TTC→HT)",
       "input": {
         "qty_requested": 12,
         "unit_requested": "piece",
         "qty_invoiced": 12,
         "unit_invoiced": "piece",
-        "unit_price_ht_cents": 150,
+        "unit_price_ttc_cents": 150,
         "vat_rate_bp_snapshot": 550,
         "credit_coefficient": 0.35,
         "piece_to_kg_weight_g": null
       },
       "expected": {
-        "credit_amount_cents": 630,
+        "credit_amount_cents": 596,
         "validation_status": "ok",
         "validation_message": null
       }
@@ -84,7 +84,7 @@
         "unit_requested": "kg",
         "qty_invoiced": 5,
         "unit_invoiced": "kg",
-        "unit_price_ht_cents": null,
+        "unit_price_ttc_cents": null,
         "vat_rate_bp_snapshot": 550,
         "credit_coefficient": 1,
         "piece_to_kg_weight_g": null
@@ -106,7 +106,7 @@
         "unit_requested": "kg",
         "qty_invoiced": 3,
         "unit_invoiced": "kg",
-        "unit_price_ht_cents": 400,
+        "unit_price_ttc_cents": 400,
         "vat_rate_bp_snapshot": null,
         "credit_coefficient": 1,
         "piece_to_kg_weight_g": null
@@ -128,7 +128,7 @@
         "unit_requested": "kg",
         "qty_invoiced": 5,
         "unit_invoiced": "kg",
-        "unit_price_ht_cents": 200,
+        "unit_price_ttc_cents": 200,
         "vat_rate_bp_snapshot": 550,
         "credit_coefficient": 1,
         "piece_to_kg_weight_g": null
@@ -150,13 +150,13 @@
         "unit_requested": "kg",
         "qty_invoiced": 7,
         "unit_invoiced": "kg",
-        "unit_price_ht_cents": 100,
+        "unit_price_ttc_cents": 100,
         "vat_rate_bp_snapshot": 550,
         "credit_coefficient": 1,
         "piece_to_kg_weight_g": null
       },
       "expected": {
-        "credit_amount_cents": 700,
+        "credit_amount_cents": 665,
         "validation_status": "ok",
         "validation_message": null
       }
@@ -172,13 +172,13 @@
         "unit_requested": "kg",
         "qty_invoiced": 25,
         "unit_invoiced": "piece",
-        "unit_price_ht_cents": 30,
+        "unit_price_ttc_cents": 30,
         "vat_rate_bp_snapshot": 550,
         "credit_coefficient": 1,
         "piece_to_kg_weight_g": 200
       },
       "expected": {
-        "credit_amount_cents": 750,
+        "credit_amount_cents": 700,
         "validation_status": "ok",
         "validation_message": null
       }
@@ -194,13 +194,13 @@
         "unit_requested": "piece",
         "qty_invoiced": 3,
         "unit_invoiced": "kg",
-        "unit_price_ht_cents": 400,
+        "unit_price_ttc_cents": 400,
         "vat_rate_bp_snapshot": 550,
         "credit_coefficient": 1,
         "piece_to_kg_weight_g": 150
       },
       "expected": {
-        "credit_amount_cents": 1200,
+        "credit_amount_cents": 1140,
         "validation_status": "ok",
         "validation_message": null
       }
@@ -216,13 +216,13 @@
         "unit_requested": "kg",
         "qty_invoiced": 16,
         "unit_invoiced": "piece",
-        "unit_price_ht_cents": 50,
+        "unit_price_ttc_cents": 50,
         "vat_rate_bp_snapshot": 550,
         "credit_coefficient": 0.5,
         "piece_to_kg_weight_g": 250
       },
       "expected": {
-        "credit_amount_cents": 400,
+        "credit_amount_cents": 376,
         "validation_status": "ok",
         "validation_message": null
       }
@@ -238,7 +238,7 @@
         "unit_requested": "kg",
         "qty_invoiced": 3,
         "unit_invoiced": "liter",
-        "unit_price_ht_cents": 500,
+        "unit_price_ttc_cents": 500,
         "vat_rate_bp_snapshot": 550,
         "credit_coefficient": 1,
         "piece_to_kg_weight_g": 1000
@@ -260,7 +260,7 @@
         "unit_requested": "piece",
         "qty_invoiced": 2,
         "unit_invoiced": "liter",
-        "unit_price_ht_cents": 120,
+        "unit_price_ttc_cents": 120,
         "vat_rate_bp_snapshot": 550,
         "credit_coefficient": 1,
         "piece_to_kg_weight_g": null
@@ -282,7 +282,7 @@
         "unit_requested": "kg",
         "qty_invoiced": 5,
         "unit_invoiced": "kg",
-        "unit_price_ht_cents": 100,
+        "unit_price_ttc_cents": 100,
         "vat_rate_bp_snapshot": 550,
         "credit_coefficient": -0.1,
         "piece_to_kg_weight_g": null
@@ -304,7 +304,7 @@
         "unit_requested": "kg",
         "qty_invoiced": 2,
         "unit_invoiced": "kg",
-        "unit_price_ht_cents": 500,
+        "unit_price_ttc_cents": 500,
         "vat_rate_bp_snapshot": 550,
         "credit_coefficient": 1.01,
         "piece_to_kg_weight_g": null
@@ -326,13 +326,13 @@
         "unit_requested": "piece",
         "qty_invoiced": 6,
         "unit_invoiced": "piece",
-        "unit_price_ht_cents": 999,
+        "unit_price_ttc_cents": 999,
         "vat_rate_bp_snapshot": 2000,
         "credit_coefficient": 1,
         "piece_to_kg_weight_g": null
       },
       "expected": {
-        "credit_amount_cents": 5994,
+        "credit_amount_cents": 4998,
         "validation_status": "ok",
         "validation_message": null
       }
@@ -348,13 +348,13 @@
         "unit_requested": "kg",
         "qty_invoiced": 8,
         "unit_invoiced": "kg",
-        "unit_price_ht_cents": 125,
+        "unit_price_ttc_cents": 125,
         "vat_rate_bp_snapshot": 550,
         "credit_coefficient": 1,
         "piece_to_kg_weight_g": null
       },
       "expected": {
-        "credit_amount_cents": 1000,
+        "credit_amount_cents": 944,
         "validation_status": "ok",
         "validation_message": null
       }
@@ -370,13 +370,13 @@
         "unit_requested": "kg",
         "qty_invoiced": 10,
         "unit_invoiced": "kg",
-        "unit_price_ht_cents": 200,
+        "unit_price_ttc_cents": 200,
         "vat_rate_bp_snapshot": 550,
         "credit_coefficient": 1,
         "piece_to_kg_weight_g": null
       },
       "expected": {
-        "credit_amount_cents": 2000,
+        "credit_amount_cents": 1900,
         "validation_status": "ok",
         "validation_message": null
       }
@@ -392,13 +392,13 @@
         "unit_requested": "kg",
         "qty_invoiced": 3,
         "unit_invoiced": "kg",
-        "unit_price_ht_cents": 333,
+        "unit_price_ttc_cents": 333,
         "vat_rate_bp_snapshot": 550,
         "credit_coefficient": 0.33,
         "piece_to_kg_weight_g": null
       },
       "expected": {
-        "credit_amount_cents": 330,
+        "credit_amount_cents": 313,
         "validation_status": "ok",
         "validation_message": null
       }
@@ -414,13 +414,13 @@
         "unit_requested": "kg",
         "qty_invoiced": 7,
         "unit_invoiced": "kg",
-        "unit_price_ht_cents": 199,
+        "unit_price_ttc_cents": 199,
         "vat_rate_bp_snapshot": 550,
         "credit_coefficient": 0.5,
         "piece_to_kg_weight_g": null
       },
       "expected": {
-        "credit_amount_cents": 697,
+        "credit_amount_cents": 662,
         "validation_status": "ok",
         "validation_message": null
       }
@@ -436,7 +436,7 @@
         "unit_requested": "kg",
         "qty_invoiced": 5,
         "unit_invoiced": "kg",
-        "unit_price_ht_cents": 1000,
+        "unit_price_ttc_cents": 1000,
         "vat_rate_bp_snapshot": 550,
         "credit_coefficient": 0,
         "piece_to_kg_weight_g": null
@@ -458,7 +458,7 @@
         "unit_requested": "kg",
         "qty_invoiced": null,
         "unit_invoiced": null,
-        "unit_price_ht_cents": 250,
+        "unit_price_ttc_cents": 250,
         "vat_rate_bp_snapshot": 550,
         "credit_coefficient": 1,
         "piece_to_kg_weight_g": null
@@ -480,7 +480,7 @@
         "unit_requested": "kg",
         "qty_invoiced": 20,
         "unit_invoiced": "piece",
-        "unit_price_ht_cents": 40,
+        "unit_price_ttc_cents": 40,
         "vat_rate_bp_snapshot": 550,
         "credit_coefficient": 1,
         "piece_to_kg_weight_g": null

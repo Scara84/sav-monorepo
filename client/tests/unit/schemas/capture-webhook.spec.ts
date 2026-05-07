@@ -7,8 +7,8 @@ import { captureWebhookSchema } from '../../../api/_lib/schemas/capture-webhook'
  * Couvre les cas (a)-(f) spécifiés dans l'AC :
  *   (a) payload sans les 4 champs → safeParse.success === true
  *   (b) payload avec les 4 champs valides → success + types corrects
- *   (c) unitPriceHtCents = -1 → failure (nonnegative)
- *   (d) unitPriceHtCents = 1.5 → failure (int)
+ *   (c) unitPriceTtcCents = -1 → failure (nonnegative)
+ *   (d) unitPriceTtcCents = 1.5 → failure (int)
  *   (e) vatRateBp = 10001 → failure (max 10000)
  *   (f) vatRateBp = 5.5 → failure (int — guard anti-confusion bp/percent R-4)
  *
@@ -48,7 +48,7 @@ describe('AC #1 (a) — payload sans les 4 champs prix', () => {
     const item = result.data.items[0]
     expect(item).toBeDefined()
     // Ces propriétés doivent exister dans le type mais valoir undefined (optional)
-    expect((item as Record<string, unknown>)['unitPriceHtCents']).toBeUndefined()
+    expect((item as Record<string, unknown>)['unitPriceTtcCents']).toBeUndefined()
     expect((item as Record<string, unknown>)['vatRateBp']).toBeUndefined()
     expect((item as Record<string, unknown>)['qtyInvoiced']).toBeUndefined()
     expect((item as Record<string, unknown>)['invoiceLineId']).toBeUndefined()
@@ -65,7 +65,7 @@ describe('AC #1 (b) — payload avec les 4 champs valides', () => {
     items: [
       {
         ...baseItem,
-        unitPriceHtCents: 2500,
+        unitPriceTtcCents: 2500,
         vatRateBp: 550,
         qtyInvoiced: 2.5,
         invoiceLineId: 'pennylane-uuid-abc',
@@ -81,16 +81,16 @@ describe('AC #1 (b) — payload avec les 4 champs valides', () => {
     expect(result.success).toBe(true)
   })
 
-  it('items[0].unitPriceHtCents est typé number et vaut 2500', () => {
-    // RED: échoue jusqu'à ce que unitPriceHtCents soit déclaré dans le schema.
+  it('items[0].unitPriceTtcCents est typé number et vaut 2500', () => {
+    // RED: échoue jusqu'à ce que unitPriceTtcCents soit déclaré dans le schema.
     const result = captureWebhookSchema.safeParse(enrichedPayload)
     expect(result.success).toBe(true)
     if (!result.success) return
     const item = result.data.items[0]
-    // @ts-expect-error — RED: unitPriceHtCents n'existe pas encore dans le type inféré
-    expect(item.unitPriceHtCents).toBe(2500)
+    // @ts-expect-error — RED: unitPriceTtcCents n'existe pas encore dans le type inféré
+    expect(item.unitPriceTtcCents).toBe(2500)
     // @ts-expect-error — RED
-    expect(typeof item.unitPriceHtCents).toBe('number')
+    expect(typeof item.unitPriceTtcCents).toBe('number')
   })
 
   it('items[0].vatRateBp vaut 550', () => {
@@ -122,32 +122,32 @@ describe('AC #1 (b) — payload avec les 4 champs valides', () => {
 })
 
 // ---------------------------------------------------------------------------
-// (c) unitPriceHtCents = -1 → nonnegative FAIL
+// (c) unitPriceTtcCents = -1 → nonnegative FAIL
 // ---------------------------------------------------------------------------
 
-describe('AC #1 (c) — unitPriceHtCents = -1 → failure (nonnegative)', () => {
+describe('AC #1 (c) — unitPriceTtcCents = -1 → failure (nonnegative)', () => {
   it('safeParse.success === false', () => {
-    // RED: échoue si unitPriceHtCents n'est pas encore déclaré (champ inconnu ignoré).
+    // RED: échoue si unitPriceTtcCents n'est pas encore déclaré (champ inconnu ignoré).
     // Post-extension: la contrainte nonnegative() doit rejeter -1.
     const result = captureWebhookSchema.safeParse({
       ...basePayload,
-      items: [{ ...baseItem, unitPriceHtCents: -1 }],
+      items: [{ ...baseItem, unitPriceTtcCents: -1 }],
     })
     expect(result.success).toBe(false)
   })
 })
 
 // ---------------------------------------------------------------------------
-// (d) unitPriceHtCents = 1.5 → int FAIL
+// (d) unitPriceTtcCents = 1.5 → int FAIL
 // ---------------------------------------------------------------------------
 
-describe('AC #1 (d) — unitPriceHtCents = 1.5 → failure (int)', () => {
+describe('AC #1 (d) — unitPriceTtcCents = 1.5 → failure (int)', () => {
   it('safeParse.success === false (pas de flottant pour les cents)', () => {
-    // RED: échoue si unitPriceHtCents n'est pas déclaré (ignoré).
+    // RED: échoue si unitPriceTtcCents n'est pas déclaré (ignoré).
     // Post-extension: int() doit rejeter 1.5.
     const result = captureWebhookSchema.safeParse({
       ...basePayload,
-      items: [{ ...baseItem, unitPriceHtCents: 1.5 }],
+      items: [{ ...baseItem, unitPriceTtcCents: 1.5 }],
     })
     expect(result.success).toBe(false)
   })

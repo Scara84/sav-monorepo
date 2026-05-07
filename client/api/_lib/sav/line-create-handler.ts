@@ -30,7 +30,7 @@ export const lineCreateBodySchema = z
     unitRequested: z.enum(['kg', 'piece', 'liter']),
     qtyInvoiced: z.number().nonnegative().max(99999).optional(),
     unitInvoiced: z.enum(['kg', 'piece', 'liter']).optional(),
-    unitPriceHtCents: z.number().int().nonnegative().max(100000000).optional(),
+    unitPriceTtcCents: z.number().int().nonnegative().max(100000000).optional(),
     vatRateBpSnapshot: z.number().int().min(0).max(10000).optional(),
     creditCoefficient: z.number().min(0).max(1).optional(),
     creditCoefficientLabel: z.string().max(32).optional(),

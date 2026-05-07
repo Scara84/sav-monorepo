@@ -140,7 +140,7 @@ const pricingPayload = {
       unit: 'kg',
       cause: 'traces de moisissure',
       // Story 4.7 — nouveaux champs prix
-      unitPriceHtCents: 2500,
+      unitPriceTtcCents: 2500,
       vatRateBp: 550,
       qtyInvoiced: 2.5,
       invoiceLineId: 'pennylane-uuid-abc-4-7',
@@ -206,7 +206,7 @@ describe('POST /api/webhooks/capture — Story 4.7 extension prix', () => {
     expect(item0).toBeDefined()
     // RED: ces assertions échouent tant que le schema Zod ne déclare pas les champs
     // (les champs sont strippés par Zod si non déclarés, ou absents du type)
-    expect(item0?.['unitPriceHtCents']).toBe(2500)
+    expect(item0?.['unitPriceTtcCents']).toBe(2500)
     expect(item0?.['vatRateBp']).toBe(550)
     expect(item0?.['qtyInvoiced']).toBe(2.5)
     expect(item0?.['invoiceLineId']).toBe('pennylane-uuid-abc-4-7')
@@ -274,7 +274,7 @@ describe('POST /api/webhooks/capture — Story 4.7 extension prix', () => {
     const item0 = payload.items[0]
     // Les champs prix ne doivent PAS être présents (ou valoir undefined)
     // → la RPC recevra NULL après cast côté Postgres
-    expect(item0?.['unitPriceHtCents']).toBeUndefined()
+    expect(item0?.['unitPriceTtcCents']).toBeUndefined()
     expect(item0?.['vatRateBp']).toBeUndefined()
     expect(item0?.['qtyInvoiced']).toBeUndefined()
     expect(item0?.['invoiceLineId']).toBeUndefined()

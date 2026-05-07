@@ -22,7 +22,7 @@ interface CreateLineBody {
   productNameSnapshot: string
   qtyRequested: number
   unitRequested: 'kg' | 'piece' | 'liter'
-  unitPriceHtCents?: number
+  unitPriceTtcCents?: number
   vatRateBpSnapshot?: number
   creditCoefficient?: number
 }
@@ -109,7 +109,7 @@ function submit(): void {
     unitRequested: form.value.unitRequested,
   }
   if (form.value.unitPriceEuros !== '') {
-    body.unitPriceHtCents = Math.round(Number(form.value.unitPriceEuros) * 100)
+    body.unitPriceTtcCents = Math.round(Number(form.value.unitPriceEuros) * 100)
   }
   if (form.value.vatRatePercent !== '') {
     body.vatRateBpSnapshot = Math.round(Number(form.value.vatRatePercent) * 100)
@@ -200,7 +200,7 @@ function submit(): void {
 
         <div class="field-row">
           <div class="field">
-            <label for="add-line-price">PU HT (€)</label>
+            <label for="add-line-price">PU TTC (€)</label>
             <input
               id="add-line-price"
               v-model="form.unitPriceEuros"

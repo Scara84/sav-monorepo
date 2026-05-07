@@ -10,7 +10,7 @@ import { computeCreditNoteTotals } from '../../../api/_lib/business/vatRemise'
  * Story 7-4 AC #3 — TEST RÉGRESSION ISO-FACT (garde-fou critique).
  *
  * Architecture.md:155-156 — invariant absolu : aucun snapshot historique
- * (`sav_lines.vat_rate_bp_snapshot`, `sav_lines.unit_price_ht_cents`,
+ * (`sav_lines.vat_rate_bp_snapshot`, `sav_lines.unit_price_ttc_cents`,
  * `credit_notes.discount_cents`) ne doit être recalculé suite à une
  * rotation `settings`.
  *

@@ -59,7 +59,7 @@ function buildPayload(overrides: {
     unitRequested: string
     qtyInvoiced: number | null
     unitInvoiced: string | null
-    unitPriceHtCents: number | null
+    unitPriceTtcCents: number | null
     vatRateBpSnapshot: number | null
     creditCoefficient: number
     creditAmountCents: number | null
@@ -120,7 +120,7 @@ const OK_LINE = {
   unitRequested: 'kg',
   qtyInvoiced: 10,
   unitInvoiced: 'kg',
-  unitPriceHtCents: 250,
+  unitPriceTtcCents: 250,
   vatRateBpSnapshot: 550,
   creditCoefficient: 1,
   creditAmountCents: 2500,
@@ -136,7 +136,7 @@ const QTY_EXCEEDS_LINE = {
   unitRequested: 'kg',
   qtyInvoiced: 5,
   unitInvoiced: 'kg',
-  unitPriceHtCents: 200,
+  unitPriceTtcCents: 200,
   vatRateBpSnapshot: 550,
   creditCoefficient: 1,
   creditAmountCents: null,

@@ -40,7 +40,7 @@ export const lineEditBodySchema = z
     // clé présente=null (unset).
     qtyInvoiced: z.number().nonnegative().max(99999).nullable().optional(),
     unitInvoiced: z.enum(['kg', 'piece', 'liter']).nullable().optional(),
-    unitPriceHtCents: z.number().int().nonnegative().max(100000000).optional(),
+    unitPriceTtcCents: z.number().int().nonnegative().max(100000000).optional(),
     vatRateBpSnapshot: z.number().int().min(0).max(10000).optional(),
     creditCoefficient: z.number().min(0).max(1).optional(),
     creditCoefficientLabel: z.string().max(32).optional(),

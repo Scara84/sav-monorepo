@@ -816,7 +816,7 @@ export default {
           // Story 4.7 — Inject Pennylane invoice line prices into the capture payload.
           // buildCaptureItemPrices extracts the 5 price fields from the Pennylane line
           // already in component state. See lib/buildCaptureItemPrices.js for the full
-          // mapping rationale (unit_amount → unitPriceHtCents, vat_rate → vatRateBp, etc.)
+          // mapping rationale (unit_amount → unitPriceTtcCents, vat_rate → vatRateBp, etc.)
           Object.assign(item, buildCaptureItemPrices(factureItem))
 
           return item

@@ -153,7 +153,7 @@ export interface ExportRow {
   id: number
   qty_invoiced: number | null
   piece_to_kg_weight_g: number | null
-  unit_price_ht_cents: number | null
+  unit_price_ttc_cents: number | null
   vat_rate_bp_snapshot: number | null
   credit_coefficient: number | string | null
   credit_amount_cents: number | null
@@ -214,7 +214,7 @@ export async function buildSupplierExport(args: BuildExportArgs): Promise<BuildE
       id,
       qty_invoiced,
       piece_to_kg_weight_g,
-      unit_price_ht_cents,
+      unit_price_ttc_cents,
       vat_rate_bp_snapshot,
       credit_coefficient,
       credit_amount_cents,
@@ -356,7 +356,7 @@ export async function buildSupplierExport(args: BuildExportArgs): Promise<BuildE
     // si DB renvoie Infinity/NaN (corruption), on skip + log au lieu de
     // laisser BigInt(NaN) throw et tuer tout l'export.
     const pieceG = row.piece_to_kg_weight_g
-    const price = row.unit_price_ht_cents
+    const price = row.unit_price_ttc_cents
     if (typeof pieceG === 'number' && typeof price === 'number') {
       const contribCents = Math.round((pieceG * price) / 1000)
       if (Number.isFinite(contribCents) && Number.isSafeInteger(contribCents)) {

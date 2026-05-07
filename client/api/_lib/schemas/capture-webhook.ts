@@ -37,14 +37,14 @@ export const captureWebhookSchema = z.object({
         // Story 4.7 — Capture des prix facture client (extension rétrocompatible)
         // Ces champs sont optionnels : un payload Make pre-4.7 sans ces champs reste valide.
         // La RPC INSERTe NULL pour les colonnes correspondantes si absents.
-        unitPriceHtCents: z.number().int().nonnegative().optional(), // prix unitaire HT en cents EUR (2500 = 25,00 €)
+        unitPriceTtcCents: z.number().int().nonnegative().optional(), // prix unitaire HT en cents EUR (2500 = 25,00 €)
         vatRateBp: z.number().int().nonnegative().max(10000).optional(), // taux TVA en basis points (550 = 5,5 %, 2000 = 20 %)
         qtyInvoiced: z.number().nonnegative().optional(), // quantité effectivement facturée (peut différer de qtyRequested)
         invoiceLineId: z.string().max(255).optional(), // identifiant ligne facture Pennylane (traçabilité reconciliation, max 255 — DN-4 locked)
         // Story 4.7 fix — unitInvoiced requis par trigger trg_compute_sav_line_credit (D1 patch :
-        // unit_invoiced IS NULL → 'to_calculate'). Si absent et unitPriceHtCents est présent,
+        // unit_invoiced IS NULL → 'to_calculate'). Si absent et unitPriceTtcCents est présent,
         // la RPC défautera à unit (même produit, même unité — sane default V1).
-        // Si absent ET unitPriceHtCents absent : NULL → 'to_calculate' (comportement legacy intentionnel).
+        // Si absent ET unitPriceTtcCents absent : NULL → 'to_calculate' (comportement legacy intentionnel).
         // Story 4.7 OQ-2 : enum tightenned to match `unit` (smaller blast radius).
         // Make MUST translate Pennylane-native strings ('Kilogramme') to one of the 4 enum values.
         // Prevents trigger comparison unit_requested != unit_invoiced firing 'unit_mismatch' wrongly.

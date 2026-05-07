@@ -80,7 +80,7 @@ export interface CreditNotePdfLine {
   unit_requested: Unit
   qty_invoiced: number | null
   unit_invoiced: Unit | null
-  unit_price_ht_cents: number | null
+  unit_price_ttc_cents: number | null
   credit_coefficient: number
   credit_coefficient_label: string | null
   credit_amount_cents: number | null
@@ -479,7 +479,7 @@ function renderTable(
       h(
         Text,
         { style: styles.colPriceHt },
-        l.unit_price_ht_cents === null ? '—' : formatEurFromCents(l.unit_price_ht_cents)
+        l.unit_price_ttc_cents === null ? '—' : formatEurFromCents(l.unit_price_ttc_cents)
       ),
       h(
         Text,

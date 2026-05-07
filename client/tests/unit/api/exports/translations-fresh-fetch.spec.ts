@@ -28,7 +28,7 @@ function makeRow(overrides: Partial<ExportRow> = {}): ExportRow {
     id: 1,
     qty_invoiced: 3,
     piece_to_kg_weight_g: 2500,
-    unit_price_ht_cents: 1250,
+    unit_price_ttc_cents: 1250,
     vat_rate_bp_snapshot: 550,
     credit_coefficient: 1,
     credit_amount_cents: 3125,

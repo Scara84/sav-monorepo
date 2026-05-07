@@ -102,7 +102,7 @@ type LineOverride = {
   unitRequested?: string
   qtyInvoiced?: number | null
   unitInvoiced?: string | null
-  unitPriceHtCents?: number | null
+  unitPriceTtcCents?: number | null
   vatRateBpSnapshot?: number | null
   creditCoefficient?: number
   creditCoefficientLabel?: string | null
@@ -124,7 +124,7 @@ function line(overrides: LineOverride = {}) {
     unitRequested: 'kg',
     qtyInvoiced: 10,
     unitInvoiced: 'kg',
-    unitPriceHtCents: 250,
+    unitPriceTtcCents: 250,
     vatRateBpSnapshot: 550,
     creditCoefficient: 1,
     creditCoefficientLabel: null,

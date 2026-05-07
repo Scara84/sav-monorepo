@@ -38,7 +38,7 @@ export type SavLineInput = {
   unit_requested: Unit
   qty_invoiced: number | null
   unit_invoiced: Unit | null
-  unit_price_ht_cents: number | null
+  unit_price_ttc_cents: number | null
   vat_rate_bp_snapshot: number | null
   credit_coefficient: number
   piece_to_kg_weight_g: number | null
@@ -92,7 +92,7 @@ export function computeSavLineCredit(input: SavLineInput): SavLineComputed {
     unit_requested,
     qty_invoiced,
     unit_invoiced,
-    unit_price_ht_cents,
+    unit_price_ttc_cents,
     vat_rate_bp_snapshot,
     credit_coefficient,
     piece_to_kg_weight_g,
@@ -106,7 +106,7 @@ export function computeSavLineCredit(input: SavLineInput): SavLineComputed {
     qty_requested,
     credit_coefficient,
     qty_invoiced,
-    unit_price_ht_cents,
+    unit_price_ttc_cents,
     vat_rate_bp_snapshot,
     piece_to_kg_weight_g,
   ]
@@ -121,14 +121,14 @@ export function computeSavLineCredit(input: SavLineInput): SavLineComputed {
   }
 
   // 1. to_calculate : information manquante (capture incomplète)
-  //    - unit_price_ht_cents ou vat_rate_bp_snapshot NULL → capture Make.com
+  //    - unit_price_ttc_cents ou vat_rate_bp_snapshot NULL → capture Make.com
   //      en attente du webhook facture (Epic 2 — double webhook capture+facture).
   //    - qty_invoiced / unit_invoiced NULL : pareil, facture pas encore matchée.
   //      Sans facture, la défense FR24 (qty_requested <= qty_invoiced) ne peut
   //      pas être évaluée → 'to_calculate' force l'opérateur à attendre que le
   //      webhook facture remplisse les colonnes avant de valider.
   if (
-    unit_price_ht_cents === null ||
+    unit_price_ttc_cents === null ||
     vat_rate_bp_snapshot === null ||
     qty_invoiced === null ||
     unit_invoiced === null
@@ -149,6 +149,16 @@ export function computeSavLineCredit(input: SavLineInput): SavLineComputed {
       validation_message: 'Coefficient avoir hors plage [0,1]',
     }
   }
+
+  // V1.8 — Conversion TTC → HT.
+  // Pennylane V2 envoie le prix unitaire TTC (cf. capture-webhook schema). Le
+  // moteur doit travailler en HT pour que `computeCreditNoteTotals` puisse
+  // ré-appliquer la TVA sans double-comptage. La conversion s'appuie sur le
+  // snapshot TVA de la ligne (vat_rate_bp_snapshot, en basis points).
+  //   unit_price_ht_cents = unit_price_ttc_cents / (1 + vat_rate_bp / 10000)
+  const unit_price_ht_cents = roundCents(
+    (unit_price_ttc_cents * 10000) / (10000 + vat_rate_bp_snapshot)
+  )
 
   // 3+4. Résolution des unités : même unité OU conversion pièce↔kg
   let price_effective = unit_price_ht_cents

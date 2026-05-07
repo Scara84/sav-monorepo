@@ -33,7 +33,7 @@ function makeRow(overrides: Partial<ExportRow> = {}): ExportRow {
     id: 1,
     qty_invoiced: 4,
     piece_to_kg_weight_g: 3000,
-    unit_price_ht_cents: 1500,
+    unit_price_ttc_cents: 1500,
     vat_rate_bp_snapshot: 550,
     credit_coefficient: 1,
     credit_amount_cents: 6000,
@@ -145,14 +145,14 @@ describe('buildSupplierExport — martinezConfig (Story 5.6)', () => {
 
   it('happy path 3 lignes : en-têtes MARTINEZ, DETERIORADO traduit, TOTAL formule, file_name correct', async () => {
     const rows = [
-      makeRow({ id: 1, qty_invoiced: 4, unit_price_ht_cents: 1500 }),
+      makeRow({ id: 1, qty_invoiced: 4, unit_price_ttc_cents: 1500 }),
       makeRow({
         id: 2,
         qty_invoiced: 2,
-        unit_price_ht_cents: 2000,
+        unit_price_ttc_cents: 2000,
         validation_messages: [{ kind: 'cause', text: 'Pourri' }],
       }),
-      makeRow({ id: 3, qty_invoiced: 1, unit_price_ht_cents: 900 }),
+      makeRow({ id: 3, qty_invoiced: 1, unit_price_ttc_cents: 900 }),
     ]
     const { client } = makeSupabaseMock(rows)
 

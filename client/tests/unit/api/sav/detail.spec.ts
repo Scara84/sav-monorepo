@@ -345,7 +345,7 @@ describe('GET /api/sav/:id (Story 3.4)', () => {
           unit_requested: 'kg',
           qty_invoiced: 8,
           unit_invoiced: 'kg',
-          unit_price_ht_cents: 250,
+          unit_price_ttc_cents: 250,
           vat_rate_bp_snapshot: 550,
           credit_coefficient: 0.5,
           credit_coefficient_label: '50%',

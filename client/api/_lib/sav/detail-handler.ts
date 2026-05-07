@@ -37,7 +37,7 @@ const SAV_SELECT = `
   assignee:operators!sav_assigned_to_fkey ( id, display_name, email ),
   lines:sav_lines ( id, product_id, product_code_snapshot, product_name_snapshot,
     qty_requested, unit_requested, qty_invoiced, unit_invoiced,
-    unit_price_ht_cents, vat_rate_bp_snapshot,
+    unit_price_ttc_cents, vat_rate_bp_snapshot,
     credit_coefficient, credit_coefficient_label, piece_to_kg_weight_g,
     credit_amount_cents, validation_status, validation_message,
     position, line_number ),
@@ -442,7 +442,7 @@ function projectLine(row: Record<string, unknown>): Record<string, unknown> {
     unit_requested: string
     qty_invoiced: number | null
     unit_invoiced: string | null
-    unit_price_ht_cents: number | null
+    unit_price_ttc_cents: number | null
     vat_rate_bp_snapshot: number | null
     credit_coefficient: number
     credit_coefficient_label: string | null
@@ -462,7 +462,7 @@ function projectLine(row: Record<string, unknown>): Record<string, unknown> {
     unitRequested: r.unit_requested,
     qtyInvoiced: r.qty_invoiced,
     unitInvoiced: r.unit_invoiced,
-    unitPriceHtCents: r.unit_price_ht_cents,
+    unitPriceTtcCents: r.unit_price_ttc_cents,
     vatRateBpSnapshot: r.vat_rate_bp_snapshot,
     creditCoefficient: r.credit_coefficient,
     creditCoefficientLabel: r.credit_coefficient_label,

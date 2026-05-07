@@ -31,7 +31,7 @@ export interface SavDetailLine {
   unitRequested: string
   qtyInvoiced: number | null
   unitInvoiced: string | null
-  unitPriceHtCents: number | null
+  unitPriceTtcCents: number | null
   vatRateBpSnapshot: number | null
   creditCoefficient: number
   creditCoefficientLabel: string | null

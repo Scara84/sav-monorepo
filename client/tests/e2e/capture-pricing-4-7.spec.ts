@@ -5,7 +5,7 @@
  *
  * AC coverage:
  *   AC #7 — Opérateur ouvre /admin/sav/:id après submit membre avec prix complets
- *           → tableau lignes affiche PU HT réel (pas « — »)
+ *           → tableau lignes affiche PU TTC réel (pas « — »)
  *
  * Prérequis (gated OPS) :
  *   - Make scenario 3203836 configuré pour envoyer les 4 champs (étape Pennylane lookup)
@@ -20,7 +20,7 @@
  *
  * NOTE: Si le test est exécuté sans Make sandbox actif, le SAV capturé
  * aura des prix NULL (comportement legacy) et le test échouera sur
- * l'assertion "PU HT réel". C'est intentionnel en phase RED.
+ * l'assertion "PU TTC réel". C'est intentionnel en phase RED.
  *
  * Pattern: réutilise admin-sav-thumbnails-v1-5.spec.ts (storage state MSAL).
  * Run: npx playwright test client/tests/e2e/capture-pricing-4-7.spec.ts
@@ -66,7 +66,7 @@ test.describe('Story 4.7 — capture prix facture client (AC #7 UAT preview)', (
     'FIXTURE_SAV_ID_4_7 non défini — ce test requiert un SAV seedé et Make sandbox actif'
   )
 
-  test('opérateur voit PU HT réel (non « — ») dans /admin/sav/:id après capture avec prix', async ({
+  test('opérateur voit PU TTC réel (non « — ») dans /admin/sav/:id après capture avec prix', async ({
     page,
   }) => {
     const consoleErrors: string[] = []
@@ -78,7 +78,7 @@ test.describe('Story 4.7 — capture prix facture client (AC #7 UAT preview)', (
     await page.goto(`${BASE_URL}/admin/sav/${FIXTURE_SAV_ID}`)
 
     // Attendre que le tableau des lignes soit chargé
-    // Pattern: chercher la cellule PU HT dans le tableau sav_lines
+    // Pattern: chercher la cellule PU TTC dans le tableau sav_lines
     await page.waitForLoadState('networkidle')
 
     // Vérifier qu'aucune erreur 500 n'apparaît (AC #7 requirement)
@@ -87,14 +87,14 @@ test.describe('Story 4.7 — capture prix facture client (AC #7 UAT preview)', (
       if (response.status() >= 500) responseErrors.push(response.status())
     })
 
-    // AC #7 : tableau lignes affiche PU HT avec valeur réelle (PAS « — »)
+    // AC #7 : tableau lignes affiche PU TTC avec valeur réelle (PAS « — »)
     // Le sélecteur dépend de l'implémentation SavDetailView.vue
     // Story 3.7b a posé le rendu `format(value, '€') ?? '—'`
     const savLinesSection = page.locator('[data-testid="sav-lines-table"], table').first()
     await expect(savLinesSection).toBeVisible({ timeout: 15000 })
 
-    // Vérifier qu'aucune cellule PU HT n'affiche « — » (tiret = valeur NULL)
-    // La cellule PU HT contient soit une valeur formatée en €, soit « — »
+    // Vérifier qu'aucune cellule PU TTC n'affiche « — » (tiret = valeur NULL)
+    // La cellule PU TTC contient soit une valeur formatée en €, soit « — »
     const dashCells = page.locator('td').filter({ hasText: /^—$/ })
     const dashCount = await dashCells.count()
 
@@ -225,9 +225,9 @@ test.describe('Story 4.7 — AC #7 smoke: submit self-service avec prix (Make mo
       if (items && items.length > 0) {
         const item = items[0]
         // En phase RED (Make sandbox non actif) : ces assertions sont skippées
-        if (item['unitPriceHtCents'] !== undefined) {
-          expect(typeof item['unitPriceHtCents']).toBe('number')
-          expect(Number.isInteger(item['unitPriceHtCents'])).toBe(true)
+        if (item['unitPriceTtcCents'] !== undefined) {
+          expect(typeof item['unitPriceTtcCents']).toBe('number')
+          expect(Number.isInteger(item['unitPriceTtcCents'])).toBe(true)
           expect(item['vatRateBp']).toBeDefined()
           expect(Number.isInteger(item['vatRateBp'])).toBe(true)
         }

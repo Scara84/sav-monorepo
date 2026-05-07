@@ -17,7 +17,7 @@ function makeRow(overrides: Partial<ExportRow> = {}): ExportRow {
     id: 1,
     qty_invoiced: 3,
     piece_to_kg_weight_g: 2500,
-    unit_price_ht_cents: 1250,
+    unit_price_ttc_cents: 1250,
     vat_rate_bp_snapshot: 550,
     credit_coefficient: 1,
     credit_amount_cents: 3125,
@@ -177,13 +177,13 @@ describe('buildSupplierExport — rufinoConfig', () => {
       makeRow({
         id: 2,
         piece_to_kg_weight_g: 5000,
-        unit_price_ht_cents: 2000,
+        unit_price_ttc_cents: 2000,
         validation_messages: [{ kind: 'cause', text: 'Pourri' }],
       }),
       makeRow({
         id: 3,
         piece_to_kg_weight_g: 1500,
-        unit_price_ht_cents: 900,
+        unit_price_ttc_cents: 900,
       }),
     ]
     const { client } = makeSupabaseMock(rows)
@@ -314,7 +314,7 @@ describe('buildSupplierExport — rufinoConfig', () => {
   })
 
   it('format cents-to-euros : PRECIO en cents=1250 → cellule XLSX = 12.50', async () => {
-    const { client } = makeSupabaseMock([makeRow({ unit_price_ht_cents: 1250 })])
+    const { client } = makeSupabaseMock([makeRow({ unit_price_ttc_cents: 1250 })])
     const result = await buildSupplierExport({
       config: rufinoConfig,
       period_from: new Date('2026-01-01T00:00:00Z'),
@@ -563,7 +563,7 @@ describe('buildSupplierExport — rufinoConfig', () => {
 
   it('CR MED — total_amount_cents en arithmétique entière (pas de divergence float)', async () => {
     // piece_g=333, price_cents=777 → expected 333*777/1000 = 258.741 → round 259.
-    const rows = [makeRow({ piece_to_kg_weight_g: 333, unit_price_ht_cents: 777 })]
+    const rows = [makeRow({ piece_to_kg_weight_g: 333, unit_price_ttc_cents: 777 })]
     const { client } = makeSupabaseMock(rows)
     const result = await buildSupplierExport({
       config: rufinoConfig,
@@ -795,8 +795,8 @@ describe('buildSupplierExport — rufinoConfig', () => {
   it('CR v2 MED — BigInt(NaN)/Infinity sur contribCents : skip + warn, pas de throw', async () => {
     const rows = [
       // Infinity via produit qui overflow — on force un pieceG monstrueux.
-      makeRow({ piece_to_kg_weight_g: Number.POSITIVE_INFINITY, unit_price_ht_cents: 1000 }),
-      makeRow({ piece_to_kg_weight_g: 2500, unit_price_ht_cents: 1250 }), // ligne OK
+      makeRow({ piece_to_kg_weight_g: Number.POSITIVE_INFINITY, unit_price_ttc_cents: 1000 }),
+      makeRow({ piece_to_kg_weight_g: 2500, unit_price_ttc_cents: 1250 }), // ligne OK
     ]
     const { client } = makeSupabaseMock(rows)
     const result = await buildSupplierExport({

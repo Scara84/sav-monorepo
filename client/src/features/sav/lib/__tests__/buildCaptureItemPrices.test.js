@@ -89,7 +89,7 @@ describe('buildCaptureItemPrices', () => {
       const result = buildCaptureItemPrices(factureItem)
 
       expect(result).toEqual({
-        unitPriceHtCents: 2500,
+        unitPriceTtcCents: 2500,
         vatRateBp: 550,
         qtyInvoiced: 2.5,
         invoiceLineId: 'pl-uuid-abc-123',
@@ -126,7 +126,7 @@ describe('buildCaptureItemPrices', () => {
         quantity: 1,
         unit: 'piece',
       })
-      expect(result.unitPriceHtCents).toBe(2500)
+      expect(result.unitPriceTtcCents).toBe(2500)
     })
 
     it('converts unit_amount 0.99 euros → 99 cents (rounds correctly)', () => {
@@ -136,7 +136,7 @@ describe('buildCaptureItemPrices', () => {
         quantity: 1,
         unit: 'kg',
       })
-      expect(result.unitPriceHtCents).toBe(99)
+      expect(result.unitPriceTtcCents).toBe(99)
     })
 
     it('converts unit_amount 1.234 euros → 123 cents (Math.round)', () => {
@@ -146,7 +146,7 @@ describe('buildCaptureItemPrices', () => {
         quantity: 1,
         unit: 'kg',
       })
-      expect(result.unitPriceHtCents).toBe(123)
+      expect(result.unitPriceTtcCents).toBe(123)
     })
 
     it('converts unit_amount 1.235 euros → 124 cents (rounds up at .5)', () => {
@@ -156,13 +156,13 @@ describe('buildCaptureItemPrices', () => {
         quantity: 1,
         unit: 'kg',
       })
-      expect(result.unitPriceHtCents).toBe(124)
+      expect(result.unitPriceTtcCents).toBe(124)
     })
 
     it('falls back to amount/quantity when unit_amount is absent', () => {
       // amount = 50€ total, quantity = 2 → unit price = 25€ → 2500 cents
       const result = buildCaptureItemPrices({ amount: 50, quantity: 2, vat_rate: 20, unit: 'kg' })
-      expect(result.unitPriceHtCents).toBe(2500)
+      expect(result.unitPriceTtcCents).toBe(2500)
     })
 
     it('fallback: floating point division is rounded correctly (3kg @ 8.97€ = 2.99€/kg = 299 cents)', () => {
@@ -172,17 +172,17 @@ describe('buildCaptureItemPrices', () => {
         vat_rate: 5.5,
         unit: 'kg',
       })
-      expect(result.unitPriceHtCents).toBe(299)
+      expect(result.unitPriceTtcCents).toBe(299)
     })
 
-    it('returns no unitPriceHtCents when neither unit_amount nor amount/quantity available', () => {
+    it('returns no unitPriceTtcCents when neither unit_amount nor amount/quantity available', () => {
       const result = buildCaptureItemPrices({ vat_rate: 5.5, quantity: 2, unit: 'kg' })
-      expect(result.unitPriceHtCents).toBeUndefined()
+      expect(result.unitPriceTtcCents).toBeUndefined()
     })
 
-    it('returns no unitPriceHtCents when quantity is 0 (division by zero guard)', () => {
+    it('returns no unitPriceTtcCents when quantity is 0 (division by zero guard)', () => {
       const result = buildCaptureItemPrices({ amount: 10, quantity: 0, vat_rate: 5.5, unit: 'kg' })
-      expect(result.unitPriceHtCents).toBeUndefined()
+      expect(result.unitPriceTtcCents).toBeUndefined()
     })
 
     it('handles unit_amount = 0 (free product / commercial gesture)', () => {
@@ -192,7 +192,7 @@ describe('buildCaptureItemPrices', () => {
         quantity: 1,
         unit: 'piece',
       })
-      expect(result.unitPriceHtCents).toBe(0)
+      expect(result.unitPriceTtcCents).toBe(0)
     })
   })
 
@@ -405,7 +405,7 @@ describe('buildCaptureItemPrices', () => {
       const result = buildCaptureItemPrices({ id: 'xyz', quantity: 5 })
       expect(result.invoiceLineId).toBe('xyz')
       expect(result.qtyInvoiced).toBe(5)
-      expect(result.unitPriceHtCents).toBeUndefined()
+      expect(result.unitPriceTtcCents).toBeUndefined()
       expect(result.vatRateBp).toBeUndefined()
       expect(result.unitInvoiced).toBeUndefined()
     })

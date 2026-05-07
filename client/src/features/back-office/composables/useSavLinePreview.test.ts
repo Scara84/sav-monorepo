@@ -50,37 +50,37 @@ describe('useSavLinePreview', () => {
   })
 
   it('1. Happy path kg × 2 lignes ok (V1-01 + V1-15) — totalHt + vat + ttc, pas de remise', () => {
-    const a = caseById('V1-01') // 2500 c
-    const b = caseById('V1-15') // 5994 c, vat 2000 bp
+    const a = caseById('V1-01') // V1.8 : TTC=250 → HT=237 → 10×237=2370
+    const b = caseById('V1-15') // V1.8 : vat 2000 bp → HT recalculé = 4998
     const input = makeInput([a.input, b.input])
     const out = useSavLinePreview(input)
 
     expect(out.linesComputed.value).toHaveLength(2)
-    expect(out.linesComputed.value[0]?.credit_amount_cents).toBe(2500)
-    expect(out.linesComputed.value[1]?.credit_amount_cents).toBe(5994)
-    expect(out.totalHtCents.value).toBe(2500 + 5994)
+    expect(out.linesComputed.value[0]?.credit_amount_cents).toBe(2370)
+    expect(out.linesComputed.value[1]?.credit_amount_cents).toBe(4998)
+    expect(out.totalHtCents.value).toBe(2370 + 4998)
     expect(out.discountCents.value).toBe(0) // isGroupManager=false
-    // vat = 2500*550/10000 + 5994*2000/10000 = 137.5→138 + 1198.8→1199 = 1337
-    expect(out.vatCents.value).toBe(138 + 1199)
+    // vat = 2370*550/10000 + 4998*2000/10000 = 130.35→130 + 999.6→1000 = 1130
+    expect(out.vatCents.value).toBe(130 + 1000)
     expect(out.totalTtcCents.value).toBe(out.totalHtCents.value + out.vatCents.value)
     expect(out.anyLineBlocking.value).toBe(false)
     expect(out.blockingCount.value).toBe(0)
   })
 
   it('2. Remise responsable active → discount > 0 et TTC = HT - discount + VAT', () => {
-    const a = caseById('V1-01') // 2500 c HT, vat 550 bp
+    const a = caseById('V1-01') // V1.8 : 2370 c HT (TTC=250→HT=237 × 10), vat 550 bp
     const input = makeInput([a.input], {
       vatRateDefaultBp: 550,
       groupManagerDiscountBp: 400,
       isGroupManager: true,
     })
     const out = useSavLinePreview(input)
-    expect(out.totalHtCents.value).toBe(2500)
-    // discount = round(2500 * 400 / 10000) = 100
-    expect(out.discountCents.value).toBe(100)
-    // htNet = 2400 ; vat = round(2400 * 550 / 10000) = 132
-    expect(out.vatCents.value).toBe(132)
-    expect(out.totalTtcCents.value).toBe(2500 - 100 + 132)
+    expect(out.totalHtCents.value).toBe(2370)
+    // discount = round(2370 * 400 / 10000) = 95
+    expect(out.discountCents.value).toBe(95)
+    // htNet = 2275 ; vat = round(2275 * 550 / 10000) = 125
+    expect(out.vatCents.value).toBe(125)
+    expect(out.totalTtcCents.value).toBe(2370 - 95 + 125)
   })
 
   it('3. Remise inactive si isGroupManager=false, même avec groupManagerDiscountBp=400', () => {
@@ -95,17 +95,18 @@ describe('useSavLinePreview', () => {
   })
 
   it('4. Réactivité — mutation lines (qty_requested + qty_invoiced) → totalHt recalculé', () => {
-    const a = caseById('V1-01') // 10×250×1 = 2500
+    const a = caseById('V1-01') // V1.8 : 10×237 (HT)×1 = 2370
     const input = makeInput([{ ...a.input }])
     const out = useSavLinePreview(input)
-    expect(out.totalHtCents.value).toBe(2500)
+    expect(out.totalHtCents.value).toBe(2370)
 
     // Le moteur calcule credit = qty_invoiced_converted * price * coef. Pour
     // observer un changement visible côté totaux, on réassigne les deux qty.
     const firstLine = input.lines.value[0]!
     input.lines.value = [{ ...firstLine, qty_requested: 5, qty_invoiced: 5 }]
-    expect(out.linesComputed.value[0]?.credit_amount_cents).toBe(1250)
-    expect(out.totalHtCents.value).toBe(1250)
+    // 5 × 237 × 1 = 1185
+    expect(out.linesComputed.value[0]?.credit_amount_cents).toBe(1185)
+    expect(out.totalHtCents.value).toBe(1185)
   })
 
   it('5. Ligne to_calculate (unit_price null) + fallback VAT settings → reste to_calculate, ignorée dans totaux', () => {
@@ -137,16 +138,18 @@ describe('useSavLinePreview', () => {
     const out = useSavLinePreview(input)
     expect(out.discountCents.value).toBe(0)
     input.isGroupManager.value = true
-    expect(out.discountCents.value).toBe(100)
+    // V1.8 : HT = 2370 × 400/10000 = 94.8 → 95
+    expect(out.discountCents.value).toBe(95)
   })
 
-  it('8. Conversion pièce→kg (V1-08) → credit = 750 c via moteur partagé, pas dupliqué', () => {
+  it('8. Conversion pièce→kg (V1-08) → credit = 700 c via moteur partagé, pas dupliqué', () => {
     const c = caseById('V1-08')
     const input = makeInput([c.input])
     const out = useSavLinePreview(input)
     expect(out.linesComputed.value[0]?.validation_status).toBe('ok')
-    expect(out.linesComputed.value[0]?.credit_amount_cents).toBe(750)
-    expect(out.totalHtCents.value).toBe(750)
+    // V1.8 : credit recalculé après conversion TTC→HT
+    expect(out.linesComputed.value[0]?.credit_amount_cents).toBe(700)
+    expect(out.totalHtCents.value).toBe(700)
   })
 
   it('9. Fallback VAT settings (snapshot null) — ligne devient calculable si unit_price présent', () => {
@@ -157,7 +160,7 @@ describe('useSavLinePreview', () => {
       unit_requested: 'kg',
       qty_invoiced: 2,
       unit_invoiced: 'kg',
-      unit_price_ht_cents: 500,
+      unit_price_ttc_cents: 500,
       vat_rate_bp_snapshot: null,
       credit_coefficient: 1,
       piece_to_kg_weight_g: null,
@@ -165,10 +168,11 @@ describe('useSavLinePreview', () => {
     const input = makeInput([base], { vatRateDefaultBp: 550 })
     const out = useSavLinePreview(input)
     expect(out.linesComputed.value[0]?.validation_status).toBe('ok')
-    expect(out.linesComputed.value[0]?.credit_amount_cents).toBe(1000)
-    expect(out.totalHtCents.value).toBe(1000)
-    // vat = round(1000 * 550 / 10000) = 55
-    expect(out.vatCents.value).toBe(55)
+    // V1.8 : TTC=500 → HT=round(500*10000/10550)=474 → 2×474=948
+    expect(out.linesComputed.value[0]?.credit_amount_cents).toBe(948)
+    expect(out.totalHtCents.value).toBe(948)
+    // vat = round(948 * 550 / 10000) = 52
+    expect(out.vatCents.value).toBe(52)
   })
 
   it('10. Toutes les lignes blocking → totaux à 0, blockingCount=4, totalTtc=0', () => {
@@ -190,8 +194,8 @@ describe('useSavLinePreview', () => {
     const frozenLine = Object.freeze({ ...a.input })
     const input = makeInput([frozenLine as SavLineInput], { vatRateDefaultBp: 600 })
     const out = useSavLinePreview(input)
-    // Lecture OK sans throw
-    expect(out.linesComputed.value[0]?.credit_amount_cents).toBe(2500)
+    // Lecture OK sans throw — V1.8 : TTC=250 → HT=237 → 10×237=2370
+    expect(out.linesComputed.value[0]?.credit_amount_cents).toBe(2370)
     // La ref d'entrée n'a pas été réassignée par le composable (pas de side-effect)
     expect(input.lines.value[0]).toBe(frozenLine)
     expect(() => {

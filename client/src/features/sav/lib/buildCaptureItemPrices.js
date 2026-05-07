@@ -14,8 +14,8 @@
  *
  * Field mapping (source: docs/integrations/make-capture-flow.md):
  *   Pennylane line field     Webhook field        Conversion
- *   unit_amount (€ decimal)  unitPriceHtCents     × 100 + Math.round
- *   amount + quantity        unitPriceHtCents      fallback: (amount / qty) × 100 + round
+ *   unit_amount (€ decimal)  unitPriceTtcCents     × 100 + Math.round
+ *   amount + quantity        unitPriceTtcCents      fallback: (amount / qty) × 100 + round
  *   vat_rate (% like 5.5)   vatRateBp            × 100 + Math.round → basis points
  *   quantity                 qtyInvoiced          pass-through numeric
  *   id                       invoiceLineId        string, truncated to 255 chars (defensive)
@@ -122,7 +122,7 @@ export function parseVatRateToBp(vatRate) {
  *
  * @param {Record<string, unknown>} factureItem  — Pennylane invoice line_item object
  * @returns {Partial<{
- *   unitPriceHtCents: number,
+ *   unitPriceTtcCents: number,
  *   vatRateBp: number,
  *   qtyInvoiced: number,
  *   invoiceLineId: string,
@@ -134,7 +134,7 @@ export function buildCaptureItemPrices(factureItem) {
 
   const prices = {}
 
-  // unitPriceHtCents: prefer Pennylane direct unit_amount (€ HT per unit),
+  // unitPriceTtcCents: prefer Pennylane direct unit_amount (€ HT per unit),
   // fall back to total amount ÷ quantity (both are available on the line).
   const unitAmountEuros =
     factureItem.unit_amount != null
@@ -145,7 +145,7 @@ export function buildCaptureItemPrices(factureItem) {
         ? Number(factureItem.amount) / Number(factureItem.quantity)
         : null
   if (unitAmountEuros != null && Number.isFinite(unitAmountEuros)) {
-    prices.unitPriceHtCents = Math.round(unitAmountEuros * 100)
+    prices.unitPriceTtcCents = Math.round(unitAmountEuros * 100)
   }
 
   // vatRateBp: Pennylane V2 returns vat_rate as a country-coded string like
@@ -172,7 +172,7 @@ export function buildCaptureItemPrices(factureItem) {
   // unitInvoiced: mapped to enum, only set when prices are present (otherwise null
   // → 'to_calculate' is the intentional legacy behaviour per trigger logic)
   const mappedUnit = mapPennylaneUnit(factureItem.unit)
-  if (mappedUnit && prices.unitPriceHtCents != null) {
+  if (mappedUnit && prices.unitPriceTtcCents != null) {
     prices.unitInvoiced = mappedUnit
   }
 
