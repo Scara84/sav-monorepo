@@ -58,6 +58,21 @@ jobs:
           echo "url=$url" >> "$GITHUB_OUTPUT"
           echo "Preview URL: $url"
 
+      # UAT V1.8 — le webhook natif GitHub→Vercel (qui auto-aliasait
+      # `<project>-git-<branch>...vercel.app`) est désactivé pour ce projet.
+      # Sans cette étape, l'alias de branche reste sur le deploy précédent et
+      # le testeur consomme un build périmé.
+      # Pattern alias : `<project>-git-<branch>-<org-slug>.vercel.app` avec
+      # les `/` du nom de branche convertis en `-`.
+      - name: Promote to branch alias
+        if: steps.deploy.outputs.url != ''
+        run: |
+          branch_slug=$(echo "${{ github.ref_name }}" | tr '/' '-')
+          branch_alias="sav-monorepo-client-git-${branch_slug}-ants-projects-3dc3de65.vercel.app"
+          deploy_host=$(echo "${{ steps.deploy.outputs.url }}" | sed 's|https://||')
+          echo "Aliasing $deploy_host → $branch_alias"
+          vercel alias set "$deploy_host" "$branch_alias" --token=${{ secrets.VERCEL_TOKEN }}
+
       - name: Comment commit with preview URL
         if: steps.deploy.outputs.url != ''
         uses: actions/github-script@v7
