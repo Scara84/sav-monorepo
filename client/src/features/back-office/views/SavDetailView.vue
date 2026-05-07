@@ -994,21 +994,36 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
                 <td>{{ l.lineNumber ?? l.position }}</td>
                 <td>{{ l.productCodeSnapshot }}</td>
                 <td>{{ l.productNameSnapshot }}</td>
-                <!-- Qté demandée -->
+                <!-- Qté demandée + unité demandée (V1.8 — l'unité est éditable en
+                     cas d'erreur de capture, mais reste la voix du client). -->
                 <td>
-                  <input
+                  <span
                     v-if="lineEdit.editingLineId.value === l.id && editDraft[l.id]"
-                    v-model="editDraft[l.id]!.qtyRequested"
-                    type="number"
-                    min="0.001"
-                    max="99999"
-                    step="0.001"
-                    :aria-label="`Quantité demandée, ligne ${l.lineNumber ?? l.position}`"
-                    class="cell-input"
-                    :data-testid="`edit-qty-requested-${l.id}`"
-                    @keydown.enter.prevent="saveEditLine(l)"
-                    @keydown.esc.prevent="cancelEditLine"
-                  />
+                    class="cell-pair"
+                  >
+                    <input
+                      v-model="editDraft[l.id]!.qtyRequested"
+                      type="number"
+                      min="0.001"
+                      max="99999"
+                      step="0.001"
+                      :aria-label="`Quantité demandée, ligne ${l.lineNumber ?? l.position}`"
+                      class="cell-input"
+                      :data-testid="`edit-qty-requested-${l.id}`"
+                      @keydown.enter.prevent="saveEditLine(l)"
+                      @keydown.esc.prevent="cancelEditLine"
+                    />
+                    <select
+                      v-model="editDraft[l.id]!.unitRequested"
+                      class="cell-select"
+                      :aria-label="`Unité demandée, ligne ${l.lineNumber ?? l.position}`"
+                      :data-testid="`edit-unit-requested-${l.id}`"
+                    >
+                      <option value="kg">kg</option>
+                      <option value="piece">pièce</option>
+                      <option value="liter">litre</option>
+                    </select>
+                  </span>
                   <span v-else>{{ l.qtyRequested }} {{ l.unitRequested }}</span>
                 </td>
                 <!-- Qté facturée -->
