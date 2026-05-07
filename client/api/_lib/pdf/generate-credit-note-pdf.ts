@@ -228,7 +228,7 @@ interface SavLineRow {
   unit_requested: 'kg' | 'piece' | 'liter'
   qty_invoiced: number | null
   unit_invoiced: 'kg' | 'piece' | 'liter' | null
-  unit_price_ttc_cents_snapshot: number | null
+  unit_price_ttc_cents: number | null
   credit_coefficient: number | string
   credit_coefficient_label: string | null
   credit_amount_cents: number | null
@@ -305,7 +305,7 @@ export async function generateCreditNotePdfAsync(args: GenerateCreditNotePdfArgs
       .select(
         'line_number, position, product_code_snapshot, product_name_snapshot, ' +
           'qty_requested, unit_requested, qty_invoiced, unit_invoiced, ' +
-          'unit_price_ttc_cents_snapshot, credit_coefficient, credit_coefficient_label, ' +
+          'unit_price_ttc_cents, credit_coefficient, credit_coefficient_label, ' +
           'credit_amount_cents, validation_message'
       )
       .eq('sav_id', sav_id)
@@ -494,8 +494,7 @@ export async function generateCreditNotePdfAsync(args: GenerateCreditNotePdfArgs
     unit_requested: l.unit_requested,
     qty_invoiced: l.qty_invoiced !== null ? Number(l.qty_invoiced) : null,
     unit_invoiced: l.unit_invoiced,
-    unit_price_ttc_cents:
-      l.unit_price_ttc_cents_snapshot !== null ? Number(l.unit_price_ttc_cents_snapshot) : null,
+    unit_price_ttc_cents: l.unit_price_ttc_cents !== null ? Number(l.unit_price_ttc_cents) : null,
     credit_coefficient:
       typeof l.credit_coefficient === 'string'
         ? Number(l.credit_coefficient)
