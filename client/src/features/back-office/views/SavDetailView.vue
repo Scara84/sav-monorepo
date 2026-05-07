@@ -1443,9 +1443,13 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
               }}</span
             >
             <p class="file-meta">{{ formatBytes(f.sizeBytes) }}</p>
+            <!-- UAT V1.8 — bouton "Ouvrir" passe par le proxy backend
+                 /api/sav/files/:id/download (extension PATTERN-V5) au lieu
+                 de pointer directement sur SharePoint webUrl, qui demandait
+                 une session Microsoft à l'opérateur back-office. -->
             <a
               v-if="isOneDriveWebUrlTrusted(f.webUrl)"
-              :href="f.webUrl"
+              :href="`/api/sav/files/${f.id}/download`"
               target="_blank"
               rel="noopener noreferrer"
               >Ouvrir</a

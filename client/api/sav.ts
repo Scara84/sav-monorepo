@@ -14,6 +14,7 @@ import {
 } from './_lib/sav/productivity-handlers'
 import { emitCreditNoteHandler } from './_lib/credit-notes/emit-handler'
 import { fileThumbnailHandler } from './_lib/sav/file-thumbnail-handler'
+import { fileDownloadHandler } from './_lib/sav/file-download-handler'
 import {
   adminUploadSessionHandler,
   adminUploadCompleteHandler,
@@ -114,6 +115,7 @@ const ALLOWED_OPS = new Set([
   'duplicate',
   'credit-notes',
   'file-thumbnail',
+  'file-download',
   'admin-upload-session',
   'admin-upload-complete',
   'tags-suggestions',
@@ -205,6 +207,21 @@ const dispatch: ApiHandler = async (req, res) => {
       return
     }
     return fileThumbnailHandler(fileId)(req, res)
+  }
+
+  // UAT V1.8 deferred — op=file-download → GET /api/sav/files/:id/download
+  // (extension PATTERN-V5 : full content stream pour bouton "Ouvrir").
+  if (op === 'file-download') {
+    if (method !== 'GET') {
+      res.setHeader('Allow', 'GET')
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
+      return
+    }
+    if (fileId === null) {
+      sendError(res, 'VALIDATION_FAILED', 'ID fichier invalide ou manquant', requestId)
+      return
+    }
+    return fileDownloadHandler(fileId)(req, res)
   }
 
   // Toutes les autres ops exigent un savId valide.

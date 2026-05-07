@@ -5,6 +5,9 @@ export interface MockResponse extends ApiResponse {
   jsonBody: unknown
   headers: Record<string, string | number | string[]>
   ended: boolean
+  // UAT V1.8 — streaming support (PATTERN-V5 Graph proxy handlers)
+  chunks: Buffer[]
+  write: (chunk: Buffer | string) => boolean
 }
 
 export function mockRes(): MockResponse {
@@ -13,6 +16,7 @@ export function mockRes(): MockResponse {
     jsonBody: undefined,
     headers: {},
     ended: false,
+    chunks: [],
     status(code: number) {
       res.statusCode = code
       return res
@@ -38,8 +42,15 @@ export function mockRes(): MockResponse {
       }
       return res
     },
-    end() {
+    end(chunk?: string) {
+      if (chunk !== undefined) {
+        res.chunks.push(Buffer.from(chunk))
+      }
       res.ended = true
+    },
+    write(chunk: Buffer | string) {
+      res.chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+      return true
     },
     getHeader(name: string) {
       const v = res.headers[name.toLowerCase()]

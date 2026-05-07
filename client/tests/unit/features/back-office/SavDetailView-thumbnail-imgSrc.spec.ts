@@ -163,7 +163,12 @@ describe('SavDetailView — imgSrc() V1.5 thumbnail proxy bascule (AC #3)', () =
     expect(src).not.toContain('webUrl')
   })
 
-  it('TH3-02: "Ouvrir" button href still points to original webUrl (DTO unchanged)', async () => {
+  it('TH3-02: "Ouvrir" button href points to /api/sav/files/:id/download proxy (UAT V1.8)', async () => {
+    // UAT V1.8 — l'opérateur back-office Fruitstock n'a pas de session
+    // Microsoft. Le bouton "Ouvrir" passe désormais par le proxy backend
+    // (extension PATTERN-V5) qui stream le fichier via Graph avec un token
+    // applicatif, plutôt que pointer directement sur SharePoint webUrl
+    // (qui déclenchait un challenge auth Microsoft bloquant).
     const file = makeFileMock({
       id: 42,
       mimeType: 'image/jpeg',
@@ -176,13 +181,11 @@ describe('SavDetailView — imgSrc() V1.5 thumbnail proxy bascule (AC #3)', () =
     const w = mount(SavDetailView, { global: { plugins: [router] } })
     await flushPromises()
 
-    // "Ouvrir" button (the <a> with SharePoint href) must keep the original webUrl
     const ouvrir = w.findAll('a').find((a) => a.text().includes('Ouvrir'))
     expect(ouvrir).toBeDefined()
     const href = ouvrir?.attributes('href') ?? ''
-    expect(href).toContain('sharepoint.com')
-    // Must be the direct webUrl for <a> (not the proxy)
-    expect(href).not.toContain('/api/sav/files/')
+    expect(href).toBe('/api/sav/files/42/download')
+    expect(href).not.toContain('sharepoint.com')
   })
 
   it('TH3-03: non-image file (application/pdf) → no <img>, only icon emoji fallback', async () => {

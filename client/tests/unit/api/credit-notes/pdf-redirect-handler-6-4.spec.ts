@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { signJwt } from '../../../../api/_lib/middleware/with-auth'
 import type { SessionUser } from '../../../../api/_lib/types'
 import { mockReq, mockRes } from '../_lib/test-helpers'
@@ -48,6 +48,36 @@ const db = vi.hoisted(() => ({
   // la query renvoie row=null (PostgREST inner join filter).
   rateLimitAllowed: true,
 }))
+
+// UAT V1.8 — graph.js mock pour proxy stream PDF (refactor 302→stream)
+vi.mock('../../../../api/_lib/graph.js', () => ({
+  getAccessToken: async () => 'test-bearer-token',
+  forceRefreshAccessToken: async () => 'test-refreshed-token',
+  getGraphClient: () => ({}),
+  __resetForTests: () => undefined,
+}))
+
+function stubFetchPdfOk(bytes: Buffer = Buffer.from('%PDF-1.4 fake')): void {
+  const headers = new Map<string, string>([
+    ['content-type', 'application/pdf'],
+    ['content-length', String(bytes.length)],
+  ])
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(bytes)
+      controller.close()
+    },
+  })
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: { get: (n: string) => headers.get(n.toLowerCase()) ?? null },
+      body: stream,
+    } as unknown as Response)
+  )
+}
 
 vi.mock('../../../../api/_lib/clients/supabase-admin', () => {
   const client = {
@@ -141,10 +171,16 @@ beforeEach(() => {
   vi.stubEnv('SESSION_COOKIE_SECRET', SECRET)
   vi.stubEnv('SUPABASE_URL', 'http://localhost')
   vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', 'test')
+  vi.stubEnv('MICROSOFT_DRIVE_ID', 'test-drive-id')
   db.row = null
   db.rowError = null
   db.appliedFilters = []
   db.rateLimitAllowed = true
+  stubFetchPdfOk()
+})
+
+afterEach(() => {
+  vi.unstubAllGlobals()
 })
 
 describe('pdfRedirectHandler polymorphique member/operator (Story 6.4)', () => {
@@ -159,8 +195,8 @@ describe('pdfRedirectHandler polymorphique member/operator (Story 6.4)', () => {
     }
     const res = mockRes()
     await handler(pdfReq('AV-2026-00042', memberCookie(42)), res)
-    expect(res.statusCode).toBe(302)
-    expect(res.headers['location']).toBe('https://onedrive.example.com/file.pdf')
+    expect(res.statusCode).toBe(200)
+    expect(res.headers['content-type']).toBe('application/pdf')
     // Le handler DOIT avoir appliqué le filtre sav.member_id côté query (anti-leak)
     expect(db.appliedFilters.some((f) => f.col === 'sav.member_id' && f.val === 42)).toBe(true)
   })
@@ -197,8 +233,8 @@ describe('pdfRedirectHandler polymorphique member/operator (Story 6.4)', () => {
     }
     const res = mockRes()
     await handler(pdfReq('AV-2026-00042', operatorCookie(7)), res)
-    expect(res.statusCode).toBe(302)
-    expect(res.headers['location']).toBe('https://onedrive.example.com/file.pdf')
+    expect(res.statusCode).toBe(200)
+    expect(res.headers['content-type']).toBe('application/pdf')
     // L'operator NE DOIT PAS appliquer de filtre sav.member_id (toutes les access)
     expect(db.appliedFilters.some((f) => f.col === 'sav.member_id')).toBe(false)
   })
@@ -214,7 +250,7 @@ describe('pdfRedirectHandler polymorphique member/operator (Story 6.4)', () => {
     }
     const res = mockRes()
     await handler(pdfReq('AV-2026-00042', memberCookie(42)), res)
-    expect(res.statusCode).toBe(302)
+    expect(res.statusCode).toBe(200)
   })
 
   it('AC#3 (e) absence de cookie → 401 (router withAuth)', async () => {

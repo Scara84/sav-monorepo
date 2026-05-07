@@ -53,6 +53,10 @@
       "source": "/api/sav/files/:id/thumbnail",
       "destination": "/api/sav?op=file-thumbnail&fileId=:id"
     },
+    {
+      "source": "/api/sav/files/:id/download",
+      "destination": "/api/sav?op=file-download&fileId=:id"
+    },
     { "source": "/api/sav/:id", "destination": "/api/sav?op=detail&id=:id" },
     {
       "source": "/api/credit-notes/:number/pdf",

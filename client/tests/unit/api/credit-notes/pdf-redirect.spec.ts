@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest'
+import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { signJwt } from '../../../../api/_lib/middleware/with-auth'
 import type { SessionUser } from '../../../../api/_lib/types'
 import { mockReq, mockRes } from '../_lib/test-helpers'
@@ -12,6 +12,36 @@ const db = vi.hoisted(() => ({
   lastEqCol: null as string | null,
   lastEqVal: null as unknown,
 }))
+
+// UAT V1.8 — graph.js mock pour proxy stream PDF
+vi.mock('../../../../api/_lib/graph.js', () => ({
+  getAccessToken: async () => 'test-bearer-token',
+  forceRefreshAccessToken: async () => 'test-refreshed-token',
+  getGraphClient: () => ({}),
+  __resetForTests: () => undefined,
+}))
+
+function stubFetchPdfOk(bytes: Buffer = Buffer.from('%PDF-1.4 fake')): void {
+  const headers = new Map<string, string>([
+    ['content-type', 'application/pdf'],
+    ['content-length', String(bytes.length)],
+  ])
+  const stream = new ReadableStream({
+    start(controller) {
+      controller.enqueue(bytes)
+      controller.close()
+    },
+  })
+  vi.stubGlobal(
+    'fetch',
+    vi.fn().mockResolvedValue({
+      ok: true,
+      status: 200,
+      headers: { get: (n: string) => headers.get(n.toLowerCase()) ?? null },
+      body: stream,
+    } as unknown as Response)
+  )
+}
 
 vi.mock('../../../../api/_lib/clients/supabase-admin', () => {
   const client = {
@@ -73,11 +103,17 @@ beforeEach(() => {
   vi.stubEnv('SESSION_COOKIE_SECRET', SECRET)
   vi.stubEnv('SUPABASE_URL', 'http://localhost')
   vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', 'test')
+  vi.stubEnv('MICROSOFT_DRIVE_ID', 'test-drive-id')
   db.row = null
   db.rowError = null
   db.rateLimitAllowed = true
   db.lastEqCol = null
   db.lastEqVal = null
+  stubFetchPdfOk()
+})
+
+afterEach(() => {
+  vi.unstubAllGlobals()
 })
 
 describe('GET /api/credit-notes/:number/pdf (Story 4.4)', () => {
@@ -126,7 +162,7 @@ describe('GET /api/credit-notes/:number/pdf (Story 4.4)', () => {
     expect(body.error.details.credit_note_number_formatted).toBe('AV-2026-00042')
   })
 
-  it('P03 pdf_web_url existant → 302 Location', async () => {
+  it('P03 pdf_web_url existant → 200 stream PDF (UAT V1.8 — proxy Graph)', async () => {
     db.row = {
       id: 1,
       number: 42,
@@ -135,9 +171,13 @@ describe('GET /api/credit-notes/:number/pdf (Story 4.4)', () => {
     }
     const res = mockRes()
     await handler(pdfReq('42'), res)
-    expect(res.statusCode).toBe(302)
-    expect(res.headers['location']).toBe('https://onedrive.example/file.pdf')
-    expect(res.headers['cache-control']).toBe('no-store')
+    expect(res.statusCode).toBe(200)
+    expect(res.headers['content-type']).toBe('application/pdf')
+    expect(res.headers['cache-control']).toBe('private, no-store')
+    expect(res.headers['content-disposition']).toContain('AV-2026-00042.pdf')
+    // Vérifie que les bytes du PDF ont bien été streamés vers la response
+    const body = Buffer.concat(res.chunks).toString('utf-8')
+    expect(body).toContain('%PDF')
   })
 
   it('P04 format AV-YYYY-NNNNN → lookup sur number_formatted', async () => {
@@ -149,7 +189,7 @@ describe('GET /api/credit-notes/:number/pdf (Story 4.4)', () => {
     }
     const res = mockRes()
     await handler(pdfReq('AV-2026-00042'), res)
-    expect(res.statusCode).toBe(302)
+    expect(res.statusCode).toBe(200)
     expect(db.lastEqCol).toBe('number_formatted')
     expect(db.lastEqVal).toBe('AV-2026-00042')
   })
@@ -221,7 +261,7 @@ describe('GET /api/credit-notes/:number/pdf (Story 4.4)', () => {
     }
     const res = mockRes()
     await handler(pdfReq('100000000000001'), res)
-    expect(res.statusCode).toBe(302)
+    expect(res.statusCode).toBe(200)
     expect(db.lastEqCol).toBe('number')
     expect(db.lastEqVal).toBe(100000000000001)
   })
@@ -235,7 +275,7 @@ describe('GET /api/credit-notes/:number/pdf (Story 4.4)', () => {
     }
     const res = mockRes()
     await handler(pdfReq('AV-2030-100000'), res)
-    expect(res.statusCode).toBe(302)
+    expect(res.statusCode).toBe(200)
     expect(db.lastEqCol).toBe('number_formatted')
     expect(db.lastEqVal).toBe('AV-2030-100000')
   })

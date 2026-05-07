@@ -3,13 +3,14 @@ import { ensureRequestId } from '../request-id'
 import { sendError } from '../errors'
 import { logger } from '../logger'
 import { supabaseAdmin } from '../clients/supabase-admin'
+import * as graphModule from '../graph.js'
 import type { ApiHandler, ApiRequest, ApiResponse } from '../types'
 
 /**
  * Story 4.4 — `GET /api/credit-notes/:number/pdf`.
  *
  * Re-download d'un avoir déjà émis. Sémantique distincte du détail SAV :
- *   - 302 redirect vers `credit_notes.pdf_web_url` (OneDrive) si généré
+ *   - 200 + stream binaire du PDF (proxy Graph API, PATTERN-V5) si généré
  *   - 202 pending si la génération async n'est pas encore terminée
  *   - 404 si l'avoir n'existe pas
  *
@@ -18,6 +19,13 @@ import type { ApiHandler, ApiRequest, ApiResponse } from '../types'
  *   - member (Story 6.4)   → filtrage anti-énumération via jointure `sav!inner`
  *     sur `sav.member_id = user.sub` ; mismatch → 404 NOT_FOUND (jamais 403,
  *     pour ne pas leaker l'existence d'un avoir d'un autre adhérent).
+ *
+ * UAT V1.8 (2026-05-07) — refactor 302 redirect → stream proxy :
+ *   Le 302 redirect vers `pdf_web_url` SharePoint exposait le browser à
+ *   un challenge auth Microsoft (l'opérateur back-office Fruitstock n'a pas
+ *   de session Microsoft). On stream désormais le PDF via Graph
+ *   `/shares/u!{base64url(webUrl)}/driveItem/content` avec token applicatif
+ *   (cohérent extension PATTERN-V5 — Story V1.5).
  *
  * Le `:number` accepte deux formats :
  *   - bigint (ex: `42`)         → lookup sur `credit_notes.number`
@@ -48,6 +56,237 @@ interface CreditNoteRow {
 // la génération async a échoué durablement. L'UI affiche un CTA « regénérer »
 // qui tape `POST /api/credit-notes/:number/regenerate-pdf` (AC #8).
 const PDF_STALE_THRESHOLD_MS = 5 * 60 * 1000 // 5 minutes
+
+// UAT V1.8 — proxy Graph API stream constraints
+const PDF_MAX_BYTES = 25 * 1024 * 1024 // 25 MB
+const PDF_FETCH_TIMEOUT_MS = 8000
+
+interface GraphModule {
+  getAccessToken: () => Promise<string>
+  forceRefreshAccessToken: () => Promise<string>
+}
+
+function sanitizeForLog(value: unknown): string {
+  let str = value instanceof Error ? (value.message ?? '') : String(value)
+  str = str.replace(/Bearer\s+[A-Za-z0-9._-]+/gi, 'Bearer [REDACTED]')
+  str = str.replace(/eyJ[A-Za-z0-9._-]+/g, '[JWT_REDACTED]')
+  return str
+}
+
+function buildShareUrl(webUrl: string): string {
+  const base64Url = Buffer.from(webUrl, 'utf-8')
+    .toString('base64')
+    .replace(/=+$/, '')
+    .replace(/\+/g, '-')
+    .replace(/\//g, '_')
+  return `https://graph.microsoft.com/v1.0/shares/u!${base64Url}/driveItem/content`
+}
+
+/**
+ * Stream le PDF depuis Graph vers la response Vercel.
+ * Retourne `true` si le stream a démarré (headers flushés) — auquel cas
+ * le caller ne doit plus écrire de réponse JSON.
+ */
+async function streamPdfFromGraph(
+  res: ApiResponse,
+  webUrl: string,
+  filename: string,
+  requestId: string,
+  ctx: { creditNoteId: number; number: number }
+): Promise<{ streamed: boolean }> {
+  const graph = graphModule as unknown as GraphModule
+  let token: string
+  try {
+    token = await graph.getAccessToken()
+  } catch (err) {
+    logger.error('credit_note.pdf.token_error', {
+      requestId,
+      creditNoteId: ctx.creditNoteId,
+      message: sanitizeForLog(err),
+    })
+    sendError(
+      res,
+      'SERVER_ERROR',
+      'Service de téléchargement temporairement indisponible',
+      requestId,
+      {
+        code: 'GRAPH_UNAVAILABLE',
+      }
+    )
+    return { streamed: false }
+  }
+
+  const graphUrl = buildShareUrl(webUrl)
+
+  const fetchOnce = async (bearer: string): Promise<Response> =>
+    fetch(graphUrl, {
+      headers: { Authorization: `Bearer ${bearer}` },
+      signal: AbortSignal.timeout(PDF_FETCH_TIMEOUT_MS),
+      redirect: 'follow',
+    })
+
+  let graphResponse: Response
+  try {
+    graphResponse = await fetchOnce(token)
+  } catch (err) {
+    const isAbort =
+      err instanceof Error && (err.name === 'AbortError' || err.name === 'TimeoutError')
+    logger.warn('credit_note.pdf.graph_unavailable', {
+      requestId,
+      creditNoteId: ctx.creditNoteId,
+      reason: isAbort ? 'timeout' : 'fetch_error',
+      message: sanitizeForLog(err),
+    })
+    sendError(
+      res,
+      'SERVER_ERROR',
+      'Service de téléchargement temporairement indisponible',
+      requestId,
+      {
+        code: 'GRAPH_UNAVAILABLE',
+      }
+    )
+    return { streamed: false }
+  }
+
+  // 401 → forceRefresh + 1 retry (Story 4.5 W35).
+  if (graphResponse.status === 401) {
+    try {
+      token = await graph.forceRefreshAccessToken()
+      graphResponse = await fetchOnce(token)
+    } catch (err) {
+      logger.warn('credit_note.pdf.graph_unavailable', {
+        requestId,
+        creditNoteId: ctx.creditNoteId,
+        status: 401,
+        reason: 'token_refresh_failed',
+        message: sanitizeForLog(err),
+      })
+      sendError(
+        res,
+        'SERVER_ERROR',
+        'Service de téléchargement temporairement indisponible',
+        requestId,
+        {
+          code: 'GRAPH_UNAVAILABLE',
+        }
+      )
+      return { streamed: false }
+    }
+    if (graphResponse.status === 401) {
+      logger.warn('credit_note.pdf.graph_unavailable', {
+        requestId,
+        creditNoteId: ctx.creditNoteId,
+        status: 401,
+        reason: 'retry_still_401',
+      })
+      sendError(
+        res,
+        'SERVER_ERROR',
+        'Service de téléchargement temporairement indisponible',
+        requestId,
+        {
+          code: 'GRAPH_UNAVAILABLE',
+        }
+      )
+      return { streamed: false }
+    }
+  }
+
+  if (!graphResponse.ok) {
+    logger.warn('credit_note.pdf.graph_unavailable', {
+      requestId,
+      creditNoteId: ctx.creditNoteId,
+      status: graphResponse.status,
+    })
+    sendError(
+      res,
+      'SERVER_ERROR',
+      'Service de téléchargement temporairement indisponible',
+      requestId,
+      {
+        code: 'GRAPH_UNAVAILABLE',
+      }
+    )
+    return { streamed: false }
+  }
+
+  const contentLengthHeader = graphResponse.headers.get('content-length')
+  if (contentLengthHeader !== null) {
+    const contentLength = parseInt(contentLengthHeader, 10)
+    if (!isNaN(contentLength) && contentLength > PDF_MAX_BYTES) {
+      logger.warn('credit_note.pdf.content_too_large', {
+        requestId,
+        creditNoteId: ctx.creditNoteId,
+        contentLength,
+      })
+      sendError(res, 'SERVER_ERROR', 'PDF trop volumineux', requestId, { code: 'BAD_GATEWAY' })
+      return { streamed: false }
+    }
+  }
+
+  const safeFilename = filename
+    .replace(/[\r\n"\\]/g, '_')
+    // eslint-disable-next-line no-control-regex
+    .replace(/[\x00-\x1f\x7f]/g, '_')
+    .slice(0, 200)
+  const encodedFilename = encodeURIComponent(filename).slice(0, 400)
+  res.setHeader('Content-Type', 'application/pdf')
+  res.setHeader('Cache-Control', 'private, no-store')
+  res.setHeader('X-Request-Id', requestId)
+  res.setHeader(
+    'Content-Disposition',
+    `inline; filename="${safeFilename}"; filename*=UTF-8''${encodedFilename}`
+  )
+
+  const nodeRes = res as unknown as {
+    statusCode: number
+    write: (chunk: Buffer | string) => boolean
+    end: (chunk?: string | Buffer) => void
+  }
+  nodeRes.statusCode = 200
+
+  if (!graphResponse.body) {
+    nodeRes.end()
+    return { streamed: true }
+  }
+
+  const reader = graphResponse.body.getReader()
+  let bytesWritten = 0
+  try {
+    // eslint-disable-next-line no-constant-condition
+    while (true) {
+      const { done, value } = await reader.read()
+      if (done) break
+      if (value) {
+        bytesWritten += value.byteLength
+        if (bytesWritten > PDF_MAX_BYTES) {
+          await reader.cancel()
+          nodeRes.end()
+          logger.warn('credit_note.pdf.runtime_size_exceeded', {
+            requestId,
+            creditNoteId: ctx.creditNoteId,
+            bytesWritten,
+          })
+          return { streamed: true }
+        }
+        nodeRes.write(Buffer.from(value))
+      }
+    }
+    nodeRes.end()
+  } catch (err) {
+    logger.warn('credit_note.pdf.stream_error', {
+      requestId,
+      creditNoteId: ctx.creditNoteId,
+      message: sanitizeForLog(err),
+    })
+    nodeRes.end()
+  } finally {
+    reader.releaseLock()
+  }
+  void ctx.number
+  return { streamed: true }
+}
 
 function pdfRedirectCore(numberInput: string): ApiHandler {
   return async (req: ApiRequest, res: ApiResponse) => {
@@ -192,17 +431,23 @@ function pdfRedirectCore(numberInput: string): ApiHandler {
         })
         return
       }
-      // 302 redirect vers OneDrive.
-      logger.info('credit_note.pdf.redirect', {
+      // UAT V1.8 — stream proxy via Graph (au lieu du 302 redirect SharePoint).
+      // L'opérateur back-office Fruitstock n'a pas de session Microsoft : un
+      // 302 vers SharePoint déclenche un challenge auth bloquant. Le stream
+      // bypasse le challenge avec un token applicatif côté lambda
+      // (cohérent extension PATTERN-V5 — Story V1.5).
+      logger.info('credit_note.pdf.proxy_stream', {
         requestId,
         creditNoteId: row.id,
         number: row.number,
         actorType: user.type,
         actorSub: user.sub,
       })
-      res.setHeader('Location', row.pdf_web_url)
-      res.setHeader('Cache-Control', 'no-store')
-      res.status(302).end()
+      const filename = `${row.number_formatted}.pdf`
+      await streamPdfFromGraph(res, row.pdf_web_url, filename, requestId, {
+        creditNoteId: row.id,
+        number: row.number,
+      })
     } catch (err) {
       logger.error('credit_note.pdf.exception', {
         requestId,
