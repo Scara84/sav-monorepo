@@ -71,7 +71,9 @@ const SAV_PAYLOAD = {
 }
 
 const ME_RESPONSE = {
-  data: { sub: 42, type: 'operator', role: 'sav-operator' },
+  // me-handler.ts:107 envelope `{ user: ... }` — useCurrentUser composable
+  // s'aligne sur ce contrat depuis le fix 3.7b (commit 88df643).
+  user: { sub: 42, type: 'operator', role: 'sav-operator' },
 }
 
 async function importSavDetailView() {

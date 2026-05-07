@@ -10,6 +10,7 @@ const db = vi.hoisted(() => ({
   comments: [] as Array<Record<string, unknown>>,
   audit: [] as Array<Record<string, unknown>>,
   settings: [] as Array<Record<string, unknown>>,
+  creditNote: null as Record<string, unknown> | null,
   rateLimitAllowed: true,
 }))
 
@@ -18,6 +19,7 @@ function resetDb(): void {
   db.comments = []
   db.audit = []
   db.settings = []
+  db.creditNote = null
   db.rateLimitAllowed = true
 }
 
@@ -63,6 +65,16 @@ vi.mock('../../../../api/_lib/clients/supabase-admin', () => {
               lte: () => ({
                 or: () => Promise.resolve({ data: db.settings, error: null }),
               }),
+            }),
+          }),
+        }
+      }
+      if (table === 'credit_notes') {
+        // Chain `.select(...).eq('sav_id', ...).maybeSingle()` → { data, error }
+        return {
+          select: () => ({
+            eq: () => ({
+              maybeSingle: () => Promise.resolve({ data: db.creditNote, error: null }),
             }),
           }),
         }

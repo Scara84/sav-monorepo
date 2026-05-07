@@ -104,11 +104,23 @@ export interface SettingsSnapshot {
   group_manager_discount_bp: number | null
 }
 
+export interface SavDetailCreditNote {
+  id: number
+  number: number
+  numberFormatted: string
+  bonType: string
+  totalTtcCents: number
+  pdfWebUrl: string | null
+  issuedAt: string
+  issuedByOperatorId: number | null
+}
+
 export interface SavDetailPayload {
   sav: SavDetailSav
   comments: SavDetailComment[]
   auditTrail: SavDetailAudit[]
   settingsSnapshot: SettingsSnapshot
+  creditNote: SavDetailCreditNote | null
 }
 
 export type SavDetailErrorKind =
@@ -134,6 +146,7 @@ export function useSavDetail(id: Ref<number>) {
   const comments = ref<SavDetailComment[]>([])
   const auditTrail = ref<SavDetailAudit[]>([])
   const settingsSnapshot = ref<SettingsSnapshot>({ ...EMPTY_SETTINGS })
+  const creditNote = ref<SavDetailCreditNote | null>(null)
   const loading = ref(false)
   const error = ref<SavDetailErrorKind | null>(null)
   // F49 (CR Epic 3) : AbortController + check id-at-resolution pour éviter
@@ -190,6 +203,7 @@ export function useSavDetail(id: Ref<number>) {
       sav.value = body.data.sav
       comments.value = body.data.comments
       auditTrail.value = body.data.auditTrail
+      creditNote.value = body.data.creditNote ?? null
       // Review P4 — normalise tout champ absent/undefined à null pour que les
       // checks `=== null` en aval (composables, computed) soient fiables.
       const incoming = body.data.settingsSnapshot
@@ -226,6 +240,7 @@ export function useSavDetail(id: Ref<number>) {
     comments,
     auditTrail,
     settingsSnapshot,
+    creditNote,
     loading,
     error,
     refresh: fetchDetail,

@@ -69,6 +69,17 @@ interface CommentRow {
   author_operator: { id: number; display_name: string } | null
 }
 
+interface CreditNoteRow {
+  id: number
+  number: number
+  number_formatted: string
+  bon_type: string
+  total_ttc_cents: number
+  pdf_web_url: string | null
+  issued_at: string
+  issued_by_operator_id: number | null
+}
+
 interface AuditRow {
   id: number
   action: string
@@ -112,27 +123,35 @@ function buildCoreHandler(savId: number): ApiHandler {
       // Review P5 — un seul `nowIso` partagé pour la fenêtre de validité
       // (évite le drift sub-ms entre `.lte(valid_from)` et `.or(valid_to)`).
       const nowIso = new Date().toISOString()
-      const [savResult, commentsResult, auditResult, settingsResult] = await Promise.allSettled([
-        admin.from('sav').select(SAV_SELECT).eq('id', savId).maybeSingle(),
-        admin
-          .from('sav_comments')
-          .select(COMMENTS_SELECT)
-          .eq('sav_id', savId)
-          .order('created_at', { ascending: true }),
-        admin
-          .from('audit_trail')
-          .select(AUDIT_SELECT)
-          .eq('entity_type', 'sav')
-          .eq('entity_id', savId)
-          .order('created_at', { ascending: false })
-          .limit(100),
-        admin
-          .from('settings')
-          .select('key, value, valid_from, valid_to')
-          .in('key', ['vat_rate_default', 'group_manager_discount'])
-          .lte('valid_from', nowIso)
-          .or(`valid_to.is.null,valid_to.gt.${nowIso}`),
-      ])
+      const [savResult, commentsResult, auditResult, settingsResult, creditNoteResult] =
+        await Promise.allSettled([
+          admin.from('sav').select(SAV_SELECT).eq('id', savId).maybeSingle(),
+          admin
+            .from('sav_comments')
+            .select(COMMENTS_SELECT)
+            .eq('sav_id', savId)
+            .order('created_at', { ascending: true }),
+          admin
+            .from('audit_trail')
+            .select(AUDIT_SELECT)
+            .eq('entity_type', 'sav')
+            .eq('entity_id', savId)
+            .order('created_at', { ascending: false })
+            .limit(100),
+          admin
+            .from('settings')
+            .select('key, value, valid_from, valid_to')
+            .in('key', ['vat_rate_default', 'group_manager_discount'])
+            .lte('valid_from', nowIso)
+            .or(`valid_to.is.null,valid_to.gt.${nowIso}`),
+          admin
+            .from('credit_notes')
+            .select(
+              'id, number, number_formatted, bon_type, total_ttc_cents, pdf_web_url, issued_at, issued_by_operator_id'
+            )
+            .eq('sav_id', savId)
+            .maybeSingle(),
+        ])
 
       // SAV principal : fail ou reject → 500 (pas de rendu partiel possible).
       if (savResult.status === 'rejected') {
@@ -267,6 +286,29 @@ function buildCoreHandler(savId: number): ApiHandler {
         })
       }
 
+      // Story workflow back-office — exposition de l'avoir émis (Story 4.4) au
+      // composable détail. Permet à l'UI de masquer le bouton « Émettre l'avoir »
+      // et d'afficher la section « Avoir émis » + lien PDF. Dégradation propre :
+      // si la lecture échoue, on continue avec creditNote=null (équivalent à
+      // « pas d'avoir émis » côté UI — l'opérateur peut retenter via le bouton,
+      // qui retournera 409 si en réalité un avoir existe).
+      let creditNote: ReturnType<typeof projectCreditNote> | null = null
+      let creditNoteDegraded = false
+      if (creditNoteResult.status === 'fulfilled' && !creditNoteResult.value.error) {
+        const row = creditNoteResult.value.data as CreditNoteRow | null
+        creditNote = row ? projectCreditNote(row) : null
+      } else {
+        creditNoteDegraded = true
+        logger.warn('sav.detail.credit_note_degraded', {
+          requestId,
+          savId,
+          reason:
+            creditNoteResult.status === 'rejected'
+              ? String(creditNoteResult.reason)
+              : creditNoteResult.value.error?.message,
+        })
+      }
+
       const durationMs = Date.now() - startedAt
       logger.info('sav.detail.success', {
         requestId,
@@ -292,12 +334,14 @@ function buildCoreHandler(savId: number): ApiHandler {
           comments,
           auditTrail,
           settingsSnapshot,
+          creditNote,
         },
         meta: {
           commentsDegraded,
           auditDegraded,
           auditTruncated,
           settingsDegraded,
+          creditNoteDegraded,
         },
       })
     } catch (err) {
@@ -476,6 +520,28 @@ function projectComment(c: CommentRow): Record<string, unknown> {
     authorOperator: c.author_operator
       ? { id: c.author_operator.id, displayName: c.author_operator.display_name }
       : null,
+  }
+}
+
+function projectCreditNote(r: CreditNoteRow): {
+  id: number
+  number: number
+  numberFormatted: string
+  bonType: string
+  totalTtcCents: number
+  pdfWebUrl: string | null
+  issuedAt: string
+  issuedByOperatorId: number | null
+} {
+  return {
+    id: r.id,
+    number: r.number,
+    numberFormatted: r.number_formatted,
+    bonType: r.bon_type,
+    totalTtcCents: r.total_ttc_cents,
+    pdfWebUrl: r.pdf_web_url,
+    issuedAt: r.issued_at,
+    issuedByOperatorId: r.issued_by_operator_id,
   }
 }
 

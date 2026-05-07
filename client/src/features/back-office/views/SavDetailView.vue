@@ -25,7 +25,8 @@ import { useCurrentUser } from '../../../shared/composables/useCurrentUser'
 const route = useRoute()
 const router = useRouter()
 const savId = computed(() => Number(route.params['id']))
-const { sav, comments, auditTrail, settingsSnapshot, loading, error, refresh } = useSavDetail(savId)
+const { sav, comments, auditTrail, settingsSnapshot, creditNote, loading, error, refresh } =
+  useSavDetail(savId)
 const isNotFound = computed(() => (error.value as string | null) === 'not_found')
 const hasOtherError = computed(() => error.value !== null && !isNotFound.value)
 
@@ -314,39 +315,204 @@ const validating = ref(false)
 
 async function validateSav(): Promise<void> {
   if (!canValidate.value || !sav.value) return
-  validating.value = true
+  await transitionStatus('validated', { onLinesBlocked: () => scrollToFirstBlockingAfterRefresh() })
+}
+
+// --- Workflow back-office : boutons transitions générique ------------------
+// Centralise PATCH /api/sav/:id/status pour tous les boutons workflow
+// (Marquer reçu, Démarrer, Valider, Clôturer, Annuler). Le serveur (RPC
+// `transition_sav_status`) reste source de vérité — l'UI propose juste les
+// transitions actuellement valides via `currentAllowedTransitions`.
+const transitioning = ref<SavStatus | null>(null)
+type SavStatus = 'draft' | 'received' | 'in_progress' | 'validated' | 'closed' | 'cancelled'
+
+interface TransitionOptions {
+  note?: string
+  onLinesBlocked?: () => void
+}
+
+async function transitionStatus(target: SavStatus, opts: TransitionOptions = {}): Promise<boolean> {
+  if (!sav.value) return false
+  // CR F-2 : garde re-entry — bloque si une transition est déjà en vol pour
+  // éviter race entre 2 PATCHes concurrents sur la même `localVersion`.
+  if (transitioning.value !== null) return false
+  transitioning.value = target
   toastMessage.value = null
+  if (target === 'validated') validating.value = true
   try {
     const res = await fetch(`/api/sav/${sav.value.id}/status`, {
       method: 'PATCH',
       credentials: 'include',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ status: 'validated', version: localVersion.value }),
+      body: JSON.stringify({
+        status: target,
+        version: localVersion.value,
+        ...(opts.note ? { note: opts.note } : {}),
+      }),
     })
+    // CR F-8 : 401/403 — session perdue → redirect login (cohérent useSavDetail).
+    if (res.status === 401 || res.status === 403) {
+      toastMessage.value = 'Session expirée — reconnexion nécessaire.'
+      if (typeof window !== 'undefined') window.location.href = '/admin/login'
+      return false
+    }
+    // CR F-8 : 404 — SAV introuvable / supprimé entre-temps.
+    if (res.status === 404) {
+      toastMessage.value = 'SAV introuvable — il a peut-être été supprimé.'
+      return false
+    }
     if (res.status === 422) {
-      // LINES_BLOCKED race → refresh + scroll vers 1re bloquante
-      await refresh()
-      toastMessage.value = 'Des lignes sont encore en erreur — valider impossible.'
-      if (firstBlockingLineId.value !== null) {
-        const el = document.getElementById(`sav-line-${firstBlockingLineId.value}`)
-        el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+      const body = (await res.json().catch(() => null)) as {
+        error?: { details?: { code?: string } }
+      } | null
+      const code = body?.error?.details?.code
+      if (code === 'LINES_BLOCKED') {
+        await refresh()
+        toastMessage.value = 'Des lignes sont encore en erreur — valider impossible.'
+        opts.onLinesBlocked?.()
+        return false
       }
-      return
+      if (code === 'INVALID_TRANSITION') {
+        await refresh()
+        toastMessage.value = 'Transition non autorisée — le SAV a été rechargé.'
+        return false
+      }
+      toastMessage.value = 'Action refusée par le serveur.'
+      return false
     }
     if (res.status === 409) {
       toastMessage.value = 'Version périmée — le SAV sera rechargé.'
       await refresh()
-      return
+      return false
+    }
+    // CR F-5 : 400 — validation Zod côté serveur (note >500 chars, etc.).
+    if (res.status === 400) {
+      toastMessage.value = 'Données invalides — vérifie le motif (max 500 caractères).'
+      return false
     }
     if (!res.ok) {
-      toastMessage.value = 'Validation impossible (erreur serveur).'
-      return
+      toastMessage.value = `Échec ${target} (erreur serveur).`
+      return false
     }
     await refresh()
+    return true
   } catch (e) {
     toastMessage.value = e instanceof Error ? e.message : 'Erreur réseau'
+    return false
   } finally {
-    validating.value = false
+    transitioning.value = null
+    if (target === 'validated') validating.value = false
+  }
+}
+
+function scrollToFirstBlockingAfterRefresh(): void {
+  if (firstBlockingLineId.value === null) return
+  const el = document.getElementById(`sav-line-${firstBlockingLineId.value}`)
+  el?.scrollIntoView({ behavior: 'smooth', block: 'center' })
+}
+
+function isTransitioning(s: SavStatus): boolean {
+  return transitioning.value === s
+}
+
+// Boutons header — lisibilité Vue.
+const showReceiveButton = computed<boolean>(() => sav.value?.status === 'draft')
+const showStartButton = computed<boolean>(() => sav.value?.status === 'received')
+const showCloseButton = computed<boolean>(() => sav.value?.status === 'validated')
+const showCancelButton = computed<boolean>(() =>
+  ['draft', 'received', 'in_progress', 'validated'].includes(sav.value?.status ?? '')
+)
+
+async function receiveSav(): Promise<void> {
+  await transitionStatus('received')
+}
+async function startSav(): Promise<void> {
+  await transitionStatus('in_progress')
+}
+async function closeSav(): Promise<void> {
+  if (!confirmFn('Clôturer ce SAV ? L’état "clos" est définitif.')) return
+  await transitionStatus('closed')
+}
+async function cancelSav(): Promise<void> {
+  const raw = window.prompt('Motif (optionnel) — annuler ce SAV ?')
+  // null = clic Annuler dans la prompt → on n'annule pas le SAV
+  if (raw === null) return
+  // CR F-5 : trim + cap 500 chars (cohérent avec `statusBodySchema.note.max(500)`
+  // côté `transition-handlers.ts`). Évite un 400 VALIDATION_FAILED côté serveur
+  // pour saisie pathologique > 500 chars (copy-paste). Empty string → no `note`.
+  const trimmed = raw.trim().slice(0, 500)
+  await transitionStatus('cancelled', trimmed ? { note: trimmed } : {})
+}
+
+// --- Workflow back-office : émission avoir ---------------------------------
+const showEmitCreditButton = computed<boolean>(
+  () =>
+    (sav.value?.status === 'validated' || sav.value?.status === 'in_progress') && !creditNote.value
+)
+const emitDialogOpen = ref(false)
+const emitting = ref(false)
+const emitError = ref<string | null>(null)
+const emitBonType = ref<'AVOIR' | 'VIREMENT BANCAIRE' | 'PAYPAL'>('AVOIR')
+
+function openEmitDialog(): void {
+  emitError.value = null
+  emitBonType.value = 'AVOIR'
+  emitDialogOpen.value = true
+}
+
+// CR F-7 : helper pour ESC / backdrop / bouton Annuler. Bloque pendant
+// l'émission pour éviter une fermeture accidentelle pendant le POST.
+function closeEmitDialog(): void {
+  if (emitting.value) return
+  emitDialogOpen.value = false
+}
+
+async function submitEmit(): Promise<void> {
+  if (!sav.value || emitting.value) return
+  emitting.value = true
+  emitError.value = null
+  try {
+    const res = await fetch(`/api/sav/${sav.value.id}/credit-notes`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ bon_type: emitBonType.value }),
+    })
+    if (!res.ok) {
+      const body = (await res.json().catch(() => null)) as {
+        error?: {
+          code: string
+          message: string
+          details?: { code?: string; number_formatted?: string }
+        }
+      } | null
+      const detailsCode = body?.error?.details?.code
+      if (detailsCode === 'CREDIT_NOTE_ALREADY_ISSUED') {
+        // CR F-4 : refresh d'abord (pour exposer l'avoir existant côté UI),
+        // puis fermer la modale et afficher le toast — l'opérateur voit la
+        // section « Avoir émis » immédiatement, plus de cycle de re-clic.
+        await refresh()
+        emitDialogOpen.value = false
+        toastMessage.value = `Un avoir a déjà été émis (n°${body?.error?.details?.number_formatted ?? '?'}).`
+        return
+      }
+      if (detailsCode === 'NO_VALID_LINES') {
+        emitError.value = 'Une ou plusieurs lignes ne sont pas validées.'
+        return
+      }
+      if (detailsCode === 'NO_LINES') {
+        emitError.value = 'Le SAV ne contient aucune ligne.'
+        return
+      }
+      emitError.value = body?.error?.message ?? `Échec émission (HTTP ${res.status}).`
+      return
+    }
+    emitDialogOpen.value = false
+    await refresh()
+  } catch (e) {
+    emitError.value = e instanceof Error ? e.message : 'Erreur réseau'
+  } finally {
+    emitting.value = false
   }
 }
 
@@ -660,19 +826,76 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
           <span :class="['status-badge', STATUS_COLOR[sav.status] ?? 'bg-gray']">
             {{ STATUS_LABEL[sav.status] ?? sav.status }}
           </span>
-          <button
-            v-if="showValidateButton"
-            type="button"
-            class="validate-btn"
-            :disabled="!canValidate || validating"
-            :title="
-              !canValidate ? 'Corrige les lignes en erreur avant de valider' : 'Valider le SAV'
-            "
-            data-testid="sav-validate-btn"
-            @click="validateSav"
-          >
-            {{ validating ? 'Validation…' : 'Valider le SAV' }}
-          </button>
+          <div class="workflow-actions" role="group" aria-label="Actions workflow SAV">
+            <button
+              v-if="showReceiveButton"
+              type="button"
+              class="workflow-btn workflow-btn--primary"
+              :disabled="isTransitioning('received')"
+              data-testid="sav-receive-btn"
+              @click="receiveSav"
+            >
+              {{ isTransitioning('received') ? 'Réception…' : 'Marquer reçu' }}
+            </button>
+            <button
+              v-if="showStartButton"
+              type="button"
+              class="workflow-btn workflow-btn--primary"
+              :disabled="isTransitioning('in_progress')"
+              data-testid="sav-start-btn"
+              @click="startSav"
+            >
+              {{ isTransitioning('in_progress') ? 'Démarrage…' : 'Démarrer le traitement' }}
+            </button>
+            <button
+              v-if="showValidateButton"
+              type="button"
+              class="workflow-btn workflow-btn--primary validate-btn"
+              :disabled="!canValidate || validating"
+              :title="
+                !canValidate ? 'Corrige les lignes en erreur avant de valider' : 'Valider le SAV'
+              "
+              data-testid="sav-validate-btn"
+              @click="validateSav"
+            >
+              {{ validating ? 'Validation…' : 'Valider le SAV' }}
+            </button>
+            <button
+              v-if="showEmitCreditButton"
+              type="button"
+              class="workflow-btn workflow-btn--primary"
+              :disabled="emitting || !canValidate"
+              :title="
+                !canValidate
+                  ? 'Toutes les lignes doivent être validées'
+                  : 'Émettre l’avoir comptable'
+              "
+              data-testid="sav-emit-credit-btn"
+              @click="openEmitDialog"
+            >
+              Émettre l’avoir
+            </button>
+            <button
+              v-if="showCloseButton"
+              type="button"
+              class="workflow-btn workflow-btn--primary"
+              :disabled="isTransitioning('closed')"
+              data-testid="sav-close-btn"
+              @click="closeSav"
+            >
+              {{ isTransitioning('closed') ? 'Clôture…' : 'Clôturer' }}
+            </button>
+            <button
+              v-if="showCancelButton"
+              type="button"
+              class="workflow-btn workflow-btn--ghost"
+              :disabled="isTransitioning('cancelled')"
+              data-testid="sav-cancel-btn"
+              @click="cancelSav"
+            >
+              {{ isTransitioning('cancelled') ? 'Annulation…' : 'Annuler le SAV' }}
+            </button>
+          </div>
         </div>
         <dl class="metadata">
           <div>
@@ -970,6 +1193,124 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
       <div v-if="toastMessage" class="toast toast-error" role="alert" data-testid="sav-toast">
         {{ toastMessage }}
         <button type="button" class="toast-close" @click="toastMessage = null">×</button>
+      </div>
+
+      <!-- Workflow — Avoir émis (Story 4.4) -->
+      <section
+        v-if="creditNote"
+        class="card credit-note-issued"
+        aria-labelledby="credit-note-title"
+        data-testid="sav-credit-note-issued"
+      >
+        <h2 id="credit-note-title">Avoir émis</h2>
+        <dl class="credit-note-dl">
+          <div>
+            <dt>Numéro</dt>
+            <dd data-testid="credit-note-number">{{ creditNote.numberFormatted }}</dd>
+          </div>
+          <div>
+            <dt>Type de bon</dt>
+            <dd>{{ creditNote.bonType }}</dd>
+          </div>
+          <div>
+            <dt>Émis le</dt>
+            <dd>{{ formatDateTime(creditNote.issuedAt) }}</dd>
+          </div>
+          <div>
+            <dt>Total TTC</dt>
+            <dd>{{ formatEur(creditNote.totalTtcCents) }}</dd>
+          </div>
+        </dl>
+        <!-- CR F-3 : lien désactivé tant que le PDF n'est pas généré (Story 4.5
+             écrit pdfWebUrl quand le rendu OneDrive est terminé). Sinon le clic
+             ouvre une page d'erreur. -->
+        <a
+          v-if="creditNote.pdfWebUrl"
+          class="credit-note-pdf-link"
+          :href="`/api/credit-notes/${creditNote.numberFormatted}/pdf`"
+          target="_blank"
+          rel="noopener noreferrer"
+          data-testid="credit-note-pdf-link"
+        >
+          Télécharger le PDF
+        </a>
+        <span
+          v-else
+          class="credit-note-pdf-link credit-note-pdf-link--disabled"
+          aria-disabled="true"
+          data-testid="credit-note-pdf-link"
+        >
+          PDF en cours de génération…
+        </span>
+      </section>
+
+      <!-- Modale émission avoir — CR F-7 : a11y ESC + backdrop click pour
+           fermer (cohérent contract `aria-modal=true`). Le clic sur la modale
+           elle-même ne propage pas (`@click.stop`). -->
+      <div
+        v-if="emitDialogOpen"
+        class="modal-backdrop"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="emit-dialog-title"
+        data-testid="sav-emit-dialog"
+        tabindex="-1"
+        @click.self="closeEmitDialog"
+        @keydown.esc.prevent="closeEmitDialog"
+      >
+        <div class="modal" @click.stop>
+          <h2 id="emit-dialog-title">Émettre l’avoir</h2>
+          <p class="modal-info">
+            Numéro d’avoir attribué automatiquement. Le PDF sera généré en arrière-plan.
+          </p>
+          <fieldset class="emit-bon-type" :disabled="emitting">
+            <legend>Type de bon</legend>
+            <label
+              ><input
+                v-model="emitBonType"
+                type="radio"
+                value="AVOIR"
+                data-testid="emit-bon-type-AVOIR"
+              />
+              Avoir comptable</label
+            >
+            <label
+              ><input
+                v-model="emitBonType"
+                type="radio"
+                value="VIREMENT BANCAIRE"
+                data-testid="emit-bon-type-VIREMENT"
+              />
+              Virement bancaire</label
+            >
+            <label
+              ><input
+                v-model="emitBonType"
+                type="radio"
+                value="PAYPAL"
+                data-testid="emit-bon-type-PAYPAL"
+              />
+              PayPal</label
+            >
+          </fieldset>
+          <p v-if="emitError" class="modal-error" role="alert" data-testid="sav-emit-error">
+            {{ emitError }}
+          </p>
+          <div class="modal-actions">
+            <button type="button" class="btn-sm" :disabled="emitting" @click="closeEmitDialog">
+              Annuler
+            </button>
+            <button
+              type="button"
+              class="btn-primary"
+              :disabled="emitting"
+              data-testid="sav-emit-confirm"
+              @click="submitEmit"
+            >
+              {{ emitting ? 'Émission…' : 'Émettre' }}
+            </button>
+          </div>
+        </div>
       </div>
 
       <!-- Story 4.3 — Aperçu avoir (preview live, AC #2) -->
@@ -1587,25 +1928,142 @@ a:focus-visible {
   gap: 0.75rem;
   flex-wrap: wrap;
 }
-.validate-btn {
+.workflow-actions {
   margin-left: auto;
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.workflow-btn {
   padding: 0.5rem 1rem;
-  background: #16a34a;
-  color: white;
-  border: 1px solid #15803d;
   border-radius: 4px;
   font: inherit;
   font-weight: 600;
   cursor: pointer;
+  border: 1px solid transparent;
 }
-.validate-btn:hover:not(:disabled) {
+.workflow-btn--primary {
+  background: #16a34a;
+  color: white;
+  border-color: #15803d;
+}
+.workflow-btn--primary:hover:not(:disabled) {
   background: #15803d;
 }
-.validate-btn:disabled {
+.workflow-btn--primary:disabled {
   opacity: 0.5;
   cursor: not-allowed;
   background: #86efac;
   border-color: #86efac;
+}
+.workflow-btn--ghost {
+  background: white;
+  color: #b91c1c;
+  border-color: #fecaca;
+}
+.workflow-btn--ghost:hover:not(:disabled) {
+  background: #fef2f2;
+}
+.workflow-btn--ghost:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+/* Section avoir émis */
+.credit-note-issued {
+  border-left: 4px solid #16a34a;
+}
+.credit-note-dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.5rem 1rem;
+  margin: 0.5rem 0;
+}
+.credit-note-dl dt {
+  font-size: 0.8125rem;
+  color: #6b7280;
+}
+.credit-note-dl dd {
+  margin: 0;
+  font-weight: 600;
+}
+.credit-note-pdf-link {
+  display: inline-block;
+  margin-top: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: #f9fafb;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  color: #1f2937;
+  text-decoration: none;
+  font-weight: 600;
+}
+.credit-note-pdf-link--disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  font-style: italic;
+}
+.credit-note-pdf-link:hover {
+  background: #f3f4f6;
+}
+/* Modale émission avoir */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.45);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+.modal {
+  background: white;
+  border-radius: 8px;
+  padding: 1.5rem;
+  width: min(420px, 95vw);
+  box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
+}
+.modal h2 {
+  margin: 0 0 0.5rem;
+}
+.modal-info {
+  color: #4b5563;
+  font-size: 0.875rem;
+  margin: 0 0 0.75rem;
+}
+.emit-bon-type {
+  border: 1px solid #e5e7eb;
+  border-radius: 4px;
+  padding: 0.5rem 0.75rem;
+  margin: 0 0 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+}
+.emit-bon-type legend {
+  padding: 0 0.25rem;
+  color: #374151;
+  font-size: 0.875rem;
+  font-weight: 600;
+}
+.emit-bon-type label {
+  font-size: 0.9375rem;
+  display: flex;
+  gap: 0.5rem;
+  align-items: center;
+}
+.modal-error {
+  background: #fee2e2;
+  color: #991b1b;
+  border: 1px solid #fca5a5;
+  border-radius: 4px;
+  padding: 0.5rem 0.75rem;
+  margin: 0 0 0.75rem;
+  font-size: 0.875rem;
+}
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
 }
 .cell-input,
 .cell-select {
