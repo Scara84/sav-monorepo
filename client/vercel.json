@@ -20,6 +20,18 @@
   "crons": [{ "path": "/api/cron/dispatcher", "schedule": "0 3 * * *" }],
   "rewrites": [
     { "source": "/api/sav", "destination": "/api/sav?op=list" },
+    {
+      "source": "/api/sav/tags/suggestions",
+      "destination": "/api/sav?op=tags-suggestions"
+    },
+    {
+      "source": "/api/admin/sav-files/upload-session",
+      "destination": "/api/sav?op=admin-upload-session"
+    },
+    {
+      "source": "/api/admin/sav-files/upload-complete",
+      "destination": "/api/sav?op=admin-upload-complete"
+    },
     { "source": "/api/sav/:id/status", "destination": "/api/sav?op=status&id=:id" },
     { "source": "/api/sav/:id/assign", "destination": "/api/sav?op=assign&id=:id" },
     { "source": "/api/sav/:id/tags", "destination": "/api/sav?op=tags&id=:id" },

@@ -14,6 +14,11 @@ import {
 } from './_lib/sav/productivity-handlers'
 import { emitCreditNoteHandler } from './_lib/credit-notes/emit-handler'
 import { fileThumbnailHandler } from './_lib/sav/file-thumbnail-handler'
+import {
+  adminUploadSessionHandler,
+  adminUploadCompleteHandler,
+} from './_lib/sav/admin-upload-handlers'
+import { tagsSuggestionsHandler } from './_lib/sav/tags-suggestions-handler'
 import type { ApiHandler, ApiRequest, ApiResponse } from './_lib/types'
 
 /**
@@ -109,6 +114,9 @@ const ALLOWED_OPS = new Set([
   'duplicate',
   'credit-notes',
   'file-thumbnail',
+  'admin-upload-session',
+  'admin-upload-complete',
+  'tags-suggestions',
 ])
 
 function parseOp(req: ApiRequest): string | null {
@@ -143,6 +151,36 @@ const dispatch: ApiHandler = async (req, res) => {
     delete q['id']
     delete q['lineId']
     delete q['fileId']
+  }
+
+  // op=tags-suggestions → GET /api/sav/tags/suggestions
+  // No savId in query — rewrite ne passe pas d'id
+  if (op === 'tags-suggestions') {
+    if (method !== 'GET') {
+      res.setHeader('Allow', 'GET')
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
+      return
+    }
+    return tagsSuggestionsHandler(req, res)
+  }
+
+  // op=admin-upload-session / admin-upload-complete → savId dans le body, pas en query
+  if (op === 'admin-upload-session') {
+    if (method !== 'POST') {
+      res.setHeader('Allow', 'POST')
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
+      return
+    }
+    return adminUploadSessionHandler(req, res)
+  }
+
+  if (op === 'admin-upload-complete') {
+    if (method !== 'POST') {
+      res.setHeader('Allow', 'POST')
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
+      return
+    }
+    return adminUploadCompleteHandler(req, res)
   }
 
   // op=list → GET /api/sav

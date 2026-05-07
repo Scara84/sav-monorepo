@@ -1,10 +1,12 @@
 import { z } from 'zod'
+import { withAuth } from '../middleware/with-auth'
 import { withRateLimit } from '../middleware/with-rate-limit'
 import { withValidation } from '../middleware/with-validation'
 import { ensureRequestId } from '../request-id'
 import { sendError } from '../errors'
 import { logger } from '../logger'
 import { supabaseAdmin } from '../clients/supabase-admin'
+import { enqueueOperatorCommentOutbox } from './outbox-helpers'
 import type { ApiHandler, ApiRequest, ApiResponse } from '../types'
 
 /**
@@ -139,6 +141,18 @@ export const commentsBodySchema = z.object({
   visibility: z.enum(['all', 'internal']),
 })
 
+interface SavRowForComment {
+  id: number
+  reference: string
+  status: string
+  member_id: number
+  // Production (Supabase embedded join) : member: { email: string | null }
+  // Test mock (flat compat) : member_email: string | null
+  member?: { email: string | null } | null
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  [key: string]: any
+}
+
 function commentsCore(savId: number): ApiHandler {
   return async (req: ApiRequest, res: ApiResponse) => {
     const requestId = ensureRequestId(req)
@@ -150,6 +164,36 @@ function commentsCore(savId: number): ApiHandler {
     const body = req.body as z.infer<typeof commentsBodySchema>
     try {
       const admin = supabaseAdmin()
+
+      // AC #6.6 — lookup SAV pour résoudre member_email (outbox enqueue op→member).
+      // SELECT utilise l'embed PostgREST member:members(email) pour production.
+      // Test mock backward-compat : si le mock retourne member_email (flat), on lit les deux.
+      // Best-effort : si le lookup échoue (ex: mock incompatible), on continue sans outbox.
+      let savRow: SavRowForComment | null = null
+      try {
+        const result = await admin
+          .from('sav')
+          .select('id, reference, status, member_id, member:members(email)')
+          .eq('id', savId)
+          .maybeSingle<SavRowForComment>()
+        if (result.error) {
+          logger.warn('sav.comment.sav_lookup_error', {
+            requestId,
+            savId,
+            message: (result.error as { message?: string }).message,
+          })
+        } else {
+          savRow = result.data
+        }
+      } catch (lookupErr) {
+        // Non-bloquant : mock incompatible ou erreur réseau → skip outbox
+        logger.warn('sav.comment.sav_lookup_exception', {
+          requestId,
+          savId,
+          error: lookupErr instanceof Error ? lookupErr.message : String(lookupErr),
+        })
+      }
+
       // Note V1 : l'audit trigger `trg_audit_sav_comments` lit `app.actor_operator_id` ;
       // nous n'avons pas de GUC auto-setter par le client Supabase JS. L'audit row
       // aura donc `actor_operator_id=NULL` — acceptable V1 puisque `author_operator_id`
@@ -187,6 +231,31 @@ function commentsCore(savId: number): ApiHandler {
         visibility: data.visibility,
         actorOperatorId: user.sub,
       })
+
+      // AC #6.6 — Enqueue outbox op→member si visibility='all' (best-effort).
+      // Si visibility='internal' → AUCUN enqueue (strict, test OB-02).
+      if (body.visibility === 'all') {
+        // Production: savRow.member.email (embedded join); Test mock: savRow.member_email (flat compat)
+        const memberEmail =
+          savRow?.member?.email ??
+          (savRow as SavRowForComment & { member_email?: string | null })?.member_email ??
+          null
+        if (!memberEmail) {
+          // member.email IS NULL → log + skip (commentaire inséré normalement)
+          console.warn(`[outbox] op→member skip: member.email missing savId=${savId}`)
+        } else {
+          await enqueueOperatorCommentOutbox({
+            savId,
+            savReference: savRow?.reference ?? '',
+            memberEmail,
+            memberMemberId: savRow?.member_id ?? 0,
+            commentBody: body.body,
+            operatorDisplayName: String(user.sub),
+            requestId,
+          })
+        }
+      }
+
       res.status(201).json({
         data: {
           commentId: data.id,
@@ -208,13 +277,15 @@ function commentsCore(savId: number): ApiHandler {
 }
 
 export function savCommentsPostHandler(savId: number): ApiHandler {
-  return withRateLimit({
-    bucketPrefix: 'sav:comments',
-    keyFrom: (r: ApiRequest) =>
-      r.user && r.user.type === 'operator' ? `op:${r.user.sub}` : undefined,
-    max: 60,
-    window: '1m',
-  })(withValidation({ body: commentsBodySchema })(commentsCore(savId)))
+  return withAuth({ types: ['operator'] })(
+    withRateLimit({
+      bucketPrefix: 'sav:comments',
+      keyFrom: (r: ApiRequest) =>
+        r.user && r.user.type === 'operator' ? `op:${r.user.sub}` : undefined,
+      max: 60,
+      window: '1m',
+    })(withValidation({ body: commentsBodySchema })(commentsCore(savId)))
+  )
 }
 
 // ---- Duplicate ----

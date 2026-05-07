@@ -28,8 +28,15 @@ export interface UploadState {
 }
 
 export interface UseOneDriveUploadOptions {
+  /** Mode SAV membre (Story 2.4) — référence du SAV (ex: 'SAV-2026-00001') */
   savReference?: string
+  /** Mode draft (Story 2.4/6.3) — retourne un draftAttachmentId pour le fichier */
   draftAttachmentIdFor?: (file: File) => string
+  /**
+   * Mode opérateur back-office (Story 3.7b PATTERN-B) — ID numérique du SAV.
+   * XOR strict avec savReference et draftAttachmentIdFor.
+   */
+  savId?: number
   maxConcurrent?: number
   chunkSize?: number
   sessionEndpoint?: string
@@ -47,6 +54,22 @@ const DEFAULT_CHUNK_SIZE = 4 * 1024 * 1024 // 4 MiB
 const MAX_RETRIES = 2
 
 export function useOneDriveUpload(options: UseOneDriveUploadOptions = {}): UseOneDriveUploadReturn {
+  // XOR guard PATTERN-B : savId est mutuellement exclusif avec savReference / draftAttachmentIdFor
+  if (options.savId !== undefined) {
+    if (options.savReference !== undefined) {
+      throw new Error(
+        '[useOneDriveUpload] savId et savReference sont mutuellement exclusifs (XOR strict PATTERN-B). ' +
+          'Utilisez savId pour le mode opérateur back-office OU savReference pour le mode adhérent.'
+      )
+    }
+    if (options.draftAttachmentIdFor !== undefined) {
+      throw new Error(
+        '[useOneDriveUpload] savId et draftAttachmentIdFor sont mutuellement exclusifs (XOR strict PATTERN-B). ' +
+          'Utilisez savId pour le mode opérateur back-office OU draftAttachmentIdFor pour le mode draft.'
+      )
+    }
+  }
+
   const uploads = ref<UploadState[]>([])
   const abortControllers = new Map<string, AbortController>()
   const doFetch = options.fetchImpl ?? ((...a) => fetch(...a))
@@ -127,25 +150,38 @@ export function useOneDriveUpload(options: UseOneDriveUploadOptions = {}): UseOn
     try {
       // (1) Négociation session
       updateState(id, { status: 'uploading' })
+
+      // Body selon le mode : savId (opérateur) ou savReference/draft (adhérent)
+      const sessionPayload: Record<string, unknown> = {
+        filename: file.name,
+        mimeType: file.type || 'application/octet-stream',
+        size: file.size,
+      }
+      if (options.savId !== undefined) {
+        sessionPayload['savId'] = options.savId
+      } else {
+        sessionPayload['savReference'] = options.savReference
+      }
+
       const sessionRes = await doFetch(sessionEndpoint, {
         method: 'POST',
         credentials: 'include',
         headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({
-          filename: file.name,
-          mimeType: file.type || 'application/octet-stream',
-          size: file.size,
-          savReference: options.savReference,
-        }),
+        body: JSON.stringify(sessionPayload),
         signal: abort.signal,
       })
       if (!sessionRes.ok) {
         throw new Error(`session ${sessionRes.status}`)
       }
       const sessionBody = (await sessionRes.json()) as {
-        data: { uploadUrl: string; sanitizedFilename: string; storagePath: string }
+        data: {
+          uploadUrl: string
+          sanitizedFilename: string
+          storagePath: string
+          uploadSessionId?: string
+        }
       }
-      const { uploadUrl, sanitizedFilename } = sessionBody.data
+      const { uploadUrl, sanitizedFilename, uploadSessionId } = sessionBody.data
 
       // (2) PUT chunks
       let finalChunkResult: { onedriveItemId: string; webUrl: string } | null = null
@@ -172,8 +208,17 @@ export function useOneDriveUpload(options: UseOneDriveUploadOptions = {}): UseOn
         sizeBytes: file.size,
         mimeType: file.type || 'application/octet-stream',
       }
-      if (options.savReference) completeBody['savReference'] = options.savReference
-      else if (draftAttachmentId) completeBody['draftAttachmentId'] = draftAttachmentId
+      if (options.savId !== undefined) {
+        // Mode opérateur back-office (PATTERN-B)
+        completeBody['savId'] = options.savId
+        // Pass-through uploadSessionId (PATTERN-D, CR 2026-05-06)
+        // Backward-compatible : si absent de la session response (self-service mode), ne pas envoyer
+        if (uploadSessionId) completeBody['uploadSessionId'] = uploadSessionId
+      } else if (options.savReference) {
+        completeBody['savReference'] = options.savReference
+      } else if (draftAttachmentId) {
+        completeBody['draftAttachmentId'] = draftAttachmentId
+      }
 
       const completeRes = await doFetch(completeEndpoint, {
         method: 'POST',

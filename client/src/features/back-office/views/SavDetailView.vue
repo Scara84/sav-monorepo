@@ -5,13 +5,18 @@ import { useSavDetail, type SavDetailLine } from '../composables/useSavDetail'
 import { useSavLinePreview } from '../composables/useSavLinePreview'
 import { useSavLineEdit } from '../composables/useSavLineEdit'
 import AddLineDialog from '../components/AddLineDialog.vue'
+import SavTagsBar from '../components/SavTagsBar.vue'
+import DuplicateButton from '../components/DuplicateButton.vue'
+import OperatorFileUploader from '../components/OperatorFileUploader.vue'
 import type { SavLineInput } from '../../../../api/_lib/business/creditCalculation'
 import { formatDiff } from '../utils/format-audit-diff'
 import { isOneDriveWebUrlTrusted } from '../../../shared/utils/onedrive-whitelist'
+import { useCurrentUser } from '../../../shared/composables/useCurrentUser'
 
 /**
  * Story 3.4 — Vue détail SAV back-office.
  * Story 4.3 — Encart « Aperçu avoir » (preview live sans IO).
+ * Story 3.7b — Tags, compose commentaire, M'assigner, DuplicateButton, OperatorFileUploader.
  *
  * Sections : header + lignes (readonly V1) + preview avoir + fichiers +
  * commentaires + audit. Dégradation propre si vignette image KO.
@@ -481,6 +486,140 @@ function initials(
 function backToList(): void {
   void router.push({ name: 'admin-sav-list' })
 }
+
+// --- Story 3.7b — PATTERN-A: useCurrentUser --------------------------------
+const { user: currentUser, loading: currentUserLoading } = useCurrentUser()
+
+// --- Story 3.7b — M'assigner -----------------------------------------------
+const assignMeError = ref<string | null>(null)
+
+async function assignMe(): Promise<void> {
+  if (!sav.value || !currentUser.value) return
+  assignMeError.value = null
+  try {
+    const res = await fetch(`/api/sav/${sav.value.id}/assign`, {
+      method: 'PATCH',
+      credentials: 'include',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        assigneeOperatorId: currentUser.value.sub,
+        version: localVersion.value,
+      }),
+    })
+    if (!res.ok) {
+      const body = (await res.json()) as {
+        error: { code: string; details?: { code?: string } }
+      }
+      const code = body.error?.details?.code ?? body.error?.code
+      if (code === 'VERSION_CONFLICT') {
+        assignMeError.value = 'Conflit de version — le SAV a été rechargé.'
+        await refresh()
+      } else {
+        assignMeError.value = `Erreur lors de l'assignation (${res.status}).`
+      }
+      return
+    }
+    await refresh()
+  } catch {
+    assignMeError.value = 'Erreur réseau — réessayez.'
+  }
+}
+
+// --- Story 3.7b — ComposeCommentForm inline --------------------------------
+// Optimistic comment list (extends comments ref)
+interface OptimisticComment {
+  id: string | number
+  body: string
+  visibility: 'internal' | 'all'
+  createdAt: string
+  authorOperator: { id: number; displayName: string } | null
+  authorMember: null
+}
+
+const optimisticComments = ref<OptimisticComment[]>([])
+const composeBody = ref('')
+const composeVisibility = ref<'internal' | 'all'>('internal')
+const composeSubmitting = ref(false)
+const composeError = ref<string | null>(null)
+
+// Merged comment list: server comments + optimistic ones
+const allComments = computed(() => {
+  // Filter out optimistic entries that have been replaced by real server entries
+  return [...(comments.value ?? []), ...optimisticComments.value]
+})
+
+async function submitComment(): Promise<void> {
+  if (!sav.value || !composeBody.value.trim()) return
+  composeError.value = null
+  composeSubmitting.value = true
+
+  const sentinelId = `optimistic-${Date.now()}`
+  const optimistic: OptimisticComment = {
+    id: sentinelId,
+    body: composeBody.value.trim(),
+    visibility: composeVisibility.value,
+    createdAt: new Date().toISOString(),
+    authorOperator: currentUser.value ? { id: currentUser.value.sub, displayName: 'Vous' } : null,
+    authorMember: null,
+  }
+
+  optimisticComments.value = [...optimisticComments.value, optimistic]
+  const bodyText = composeBody.value.trim()
+  composeBody.value = ''
+
+  try {
+    const res = await fetch(`/api/sav/${sav.value.id}/comments`, {
+      method: 'POST',
+      credentials: 'include',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({
+        body: bodyText,
+        visibility: composeVisibility.value,
+      }),
+    })
+    if (!res.ok) {
+      // Rollback optimistic comment
+      optimisticComments.value = optimisticComments.value.filter((c) => c.id !== sentinelId)
+      composeBody.value = bodyText
+      composeError.value = `Erreur lors de l'envoi du commentaire (${res.status}).`
+      return
+    }
+    const data = (await res.json()) as {
+      data: {
+        commentId: number
+        createdAt: string
+        visibility: string
+        body: string
+        authorOperator?: { id: number }
+      }
+    }
+    // Replace sentinel with real comment
+    optimisticComments.value = optimisticComments.value.map((c) =>
+      c.id === sentinelId
+        ? {
+            ...c,
+            id: data.data.commentId,
+            createdAt: data.data.createdAt,
+          }
+        : c
+    )
+  } catch {
+    // Rollback on network error
+    optimisticComments.value = optimisticComments.value.filter((c) => c.id !== sentinelId)
+    composeBody.value = bodyText
+    composeError.value = 'Erreur réseau — réessayez.'
+  } finally {
+    composeSubmitting.value = false
+  }
+}
+
+// Tags update handler (from SavTagsBar)
+function onTagsUpdated(newTags: string[], newVersion: number): void {
+  if (sav.value) {
+    // Update local version to avoid stale-version issues
+    localVersion.value = newVersion
+  }
+}
 </script>
 
 <template>
@@ -563,17 +702,14 @@ function backToList(): void {
             <dt>Assigné à</dt>
             <dd>
               {{ sav.assignee?.displayName ?? 'Non assigné' }}
-              <!--
-                F45 (CR Epic 3) : tooltip stale « Story 3.5 » mis à jour.
-                Le handler PATCH /assign existe mais l'UI wiring dépend
-                d'un endpoint whoami absent V1 — carry-over Story 3.7b.
-              -->
+              <!-- Story 3.7b — M'assigner wired to useCurrentUser (PATTERN-A) -->
               <button
                 v-if="!sav.assignee"
                 type="button"
-                disabled
-                title="Bouton opérationnel avec l'UI back-office complète (Story 3.7b — Epic 6)"
                 class="assign-me"
+                aria-label="M'assigner ce SAV"
+                :disabled="currentUserLoading || !currentUser"
+                @click="assignMe"
               >
                 M'assigner
               </button>
@@ -584,8 +720,25 @@ function backToList(): void {
             <dd>{{ formatEur(sav.totalAmountCents) }}</dd>
           </div>
         </dl>
-        <div v-if="sav.tags.length > 0" class="tags">
-          <span v-for="t in sav.tags" :key="t" class="tag">{{ t }}</span>
+        <!-- Story 3.7b — SavTagsBar avec gestion optimistic -->
+        <div class="tags-row">
+          <SavTagsBar
+            :sav-id="sav.id"
+            :tags="sav.tags"
+            :version="sav.version"
+            @updated="onTagsUpdated"
+          />
+        </div>
+
+        <!-- Story 3.7b — DuplicateButton -->
+        <div class="header-actions-row">
+          <DuplicateButton :sav-id="sav.id" />
+        </div>
+
+        <!-- Assign-me error toast -->
+        <div v-if="assignMeError" class="assign-error" role="alert">
+          {{ assignMeError }}
+          <button type="button" class="toast-close" @click="assignMeError = null">×</button>
         </div>
       </section>
 
@@ -872,6 +1025,8 @@ function backToList(): void {
       <!-- Fichiers -->
       <section class="card" aria-labelledby="files-title">
         <h2 id="files-title">Fichiers ({{ sav.files.length }})</h2>
+        <!-- Story 3.7b — OperatorFileUploader -->
+        <OperatorFileUploader :sav-id="sav.id" @uploaded="refresh" />
         <div v-if="sav.files.length === 0" class="empty">Aucun fichier joint.</div>
         <div v-else class="files-grid">
           <article v-for="f in sav.files" :key="f.id" class="file-card">
@@ -902,6 +1057,35 @@ function backToList(): void {
               </div>
             </template>
             <p class="file-name">{{ f.originalFilename }}</p>
+            <!-- AC #6.5 — Badge source FR (D-2: libellés FR + title a11y) -->
+            <span
+              v-if="
+                f.source === 'capture' || f.source === 'member-add' || f.source === 'operator-add'
+              "
+              class="file-source-badge"
+              :class="`file-source-badge--${f.source}`"
+              :title="
+                f.source === 'capture'
+                  ? 'Fichier issu de la capture'
+                  : f.source === 'member-add'
+                    ? 'Fichier ajouté par le membre'
+                    : 'Fichier ajouté par un opérateur'
+              "
+              :aria-label="
+                f.source === 'capture'
+                  ? 'Source : Capture'
+                  : f.source === 'member-add'
+                    ? 'Source : Membre'
+                    : 'Source : Opérateur'
+              "
+              >{{
+                f.source === 'capture'
+                  ? 'Capture'
+                  : f.source === 'member-add'
+                    ? 'Membre'
+                    : 'Opérateur'
+              }}</span
+            >
             <p class="file-meta">{{ formatBytes(f.sizeBytes) }}</p>
             <a
               v-if="isOneDriveWebUrlTrusted(f.webUrl)"
@@ -919,9 +1103,9 @@ function backToList(): void {
 
       <!-- Commentaires -->
       <section class="card" aria-labelledby="comments-title">
-        <h2 id="comments-title">Commentaires ({{ comments.length }})</h2>
-        <ul v-if="comments.length > 0" class="comments">
-          <li v-for="c in comments" :key="c.id" class="comment">
+        <h2 id="comments-title">Commentaires ({{ allComments.length }})</h2>
+        <ul v-if="allComments.length > 0" class="comments">
+          <li v-for="c in allComments" :key="c.id" class="comment">
             <div class="avatar" aria-hidden="true">
               {{ initials(c.authorMember, c.authorOperator) }}
             </div>
@@ -938,9 +1122,48 @@ function backToList(): void {
         </ul>
         <p v-else class="empty">Aucun commentaire pour ce SAV.</p>
 
-        <div class="compose-placeholder" role="note">
-          <em>Publication de commentaires disponible après Story 3.7.</em>
-        </div>
+        <!-- Story 3.7b — ComposeCommentForm inline (AC #6.2) -->
+        <form class="compose-form" @submit.prevent="submitComment">
+          <textarea
+            v-model="composeBody"
+            aria-label="Nouveau commentaire"
+            class="compose-textarea"
+            placeholder="Saisir un commentaire..."
+            :disabled="composeSubmitting"
+          />
+          <fieldset class="compose-visibility">
+            <legend>Visibilité</legend>
+            <label class="radio-label">
+              <input
+                v-model="composeVisibility"
+                type="radio"
+                value="internal"
+                name="compose-visibility"
+              />
+              Interne (opérateurs)
+            </label>
+            <label class="radio-label">
+              <input
+                v-model="composeVisibility"
+                type="radio"
+                value="all"
+                name="compose-visibility"
+              />
+              Adhérent + opérateurs
+            </label>
+          </fieldset>
+          <button
+            type="submit"
+            class="btn-primary"
+            :disabled="composeSubmitting || !composeBody.trim()"
+          >
+            {{ composeSubmitting ? 'Envoi…' : 'Envoyer' }}
+          </button>
+          <div v-if="composeError" class="compose-error" role="alert">
+            {{ composeError }}
+            <button type="button" class="toast-close" @click="composeError = null">×</button>
+          </div>
+        </form>
       </section>
 
       <!-- Audit trail -->
@@ -1148,6 +1371,29 @@ a:focus-visible {
   color: #666;
   font-size: 0.75rem;
   margin: 0;
+}
+/* AC #6.5 — Source badge per file */
+.file-source-badge {
+  display: inline-block;
+  font-size: 0.65rem;
+  font-weight: 600;
+  padding: 0.1rem 0.4rem;
+  border-radius: 3px;
+  margin-top: 0.2rem;
+  letter-spacing: 0.02em;
+  text-transform: uppercase;
+}
+.file-source-badge--capture {
+  background: #dbeafe;
+  color: #1e40af;
+}
+.file-source-badge--member-add {
+  background: #dcfce7;
+  color: #166534;
+}
+.file-source-badge--operator-add {
+  background: #ffedd5;
+  color: #9a3412;
 }
 .link-unsafe {
   color: #c00;
@@ -1440,6 +1686,72 @@ a:focus-visible {
 }
 .extra-label .cell-input {
   width: 120px;
+}
+
+/* Story 3.7b */
+.tags-row {
+  margin-top: 0.5rem;
+}
+.header-actions-row {
+  margin-top: 0.75rem;
+  display: flex;
+  gap: 0.5rem;
+}
+.assign-error {
+  background: #fee2e2;
+  color: #991b1b;
+  padding: 0.5rem 0.75rem;
+  border-radius: 4px;
+  font-size: 0.875rem;
+  margin-top: 0.5rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+.compose-form {
+  margin-top: 1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+.compose-textarea {
+  width: 100%;
+  min-height: 80px;
+  padding: 0.5rem;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  font: inherit;
+  font-size: 0.875rem;
+  resize: vertical;
+  box-sizing: border-box;
+}
+.compose-visibility {
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  padding: 0.375rem 0.75rem;
+}
+.compose-visibility legend {
+  font-size: 0.8125rem;
+  font-weight: 600;
+  padding: 0 0.25rem;
+}
+.radio-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  font-size: 0.875rem;
+  margin-right: 1rem;
+  cursor: pointer;
+}
+.compose-error {
+  background: #fee2e2;
+  color: #991b1b;
+  padding: 0.5rem 0.75rem;
+  border-radius: 4px;
+  font-size: 0.875rem;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
 }
 .toast {
   position: fixed;

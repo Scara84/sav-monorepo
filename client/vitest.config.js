@@ -66,6 +66,10 @@ export default defineConfig({
   test: {
     globals: true,
     environment: 'happy-dom',
+    // Story 3.7b: assign-me spec uses aria-label with apostrophe; happy-dom 17.x
+    // has a bug where querySelector fails on attribute selectors containing U+0027.
+    // Using jsdom for this specific file to work around it.
+    environmentMatchGlobs: [['**/SavDetailView.assign-me.spec.ts', 'jsdom']],
     coverage: {
       provider: 'v8',
       reporter: ['text', 'json', 'html'],
