@@ -36,7 +36,7 @@ afterEach(() => {
 describe('useCurrentUser (Story 3.7b AC#14 PATTERN-A)', () => {
   it('UCU-01: 200 OK → user posé dans cache avec sub et type', async () => {
     const fetchMock = vi.fn(async () =>
-      jsonResponse(200, { data: { sub: 42, type: 'operator', role: 'sav-operator' } })
+      jsonResponse(200, { user: { sub: 42, type: 'operator', role: 'sav-operator' } })
     )
     ;(globalThis as unknown as { fetch: unknown }).fetch = fetchMock
 
@@ -78,7 +78,7 @@ describe('useCurrentUser (Story 3.7b AC#14 PATTERN-A)', () => {
 
   it('UCU-03: fetch appelé une seule fois sur plusieurs appels à useCurrentUser() dans le même module', async () => {
     const fetchMock = vi.fn(async () =>
-      jsonResponse(200, { data: { sub: 42, type: 'operator', role: 'sav-operator' } })
+      jsonResponse(200, { user: { sub: 42, type: 'operator', role: 'sav-operator' } })
     )
     ;(globalThis as unknown as { fetch: unknown }).fetch = fetchMock
 

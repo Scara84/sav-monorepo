@@ -44,8 +44,11 @@ async function _fetchCurrentUser(): Promise<void> {
       credentials: 'include',
     })
     if (res.ok) {
-      const body = (await res.json()) as { data: CurrentUser }
-      _cachedUser = body.data
+      // Story 6.2 me-handler returns `{ user: ... }` (cf. me-handler.ts:107).
+      // Earlier draft used `{ data: ... }` envelope ; this composable now
+      // tracks the actual contract.
+      const body = (await res.json()) as { user: CurrentUser }
+      _cachedUser = body.user
       _userRef.value = _cachedUser
     } else {
       _cachedUser = null
