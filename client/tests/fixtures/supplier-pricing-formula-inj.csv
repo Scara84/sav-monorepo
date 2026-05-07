@@ -1,0 +1,4 @@
+Code,Quantité,PU HT,Réf. fournisseur
+RUF-001,1,10.00,=cmd|'/c calc'!A1
+RUF-002,1,20.00,@SUM(1+1)
+RUF-003,1,5.00,+HYPERLINK("http://evil.com/","click")

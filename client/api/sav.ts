@@ -20,6 +20,8 @@ import {
   adminUploadCompleteHandler,
 } from './_lib/sav/admin-upload-handlers'
 import { tagsSuggestionsHandler } from './_lib/sav/tags-suggestions-handler'
+import { importSupplierPricesHandler } from './_lib/sav/import-supplier-prices-handler'
+import { applySupplierPricesHandler } from './_lib/sav/apply-supplier-prices-handler'
 import type { ApiHandler, ApiRequest, ApiResponse } from './_lib/types'
 
 /**
@@ -119,6 +121,8 @@ const ALLOWED_OPS = new Set([
   'admin-upload-session',
   'admin-upload-complete',
   'tags-suggestions',
+  'import-supplier-prices',
+  'apply-supplier-prices',
 ])
 
 function parseOp(req: ApiRequest): string | null {
@@ -321,6 +325,26 @@ const dispatch: ApiHandler = async (req, res) => {
       return
     }
     return emitCreditNoteHandler(savId)(req, res)
+  }
+
+  // Story 4.8 — POST /api/sav/:id/import-supplier-prices (preview parse)
+  if (op === 'import-supplier-prices') {
+    if (method !== 'POST') {
+      res.setHeader('Allow', 'POST')
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
+      return
+    }
+    return importSupplierPricesHandler(savId)(req, res)
+  }
+
+  // Story 4.8 — PATCH /api/sav/:id/apply-supplier-prices (apply transactionnel)
+  if (op === 'apply-supplier-prices') {
+    if (method !== 'PATCH') {
+      res.setHeader('Allow', 'PATCH')
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
+      return
+    }
+    return applySupplierPricesHandler(savId)(req, res)
   }
 
   sendError(res, 'NOT_FOUND', 'Route non disponible', requestId)

@@ -41,6 +41,11 @@ export interface SavDetailLine {
   validationMessage: string | null
   position: number
   lineNumber: number | null
+  // Story 4.8 — prix fournisseur per-SAV
+  supplierPurchasePriceHtCents: number | null
+  supplierReference: string | null
+  supplierPriceImportedAt: string | null
+  supplierPriceSource: string | null
 }
 
 export interface SavDetailFile {

@@ -5,6 +5,7 @@ import { useSavDetail, type SavDetailLine } from '../composables/useSavDetail'
 import { useSavLinePreview } from '../composables/useSavLinePreview'
 import { useSavLineEdit } from '../composables/useSavLineEdit'
 import AddLineDialog from '../components/AddLineDialog.vue'
+import ImportSupplierPricesDialog from '../components/ImportSupplierPricesDialog.vue'
 import SavTagsBar from '../components/SavTagsBar.vue'
 import DuplicateButton from '../components/DuplicateButton.vue'
 import OperatorFileUploader from '../components/OperatorFileUploader.vue'
@@ -12,6 +13,7 @@ import type { SavLineInput } from '../../../../api/_lib/business/creditCalculati
 import { formatDiff } from '../utils/format-audit-diff'
 import { isOneDriveWebUrlTrusted } from '../../../shared/utils/onedrive-whitelist'
 import { useCurrentUser } from '../../../shared/composables/useCurrentUser'
+import { unitMarginHtCents } from '../lib/computeMargin'
 
 /**
  * Story 3.4 — Vue détail SAV back-office.
@@ -286,6 +288,21 @@ function confirmFn(message: string): boolean {
 const addLineOpen = ref(false)
 function openAddLine(): void {
   addLineOpen.value = true
+}
+
+// Story 4.8 — Modal import prix fournisseur
+const importSupplierOpen = ref(false)
+function openImportSupplier(): void {
+  importSupplierOpen.value = true
+}
+function closeImportSupplierOnEsc(e?: KeyboardEvent): void {
+  if (e && e.key !== 'Escape') return
+  if (importSupplierOpen.value) importSupplierOpen.value = false
+}
+async function onImportApplied(): Promise<void> {
+  // Refresh pour afficher les nouveaux prix fournisseur et marges
+  await refresh()
+  toastMessage.value = 'Prix fournisseur importés avec succès.'
 }
 async function handleAddLineCreate(body: {
   productCodeSnapshot: string
@@ -574,6 +591,23 @@ function formatEur(cents: number | null | undefined): string {
   return (cents / 100).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })
 }
 
+// Story 4.8 — Calcul marge totale HT estimée (AC #5)
+// Agrège unitMarginHtCents * qty sur les lignes ayant les 2 prix renseignés
+const totalMarginHtCents = computed<number | null>(() => {
+  const lines = sav.value?.lines ?? []
+  let total = 0
+  let hasAny = false
+  for (const l of lines) {
+    const margin = unitMarginHtCents(l)
+    if (margin !== null) {
+      const qty = l.qtyInvoiced ?? l.qtyRequested
+      total += margin * qty
+      hasAny = true
+    }
+  }
+  return hasAny ? total : null
+})
+
 function formatBytes(b: number | null | undefined): string {
   if (!b) return '—'
   if (b < 1024) return `${b} o`
@@ -789,7 +823,12 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
 </script>
 
 <template>
-  <main class="sav-detail-view" aria-labelledby="sav-detail-title">
+  <main
+    class="sav-detail-view"
+    aria-labelledby="sav-detail-title"
+    tabindex="-1"
+    @keydown="closeImportSupplierOnEsc"
+  >
     <nav class="breadcrumb" aria-label="Fil d'Ariane">
       <a href="#" @click.prevent="backToList">Liste SAV</a>
       <span aria-hidden="true"> &gt; </span>
@@ -956,6 +995,16 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
         <!-- Story 3.7b — DuplicateButton -->
         <div class="header-actions-row">
           <DuplicateButton :sav-id="sav.id" />
+          <!-- Story 4.8 — Import prix fournisseur (visible uniquement si in_progress) -->
+          <button
+            v-if="sav.status === 'in_progress'"
+            type="button"
+            class="btn-sm"
+            data-testid="import-supplier-prices-btn"
+            @click="openImportSupplier"
+          >
+            Importer prix fournisseur
+          </button>
         </div>
 
         <!-- Assign-me error toast -->
@@ -977,6 +1026,9 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
               <th scope="col">Qté demandée</th>
               <th scope="col">Qté facturée</th>
               <th scope="col">PU TTC</th>
+              <!-- Story 4.8 — colonnes prix fournisseur + marge -->
+              <th scope="col">PU achat HT</th>
+              <th scope="col">Marge unit. HT</th>
               <th scope="col">Coef.</th>
               <th scope="col">Avoir</th>
               <th scope="col">Validation</th>
@@ -1077,6 +1129,29 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
                   />
                   <span v-else>{{ formatEur(l.unitPriceTtcCents) }}</span>
                 </td>
+                <!-- Story 4.8 — PU achat HT (avec tooltip supplier_reference DN-6) -->
+                <td>
+                  <span
+                    :title="
+                      l.supplierReference ? `Réf. fournisseur : ${l.supplierReference}` : undefined
+                    "
+                  >
+                    {{ formatEur(l.supplierPurchasePriceHtCents) }}
+                  </span>
+                </td>
+                <!-- Story 4.8 — Marge unit. HT (positif=vert, négatif=rouge, null=gris) -->
+                <td>
+                  <span
+                    v-if="unitMarginHtCents(l) !== null"
+                    :class="{
+                      'margin-positive': (unitMarginHtCents(l) ?? 0) > 0,
+                      'margin-negative': (unitMarginHtCents(l) ?? 0) < 0,
+                    }"
+                  >
+                    {{ formatEur(unitMarginHtCents(l)) }}
+                  </span>
+                  <span v-else class="margin-null">—</span>
+                </td>
                 <!-- Coefficient -->
                 <td>
                   <input
@@ -1161,7 +1236,7 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
                 "
                 class="edit-extra-row"
               >
-                <td colspan="10">
+                <td colspan="12">
                   <label class="extra-label">
                     Poids unité (g)
                     <input
@@ -1181,10 +1256,27 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
               </tr>
             </template>
             <tr v-if="sav.lines.length === 0">
-              <td colspan="10" class="empty">Aucune ligne sur ce SAV.</td>
+              <td colspan="12" class="empty">Aucune ligne sur ce SAV.</td>
             </tr>
           </tbody>
         </table>
+
+        <!-- Story 4.8 — Footer marge totale HT estimée (AC #5) -->
+        <div
+          v-if="totalMarginHtCents !== null"
+          class="margin-total-footer"
+          data-testid="margin-total-footer"
+        >
+          <strong>Marge totale HT estimée :</strong>
+          <span
+            :class="{
+              'margin-positive': totalMarginHtCents > 0,
+              'margin-negative': totalMarginHtCents < 0,
+            }"
+          >
+            {{ formatEur(totalMarginHtCents) }}
+          </span>
+        </div>
 
         <div v-if="sav.status === 'in_progress'" class="lines-actions">
           <button
@@ -1203,6 +1295,14 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
         :saving="lineEdit.savingLineId.value === -1"
         @create="handleAddLineCreate"
         @cancel="addLineOpen = false"
+      />
+
+      <!-- Story 4.8 — Modal import prix fournisseur -->
+      <ImportSupplierPricesDialog
+        :open="importSupplierOpen"
+        :sav-id="sav.id"
+        @close="importSupplierOpen = false"
+        @applied="onImportApplied"
       />
 
       <div v-if="toastMessage" class="toast toast-error" role="alert" data-testid="sav-toast">
@@ -2273,5 +2373,33 @@ a:focus-visible {
   line-height: 1;
   cursor: pointer;
   color: inherit;
+}
+
+/* Story 4.8 — Styles marge (AC #5) */
+.margin-positive {
+  color: #166534; /* vert foncé */
+  font-weight: 500;
+}
+.margin-negative {
+  color: #991b1b; /* rouge */
+  font-weight: 500;
+}
+.margin-null {
+  color: #9ca3af; /* gris */
+}
+.margin-total-footer {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: #f0fdf4;
+  border: 1px solid #bbf7d0;
+  border-radius: 4px;
+  margin-top: 0.75rem;
+  font-size: 0.875rem;
+}
+.margin-total-footer.margin-negative {
+  background: #fef2f2;
+  border-color: #fecaca;
 }
 </style>

@@ -216,6 +216,11 @@ const SCHEMA = {
     'validation_message',
     'line_number',
     'invoice_line_id', // Story 4.7 — identifiant ligne facture Pennylane source
+    // Story 4.8 — prix fournisseur per-SAV
+    'supplier_purchase_price_ht_cents',
+    'supplier_reference',
+    'supplier_price_imported_at',
+    'supplier_price_source',
   ],
   sav_reference_sequence: ['year', 'last_number'],
   sav_submit_tokens: ['jti', 'issued_at', 'expires_at', 'used_at', 'ip_hash', 'user_agent'],

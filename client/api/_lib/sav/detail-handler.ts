@@ -40,7 +40,9 @@ const SAV_SELECT = `
     unit_price_ttc_cents, vat_rate_bp_snapshot,
     credit_coefficient, credit_coefficient_label, piece_to_kg_weight_g,
     credit_amount_cents, validation_status, validation_message,
-    position, line_number ),
+    position, line_number,
+    supplier_purchase_price_ht_cents, supplier_reference,
+    supplier_price_imported_at, supplier_price_source ),
   files:sav_files ( id, original_filename, sanitized_filename, onedrive_item_id,
     web_url, mime_type, size_bytes, uploaded_by_member_id, uploaded_by_operator_id,
     source, created_at )
@@ -452,6 +454,11 @@ function projectLine(row: Record<string, unknown>): Record<string, unknown> {
     validation_message: string | null
     position: number
     line_number: number | null
+    // Story 4.8 — colonnes prix fournisseur
+    supplier_purchase_price_ht_cents: number | null
+    supplier_reference: string | null
+    supplier_price_imported_at: string | null
+    supplier_price_source: string | null
   }
   return {
     id: r.id,
@@ -472,6 +479,11 @@ function projectLine(row: Record<string, unknown>): Record<string, unknown> {
     validationMessage: r.validation_message,
     position: r.position,
     lineNumber: r.line_number,
+    // Story 4.8 — prix fournisseur (camelCase)
+    supplierPurchasePriceHtCents: r.supplier_purchase_price_ht_cents,
+    supplierReference: r.supplier_reference,
+    supplierPriceImportedAt: r.supplier_price_imported_at,
+    supplierPriceSource: r.supplier_price_source,
   }
 }
 
