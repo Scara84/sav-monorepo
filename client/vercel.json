@@ -33,6 +33,14 @@
       "destination": "/api/sav?op=admin-upload-complete"
     },
     { "source": "/api/sav/:id/status", "destination": "/api/sav?op=status&id=:id" },
+    {
+      "source": "/api/sav/:id/import-supplier-prices",
+      "destination": "/api/sav?op=import-supplier-prices&id=:id"
+    },
+    {
+      "source": "/api/sav/:id/apply-supplier-prices",
+      "destination": "/api/sav?op=apply-supplier-prices&id=:id"
+    },
     { "source": "/api/sav/:id/assign", "destination": "/api/sav?op=assign&id=:id" },
     { "source": "/api/sav/:id/tags", "destination": "/api/sav?op=tags&id=:id" },
     { "source": "/api/sav/:id/comments", "destination": "/api/sav?op=comments&id=:id" },
