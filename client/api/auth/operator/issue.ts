@@ -13,6 +13,7 @@ import {
   MAGIC_LINK_TTL_SEC,
 } from '../../_lib/auth/magic-link'
 import { renderOperatorMagicLinkEmail } from '../../_lib/auth/magic-link-email'
+import { isAllowedOrigin, readOrigin } from '../../_lib/auth/origin-check'
 import { sendMail } from '../../_lib/clients/smtp'
 import type { ApiHandler, ApiRequest } from '../../_lib/types'
 
@@ -49,7 +50,7 @@ const coreHandler: ApiHandler = async (req, res) => {
   }
 
   // CSRF — rejette si Origin ne matche pas APP_BASE_URL (forms externes flood SMTP).
-  if (!isSameOrigin(req, appBase)) {
+  if (!isAllowedOrigin(req, appBase)) {
     logger.warn('operator magic-link issue cross-origin blocked', {
       requestId,
       origin: readOrigin(req),
@@ -183,27 +184,6 @@ function readIp(req: ApiRequest): string | undefined {
   const firstFwd = Array.isArray(fwd) ? fwd[0] : fwd
   if (typeof firstFwd === 'string' && firstFwd.length > 0) return firstFwd.split(',')[0]?.trim()
   return undefined
-}
-
-function readOrigin(req: ApiRequest): string | undefined {
-  const o = req.headers['origin']
-  if (typeof o === 'string') return o
-  const r = req.headers['referer']
-  if (typeof r === 'string') return r
-  return undefined
-}
-
-function isSameOrigin(req: ApiRequest, appBase: string): boolean {
-  if (process.env['NODE_ENV'] === 'test' || process.env['VITEST']) return true
-  const incoming = readOrigin(req)
-  if (!incoming) return false
-  try {
-    const incomingUrl = new URL(incoming)
-    const expectedUrl = new URL(appBase)
-    return incomingUrl.origin === expectedUrl.origin
-  } catch {
-    return false
-  }
 }
 
 function sleep(ms: number): Promise<void> {

@@ -14,6 +14,7 @@ import {
 } from '../../_lib/auth/magic-link'
 import { logAuthEvent } from '../../_lib/auth/operator'
 import { renderMagicLinkEmail } from '../../_lib/auth/magic-link-email'
+import { isAllowedOrigin, readOrigin } from '../../_lib/auth/origin-check'
 import { sendMail } from '../../_lib/clients/smtp'
 import type { ApiHandler, ApiRequest, ApiResponse } from '../../_lib/types'
 
@@ -49,7 +50,7 @@ const coreHandler: ApiHandler = async (req, res) => {
 
   // P5 — CSRF : rejette si l'origine ne matche pas APP_BASE_URL.
   // Protection contre les formulaires externes flood-emails (grief des quotas).
-  if (!isSameOrigin(req, appBase)) {
+  if (!isAllowedOrigin(req, appBase)) {
     logger.warn('magic-link issue cross-origin blocked', {
       requestId,
       origin: readOrigin(req),
@@ -156,28 +157,6 @@ function readIp(req: ApiRequest): string | undefined {
   const firstFwd = Array.isArray(fwd) ? fwd[0] : fwd
   if (typeof firstFwd === 'string' && firstFwd.length > 0) return firstFwd.split(',')[0]?.trim()
   return undefined
-}
-
-function readOrigin(req: ApiRequest): string | undefined {
-  const o = req.headers['origin']
-  if (typeof o === 'string') return o
-  const r = req.headers['referer']
-  if (typeof r === 'string') return r
-  return undefined
-}
-
-function isSameOrigin(req: ApiRequest, appBase: string): boolean {
-  // En tests unitaires (NODE_ENV=test), on skip le check (le mock mockReq n'envoie pas Origin).
-  if (process.env['NODE_ENV'] === 'test' || process.env['VITEST']) return true
-  const incoming = readOrigin(req)
-  if (!incoming) return false
-  try {
-    const incomingUrl = new URL(incoming)
-    const expectedUrl = new URL(appBase)
-    return incomingUrl.origin === expectedUrl.origin
-  } catch {
-    return false
-  }
 }
 
 function sleep(ms: number): Promise<void> {
