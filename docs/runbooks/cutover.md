@@ -370,12 +370,16 @@ WHERE id = <N>
 
 #### Étape 6 — INSERT audit_trail (AC#4)
 
+> **⚠️ Schema réel (vérifié 2026-05-08 exécution prod)** : la table `audit_trail` utilise
+> `actor_operator_id` / `actor_member_id` / `actor_system` (PAS `performed_by_*`),
+> et `diff` JSONB (PAS `metadata`). Colonne `notes` text disponible.
+
 ```sql
 -- Remplacer <RUNBOOK_SESSION_ID> par la valeur générée à l'Étape 0.
 INSERT INTO audit_trail (
   entity_type, entity_id, action,
-  performed_by_operator_id, performed_by_member_id, performed_by,
-  metadata
+  actor_operator_id, actor_member_id, actor_system,
+  diff, notes
 )
 VALUES (
   'sav_files',
@@ -391,7 +395,8 @@ VALUES (
     'processed_at', now()::text,
     'story', 'V1.6',
     'runbook_session_id', '<RUNBOOK_SESSION_ID>'
-  )
+  ),
+  'V1.6 backfill — runbook session <RUNBOOK_SESSION_ID>'
 );
 ```
 
@@ -404,8 +409,8 @@ Une fois les 6 lignes traitées, insérer une ligne récapitulative de la sessio
 -- <STARTED_AT_ISO> = timestamp noté lors de l'Étape 0 ; <COMPLETED_AT_ISO> = now().
 INSERT INTO audit_trail (
   entity_type, entity_id, action,
-  performed_by_operator_id, performed_by_member_id, performed_by,
-  metadata
+  actor_operator_id, actor_member_id, actor_system,
+  diff, notes
 )
 VALUES (
   'cutover_run',
@@ -421,11 +426,12 @@ VALUES (
     'started_at', '<STARTED_AT_ISO>',
     'completed_at', now()::text,
     'story', 'V1.6'
-  )
+  ),
+  'V1.6 backfill synthèse — N lignes UPDATE OK'
 );
 ```
 
-> Cette ligne de synthèse permet de retrouver toute la session via `WHERE metadata->>'runbook_session_id' = '<RUNBOOK_SESSION_ID>'` et `entity_type = 'cutover_run'`.
+> Cette ligne de synthèse permet de retrouver toute la session via `WHERE diff->>'runbook_session_id' = '<RUNBOOK_SESSION_ID>'` et `entity_type = 'cutover_run'`.
 
 ### Validation post-backfill (à exécuter après les 6 UPDATE)
 
@@ -456,7 +462,8 @@ Le backfill est **non-destructif** (UPDATE d'une colonne de métadonnées, pas d
    DELETE FROM audit_trail
    WHERE entity_type = 'sav_files'
      AND entity_id = <N>
-     AND action = 'cutover_backfill_onedrive_item_id';
+     AND action = 'cutover_backfill_onedrive_item_id'
+     AND diff->>'runbook_session_id' = '<RUNBOOK_SESSION_ID>';
    ```
 4. Le handler thumbnail V1.5 reste webUrl-primary → **aucune régression runtime** (V1.5 PATTERN-V5 fonctionne avec ou sans `onedrive_item_id` valide tant que `web_url` est présent).
 
@@ -466,4 +473,4 @@ Post-backfill, le handler `/api/sav/files/:id/thumbnail` (`file-thumbnail-handle
 
 ---
 
-**Dernière mise à jour** : 2026-05-08 — Story V1.6
+**Dernière mise à jour** : 2026-05-08 — Story V1.6 (post-exécution prod : backfill 6 lignes OK, runbook patché schema audit_trail réel `actor_*` + `diff` + `notes`)
