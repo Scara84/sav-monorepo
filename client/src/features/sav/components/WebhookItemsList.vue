@@ -706,7 +706,7 @@ export default {
         for (const { form } of filledForms) {
           if (form.images && form.images.length > 0) {
             for (let imgObj of form.images) {
-              if (imgObj.file && !imgObj.uploadedUrl) {
+              if (imgObj.file && (!imgObj.uploadedUrl || !imgObj.itemId)) {
                 allFiles.push(imgObj.file)
                 fileMapping.set(imgObj.file, imgObj)
               }
@@ -723,8 +723,10 @@ export default {
           const imgObj = fileMapping.get(file)
           try {
             currentUploadFile.value = file.name
-            const uploadedUrl = await uploadToBackend(file, savDossier)
-            imgObj.uploadedUrl = uploadedUrl
+            // V1.6 AC#9 : uploadToBackend retourne { webUrl, itemId } (pas string)
+            const uploadResult = await uploadToBackend(file, savDossier)
+            imgObj.uploadedUrl = uploadResult.webUrl
+            imgObj.itemId = uploadResult.itemId
             uploadedFiles.value++
           } catch (e) {
             imgObj.uploadError = true
@@ -825,9 +827,10 @@ export default {
         for (const { form } of filledForms) {
           if (form.images && form.images.length > 0) {
             for (const img of form.images) {
-              if (img.uploadedUrl && img.file) {
+              if (img.uploadedUrl && img.itemId && img.file) {
                 captureFiles.push({
-                  onedriveItemId: img.uploadedUrl.split('?')[0]?.split('/').pop() || img.file.name,
+                  // V1.6 AC#9 : utilise img.itemId (Graph opaque ID) — jamais URL parsing
+                  onedriveItemId: img.itemId,
                   webUrl: img.uploadedUrl,
                   originalFilename: img.file.name,
                   sanitizedFilename: img.file.name,

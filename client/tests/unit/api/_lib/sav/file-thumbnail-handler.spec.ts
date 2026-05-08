@@ -880,4 +880,58 @@ describe('fileThumbnailHandler (Story V1.5 — AC #1, #2, #4, #5, #6.a)', () => 
 
     errorSpy.mockRestore()
   })
+
+  // ── Story V1.6 AC #6 — Régression V1.5 : DN-4=A webUrl-primary path intact ──────────
+  //
+  // Post-backfill V1.6, sav_files rows auront un `onedrive_item_id` valide (Graph ID opaque)
+  // ET un `web_url` présent. L'arbitrage DN-4=A conserve la priorité webUrl-based (Path A)
+  // dans le handler thumbnail. Ce test valide que le handler emprunte bien Path A (share-based
+  // via web_url) même quand onedrive_item_id est désormais valide.
+  //
+  // Ce test est RED-PHASE si implémenté avant V1.5, mais V1.5 étant DONE, il est
+  // GREEN par construction et sert de test de non-régression (ne pas casser DN-4=A).
+
+  it('TH-25 (V1.6 AC#6): onedrive_item_id valide post-backfill + web_url présent → handler emprunte Path A (share-based via web_url, pas id-based)', async () => {
+    // Post-backfill: onedrive_item_id is now a valid Graph opaque ID
+    const VALID_GRAPH_ITEM_ID = '01ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+    const WEB_URL = 'https://fruitstocksav.sharepoint.com/SAV_Images/SAV_18/IMG_4889.JPG'
+
+    db.fileRow = {
+      ...IMAGE_FILE_ROW,
+      onedrive_item_id: VALID_GRAPH_ITEM_ID,
+      web_url: WEB_URL,
+    }
+    db.operatorGroups = [{ group_id: 1 }]
+
+    const imageBytes = Buffer.from('FAKEJPEG-SHARE-BASED')
+    mockFetchImageOk(imageBytes)
+
+    const res = mockStreamingRes()
+    await fileThumbnailHandler(42)(mockReq({ cookie: operatorCookie(), fileId: 42 }), res as never)
+
+    // Handler must succeed (Path A works)
+    expect(res.statusCode).toBe(200)
+    expect(res.headers['content-type']).toBe('image/jpeg')
+
+    // Path A (share-based) must have been used: fetch URL must contain /shares/u!
+    const fetchSpy = vi.mocked(globalThis.fetch)
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    const calledUrl = fetchSpy.mock.calls[0]?.[0] as string
+    // DN-4=A: webUrl-primary → URL must be share-based path, NOT /drives/.../items/...
+    expect(calledUrl).toContain('/shares/u!')
+    expect(calledUrl).not.toContain(`/drives/`)
+    expect(calledUrl).not.toContain(`/items/${VALID_GRAPH_ITEM_ID}`)
+
+    // The base64url encoding of WEB_URL must appear in the fetch URL
+    const expectedBase64 = Buffer.from(WEB_URL, 'utf-8')
+      .toString('base64')
+      .replace(/=+$/, '')
+      .replace(/\+/g, '-')
+      .replace(/\//g, '_')
+    expect(calledUrl).toContain(expectedBase64)
+
+    // Image bytes must be streamed (path A is functional)
+    const received = Buffer.concat(res.chunks)
+    expect(received.toString()).toContain('FAKEJPEG-SHARE-BASED')
+  })
 })

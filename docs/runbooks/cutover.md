@@ -236,4 +236,234 @@ Voir [rollback.md](rollback.md) §3 — arbre de décision selon l'étape en éc
 
 ---
 
-**Dernière mise à jour** : 2026-05-01 — Story 7.7 V1
+## §V1.6 — Backfill `sav_files.onedrive_item_id` (PATTERN-B, opération manuelle)
+
+> **Auteur** : Story V1.6 (2026-05-08)
+> **Statut** : A exécuter post-merge V1.6 sur prod (SAV-IDs 18 et 19 — 6 lignes polluées)
+> **Prerequis** : V1.5 mergé (handler thumbnail webUrl-primary actif) + V1.6 mergé (fix SPA pipeline upload)
+> **DN-4 retenue** : handler thumbnail reste webUrl-primary post-backfill (V1.5). Backfill sert uniquement à nettoyer la donnée pour les futurs consommateurs id-based (delete file V2, share-link rotation V2, item rename V2).
+
+### Pourquoi ce backfill
+
+Le bug source (`WebhookItemsList.vue:830` produisait le filename URL-parsé au lieu du Graph opaque ID) a été corrigé dans V1.6. Mais les 6 lignes pré-existantes en base (`sav_files.id` 1-6, créées pour `sav_id` 18 et 19) contiennent encore des filenames invalides dans `onedrive_item_id`.
+
+Sans ce backfill :
+- Les futurs consommateurs id-based (delete file V2, rename V2, share-link rotation V2) cassent sur ces 6 lignes.
+- La colonne `onedrive_item_id` contient de la donnée non conforme au contrat Graph.
+
+### Pré-requis avant exécution
+
+1. Avoir un accès token Microsoft Graph valide (Bearer token avec scope `Files.Read.All` ou `Sites.Read.All`).
+2. Accès Supabase SQL Editor prod (project `app-sav`, viwgyrqpyryagzgvnfoi).
+3. Fichier CSV backup créé manuellement avant chaque UPDATE (cf. AC#5).
+
+Pour obtenir un access token Graph (Antho, via az CLI ou script local) :
+```bash
+# Via Azure CLI (si connecté avec le compte Microsoft Fruitstock)
+az account get-access-token --resource https://graph.microsoft.com --query accessToken -o tsv
+```
+
+### Audit pré-backfill (vérifier l'état courant)
+
+```sql
+-- Compter les lignes invalides restantes
+SELECT count(*) FROM sav_files
+WHERE onedrive_item_id !~ '^(01[A-Z0-9]{30,}|b![A-Za-z0-9_-]+)$';
+-- Attendu avant backfill : 6
+
+-- Détail des 6 lignes cibles
+SELECT id, sav_id, onedrive_item_id, web_url, created_at
+FROM sav_files
+WHERE onedrive_item_id !~ '^(01[A-Z0-9]{30,}|b![A-Za-z0-9_-]+)$'
+ORDER BY id;
+-- sav_id=18 : 4 fichiers (id 1-4, créés 2026-05-05 — legacy pre-cutover Make)
+-- sav_id=19 : 2 fichiers (id 5-6, créés 2026-05-06 — post-cutover SPA bug V1)
+```
+
+### Étape 0 — Générer le runbook_session_id (une seule fois pour toute la session)
+
+```bash
+# Générer un UUID unique pour cette session de backfill
+# Le même UUID est réutilisé dans tous les INSERTs audit_trail + la synthèse finale
+RUNBOOK_SESSION_ID=$(python3 -c "import uuid; print(str(uuid.uuid4()))")
+echo "RUNBOOK_SESSION_ID = $RUNBOOK_SESSION_ID"
+# Ex : 4a7e3c1d-9f2b-4e8a-b3d5-6c0f1e2a7b4c
+# Conserver cette valeur — elle relie les 6 INSERTs audit + la ligne de synthèse.
+```
+
+> **Important** : ne pas regénérer entre les lignes. Un seul UUID pour toute la session.
+
+### Procédure manuelle ligne par ligne
+
+Répéter les étapes suivantes pour chaque ligne (N = sav_files.id cible) :
+
+#### Étape 1 — Lire la ligne cible
+
+```sql
+SELECT id, sav_id, onedrive_item_id, web_url
+FROM sav_files
+WHERE id = <N>;
+```
+
+Copier la valeur de `web_url`.
+
+#### Étape 2 — Construire l'URL Graph share-based (cohérent V1.5 PATTERN-V5)
+
+```bash
+WEBURL="<web_url copiée>"
+WEBURL_B64=$(printf '%s' "$WEBURL" | base64 | tr -d '=' | tr '+/' '-_')
+SHARE_ID="u!${WEBURL_B64}"
+echo "Share ID : $SHARE_ID"
+```
+
+#### Étape 3 — Récupérer le Graph item ID via curl
+
+```bash
+ACCESS_TOKEN="<Bearer token obtenu via az CLI>"
+curl -s -H "Authorization: Bearer $ACCESS_TOKEN" \
+  "https://graph.microsoft.com/v1.0/shares/${SHARE_ID}/driveItem" \
+  | python3 -c "import sys,json; d=json.load(sys.stdin); print(d.get('id','ABSENT'))"
+```
+
+Le résultat doit matcher le pattern `^(01[A-Z0-9]{30,}|b![A-Za-z0-9_-]+)$`.
+Si la valeur est `ABSENT` ou ne matche pas : **STOP — investiguer manuellement, ne pas UPDATE**.
+
+#### Étape 4 — Backup CSV pré-UPDATE (AC#5 — forensique RGPD 90 jours)
+
+**Path standardisé** : `client/scripts/cutover/results/backfill-onedrive-item-id-<ISO_DATE>.csv`
+(ex : `backfill-onedrive-item-id-2026-05-08T15-30-00Z.csv`)
+
+Ce dossier est dans `.gitignore` — le fichier **ne sera pas commité**.
+
+**Procédure de création (UTF-8 BOM pour ouverture Excel sans souci)** :
+
+```bash
+# 1. Créer le fichier avec BOM UTF-8 + header (une seule fois en début de session)
+CSV_FILE="client/scripts/cutover/results/backfill-onedrive-item-id-$(date -u +%Y-%m-%dT%H-%M-%SZ).csv"
+printf '\xEF\xBB\xBF' > "$CSV_FILE"
+printf '"id","sav_id","old_onedrive_item_id","new_onedrive_item_id","web_url","backed_up_at","runbook_session_id"\n' >> "$CSV_FILE"
+
+# 2. Appender une ligne par UPDATE (répéter pour chaque N)
+printf '"%s","%s","%s","%s","%s","%s","%s"\n' \
+  "<N>" "<sav_id>" "<ancienne valeur>" "<graph_id>" "<web_url>" "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$RUNBOOK_SESSION_ID" >> "$CSV_FILE"
+```
+
+**Format CSV — header explicite** :
+```
+"id","sav_id","old_onedrive_item_id","new_onedrive_item_id","web_url","backed_up_at","runbook_session_id"
+```
+
+Tous les champs sont wrappés dans `"..."` (protection CSV injection + cohérence, en particulier pour `web_url` qui contient des `/`).
+
+**Rétention RGPD** : conserver ce fichier **90 jours** puis supprimer manuellement (conformité NFR-D10 audit forensique RGPD — OOS#10 cleanup CSV manuel V1.6).
+
+#### Étape 5 — UPDATE manuel via Supabase SQL Editor
+
+```sql
+-- Defense WHERE clause : vérifie l'ancienne valeur pour éviter les race conditions
+UPDATE sav_files
+SET onedrive_item_id = '<graph_id_obtenu_étape_3>'
+WHERE id = <N>
+  AND onedrive_item_id = '<ancienne_valeur>';
+-- Vérifier que "1 row updated" apparaît dans le résultat
+```
+
+#### Étape 6 — INSERT audit_trail (AC#4)
+
+```sql
+-- Remplacer <RUNBOOK_SESSION_ID> par la valeur générée à l'Étape 0.
+INSERT INTO audit_trail (
+  entity_type, entity_id, action,
+  performed_by_operator_id, performed_by_member_id, performed_by,
+  metadata
+)
+VALUES (
+  'sav_files',
+  <N>,
+  'cutover_backfill_onedrive_item_id',
+  NULL,
+  NULL,
+  'manual-runbook-antho.scara@gmail.com',
+  jsonb_build_object(
+    'old_onedrive_item_id', '<ancienne valeur onedrive_item_id>',
+    'new_onedrive_item_id', '<graph_id_obtenu>',
+    'web_url', '<web_url>',
+    'processed_at', now()::text,
+    'story', 'V1.6',
+    'runbook_session_id', '<RUNBOOK_SESSION_ID>'
+  )
+);
+```
+
+#### Étape 7 (optionnelle) — INSERT audit_trail de synthèse (AC#4 OOS#9)
+
+Une fois les 6 lignes traitées, insérer une ligne récapitulative de la session entière :
+
+```sql
+-- Remplacer <RUNBOOK_SESSION_ID>, <STARTED_AT_ISO>, <COMPLETED_AT_ISO> par les valeurs réelles.
+-- <STARTED_AT_ISO> = timestamp noté lors de l'Étape 0 ; <COMPLETED_AT_ISO> = now().
+INSERT INTO audit_trail (
+  entity_type, entity_id, action,
+  performed_by_operator_id, performed_by_member_id, performed_by,
+  metadata
+)
+VALUES (
+  'cutover_run',
+  0,
+  'cutover_backfill_onedrive_item_id_summary',
+  NULL,
+  NULL,
+  'manual-runbook-antho.scara@gmail.com',
+  jsonb_build_object(
+    'runbook_session_id', '<RUNBOOK_SESSION_ID>',
+    'total_rows', 6,
+    'sav_ids', ARRAY[18, 19]::int[],
+    'started_at', '<STARTED_AT_ISO>',
+    'completed_at', now()::text,
+    'story', 'V1.6'
+  )
+);
+```
+
+> Cette ligne de synthèse permet de retrouver toute la session via `WHERE metadata->>'runbook_session_id' = '<RUNBOOK_SESSION_ID>'` et `entity_type = 'cutover_run'`.
+
+### Validation post-backfill (à exécuter après les 6 UPDATE)
+
+```sql
+-- Attendu : 0
+SELECT count(*) FROM sav_files
+WHERE onedrive_item_id !~ '^(01[A-Z0-9]{30,}|b![A-Za-z0-9_-]+)$';
+
+-- Vérification détail (toutes les lignes doivent avoir un ID valide)
+SELECT id, sav_id, onedrive_item_id, web_url
+FROM sav_files
+ORDER BY id;
+```
+
+### Si ça casse (rollback)
+
+Le backfill est **non-destructif** (UPDATE d'une colonne de métadonnées, pas de suppression). En cas d'erreur :
+
+1. Lire le CSV backup (étape 4) pour récupérer l'ancienne valeur.
+2. Re-exécuter un UPDATE avec l'ancienne valeur :
+   ```sql
+   UPDATE sav_files
+   SET onedrive_item_id = '<ancienne valeur depuis CSV>'
+   WHERE id = <N>;
+   ```
+3. Supprimer la ligne audit_trail correspondante si nécessaire :
+   ```sql
+   DELETE FROM audit_trail
+   WHERE entity_type = 'sav_files'
+     AND entity_id = <N>
+     AND action = 'cutover_backfill_onedrive_item_id';
+   ```
+4. Le handler thumbnail V1.5 reste webUrl-primary → **aucune régression runtime** (V1.5 PATTERN-V5 fonctionne avec ou sans `onedrive_item_id` valide tant que `web_url` est présent).
+
+### Note DN-4 — Decision: webUrl-primary conservé (V1.5)
+
+Post-backfill, le handler `/api/sav/files/:id/thumbnail` (`file-thumbnail-handler.ts`) reste webUrl-primary (path A = share-based via `web_url`). Backfill id-based comme path primaire est déféré en **V1.6.2** (après validation 100% lignes valides en prod + accord PM). Voir story V1.6 DN-4=A.
+
+---
+
+**Dernière mise à jour** : 2026-05-08 — Story V1.6

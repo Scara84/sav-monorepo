@@ -1,6 +1,26 @@
 import axios from 'axios'
 
 /**
+ * Regex de validation d'un Microsoft Graph item ID opaque.
+ * Formats valides :
+ *   - 01[A-Z0-9]{30,} : format DriveItem ID classique (SharePoint/OneDrive)
+ *   - b![A-Za-z0-9_-]+ : format base64url encodé (drives partagés/B2B)
+ *
+ * Story V1.6 — AC#9 : utilisé pour valider driveItem.id avant stockage.
+ * NE PAS modifier sans mise à jour cohérente de la validation Supabase (sav_files.onedrive_item_id).
+ */
+const GRAPH_ITEM_ID_REGEX = /^(01[A-Z0-9]{30,}|b![A-Za-z0-9_-]+)$/
+
+/**
+ * Regex defense-in-depth : détecte si une string ressemble à un nom de fichier
+ * (extension 2-5 caractères en fin de chaîne). Utilisée uniquement pour enrichir
+ * le message d'erreur (aide au debug) — pas la validation primaire.
+ *
+ * Story V1.6 — AC#9 : guard contre le bug historique WebhookItemsList.vue:830.
+ */
+const FILENAME_EXTENSION_REGEX = /\.[a-zA-Z]{2,5}$/
+
+/**
  * Composable pour gérer les appels API avec retry logic.
  *
  * Architecture post-Epic 1 :
@@ -94,7 +114,13 @@ export function useApiClient() {
    * @param {File|{content:string,filename:string}} file
    * @param {string} savDossier
    * @param {{ isBase64?: boolean, onProgress?: (pct:number)=>void }} options
-   * @returns {Promise<string>} webUrl OneDrive du fichier uploadé
+   * @returns {Promise<{ webUrl: string, itemId: string }>} webUrl + Graph item ID opaque
+   *
+   * Story V1.6 — AC#9 : retourne un objet { webUrl, itemId } au lieu de la string webUrl seule.
+   * itemId est le vrai Graph opaque ID (driveItem.id) — jamais un filename ni un segment d'URL.
+   * Validation POSITIVE : driveItem.id DOIT matcher GRAPH_ITEM_ID_REGEX /^(01[A-Z0-9]{30,}|b![A-Za-z0-9_-]+)$/.
+   * Throws GRAPH_ITEM_ID_MISSING si driveItem.id absent.
+   * Throws GRAPH_ITEM_ID_INVALID si ne matche pas le pattern Graph ID attendu.
    */
   const uploadToBackend = async (file, savDossier, options = {}) => {
     const { isBase64 = false, onProgress } = options
@@ -133,7 +159,37 @@ export function useApiClient() {
     if (!driveItem || !driveItem.webUrl) {
       throw new Error('Réponse Graph invalide : webUrl manquant dans la DriveItem')
     }
-    return driveItem.webUrl
+
+    // Story V1.6 — AC#9 : valider driveItem.id (Graph opaque item ID).
+    // Aucun fallback silencieux : une erreur explicite vaut mieux que de persister
+    // un filename en base (cause du bug SAV-18/SAV-19 détecté step 1.5).
+    const rawId = driveItem.id
+    if (rawId === undefined || rawId === null || rawId === '') {
+      console.error('[useApiClient] Graph driveItem.id absent dans la réponse PUT:', {
+        webUrl: driveItem.webUrl,
+        keys: driveItem ? Object.keys(driveItem) : [],
+      })
+      throw new Error('GRAPH_ITEM_ID_MISSING: driveItem.id absent dans la réponse Graph')
+    }
+    if (!GRAPH_ITEM_ID_REGEX.test(rawId)) {
+      const looksLikeFilename = FILENAME_EXTENSION_REGEX.test(rawId)
+      const hint = looksLikeFilename
+        ? ` (ressemble à un filename — vérifier que WebhookItemsList.vue utilise driveItem.id et non un segment d'URL)`
+        : ''
+      console.error(
+        '[useApiClient] Graph driveItem.id invalide — ne matche pas le pattern Graph ID:',
+        {
+          id: rawId,
+          webUrl: driveItem.webUrl,
+          looksLikeFilename,
+        }
+      )
+      throw new Error(
+        `GRAPH_ITEM_ID_INVALID: driveItem.id "${rawId}" ne matche pas le pattern Graph ID attendu /^(01[A-Z0-9]{30,}|b![A-Za-z0-9_-]+)$/${hint}`
+      )
+    }
+
+    return { webUrl: driveItem.webUrl, itemId: rawId }
   }
 
   /**
@@ -161,15 +217,16 @@ export function useApiClient() {
 
   /**
    * Upload tous les fichiers en parallèle avec gestion d'erreurs.
+   * Retourne { success, url, itemId, fileName } — itemId = Graph opaque ID (V1.6 AC#9).
    */
   const uploadFilesParallel = async (files, savDossier) => {
     const uploadPromises = files.map(async (fileObj) => {
       const fileName = fileObj.file?.name || fileObj.filename
       try {
-        const url = await uploadToBackend(fileObj.file, savDossier, {
+        const result = await uploadToBackend(fileObj.file, savDossier, {
           isBase64: fileObj.isBase64,
         })
-        return { success: true, url, fileName }
+        return { success: true, url: result.webUrl, itemId: result.itemId, fileName }
       } catch (error) {
         console.error(`Erreur lors de l'upload de ${fileName}:`, error)
         return { success: false, error: error.message, fileName }
