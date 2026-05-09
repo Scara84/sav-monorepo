@@ -429,4 +429,61 @@ describe('PATCH /api/admin/settings/:key (admin-setting-rotate)', () => {
     expect(res.statusCode).toBe(200)
     expect(state.insertCalls).toHaveLength(1)
   })
+
+  /**
+   * V1.x-B AC#2 LOCK-IN — Zod `z.string().datetime({ offset: true })` rejette
+   * les valid_from sans suffixe TZ.
+   *
+   * Contexte: `settings-schema.ts` utilise `offset: true` qui EXIGE un suffixe
+   * timezone (`Z` ou `±HH:MM`). Une string sans TZ comme `'2026-05-07T15:38:00'`
+   * doit déclencher 400 + issue.path = ['valid_from'].
+   *
+   * Ce test est un verrou régression: si une future refacto relâche `offset: true`
+   * → `offset: false` ou supprime le champ datetime, ce test ÉCHOUE et alerte CI.
+   *
+   * NOTE: ce cas est DÉJÀ SATISFAIT par Story 7.4 (z.string().datetime({offset:true})).
+   * Ce test confirme le comportement actuel — il doit passer GREEN immédiatement.
+   */
+  it('V1.x-B AC#2 LOCK-IN : Zod refuse valid_from sans suffixe TZ → 400 issue path=[valid_from]', async () => {
+    // valid_from sans suffixe TZ (string ambiguë — pas de Z ni ±HH:MM).
+    const noTzString = '2026-05-07T15:38:00'
+    const req = mockReq({
+      method: 'PATCH',
+      body: {
+        value: { bp: 600 },
+        valid_from: noTzString,
+        notes: null,
+      },
+      query: { key: 'vat_rate_default' },
+    })
+    req.user = adminSession()
+    const res = mockRes()
+    await adminSettingRotateHandler(req, res)
+
+    // Doit retourner 400 (Zod validation échoue avant isValidFromInRange() et tout DB).
+    expect(res.statusCode).toBe(400)
+    const body = res.jsonBody as {
+      error: {
+        code?: string
+        details?: {
+          code?: string
+          // Handler serialise les issues Zod comme { field: string, message: string }[]
+          // (voir setting-rotate-handler.ts ligne 110 : field = i.path.join('.'))
+          issues?: Array<{ field: string; message: string }>
+        }
+      }
+    }
+    // Aucun INSERT ni audit avant la validation body.
+    expect(state.insertCalls).toHaveLength(0)
+    expect(state.recordAuditCalls).toHaveLength(0)
+    // L'erreur code doit être INVALID_BODY (Zod body schema échec).
+    expect(body.error.details?.code).toBe('INVALID_BODY')
+    // L'erreur pointe bien sur valid_from dans les issues Zod.
+    const issues = body.error.details?.issues
+    expect(Array.isArray(issues)).toBe(true)
+    if (Array.isArray(issues)) {
+      const validFromIssue = issues.find((issue) => issue.field === 'valid_from')
+      expect(validFromIssue).toBeDefined()
+    }
+  })
 })

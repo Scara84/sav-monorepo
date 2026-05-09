@@ -229,6 +229,9 @@ describe('SettingsAdminView (UI)', () => {
  *   5. Régression onglet « Seuils » Story 5.5 reste accessible (D-5 préservation)
  */
 
+// ISO UTC regex used by multiple V1.x-B tests.
+const ISO_UTC_RE = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/
+
 interface ApiSettingActive {
   id: number
   key: string
@@ -469,5 +472,415 @@ describe('SettingsAdminView — Story 7-4 onglet Général (UI)', () => {
     expect(wrapper.find('#threshold-count').exists()).toBe(true)
     expect(wrapper.find('#threshold-days').exists()).toBe(true)
     expect(wrapper.find('#threshold-dedup').exists()).toBe(true)
+  })
+})
+
+/**
+ * Story V1.x-B — 4 cas régression + lock-in.
+ *
+ * AC#1 (lock-in): payload SPA valid_from = UTC ISO (Z suffix) — déjà satisfait
+ *   Story 7.4 W-7-4-3, ce test est un verrou régression.
+ * AC#3: formatDateTime() rendu Heure Paris indépendamment du browser TZ.
+ * AC#4 cas 1: badge « En attente d'effet » sur row valid_from > now().
+ * AC#4 cas 2: badge « Actif maintenant » sur row valid_from <= now() ET valid_to=null.
+ *
+ * Convention test: vi.useFakeTimers() + vi.setSystemTime() pour contrôler Date.now()
+ * dans les assertions de badging. TZ browser non-mockée explicitement — le test
+ * assert sur la string affichée en Heure Paris via timeZone:'Europe/Paris' (AC#3).
+ */
+describe('SettingsAdminView — V1.x-B régression timezone + badges (UI)', () => {
+  beforeEach(() => {
+    vi.restoreAllMocks()
+  })
+  afterEach(() => {
+    globalThis.fetch = originalFetch
+    vi.useRealTimers()
+  })
+
+  /**
+   * V1.x-B AC#1 LOCK-IN — payload POST valid_from contient bien le suffixe 'Z'
+   * après conversion toISOString(). Regex /^\d{4}-...-Z$/ assert format UTC.
+   *
+   * Rationale: `<input type="datetime-local">` produit YYYY-MM-DDTHH:mm (sans TZ).
+   * W-7-4-3 fait `new Date(form.validFrom).toISOString()` → UTC ISO avec Z.
+   * Ce test ÉCHOUE si une refacto future retire la conversion toISOString().
+   */
+  it('V1.x-B AC#1 LOCK-IN : onRotate() envoie valid_from avec suffixe Z (UTC ISO non ambigu)', async () => {
+    // Figer le temps pour un valid_from futur prévisible.
+    const FROZEN_NOW = new Date('2026-05-07T13:00:00.000Z') // 15:00 Paris été (UTC+2)
+    vi.useFakeTimers()
+    vi.setSystemTime(FROZEN_NOW)
+
+    let capturedBody: Record<string, unknown> | null = null
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const method = init?.method ?? 'GET'
+      // PATCH rotate pour company.legal_name — capturer le body.
+      if (method === 'PATCH' && url.includes('company.legal_name')) {
+        capturedBody = JSON.parse(String(init!.body)) as Record<string, unknown>
+        return jsonResponse(200, {
+          data: buildActiveItem({ key: 'company.legal_name', value: 'Fruitstock SAS' }),
+        })
+      }
+      // GET /api/admin/settings (liste active onglet général).
+      if (
+        url.endsWith('/api/admin/settings') ||
+        (url.includes('/api/admin/settings') && method === 'GET' && !url.includes('/history'))
+      ) {
+        return jsonResponse(200, {
+          data: {
+            items: [buildActiveItem({ key: 'company.legal_name', value: 'Fruitstock SAS' })],
+          },
+        })
+      }
+      return jsonResponse(200, { data: { items: [] } })
+    }) as unknown as typeof fetch
+
+    const router = buildRouter()
+    await router.push('/admin/settings?tab=general')
+    const wrapper = mount(SettingsAdminView, { global: { plugins: [router] } })
+    await flushPromises()
+
+    // Simuler une valeur valid_from locale (comme produite par formatLocalDateTimeInput).
+    // now + 1h en heure locale Paris été = 2026-05-07T16:00 local
+    // → new Date('2026-05-07T16:00').toISOString() = '2026-05-07T14:00:00.000Z' (UTC)
+    const localValidFrom = '2026-05-07T16:00'
+    const validFromInput = wrapper.find<HTMLInputElement>(`#valid-from-company\\.legal_name`)
+    // W-VxB-4 L-1 fix: fail-fast if selector is broken (don't silently skip setValue).
+    expect(validFromInput.exists()).toBe(true)
+    await validFromInput.setValue(localValidFrom)
+
+    // Trouver le formulaire rotate pour company.legal_name et soumettre.
+    const rotateForm = wrapper
+      .findAll('form.rotate-form')
+      .find((f) => f.find('input[type="datetime-local"]').exists())
+    expect(rotateForm).toBeDefined()
+    if (rotateForm) {
+      await rotateForm.trigger('submit')
+      await flushPromises()
+    }
+
+    // Assert que le body POST a bien un valid_from avec suffixe Z.
+    expect(capturedBody).not.toBeNull()
+    if (capturedBody !== null) {
+      const validFromSent = capturedBody['valid_from'] as string
+      expect(typeof validFromSent).toBe('string')
+      // LOCK-IN : doit se terminer par 'Z' (UTC ISO non ambigu).
+      expect(validFromSent.endsWith('Z')).toBe(true)
+      // Pattern strict ISO 8601 UTC.
+      expect(validFromSent).toMatch(ISO_UTC_RE)
+    }
+  })
+
+  /**
+   * V1.x-B AC#3 — formatDateTime() rendu Heure Paris.
+   *
+   * Fixture: valid_from='2026-05-07T15:38:00.000Z' (UTC).
+   * En heure Paris été (UTC+2): 17:38. En heure NYC (UTC-4): 11:38.
+   *
+   * Ce test ÉCHOUE tant que formatDateTime() n'a pas `timeZone: 'Europe/Paris'`.
+   * Après fix Step 3, le DOM doit afficher '17:38' indépendamment de la TZ
+   * du process test (Vitest tourne en UTC sur CI).
+   *
+   * Note: on ne mock pas process.env.TZ — on asset directement sur le rendu
+   * DOM qui doit toujours être Heure Paris grâce à l'option timeZone explicite.
+   */
+  it('V1.x-B AC#3 : formatDateTime() rendu Heure Paris (17:38) — indépendant browser TZ', async () => {
+    // UTC 15:38 = 17:38 Paris été.
+    const UTC_ISO = '2026-05-07T15:38:00.000Z'
+
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/api/admin/settings') && !url.includes('/history')) {
+        return jsonResponse(200, {
+          data: {
+            items: [
+              buildActiveItem({
+                key: 'company.legal_name',
+                value: 'Fruitstock SAS',
+                valid_from: UTC_ISO,
+              }),
+            ],
+          },
+        })
+      }
+      return jsonResponse(200, { data: { items: [] } })
+    }) as unknown as typeof fetch
+
+    const router = buildRouter()
+    await router.push('/admin/settings?tab=general')
+    const wrapper = mount(SettingsAdminView, { global: { plugins: [router] } })
+    await flushPromises()
+
+    const domText = wrapper.text()
+    // Heure Paris été 17:38 doit être présente dans le DOM.
+    expect(domText).toContain('17:38')
+    // W-VxB-5 L-3 fix: scoper la négation sur .setting-current pour éviter
+    // un faux-positif global (ex: '15:38' dans un autre champ non lié).
+    const settingCurrentEl = wrapper.find('.setting-current')
+    expect(settingCurrentEl.exists()).toBe(true)
+    // Le conteneur de la valeur active ne doit pas afficher l'heure UTC brute 15:38.
+    expect(settingCurrentEl.text()).not.toContain('15:38')
+  })
+
+  /**
+   * V1.x-B AC#4 cas 1 — badge « En attente d'effet » sur row valid_from > now().
+   *
+   * Figer now à 2026-05-07T13:00:00Z. Row active avec valid_from 2 heures dans
+   * le futur (15:00Z). Badge [data-testid="badge-pending"] doit être présent.
+   *
+   * Ce test ÉCHOUE tant que le template ne contient pas le badge v-if.
+   */
+  it("V1.x-B AC#4 cas 1 : badge « En attente d'effet » sur row valid_from > now()", async () => {
+    const FROZEN_NOW = new Date('2026-05-07T13:00:00.000Z')
+    vi.useFakeTimers()
+    vi.setSystemTime(FROZEN_NOW)
+
+    // Row dont valid_from est dans le futur par rapport au now figé.
+    const FUTURE_ISO = '2026-05-07T15:00:00.000Z' // +2h depuis FROZEN_NOW
+
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/api/admin/settings') && !url.includes('/history')) {
+        return jsonResponse(200, {
+          data: {
+            items: [
+              buildActiveItem({
+                key: 'company.legal_name',
+                value: 'Fruitstock SAS',
+                valid_from: FUTURE_ISO,
+                valid_to: null,
+              }),
+            ],
+          },
+        })
+      }
+      return jsonResponse(200, { data: { items: [] } })
+    }) as unknown as typeof fetch
+
+    const router = buildRouter()
+    await router.push('/admin/settings?tab=general')
+    const wrapper = mount(SettingsAdminView, { global: { plugins: [router] } })
+    await flushPromises()
+
+    // Badge « En attente d'effet » présent (valid_from future strict).
+    const badgePending = wrapper.find('[data-testid="badge-pending"]')
+    expect(badgePending.exists()).toBe(true)
+    expect(badgePending.text()).toContain("En attente d'effet")
+
+    // Badge « Actif maintenant » absent pour cette row.
+    const badgeActive = wrapper.find('[data-testid="badge-active"]')
+    expect(badgeActive.exists()).toBe(false)
+  })
+
+  /**
+   * V1.x-B AC#4 cas 2 — badge « Actif maintenant » sur row valid_from <= now()
+   * ET valid_to = null.
+   *
+   * Figer now à 2026-05-07T16:00:00Z. Row active avec valid_from 1h dans le passé.
+   * Badge [data-testid="badge-active"] doit être présent.
+   * Badge [data-testid="badge-pending"] doit être absent.
+   *
+   * Ce test ÉCHOUE tant que le template ne contient pas le badge v-else-if.
+   */
+  it('V1.x-B AC#4 cas 2 : badge « Actif maintenant » sur row valid_from <= now()', async () => {
+    const FROZEN_NOW = new Date('2026-05-07T16:00:00.000Z')
+    vi.useFakeTimers()
+    vi.setSystemTime(FROZEN_NOW)
+
+    // Row dont valid_from est dans le passé par rapport au now figé.
+    const PAST_ISO = '2026-05-07T15:00:00.000Z' // -1h depuis FROZEN_NOW
+
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/api/admin/settings') && !url.includes('/history')) {
+        return jsonResponse(200, {
+          data: {
+            items: [
+              buildActiveItem({
+                key: 'company.legal_name',
+                value: 'Fruitstock SAS',
+                valid_from: PAST_ISO,
+                valid_to: null,
+              }),
+            ],
+          },
+        })
+      }
+      return jsonResponse(200, { data: { items: [] } })
+    }) as unknown as typeof fetch
+
+    const router = buildRouter()
+    await router.push('/admin/settings?tab=general')
+    const wrapper = mount(SettingsAdminView, { global: { plugins: [router] } })
+    await flushPromises()
+
+    // Badge « Actif maintenant » présent (valid_from passé, valid_to null).
+    const badgeActive = wrapper.find('[data-testid="badge-active"]')
+    expect(badgeActive.exists()).toBe(true)
+    expect(badgeActive.text()).toContain('Actif maintenant')
+
+    // Badge « En attente d'effet » absent pour cette row.
+    const badgePending = wrapper.find('[data-testid="badge-pending"]')
+    expect(badgePending.exists()).toBe(false)
+  })
+
+  /**
+   * W-VxB-2 — Hardening Round 1 — badges sur history-panel rows (AC#4).
+   *
+   * Fixture : 3 rows history pour vat_rate_default :
+   *   - row future (valid_to=null, valid_from > now) → history-badge-pending
+   *   - row active (valid_to=null, valid_from <= now) → history-badge-active
+   *   - row fermée (valid_to != null)                → aucun badge
+   *
+   * Utilise vi.useFakeTimers() + vi.setSystemTime() pour contrôler Date.now().
+   */
+  it('W-VxB-2 : badges présents sur history-panel rows (pending / active / fermée)', async () => {
+    const FROZEN_NOW = new Date('2026-05-07T14:00:00.000Z')
+    vi.useFakeTimers()
+    vi.setSystemTime(FROZEN_NOW)
+
+    const FUTURE_ISO = '2026-05-07T16:00:00.000Z' // +2h, pending
+    const PAST_ISO = '2026-05-07T12:00:00.000Z' // -2h, active
+    const CLOSED_FROM = '2026-01-01T00:00:00.000Z'
+    const CLOSED_TO = '2026-04-01T00:00:00.000Z' // fermée
+
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/api/admin/settings') && !url.includes('/history')) {
+        return jsonResponse(200, {
+          data: {
+            items: [
+              buildActiveItem({
+                key: 'vat_rate_default',
+                value: { bp: 600 },
+                valid_from: FUTURE_ISO,
+                valid_to: null,
+                versions_count: 3,
+              }),
+            ],
+          },
+        })
+      }
+      if (url.includes('/history')) {
+        return jsonResponse(200, {
+          data: {
+            items: [
+              // row future (pending)
+              {
+                id: 3,
+                value: { bp: 600 },
+                valid_from: FUTURE_ISO,
+                valid_to: null,
+                notes: 'Hausse future',
+                created_at: FUTURE_ISO,
+                updated_by: { id: 9, email_display_short: 'admin' },
+              },
+              // row active (actif maintenant)
+              {
+                id: 2,
+                value: { bp: 575 },
+                valid_from: PAST_ISO,
+                valid_to: null,
+                notes: null,
+                created_at: PAST_ISO,
+                updated_by: null,
+              },
+              // row fermée (historique — pas de badge)
+              {
+                id: 1,
+                value: { bp: 550 },
+                valid_from: CLOSED_FROM,
+                valid_to: CLOSED_TO,
+                notes: null,
+                created_at: CLOSED_FROM,
+                updated_by: null,
+              },
+            ],
+          },
+        })
+      }
+      return jsonResponse(200, { data: { items: [] } })
+    }) as unknown as typeof fetch
+
+    const router = buildRouter()
+    await router.push('/admin/settings?tab=general')
+    const wrapper = mount(SettingsAdminView, { global: { plugins: [router] } })
+    await flushPromises()
+
+    // Expand history panel
+    const historyToggle = wrapper.find('[data-history-toggle="vat_rate_default"]')
+    expect(historyToggle.exists()).toBe(true)
+    await historyToggle.trigger('click')
+    await flushPromises()
+
+    // Badge pending présent sur row future
+    const badgePending = wrapper.find('[data-testid="history-badge-pending"]')
+    expect(badgePending.exists()).toBe(true)
+    expect(badgePending.text()).toContain("En attente d'effet")
+
+    // Badge active présent sur row passée (valid_to=null, valid_from <= now)
+    const badgeActive = wrapper.find('[data-testid="history-badge-active"]')
+    expect(badgeActive.exists()).toBe(true)
+    expect(badgeActive.text()).toContain('Actif maintenant')
+
+    // Aucun badge sur la row fermée (valid_to != null) — on vérifie que les
+    // badges sont exactement 1 chacun (pas de troisième badge).
+    expect(wrapper.findAll('[data-testid="history-badge-pending"]')).toHaveLength(1)
+    expect(wrapper.findAll('[data-testid="history-badge-active"]')).toHaveLength(1)
+  })
+
+  /**
+   * W-VxB-3 — Hardening Round 1 — réactivité du hint valid-from-preview (AC#3).
+   *
+   * Vérifie que le hint live `.valid-from-preview` se met à jour de façon réactive
+   * quand l'admin modifie l'input datetime-local, sans fake timers (test réactivité,
+   * pas de badging).
+   */
+  it('W-VxB-3 : hint .valid-from-preview réactif à la saisie dans input datetime-local', async () => {
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/api/admin/settings') && !url.includes('/history')) {
+        return jsonResponse(200, {
+          data: {
+            items: [
+              buildActiveItem({
+                key: 'company.legal_name',
+                value: 'Fruitstock SAS',
+                valid_from: '2026-01-01T00:00:00.000Z',
+              }),
+            ],
+          },
+        })
+      }
+      return jsonResponse(200, { data: { items: [] } })
+    }) as unknown as typeof fetch
+
+    const router = buildRouter()
+    await router.push('/admin/settings?tab=general')
+    const wrapper = mount(SettingsAdminView, { global: { plugins: [router] } })
+    await flushPromises()
+
+    // Trouver l'input datetime-local pour company.legal_name
+    const input = wrapper.find<HTMLInputElement>(`#valid-from-company\\.legal_name`)
+    expect(input.exists()).toBe(true)
+
+    // Saisir une valeur dans l'input.
+    // Using a date string that includes ':00' minutes so the Paris rendering will
+    // always contain ':00' regardless of the test-runner TZ (UTC on CI or Paris locally).
+    const INPUT_VALUE = '2026-06-15T10:00'
+    await input.setValue(INPUT_VALUE)
+    await wrapper.vm.$nextTick()
+
+    // Le hint .valid-from-preview doit refleter la nouvelle valeur.
+    const preview = wrapper.find('.valid-from-preview')
+    expect(preview.exists()).toBe(true)
+    // Compute the expected Paris time dynamically (TZ-agnostic across CI UTC / local Paris).
+    const expectedParisTime = new Date(INPUT_VALUE).toLocaleString('fr-FR', {
+      hour: '2-digit',
+      minute: '2-digit',
+      timeZone: 'Europe/Paris',
+    })
+    expect(preview.text()).toContain(expectedParisTime)
   })
 })

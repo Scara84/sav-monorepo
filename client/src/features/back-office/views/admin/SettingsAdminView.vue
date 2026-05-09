@@ -170,6 +170,7 @@ function formatDateTime(iso: string): string {
       year: 'numeric',
       hour: '2-digit',
       minute: '2-digit',
+      timeZone: 'Europe/Paris', // V1.x-B CONVENTION-PARIS-FIXE — Paris-only V1 Fruitstock
     })
   } catch {
     return iso
@@ -216,6 +217,28 @@ function buildDefaultForm(): GeneralRotateForm {
     validFrom: formatLocalDateTimeInput(inOneHour),
     notes: '',
   }
+}
+
+// V1.x-B CONVENTION-PARIS-FIXE — formater une date en Heure Paris explicite.
+function formatParisDateTime(d: Date): string {
+  return d.toLocaleString('fr-FR', {
+    day: '2-digit',
+    month: '2-digit',
+    year: 'numeric',
+    hour: '2-digit',
+    minute: '2-digit',
+    timeZone: 'Europe/Paris',
+  })
+}
+
+// V1.x-B AC#3 — hint live sous l'input Date d'effet (Heure Paris).
+// Prend form.validFrom (YYYY-MM-DDTHH:mm local) et affiche la conversion Paris.
+function validFromPreview(key: string): string {
+  const rotateForm = generalRotateForms.value[key]
+  if (!rotateForm || !rotateForm.validFrom) return ''
+  const t = Date.parse(rotateForm.validFrom)
+  if (Number.isNaN(t)) return ''
+  return `→ Sera active le ${formatParisDateTime(new Date(t))} (Heure Paris)`
 }
 
 const generalRotateForms = ref<Record<string, GeneralRotateForm>>({})
@@ -507,6 +530,19 @@ onMounted(async () => {
                 (depuis {{ formatDateTime(item.valid_from) }} —
                 {{ item.versions_count }} version<span v-if="item.versions_count > 1">s</span>)
               </span>
+              <!-- V1.x-B AC#4 — badge dynamique activation -->
+              <span
+                v-if="item.valid_to === null && new Date(item.valid_from).getTime() > Date.now()"
+                class="badge pending"
+                data-testid="badge-pending"
+                >En attente d'effet</span
+              >
+              <span
+                v-else-if="item.valid_to === null"
+                class="badge active"
+                data-testid="badge-active"
+                >Actif maintenant</span
+              >
             </p>
           </header>
 
@@ -560,7 +596,7 @@ onMounted(async () => {
             </div>
 
             <div class="field">
-              <label :for="`valid-from-${item.key}`">Date d'effet</label>
+              <label :for="`valid-from-${item.key}`">Date d'effet (Heure Paris)</label>
               <input
                 :id="`valid-from-${item.key}`"
                 v-model="ensureForm(item.key, item).validFrom"
@@ -569,6 +605,10 @@ onMounted(async () => {
                 required
               />
               <span class="field-hint">Doit être ≥ maintenant (D-4 strict).</span>
+              <!-- V1.x-B AC#3 — hint live conversion Heure Paris -->
+              <span v-if="validFromPreview(item.key)" class="field-hint valid-from-preview">
+                {{ validFromPreview(item.key) }}
+              </span>
             </div>
             <div class="field">
               <label :for="`notes-${item.key}`">Note (optionnel)</label>
@@ -632,6 +672,19 @@ onMounted(async () => {
                     <div class="muted">
                       {{ h.valid_to === null ? 'Active' : `→ ${formatDateTime(h.valid_to)}` }}
                     </div>
+                    <!-- V1.x-B Hardening W-VxB-1 — badges sur history-panel rows (AC#4) -->
+                    <span
+                      v-if="h.valid_to === null && new Date(h.valid_from).getTime() > Date.now()"
+                      class="badge pending"
+                      data-testid="history-badge-pending"
+                      >En attente d'effet</span
+                    >
+                    <span
+                      v-else-if="h.valid_to === null"
+                      class="badge active"
+                      data-testid="history-badge-active"
+                      >Actif maintenant</span
+                    >
                   </td>
                   <td>
                     <code>{{ formatGeneralValue(h.value) }}</code>
@@ -883,6 +936,31 @@ onMounted(async () => {
 .history-panel h4 {
   margin: 0 0 0.5rem 0;
   font-size: 0.95rem;
+}
+/* V1.x-B AC#4 — badges dynamiques activation (CONVENTION-PARIS-FIXE) */
+.badge {
+  display: inline-block;
+  padding: 2px 8px;
+  border-radius: 3px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  margin-left: 0.5rem;
+  vertical-align: middle;
+}
+.badge.pending {
+  background: #fff8e1;
+  color: #f57c00;
+  border: 1px solid #f57c00;
+}
+.badge.active {
+  background: #e8f5e9;
+  color: #2e7d32;
+  border: 1px solid #2e7d32;
+}
+/* V1.x-B AC#3 — hint live preview Heure Paris */
+.valid-from-preview {
+  color: #0066cc;
+  font-style: italic;
 }
 @media (max-width: 720px) {
   .form,
