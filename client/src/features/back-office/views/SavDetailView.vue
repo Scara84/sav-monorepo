@@ -1035,227 +1035,253 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
               <th scope="col">Actions</th>
             </tr>
           </thead>
-          <tbody>
-            <template v-for="l in sav.lines" :key="l.id">
-              <tr
-                :id="`sav-line-${l.id}`"
-                :data-blocking="l.validationStatus !== 'ok' ? 'true' : 'false'"
-                :aria-busy="lineEdit.savingLineId.value === l.id ? 'true' : 'false'"
-                :class="{ 'line-saving': lineEdit.savingLineId.value === l.id }"
-              >
-                <td>{{ l.lineNumber ?? l.position }}</td>
-                <td>{{ l.productCodeSnapshot }}</td>
-                <td>{{ l.productNameSnapshot }}</td>
-                <!-- Qté demandée + unité demandée (V1.8 — l'unité est éditable en
-                     cas d'erreur de capture, mais reste la voix du client). -->
-                <td>
-                  <span
-                    v-if="lineEdit.editingLineId.value === l.id && editDraft[l.id]"
-                    class="cell-pair"
-                  >
-                    <input
-                      v-model="editDraft[l.id]!.qtyRequested"
-                      type="number"
-                      min="0.001"
-                      max="99999"
-                      step="0.001"
-                      :aria-label="`Quantité demandée, ligne ${l.lineNumber ?? l.position}`"
-                      class="cell-input"
-                      :data-testid="`edit-qty-requested-${l.id}`"
-                      @keydown.enter.prevent="saveEditLine(l)"
-                      @keydown.esc.prevent="cancelEditLine"
-                    />
-                    <select
-                      v-model="editDraft[l.id]!.unitRequested"
-                      class="cell-select"
-                      :aria-label="`Unité demandée, ligne ${l.lineNumber ?? l.position}`"
-                      :data-testid="`edit-unit-requested-${l.id}`"
-                    >
-                      <option value="kg">kg</option>
-                      <option value="piece">pièce</option>
-                      <option value="liter">litre</option>
-                    </select>
-                  </span>
-                  <span v-else>{{ l.qtyRequested }} {{ l.unitRequested }}</span>
-                </td>
-                <!-- Qté facturée -->
-                <td>
-                  <span
-                    v-if="lineEdit.editingLineId.value === l.id && editDraft[l.id]"
-                    class="cell-pair"
-                  >
-                    <input
-                      v-model="editDraft[l.id]!.qtyInvoiced"
-                      type="number"
-                      min="0"
-                      max="99999"
-                      step="0.001"
-                      placeholder="—"
-                      :aria-label="`Quantité facturée, ligne ${l.lineNumber ?? l.position}`"
-                      class="cell-input"
-                      @keydown.enter.prevent="saveEditLine(l)"
-                      @keydown.esc.prevent="cancelEditLine"
-                    />
-                    <select
-                      v-model="editDraft[l.id]!.unitInvoiced"
-                      class="cell-select"
-                      :aria-label="`Unité facturée, ligne ${l.lineNumber ?? l.position}`"
-                    >
-                      <option value="">—</option>
-                      <option value="kg">kg</option>
-                      <option value="piece">pièce</option>
-                      <option value="liter">litre</option>
-                    </select>
-                  </span>
-                  <span v-else>
-                    {{ l.qtyInvoiced ?? '—' }}
-                    {{ l.qtyInvoiced !== null ? (l.unitInvoiced ?? l.unitRequested) : '' }}
-                  </span>
-                </td>
-                <!-- PU TTC -->
-                <td>
+          <!-- V1.9-A — Split UX : 1 <tbody class="sav-line-group"> par ligne SAV.
+               Row 1 = demande adhérent (qtyRequested + stub colspan=8).
+               Row 2 = validation opérateur (qtyInvoiced, PU, marge, coef, avoir, validation, actions).
+               Edit-extra-row (pieceToKgWeightG) reste dans le même <tbody> (Story 3.6 pattern preserved).
+               Ancre DOM id="sav-line-{id}" migrée du <tr> au <tbody> (D-5 scroll-to-blocking preserved). -->
+          <tbody
+            v-for="l in sav.lines"
+            :key="l.id"
+            class="sav-line-group"
+            :id="`sav-line-${l.id}`"
+            :data-blocking="l.validationStatus !== 'ok' ? 'true' : 'false'"
+            :aria-busy="lineEdit.savingLineId.value === l.id ? 'true' : 'false'"
+            :class="{ 'line-saving': lineEdit.savingLineId.value === l.id }"
+          >
+            <!-- Row 1 — Demande adhérent (voix du client, fond gris italique) -->
+            <tr class="sav-line-request" :data-testid="`sav-line-${l.id}-request-row`">
+              <td>{{ l.lineNumber ?? l.position }}</td>
+              <td>{{ l.productCodeSnapshot }}</td>
+              <td>{{ l.productNameSnapshot }}</td>
+              <!-- Qté demandée + unité demandée (V1.x-B — l'unité est éditable en
+                   cas d'erreur de capture, reste la voix du client). -->
+              <td>
+                <span
+                  v-if="lineEdit.editingLineId.value === l.id && editDraft[l.id]"
+                  class="cell-pair"
+                >
                   <input
-                    v-if="lineEdit.editingLineId.value === l.id && editDraft[l.id]"
-                    v-model="editDraft[l.id]!.unitPriceEuros"
+                    v-model="editDraft[l.id]!.qtyRequested"
+                    type="number"
+                    min="0.001"
+                    max="99999"
+                    step="0.001"
+                    :aria-label="`Quantité demandée, ligne ${l.lineNumber ?? l.position}`"
+                    class="cell-input"
+                    :data-testid="`edit-qty-requested-${l.id}`"
+                    @keydown.enter.prevent="saveEditLine(l)"
+                    @keydown.esc.prevent="cancelEditLine"
+                  />
+                  <select
+                    v-model="editDraft[l.id]!.unitRequested"
+                    class="cell-select"
+                    :aria-label="`Unité demandée, ligne ${l.lineNumber ?? l.position}`"
+                    :data-testid="`edit-unit-requested-${l.id}`"
+                  >
+                    <option value="kg">kg</option>
+                    <option value="piece">pièce</option>
+                    <option value="liter">litre</option>
+                  </select>
+                </span>
+                <span v-else>{{ l.qtyRequested }} {{ l.unitRequested }}</span>
+              </td>
+              <!-- colspan=8 : colonnes 5-12 — libellé contextuel demande adhérent (DN-6 Option A).
+                   requestComment absent de la projection detail-handler.ts (SAV_SELECT ne contient
+                   pas ce champ) → stub italic gris. -->
+              <td colspan="8" class="line-request-context">Demande adhérent</td>
+            </tr>
+            <!-- Row 2 — Validation opérateur (fond blanc, font-weight 500) -->
+            <tr class="sav-line-validation" :data-testid="`sav-line-${l.id}-validation-row`">
+              <!-- Colonnes 1-4 vides (alignement avec Row 1) -->
+              <td></td>
+              <td></td>
+              <td></td>
+              <td></td>
+              <!-- Qté facturée (colonne 5) -->
+              <td>
+                <span
+                  v-if="lineEdit.editingLineId.value === l.id && editDraft[l.id]"
+                  class="cell-pair"
+                >
+                  <input
+                    v-model="editDraft[l.id]!.qtyInvoiced"
                     type="number"
                     min="0"
-                    max="999999.99"
-                    step="0.01"
-                    placeholder="€"
-                    :aria-label="`Prix unitaire TTC, ligne ${l.lineNumber ?? l.position}`"
+                    max="99999"
+                    step="0.001"
+                    placeholder="—"
+                    :aria-label="`Quantité facturée, ligne ${l.lineNumber ?? l.position}`"
                     class="cell-input"
                     @keydown.enter.prevent="saveEditLine(l)"
                     @keydown.esc.prevent="cancelEditLine"
                   />
-                  <span v-else>{{ formatEur(l.unitPriceTtcCents) }}</span>
-                </td>
-                <!-- Story 4.8 — PU achat HT (avec tooltip supplier_reference DN-6) -->
-                <td>
-                  <span
-                    :title="
-                      l.supplierReference ? `Réf. fournisseur : ${l.supplierReference}` : undefined
-                    "
+                  <select
+                    v-model="editDraft[l.id]!.unitInvoiced"
+                    class="cell-select"
+                    :aria-label="`Unité facturée, ligne ${l.lineNumber ?? l.position}`"
                   >
-                    {{ formatEur(l.supplierPurchasePriceHtCents) }}
-                  </span>
-                </td>
-                <!-- Story 4.8 — Marge unit. HT (positif=vert, négatif=rouge, null=gris) -->
-                <td>
-                  <span
-                    v-if="unitMarginHtCents(l) !== null"
-                    :class="{
-                      'margin-positive': (unitMarginHtCents(l) ?? 0) > 0,
-                      'margin-negative': (unitMarginHtCents(l) ?? 0) < 0,
-                    }"
+                    <option value="">—</option>
+                    <option value="kg">kg</option>
+                    <option value="piece">pièce</option>
+                    <option value="liter">litre</option>
+                  </select>
+                </span>
+                <span v-else>
+                  {{ l.qtyInvoiced ?? '—' }}
+                  {{ l.qtyInvoiced !== null ? (l.unitInvoiced ?? l.unitRequested) : '' }}
+                </span>
+              </td>
+              <!-- PU TTC (colonne 6) -->
+              <td>
+                <input
+                  v-if="lineEdit.editingLineId.value === l.id && editDraft[l.id]"
+                  v-model="editDraft[l.id]!.unitPriceEuros"
+                  type="number"
+                  min="0"
+                  max="999999.99"
+                  step="0.01"
+                  placeholder="€"
+                  :aria-label="`Prix unitaire TTC, ligne ${l.lineNumber ?? l.position}`"
+                  class="cell-input"
+                  @keydown.enter.prevent="saveEditLine(l)"
+                  @keydown.esc.prevent="cancelEditLine"
+                />
+                <span v-else>{{ formatEur(l.unitPriceTtcCents) }}</span>
+              </td>
+              <!-- Story 4.8 — PU achat HT (colonne 7, avec tooltip supplier_reference) -->
+              <td>
+                <span
+                  :title="
+                    l.supplierReference ? `Réf. fournisseur : ${l.supplierReference}` : undefined
+                  "
+                >
+                  {{ formatEur(l.supplierPurchasePriceHtCents) }}
+                </span>
+              </td>
+              <!-- Story 4.8 — Marge unit. HT (colonne 8, positif=vert, négatif=rouge, null=gris) -->
+              <td>
+                <span
+                  v-if="unitMarginHtCents(l) !== null"
+                  :class="{
+                    'margin-positive': (unitMarginHtCents(l) ?? 0) > 0,
+                    'margin-negative': (unitMarginHtCents(l) ?? 0) < 0,
+                  }"
+                >
+                  {{ formatEur(unitMarginHtCents(l)) }}
+                </span>
+                <span v-else class="margin-null">—</span>
+              </td>
+              <!-- Coefficient (colonne 9) -->
+              <td>
+                <input
+                  v-if="lineEdit.editingLineId.value === l.id && editDraft[l.id]"
+                  v-model="editDraft[l.id]!.creditCoefficient"
+                  type="number"
+                  min="0"
+                  max="1"
+                  step="0.01"
+                  :aria-label="`Coefficient avoir, ligne ${l.lineNumber ?? l.position}`"
+                  class="cell-input"
+                  @keydown.enter.prevent="saveEditLine(l)"
+                  @keydown.esc.prevent="cancelEditLine"
+                />
+                <span v-else>
+                  {{
+                    l.creditCoefficientLabel ??
+                    (Number.isFinite(l.creditCoefficient) ? l.creditCoefficient : '—')
+                  }}
+                </span>
+              </td>
+              <!-- Avoir (colonne 10) -->
+              <td>{{ formatEur(l.creditAmountCents) }}</td>
+              <!-- Validation (colonne 11) -->
+              <td>
+                <span
+                  :class="[
+                    'validation-badge',
+                    VALIDATION_COLOR[l.validationStatus] ?? 'validation-ok',
+                  ]"
+                  :title="l.validationMessage ?? ''"
+                >
+                  {{ l.validationStatus }}
+                </span>
+              </td>
+              <!-- Actions (colonne 12) -->
+              <td class="actions-cell">
+                <span v-if="lineEdit.editingLineId.value === l.id" class="actions-pair">
+                  <button
+                    type="button"
+                    class="btn-sm"
+                    :disabled="lineEdit.savingLineId.value !== null"
+                    :data-testid="`save-line-${l.id}`"
+                    @click="saveEditLine(l)"
                   >
-                    {{ formatEur(unitMarginHtCents(l)) }}
-                  </span>
-                  <span v-else class="margin-null">—</span>
-                </td>
-                <!-- Coefficient -->
-                <td>
+                    Enregistrer
+                  </button>
+                  <button
+                    type="button"
+                    class="btn-sm"
+                    :disabled="lineEdit.savingLineId.value !== null"
+                    @click="cancelEditLine"
+                  >
+                    Annuler
+                  </button>
+                </span>
+                <span v-else class="actions-pair">
+                  <button
+                    type="button"
+                    class="btn-sm"
+                    :disabled="sav.status !== 'in_progress'"
+                    :data-testid="`edit-line-${l.id}`"
+                    @click="beginEditLine(l)"
+                  >
+                    Éditer
+                  </button>
+                  <button
+                    type="button"
+                    class="btn-sm btn-danger"
+                    :disabled="sav.status !== 'in_progress'"
+                    :data-testid="`delete-line-${l.id}`"
+                    @click="deleteLineConfirmed(l)"
+                  >
+                    Supprimer
+                  </button>
+                </span>
+              </td>
+            </tr>
+            <!-- Row 3 (optionnel) — poids unité (g) visible si to_calculate + édition.
+                 Reste dans le même <tbody class="sav-line-group"> (Story 3.6 pattern preserved). -->
+            <tr
+              v-if="
+                lineEdit.editingLineId.value === l.id &&
+                editDraft[l.id] &&
+                l.validationStatus === 'to_calculate'
+              "
+              class="edit-extra-row"
+            >
+              <td colspan="12">
+                <label class="extra-label">
+                  Poids unité (g)
                   <input
-                    v-if="lineEdit.editingLineId.value === l.id && editDraft[l.id]"
-                    v-model="editDraft[l.id]!.creditCoefficient"
+                    v-model="editDraft[l.id]!.pieceToKgWeightG"
                     type="number"
-                    min="0"
-                    max="1"
-                    step="0.01"
-                    :aria-label="`Coefficient avoir, ligne ${l.lineNumber ?? l.position}`"
+                    min="1"
+                    max="100000"
+                    step="1"
+                    :aria-label="`Poids unité en grammes, ligne ${l.lineNumber ?? l.position}`"
                     class="cell-input"
+                    data-testid="edit-piece-to-kg-weight-g"
                     @keydown.enter.prevent="saveEditLine(l)"
                     @keydown.esc.prevent="cancelEditLine"
                   />
-                  <span v-else>
-                    {{
-                      l.creditCoefficientLabel ??
-                      (Number.isFinite(l.creditCoefficient) ? l.creditCoefficient : '—')
-                    }}
-                  </span>
-                </td>
-                <td>{{ formatEur(l.creditAmountCents) }}</td>
-                <td>
-                  <span
-                    :class="[
-                      'validation-badge',
-                      VALIDATION_COLOR[l.validationStatus] ?? 'validation-ok',
-                    ]"
-                    :title="l.validationMessage ?? ''"
-                  >
-                    {{ l.validationStatus }}
-                  </span>
-                </td>
-                <td class="actions-cell">
-                  <span v-if="lineEdit.editingLineId.value === l.id" class="actions-pair">
-                    <button
-                      type="button"
-                      class="btn-sm"
-                      :disabled="lineEdit.savingLineId.value !== null"
-                      :data-testid="`save-line-${l.id}`"
-                      @click="saveEditLine(l)"
-                    >
-                      Enregistrer
-                    </button>
-                    <button
-                      type="button"
-                      class="btn-sm"
-                      :disabled="lineEdit.savingLineId.value !== null"
-                      @click="cancelEditLine"
-                    >
-                      Annuler
-                    </button>
-                  </span>
-                  <span v-else class="actions-pair">
-                    <button
-                      type="button"
-                      class="btn-sm"
-                      :disabled="sav.status !== 'in_progress'"
-                      :data-testid="`edit-line-${l.id}`"
-                      @click="beginEditLine(l)"
-                    >
-                      Éditer
-                    </button>
-                    <button
-                      type="button"
-                      class="btn-sm btn-danger"
-                      :disabled="sav.status !== 'in_progress'"
-                      :data-testid="`delete-line-${l.id}`"
-                      @click="deleteLineConfirmed(l)"
-                    >
-                      Supprimer
-                    </button>
-                  </span>
-                </td>
-              </tr>
-              <!-- Row secondaire : poids unité (g) visible si to_calculate + édition -->
-              <tr
-                v-if="
-                  lineEdit.editingLineId.value === l.id &&
-                  editDraft[l.id] &&
-                  l.validationStatus === 'to_calculate'
-                "
-                class="edit-extra-row"
-              >
-                <td colspan="12">
-                  <label class="extra-label">
-                    Poids unité (g)
-                    <input
-                      v-model="editDraft[l.id]!.pieceToKgWeightG"
-                      type="number"
-                      min="1"
-                      max="100000"
-                      step="1"
-                      :aria-label="`Poids unité en grammes, ligne ${l.lineNumber ?? l.position}`"
-                      class="cell-input"
-                      data-testid="edit-piece-to-kg-weight-g"
-                      @keydown.enter.prevent="saveEditLine(l)"
-                      @keydown.esc.prevent="cancelEditLine"
-                    />
-                  </label>
-                </td>
-              </tr>
-            </template>
-            <tr v-if="sav.lines.length === 0">
+                </label>
+              </td>
+            </tr>
+          </tbody>
+          <!-- Empty state — wrap dans <tbody> séparé pour cohérence HTML5 multi-tbody -->
+          <tbody v-if="sav.lines.length === 0" class="sav-line-empty">
+            <tr>
               <td colspan="12" class="empty">Aucune ligne sur ce SAV.</td>
             </tr>
           </tbody>
@@ -2265,6 +2291,39 @@ a:focus-visible {
 }
 .lines-actions {
   margin-top: 0.75rem;
+}
+/* V1.9-A — Split UX lignes SAV (D-9 styles) */
+/* Groupe tbody : border-bottom ferme visuellement le groupe */
+tbody.sav-line-group {
+  border-bottom: 2px solid #e5e7eb;
+}
+/* Row 1 — Demande adhérent : fond gris subtle + italique (voix du client) */
+tr.sav-line-request td {
+  background: var(--c-line-request-bg, #fafafa);
+  font-style: italic;
+  color: var(--c-line-request-text, #525252);
+}
+/* Row 2 — Validation opérateur : fond blanc + font-weight 500 (action principale) */
+tr.sav-line-validation td {
+  background: var(--c-line-validation-bg, #ffffff);
+  font-weight: 500;
+}
+/* Alternance lecture : lignes paires légèrement différenciées */
+tbody.sav-line-group:nth-of-type(even) tr.sav-line-request td {
+  background: var(--c-line-alt, #f3f4f6);
+}
+tbody.sav-line-group:nth-of-type(even) tr.sav-line-validation td {
+  background: var(--c-line-validation-alt, #f9fafb);
+}
+/* Sentinelle visuelle blocking : inset left border rouge */
+tbody.sav-line-group[data-blocking='true'] {
+  box-shadow: inset 4px 0 0 var(--c-error, #dc2626);
+}
+/* Libellé contextuel Row 1 colspan=8 : italic muted */
+.line-request-context {
+  font-style: italic;
+  color: #9ca3af;
+  font-size: 0.8125rem;
 }
 .line-saving {
   opacity: 0.6;
