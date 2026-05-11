@@ -2315,8 +2315,11 @@ tbody.sav-line-group:nth-of-type(even) tr.sav-line-request td {
 tbody.sav-line-group:nth-of-type(even) tr.sav-line-validation td {
   background: var(--c-line-validation-alt, #f9fafb);
 }
-/* Sentinelle visuelle blocking : inset left border rouge */
-tbody.sav-line-group[data-blocking='true'] {
+/* Sentinelle visuelle blocking : inset left border rouge.
+   V1.9-A.1 — box-shadow:inset sur <tbody display:table-row-group> n'est pas
+   rendu visuellement par Chrome (computed OK, paint KO). Fallback sur le
+   premier <td> de chaque row du groupe (Row 1 + Row 2 + edit-extra-row). */
+tbody.sav-line-group[data-blocking='true'] > tr > td:first-child {
   box-shadow: inset 4px 0 0 var(--c-error, #dc2626);
 }
 /* Libellé contextuel Row 1 colspan=8 : italic muted */
