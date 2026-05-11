@@ -301,3 +301,86 @@ describe('V1.9-B creditCalculation — AC#2.4 : préservation backward compat (q
     expect(result.validation_status).toBeDefined()
   })
 })
+
+// ---------------------------------------------------------------------------
+// V1.9-B.2 — PU TTC override (unit_price_ttc_arbitrated_cents)
+// ---------------------------------------------------------------------------
+
+describe('V1.9-B.2 creditCalculation — COALESCE(unit_price_ttc_arbitrated_cents, unit_price_ttc_cents)', () => {
+  it('PU TTC arbitré absent → utilise unit_price_ttc_cents (facture)', () => {
+    const result = computeSavLineCredit({
+      qty_requested: 10,
+      unit_requested: 'kg',
+      qty_invoiced: 10,
+      unit_invoiced: 'kg',
+      qty_arbitrated: 10,
+      unit_arbitrated: 'kg',
+      unit_price_ttc_cents: 1000, // 10,00 € facture
+      vat_rate_bp_snapshot: 550,
+      credit_coefficient: 1,
+      piece_to_kg_weight_g: null,
+    })
+    // sellHt = round(1000 * 10000 / 10550) = 948 c
+    // credit = 10 * 948 * 1 = 9480
+    expect(result.validation_status).toBe('ok')
+    expect(result.credit_amount_cents).toBe(9480)
+  })
+
+  it('PU TTC arbitré null → utilise unit_price_ttc_cents (facture), même comportement', () => {
+    const result = computeSavLineCredit({
+      qty_requested: 10,
+      unit_requested: 'kg',
+      qty_invoiced: 10,
+      unit_invoiced: 'kg',
+      qty_arbitrated: 10,
+      unit_arbitrated: 'kg',
+      unit_price_ttc_cents: 1000,
+      unit_price_ttc_arbitrated_cents: null,
+      vat_rate_bp_snapshot: 550,
+      credit_coefficient: 1,
+      piece_to_kg_weight_g: null,
+    })
+    expect(result.validation_status).toBe('ok')
+    expect(result.credit_amount_cents).toBe(9480)
+  })
+
+  it('PU TTC arbitré set (override) → écrase unit_price_ttc_cents pour le compute', () => {
+    const result = computeSavLineCredit({
+      qty_requested: 10,
+      unit_requested: 'kg',
+      qty_invoiced: 10,
+      unit_invoiced: 'kg',
+      qty_arbitrated: 10,
+      unit_arbitrated: 'kg',
+      unit_price_ttc_cents: 1000, // 10,00 € facture — ignoré
+      unit_price_ttc_arbitrated_cents: 500, // 5,00 € override opérateur
+      vat_rate_bp_snapshot: 550,
+      credit_coefficient: 1,
+      piece_to_kg_weight_g: null,
+    })
+    // sellHt arbitrée = round(500 * 10000 / 10550) = 474 c
+    // credit = 10 * 474 * 1 = 4740
+    expect(result.validation_status).toBe('ok')
+    expect(result.credit_amount_cents).toBe(4740)
+  })
+
+  it('PU TTC arbitré set MAIS facture incomplète (unit_price_ttc_cents NULL) → to_calculate (vérité Pennylane prime pour status)', () => {
+    const result = computeSavLineCredit({
+      qty_requested: 10,
+      unit_requested: 'kg',
+      qty_invoiced: 10,
+      unit_invoiced: 'kg',
+      qty_arbitrated: 10,
+      unit_arbitrated: 'kg',
+      unit_price_ttc_cents: null, // facture pas encore matchée
+      unit_price_ttc_arbitrated_cents: 500, // override déjà saisi
+      vat_rate_bp_snapshot: 550,
+      credit_coefficient: 1,
+      piece_to_kg_weight_g: null,
+    })
+    // V1.9-B.2 : to_calculate reste évalué sur unit_price_ttc_cents (facture).
+    // Si la facture est NULL, on ne peut pas valider même avec override.
+    expect(result.validation_status).toBe('to_calculate')
+    expect(result.credit_amount_cents).toBeNull()
+  })
+})

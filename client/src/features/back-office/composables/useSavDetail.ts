@@ -37,6 +37,8 @@ export interface SavDetailLine {
   requestReason: string | null
   requestComment: string | null
   unitPriceTtcCents: number | null
+  // V1.9-B.2 — override opérateur PU TTC (Row 3)
+  unitPriceTtcArbitratedCents: number | null
   vatRateBpSnapshot: number | null
   creditCoefficient: number
   creditCoefficientLabel: string | null

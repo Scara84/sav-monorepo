@@ -38,7 +38,7 @@ const SAV_SELECT = `
   lines:sav_lines ( id, product_id, product_code_snapshot, product_name_snapshot,
     qty_requested, unit_requested, qty_invoiced, unit_invoiced,
     qty_arbitrated, unit_arbitrated, request_reason, request_comment,
-    unit_price_ttc_cents, vat_rate_bp_snapshot,
+    unit_price_ttc_cents, unit_price_ttc_arbitrated_cents, vat_rate_bp_snapshot,
     credit_coefficient, credit_coefficient_label, piece_to_kg_weight_g,
     credit_amount_cents, validation_status, validation_message,
     position, line_number,
@@ -451,6 +451,8 @@ function projectLine(row: Record<string, unknown>): Record<string, unknown> {
     request_reason: string | null
     request_comment: string | null
     unit_price_ttc_cents: number | null
+    // V1.9-B.2 — override opérateur PU TTC (Row 3)
+    unit_price_ttc_arbitrated_cents: number | null
     vat_rate_bp_snapshot: number | null
     credit_coefficient: number
     credit_coefficient_label: string | null
@@ -481,6 +483,8 @@ function projectLine(row: Record<string, unknown>): Record<string, unknown> {
     requestReason: r.request_reason ?? null,
     requestComment: r.request_comment ?? null,
     unitPriceTtcCents: r.unit_price_ttc_cents,
+    // V1.9-B.2 — override opérateur PU TTC (Row 3)
+    unitPriceTtcArbitratedCents: r.unit_price_ttc_arbitrated_cents ?? null,
     vatRateBpSnapshot: r.vat_rate_bp_snapshot,
     creditCoefficient: r.credit_coefficient,
     creditCoefficientLabel: r.credit_coefficient_label,

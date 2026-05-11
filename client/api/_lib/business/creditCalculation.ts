@@ -43,6 +43,8 @@ export type SavLineInput = {
   qty_arbitrated?: number | null
   unit_arbitrated?: Unit | null
   unit_price_ttc_cents: number | null
+  // V1.9-B.2 — override opérateur PU TTC (Row 3). NULL/absent = utilise unit_price_ttc_cents (facture).
+  unit_price_ttc_arbitrated_cents?: number | null
   vat_rate_bp_snapshot: number | null
   credit_coefficient: number
   piece_to_kg_weight_g: number | null
@@ -102,6 +104,16 @@ export function computeSavLineCredit(input: SavLineInput): SavLineComputed {
     piece_to_kg_weight_g,
   } = input
 
+  // V1.9-B.2 — PU TTC source effective : COALESCE(arbitrated, invoiced).
+  // L'opérateur peut override le prix Pennylane via Row 3. Si NULL/absent → fallback facture.
+  const unit_price_ttc_arbitrated =
+    input.unit_price_ttc_arbitrated_cents !== undefined &&
+    input.unit_price_ttc_arbitrated_cents !== null
+      ? input.unit_price_ttc_arbitrated_cents
+      : null
+  const unit_price_ttc_effective =
+    unit_price_ttc_arbitrated !== null ? unit_price_ttc_arbitrated : unit_price_ttc_cents
+
   // V1.9-B — Source effective : COALESCE(qty_arbitrated, qty_invoiced)
   // Si qty_arbitrated ABSENT du input (champ optionnel, ancien appelant V1.9-A) →
   // on considère que l'arbitrage = qty_invoiced (backward compat, pas d'awaiting_arbitration).
@@ -121,6 +133,7 @@ export function computeSavLineCredit(input: SavLineInput): SavLineComputed {
     // qty_arbitrated peut être undefined (champ optionnel) — exclude undefined de la vérification
     qty_arbitrated !== undefined ? qty_arbitrated : null,
     unit_price_ttc_cents,
+    unit_price_ttc_arbitrated,
     vat_rate_bp_snapshot,
     piece_to_kg_weight_g,
   ]
@@ -182,8 +195,9 @@ export function computeSavLineCredit(input: SavLineInput): SavLineComputed {
   // ré-appliquer la TVA sans double-comptage. La conversion s'appuie sur le
   // snapshot TVA de la ligne (vat_rate_bp_snapshot, en basis points).
   //   unit_price_ht_cents = unit_price_ttc_cents / (1 + vat_rate_bp / 10000)
+  // V1.9-B.2 — utilise la source effective (COALESCE arbitrated→invoiced)
   const unit_price_ht_cents = roundCents(
-    (unit_price_ttc_cents * 10000) / (10000 + vat_rate_bp_snapshot)
+    ((unit_price_ttc_effective as number) * 10000) / (10000 + vat_rate_bp_snapshot)
   )
 
   // V1.9-B — Source effective après COALESCE :

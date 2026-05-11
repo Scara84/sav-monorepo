@@ -44,6 +44,14 @@ export const lineEditBodySchema = z
     qtyArbitrated: z.number().nonnegative().max(99999).nullable().optional(),
     unitArbitrated: z.enum(['kg', 'piece', 'liter']).nullable().optional(),
     unitPriceTtcCents: z.number().int().nonnegative().max(100000000).optional(),
+    // V1.9-B.2 — override opérateur PU TTC (Row 3, nullable = reset à facture)
+    unitPriceTtcArbitratedCents: z
+      .number()
+      .int()
+      .nonnegative()
+      .max(100000000)
+      .nullable()
+      .optional(),
     vatRateBpSnapshot: z.number().int().min(0).max(10000).optional(),
     creditCoefficient: z.number().min(0).max(1).optional(),
     creditCoefficientLabel: z.string().max(32).optional(),

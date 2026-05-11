@@ -37,6 +37,8 @@ export const lineCreateBodySchema = z
     requestReason: z.string().max(200).optional(),
     requestComment: z.string().max(500).optional(),
     unitPriceTtcCents: z.number().int().nonnegative().max(100000000).optional(),
+    // V1.9-B.2 — override opérateur PU TTC (optionnel à la création)
+    unitPriceTtcArbitratedCents: z.number().int().nonnegative().max(100000000).optional(),
     vatRateBpSnapshot: z.number().int().min(0).max(10000).optional(),
     creditCoefficient: z.number().min(0).max(1).optional(),
     creditCoefficientLabel: z.string().max(32).optional(),

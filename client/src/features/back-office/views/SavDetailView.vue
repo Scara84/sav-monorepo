@@ -66,6 +66,7 @@ function toSavLineInput(l: {
   qtyArbitrated: number | null
   unitArbitrated: string | null
   unitPriceTtcCents: number | null
+  unitPriceTtcArbitratedCents: number | null
   vatRateBpSnapshot: number | null
   creditCoefficient: number
   pieceToKgWeightG: number | null
@@ -87,6 +88,8 @@ function toSavLineInput(l: {
       ? l.unitArbitrated
       : null) as SavLineInput['unit_arbitrated'],
     unit_price_ttc_cents: l.unitPriceTtcCents,
+    // V1.9-B.2 — override opérateur PU TTC (Row 3, NULL = fallback facture)
+    unit_price_ttc_arbitrated_cents: l.unitPriceTtcArbitratedCents,
     vat_rate_bp_snapshot: l.vatRateBpSnapshot,
     credit_coefficient: l.creditCoefficient,
     piece_to_kg_weight_g: l.pieceToKgWeightG,
@@ -203,7 +206,11 @@ function beginEditLine(l: SavDetailLine): void {
     unitInvoiced: l.unitInvoiced ?? '',
     qtyArbitrated: prefilledQtyArbitrated,
     unitArbitrated: prefilledUnitArbitrated,
-    unitPriceEuros: l.unitPriceTtcCents !== null ? (l.unitPriceTtcCents / 100).toFixed(2) : '',
+    // V1.9-B.2 — pre-fill PU TTC arbitré : override ?? facture (DN-4 pattern étendu)
+    unitPriceEuros: (() => {
+      const effective = l.unitPriceTtcArbitratedCents ?? l.unitPriceTtcCents
+      return effective !== null ? (effective / 100).toFixed(2) : ''
+    })(),
     creditCoefficient: String(l.creditCoefficient),
     pieceToKgWeightG: l.pieceToKgWeightG !== null ? String(l.pieceToKgWeightG) : '',
   }
@@ -265,9 +272,13 @@ async function saveEditLine(l: SavDetailLine): Promise<void> {
     // unitArbitrated inchangé mais toujours envoyé pour cohérence avec qtyArbitrated
     if (!isEmptyDraftField(draft.unitArbitrated)) patch['unitArbitrated'] = draft.unitArbitrated
   }
+  // V1.9-B.2 — l'opérateur édite désormais unitPriceTtcArbitratedCents (override Row 3).
+  // Le champ unit_price_ttc_cents (Row 2 = facture Pennylane) n'est plus éditable côté UI.
+  // Si la valeur saisie == facture → on persiste quand même l'override (l'opérateur a confirmé).
   if (!isEmptyDraftField(draft.unitPriceEuros)) {
     const cents = Math.round(parseLocaleNumber(draft.unitPriceEuros) * 100)
-    if (Number.isFinite(cents) && cents !== l.unitPriceTtcCents) patch['unitPriceTtcCents'] = cents
+    if (Number.isFinite(cents) && cents !== l.unitPriceTtcArbitratedCents)
+      patch['unitPriceTtcArbitratedCents'] = cents
   }
   if (!isEmptyDraftField(draft.creditCoefficient)) {
     const c = parseLocaleNumber(draft.creditCoefficient)
@@ -1140,7 +1151,8 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
                 <span v-else class="line-request-context-empty">Demande adhérent</span>
               </td>
             </tr>
-            <!-- Row 2 — Facturé read-only (voix Pennylane, fond subtle gris italique) V1.9-B NEW -->
+            <!-- Row 2 — Facturé read-only (voix Pennylane, fond subtle gris italique) V1.9-B NEW
+                 V1.9-B.2 : PU TTC facture exposé colonne 6 (séparé de Row 3 arbitrage) -->
             <tr class="sav-line-invoiced" :data-testid="`sav-line-${l.id}-invoiced-row`">
               <!-- Colonnes 1-4 vides (alignement avec Row 1) -->
               <td></td>
@@ -1154,8 +1166,11 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
                   {{ l.qtyInvoiced !== null ? (l.unitInvoiced ?? l.unitRequested) : '' }}
                 </span>
               </td>
-              <!-- Colonnes 6-12 vides (alignement) -->
-              <td></td>
+              <!-- PU TTC facture (colonne 6) — V1.9-B.2 read-only Pennylane -->
+              <td>
+                <span>{{ formatEur(l.unitPriceTtcCents) }}</span>
+              </td>
+              <!-- Colonnes 7-12 vides (alignement) -->
               <td></td>
               <td></td>
               <td></td>
@@ -1208,7 +1223,8 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
                   <span v-else style="font-style: italic; color: #6b7280">—</span>
                 </span>
               </td>
-              <!-- PU TTC (colonne 6) -->
+              <!-- PU TTC arbitré (colonne 6) — V1.9-B.2 override opérateur
+                   Affichage non-édition : override si set, sinon vide (la facture est Row 2) -->
               <td>
                 <input
                   v-if="lineEdit.editingLineId.value === l.id && editDraft[l.id]"
@@ -1218,12 +1234,22 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
                   max="999999.99"
                   step="0.01"
                   placeholder="€"
-                  :aria-label="`Prix unitaire TTC, ligne ${l.lineNumber ?? l.position}`"
+                  :aria-label="`Prix unitaire TTC arbitré, ligne ${l.lineNumber ?? l.position}`"
                   class="cell-input"
+                  :data-testid="`edit-unit-price-arbitrated-${l.id}`"
                   @keydown.enter.prevent="saveEditLine(l)"
                   @keydown.esc.prevent="cancelEditLine"
                 />
-                <span v-else>{{ formatEur(l.unitPriceTtcCents) }}</span>
+                <span v-else>
+                  <span
+                    v-if="l.unitPriceTtcArbitratedCents !== null"
+                    style="font-weight: 500"
+                    :title="`Override opérateur (facture : ${formatEur(l.unitPriceTtcCents)})`"
+                  >
+                    {{ formatEur(l.unitPriceTtcArbitratedCents) }}
+                  </span>
+                  <span v-else style="font-style: italic; color: #6b7280">—</span>
+                </span>
               </td>
               <!-- Story 4.8 — PU achat HT (colonne 7, avec tooltip supplier_reference) -->
               <td>
