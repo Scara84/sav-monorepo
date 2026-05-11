@@ -31,6 +31,11 @@ export interface SavDetailLine {
   unitRequested: string
   qtyInvoiced: number | null
   unitInvoiced: string | null
+  // V1.9-B — arbitrage opérateur + motif demande
+  qtyArbitrated: number | null
+  unitArbitrated: string | null
+  requestReason: string | null
+  requestComment: string | null
   unitPriceTtcCents: number | null
   vatRateBpSnapshot: number | null
   creditCoefficient: number

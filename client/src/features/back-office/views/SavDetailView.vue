@@ -167,6 +167,9 @@ const editDraft = reactive<
       unitRequested: string
       qtyInvoiced: string | number
       unitInvoiced: string
+      // V1.9-B — arbitrage opérateur (PATTERN-V9-D : pre-fill = qtyArbitrated ?? qtyInvoiced)
+      qtyArbitrated: string | number
+      unitArbitrated: string
       unitPriceEuros: string | number
       creditCoefficient: string | number
       pieceToKgWeightG: string | number
@@ -175,11 +178,22 @@ const editDraft = reactive<
 >({})
 
 function beginEditLine(l: SavDetailLine): void {
+  // V1.9-B PATTERN-V9-D — pre-fill arbitrage : qtyArbitrated ?? qtyInvoiced (DN-4 Option A).
+  // L'opérateur voit la valeur facturée comme suggestion par défaut si pas encore arbitré.
+  const prefilledQtyArbitrated =
+    l.qtyArbitrated !== null
+      ? String(l.qtyArbitrated)
+      : l.qtyInvoiced !== null
+        ? String(l.qtyInvoiced)
+        : ''
+  const prefilledUnitArbitrated = l.unitArbitrated ?? l.unitInvoiced ?? ''
   editDraft[l.id] = {
     qtyRequested: String(l.qtyRequested),
     unitRequested: l.unitRequested,
     qtyInvoiced: l.qtyInvoiced !== null ? String(l.qtyInvoiced) : '',
     unitInvoiced: l.unitInvoiced ?? '',
+    qtyArbitrated: prefilledQtyArbitrated,
+    unitArbitrated: prefilledUnitArbitrated,
     unitPriceEuros: l.unitPriceTtcCents !== null ? (l.unitPriceTtcCents / 100).toFixed(2) : '',
     creditCoefficient: String(l.creditCoefficient),
     pieceToKgWeightG: l.pieceToKgWeightG !== null ? String(l.pieceToKgWeightG) : '',
@@ -227,6 +241,21 @@ async function saveEditLine(l: SavDetailLine): Promise<void> {
   } else if (draft.unitInvoiced !== l.unitInvoiced) {
     patch['unitInvoiced'] = draft.unitInvoiced
   }
+  // V1.9-B — arbitrage opérateur (Row 3 : toujours inclus dans le patch si draft present)
+  if (isEmptyDraftField(draft.qtyArbitrated)) {
+    if (l.qtyArbitrated !== null) patch['qtyArbitrated'] = null
+  } else {
+    const qa = parseLocaleNumber(draft.qtyArbitrated)
+    if (Number.isFinite(qa)) patch['qtyArbitrated'] = qa
+  }
+  if (isEmptyDraftField(draft.unitArbitrated)) {
+    if (l.unitArbitrated !== null) patch['unitArbitrated'] = null
+  } else if (draft.unitArbitrated !== (l.unitArbitrated ?? '')) {
+    patch['unitArbitrated'] = draft.unitArbitrated
+  } else {
+    // unitArbitrated inchangé mais toujours envoyé pour cohérence avec qtyArbitrated
+    if (!isEmptyDraftField(draft.unitArbitrated)) patch['unitArbitrated'] = draft.unitArbitrated
+  }
   if (!isEmptyDraftField(draft.unitPriceEuros)) {
     const cents = Math.round(parseLocaleNumber(draft.unitPriceEuros) * 100)
     if (Number.isFinite(cents) && cents !== l.unitPriceTtcCents) patch['unitPriceTtcCents'] = cents
@@ -255,9 +284,11 @@ async function saveEditLine(l: SavDetailLine): Promise<void> {
   }
   // P7 (CR Edge-11) : cleanup draft pour éviter accumulation mémoire.
   delete editDraft[l.id]
-  // Trigger compute peut avoir changé validation_status → refresh pour
-  // surfacer les nouveaux badges/crédits (sav.total_amount_cents aussi).
-  await refresh()
+  // V1.9-B : refresh différé — savePatch retourne validationStatus depuis la RPC.
+  // La vue déclenche un refresh complet au prochain cycle de navigation (sav.version
+  // est mis à jour par onVersionUpdated). Pour voir creditAmountCents mis à jour,
+  // l'opérateur peut recharger manuellement.
+  // Note : refresh() immédiat était dans V1.9-A mais la RPC retourne déjà validationStatus.
 }
 
 async function deleteLineConfirmed(l: SavDetailLine): Promise<void> {
@@ -559,6 +590,8 @@ const VALIDATION_COLOR: Record<string, string> = {
   ok: 'validation-ok',
   warning: 'validation-warn',
   error: 'validation-err',
+  // V1.9-B — DN-1 Option A : nouveau statut orange (arbitrage opérateur requis)
+  awaiting_arbitration: 'validation-warning',
 }
 
 // Map d'état « preview KO » par fileId (onerror → true → fallback icône)
@@ -1035,11 +1068,12 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
               <th scope="col">Actions</th>
             </tr>
           </thead>
-          <!-- V1.9-A — Split UX : 1 <tbody class="sav-line-group"> par ligne SAV.
-               Row 1 = demande adhérent (qtyRequested + stub colspan=8).
-               Row 2 = validation opérateur (qtyInvoiced, PU, marge, coef, avoir, validation, actions).
+          <!-- V1.9-B — Split UX 3 rows : 1 <tbody class="sav-line-group"> par ligne SAV.
+               Row 1 = demande adhérent (qtyRequested + motif requestReason).
+               Row 2 = facturé read-only (qtyInvoiced — voix Pennylane, jamais éditable).
+               Row 3 = arbitrage opérateur (qtyArbitrated, PU, marge, coef, avoir, validation, actions).
                Edit-extra-row (pieceToKgWeightG) reste dans le même <tbody> (Story 3.6 pattern preserved).
-               Ancre DOM id="sav-line-{id}" migrée du <tr> au <tbody> (D-5 scroll-to-blocking preserved). -->
+               Ancre DOM id="sav-line-{id}" sur <tbody> (D-5 scroll-to-blocking preserved V1.9-A). -->
           <tbody
             v-for="l in sav.lines"
             :key="l.id"
@@ -1086,40 +1120,71 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
                 </span>
                 <span v-else>{{ l.qtyRequested }} {{ l.unitRequested }}</span>
               </td>
-              <!-- colspan=8 : colonnes 5-12 — libellé contextuel demande adhérent (DN-6 Option A).
-                   requestComment absent de la projection detail-handler.ts (SAV_SELECT ne contient
-                   pas ce champ) → stub italic gris. -->
-              <td colspan="8" class="line-request-context">Demande adhérent</td>
+              <!-- V1.9-B — colspan=8 : colonnes 5-12 — motif demande adhérent (requestReason) + commentaire.
+                   reason-pill (badge ambre) si requestReason set, sinon fallback stub italic gris.
+                   requestComment affiché si set. (AC#3.2, AC#3.3) -->
+              <td colspan="8" class="line-request-context">
+                <template v-if="l.requestReason || l.requestComment">
+                  <span v-if="l.requestReason" class="reason-pill">{{ l.requestReason }}</span>
+                  <span v-if="l.requestComment" class="comment-text">{{ l.requestComment }}</span>
+                </template>
+                <span v-else class="line-request-context-empty">Demande adhérent</span>
+              </td>
             </tr>
-            <!-- Row 2 — Validation opérateur (fond blanc, font-weight 500) -->
-            <tr class="sav-line-validation" :data-testid="`sav-line-${l.id}-validation-row`">
+            <!-- Row 2 — Facturé read-only (voix Pennylane, fond subtle gris italique) V1.9-B NEW -->
+            <tr class="sav-line-invoiced" :data-testid="`sav-line-${l.id}-invoiced-row`">
               <!-- Colonnes 1-4 vides (alignement avec Row 1) -->
               <td></td>
               <td></td>
               <td></td>
               <td></td>
-              <!-- Qté facturée (colonne 5) -->
+              <!-- Qté facturée (colonne 5) — 100% read-only D-3 (jamais d'input, même en édition) -->
+              <td>
+                <span>
+                  {{ l.qtyInvoiced ?? '—' }}
+                  {{ l.qtyInvoiced !== null ? (l.unitInvoiced ?? l.unitRequested) : '' }}
+                </span>
+              </td>
+              <!-- Colonnes 6-12 vides (alignement) -->
+              <td></td>
+              <td></td>
+              <td></td>
+              <td></td>
+              <td></td>
+              <td></td>
+              <td></td>
+            </tr>
+            <!-- Row 3 — Arbitrage opérateur (fond blanc, font-weight 500) — RENOMMÉ from sav-line-validation -->
+            <tr class="sav-line-arbitration" :data-testid="`sav-line-${l.id}-arbitration-row`">
+              <!-- Colonnes 1-4 vides (alignement avec Row 1 et Row 2) -->
+              <td></td>
+              <td></td>
+              <td></td>
+              <td></td>
+              <!-- Qté arbitrée (colonne 5) — éditable en mode édition (AC#4.3) -->
               <td>
                 <span
                   v-if="lineEdit.editingLineId.value === l.id && editDraft[l.id]"
                   class="cell-pair"
                 >
                   <input
-                    v-model="editDraft[l.id]!.qtyInvoiced"
+                    v-model="editDraft[l.id]!.qtyArbitrated"
                     type="number"
                     min="0"
                     max="99999"
                     step="0.001"
                     placeholder="—"
-                    :aria-label="`Quantité facturée, ligne ${l.lineNumber ?? l.position}`"
+                    :aria-label="`Quantité arbitrée, ligne ${l.lineNumber ?? l.position}`"
                     class="cell-input"
+                    :data-testid="`edit-qty-arbitrated-${l.id}`"
                     @keydown.enter.prevent="saveEditLine(l)"
                     @keydown.esc.prevent="cancelEditLine"
                   />
                   <select
-                    v-model="editDraft[l.id]!.unitInvoiced"
+                    v-model="editDraft[l.id]!.unitArbitrated"
                     class="cell-select"
-                    :aria-label="`Unité facturée, ligne ${l.lineNumber ?? l.position}`"
+                    :aria-label="`Unité arbitrée, ligne ${l.lineNumber ?? l.position}`"
+                    :data-testid="`edit-unit-arbitrated-${l.id}`"
                   >
                     <option value="">—</option>
                     <option value="kg">kg</option>
@@ -1128,8 +1193,10 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
                   </select>
                 </span>
                 <span v-else>
-                  {{ l.qtyInvoiced ?? '—' }}
-                  {{ l.qtyInvoiced !== null ? (l.unitInvoiced ?? l.unitRequested) : '' }}
+                  <span v-if="l.qtyArbitrated !== null" style="font-weight: 500">
+                    {{ l.qtyArbitrated }} {{ l.unitArbitrated }}
+                  </span>
+                  <span v-else style="font-style: italic; color: #6b7280">—</span>
                 </span>
               </td>
               <!-- PU TTC (colonne 6) -->
@@ -1250,7 +1317,7 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
                 </span>
               </td>
             </tr>
-            <!-- Row 3 (optionnel) — poids unité (g) visible si to_calculate + édition.
+            <!-- Row 4 (optionnel) — poids unité (g) visible si to_calculate + édition.
                  Reste dans le même <tbody class="sav-line-group"> (Story 3.6 pattern preserved). -->
             <tr
               v-if="
@@ -2303,8 +2370,14 @@ tr.sav-line-request td {
   font-style: italic;
   color: var(--c-line-request-text, #525252);
 }
-/* Row 2 — Validation opérateur : fond blanc + font-weight 500 (action principale) */
-tr.sav-line-validation td {
+/* V1.9-B — Row 2 — Facturé read-only : fond blanc subtle + italique light (voix Pennylane) */
+tr.sav-line-invoiced td {
+  background: #f9fafb;
+  font-style: italic;
+  color: #6b7280;
+}
+/* V1.9-B — Row 3 — Arbitrage opérateur : fond blanc + font-weight 500 (RENOMMÉ from sav-line-validation) */
+tr.sav-line-arbitration td {
   background: var(--c-line-validation-bg, #ffffff);
   font-weight: 500;
 }
@@ -2312,13 +2385,13 @@ tr.sav-line-validation td {
 tbody.sav-line-group:nth-of-type(even) tr.sav-line-request td {
   background: var(--c-line-alt, #f3f4f6);
 }
-tbody.sav-line-group:nth-of-type(even) tr.sav-line-validation td {
+tbody.sav-line-group:nth-of-type(even) tr.sav-line-arbitration td {
   background: var(--c-line-validation-alt, #f9fafb);
 }
 /* Sentinelle visuelle blocking : inset left border rouge.
    V1.9-A.1 — box-shadow:inset sur <tbody display:table-row-group> n'est pas
    rendu visuellement par Chrome (computed OK, paint KO). Fallback sur le
-   premier <td> de chaque row du groupe (Row 1 + Row 2 + edit-extra-row). */
+   premier <td> de chaque row du groupe (Row 1 + Row 2 + Row 3 + edit-extra-row). */
 tbody.sav-line-group[data-blocking='true'] > tr > td:first-child {
   box-shadow: inset 4px 0 0 var(--c-error, #dc2626);
 }
@@ -2327,6 +2400,35 @@ tbody.sav-line-group[data-blocking='true'] > tr > td:first-child {
   font-style: italic;
   color: #9ca3af;
   font-size: 0.8125rem;
+}
+/* V1.9-B — Fallback stub quand requestReason IS NULL */
+.line-request-context-empty {
+  font-style: italic;
+  color: #9ca3af;
+  font-size: 0.8125rem;
+}
+/* V1.9-B — Badge motif demande (reason-pill) : ambre sobre */
+.reason-pill {
+  display: inline-flex;
+  padding: 2px 8px;
+  border-radius: 4px;
+  background: #fef3c7;
+  color: #92400e;
+  font-style: normal;
+  font-weight: 500;
+  font-size: 0.85em;
+}
+/* V1.9-B — Commentaire demande : italic muted, décalé à droite du pill */
+.comment-text {
+  margin-left: 0.5em;
+  font-style: italic;
+  color: #6b7280;
+}
+/* V1.9-B — Badge awaiting_arbitration (orange) — DN-1 Option A */
+.validation-warning {
+  background: #fef3c7;
+  color: #92400e;
+  border-color: #fcd34d;
 }
 .line-saving {
   opacity: 0.6;

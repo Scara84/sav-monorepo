@@ -30,6 +30,12 @@ export const lineCreateBodySchema = z
     unitRequested: z.enum(['kg', 'piece', 'liter']),
     qtyInvoiced: z.number().nonnegative().max(99999).optional(),
     unitInvoiced: z.enum(['kg', 'piece', 'liter']).optional(),
+    // V1.9-B — arbitrage opérateur (optionnel à la création)
+    qtyArbitrated: z.number().nonnegative().max(99999).optional(),
+    unitArbitrated: z.enum(['kg', 'piece', 'liter']).optional(),
+    // V1.9-B — motif demande (optionnel à la création manuelle)
+    requestReason: z.string().max(200).optional(),
+    requestComment: z.string().max(500).optional(),
     unitPriceTtcCents: z.number().int().nonnegative().max(100000000).optional(),
     vatRateBpSnapshot: z.number().int().min(0).max(10000).optional(),
     creditCoefficient: z.number().min(0).max(1).optional(),

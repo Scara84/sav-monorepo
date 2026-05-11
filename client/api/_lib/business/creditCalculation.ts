@@ -32,12 +32,16 @@ export type ValidationStatus =
   | 'qty_exceeds_invoice'
   | 'to_calculate'
   | 'blocked'
+  | 'awaiting_arbitration'
 
 export type SavLineInput = {
   qty_requested: number
   unit_requested: Unit
   qty_invoiced: number | null
   unit_invoiced: Unit | null
+  // V1.9-B — arbitrage opérateur (COALESCE source effective)
+  qty_arbitrated?: number | null
+  unit_arbitrated?: Unit | null
   unit_price_ttc_cents: number | null
   vat_rate_bp_snapshot: number | null
   credit_coefficient: number
@@ -98,6 +102,14 @@ export function computeSavLineCredit(input: SavLineInput): SavLineComputed {
     piece_to_kg_weight_g,
   } = input
 
+  // V1.9-B — Source effective : COALESCE(qty_arbitrated, qty_invoiced)
+  // Si qty_arbitrated ABSENT du input (champ optionnel, ancien appelant V1.9-A) →
+  // on considère que l'arbitrage = qty_invoiced (backward compat, pas d'awaiting_arbitration).
+  // Si qty_arbitrated PRÉSENT et null explicitement → awaiting_arbitration (DN-1 Option A).
+  const hasArbitration = 'qty_arbitrated' in input
+  const qty_arbitrated = hasArbitration ? (input.qty_arbitrated ?? null) : undefined
+  const unit_arbitrated = hasArbitration ? (input.unit_arbitrated ?? null) : undefined
+
   // 0. Defense Error Handling Rule 4 : jamais de fallback silencieux sur
   //    données financières. Si les inputs contiennent NaN/Infinity (bug
   //    sérialisation amont), on rejette en 'to_calculate' avec message
@@ -106,6 +118,8 @@ export function computeSavLineCredit(input: SavLineInput): SavLineComputed {
     qty_requested,
     credit_coefficient,
     qty_invoiced,
+    // qty_arbitrated peut être undefined (champ optionnel) — exclude undefined de la vérification
+    qty_arbitrated !== undefined ? qty_arbitrated : null,
     unit_price_ttc_cents,
     vat_rate_bp_snapshot,
     piece_to_kg_weight_g,
@@ -141,6 +155,18 @@ export function computeSavLineCredit(input: SavLineInput): SavLineComputed {
     }
   }
 
+  // V1.9-B — awaiting_arbitration : facture présente + PU+VAT set + qty_arbitrated explicitement NULL
+  // Uniquement quand le champ qty_arbitrated est présent dans l'input MAIS null (pas absent).
+  // Si absent (ancien appelant V1.9-A sans connaissance de ce champ) → backward compat.
+  // DN-1 Option A : badge orange 'awaiting_arbitration'.
+  if (hasArbitration && qty_arbitrated === null) {
+    return {
+      credit_amount_cents: null,
+      validation_status: 'awaiting_arbitration',
+      validation_message: 'Arbitrage opérateur requis (Row 3)',
+    }
+  }
+
   // 2. blocked : coefficient hors plage (défense en profondeur)
   if (credit_coefficient < 0 || credit_coefficient > 1) {
     return {
@@ -160,34 +186,55 @@ export function computeSavLineCredit(input: SavLineInput): SavLineComputed {
     (unit_price_ttc_cents * 10000) / (10000 + vat_rate_bp_snapshot)
   )
 
-  // 3+4. Résolution des unités : même unité OU conversion pièce↔kg
-  let price_effective = unit_price_ht_cents
-  let qty_invoiced_converted: number | null = qty_invoiced
+  // V1.9-B — Source effective après COALESCE :
+  //   qty effective = COALESCE(qty_arbitrated, qty_invoiced)
+  //   unit effective = COALESCE(unit_arbitrated, unit_invoiced)
+  // Si qty_arbitrated est undefined (champ absent, backward compat V1.9-A) → qty_invoiced
+  // Si qty_arbitrated est un nombre (non-null) → qty_arbitrated (guard awaiting déjà passé)
+  const qty_effective_source: number =
+    qty_arbitrated !== undefined && qty_arbitrated !== null ? qty_arbitrated : qty_invoiced // backward compat : qty_arbitrated absent → qty_invoiced
+  const unit_effective_source: Unit = (
+    unit_arbitrated !== undefined && unit_arbitrated !== null ? unit_arbitrated : unit_invoiced
+  ) as Unit
 
-  if (unit_invoiced !== null && unit_requested !== unit_invoiced) {
+  // 3+4. Résolution des unités : même unité OU conversion pièce↔kg
+  // La résolution s'appuie sur la source effective (arbitrée).
+  let price_effective = unit_price_ht_cents
+  let qty_invoiced_converted: number | null = qty_effective_source
+
+  if (unit_effective_source !== unit_requested) {
     const hasWeight = piece_to_kg_weight_g !== null && piece_to_kg_weight_g > 0
     const weight_g = piece_to_kg_weight_g as number
 
-    if (unit_requested === 'kg' && unit_invoiced === 'piece' && hasWeight) {
-      // Cas A : adhérent demande en kg, facturé en pièces
+    if (unit_requested === 'kg' && unit_effective_source === 'piece' && hasWeight) {
+      // Cas A : adhérent demande en kg, arbitré en pièces
       price_effective = roundCents((unit_price_ht_cents * 1000) / weight_g)
-      qty_invoiced_converted = roundQty3((qty_invoiced * weight_g) / 1000)
-    } else if (unit_requested === 'piece' && unit_invoiced === 'kg' && hasWeight) {
-      // Cas B : adhérent demande en pièces, facturé en kg
+      qty_invoiced_converted = roundQty3((qty_effective_source * weight_g) / 1000)
+    } else if (unit_requested === 'piece' && unit_effective_source === 'kg' && hasWeight) {
+      // Cas B : adhérent demande en pièces, arbitré en kg
       price_effective = roundCents((unit_price_ht_cents * weight_g) / 1000)
-      qty_invoiced_converted = roundQty3((qty_invoiced * 1000) / weight_g)
+      qty_invoiced_converted = roundQty3((qty_effective_source * 1000) / weight_g)
     } else {
       // Pas de conversion définie → unit_mismatch bloquant
+      const sourceUnitLabel = hasArbitration ? 'arbitrée' : 'facturée'
       return {
         credit_amount_cents: null,
         validation_status: 'unit_mismatch',
-        validation_message: `Unité demandée (${unit_requested}) ≠ unité facturée (${unit_invoiced}) — conversion indisponible`,
+        validation_message: `Unité demandée (${unit_requested}) ≠ unité ${sourceUnitLabel} (${unit_effective_source}) — conversion indisponible`,
       }
     }
   }
 
   // 5. qty_exceeds_invoice (comparaison DANS l'unité demandée, après conversion)
-  if (qty_invoiced_converted !== null && qty_requested > qty_invoiced_converted) {
+  // V1.9-A backward compat (hasArbitration=false) : compare qty_requested vs qty_invoiced_converted.
+  // V1.9-B avec arbitrage (hasArbitration=true) : l'opérateur décide librement — pas de check
+  // qty_requested vs qty_arbitrated (l'opérateur peut accorder moins OU plus que demandé).
+  // Le check qty_exceeds n'a de sens qu'en mode facturer sans arbitrage explicite.
+  if (
+    !hasArbitration &&
+    qty_invoiced_converted !== null &&
+    qty_requested > qty_invoiced_converted
+  ) {
     return {
       credit_amount_cents: null,
       validation_status: 'qty_exceeds_invoice',
@@ -198,8 +245,8 @@ export function computeSavLineCredit(input: SavLineInput): SavLineComputed {
   }
 
   // 6. Happy path ok
-  const qty_effective = qty_invoiced_converted ?? qty_requested
-  const credit = roundCents(qty_effective * price_effective * credit_coefficient)
+  const qty_final = qty_invoiced_converted ?? qty_requested
+  const credit = roundCents(qty_final * price_effective * credit_coefficient)
   return {
     credit_amount_cents: credit,
     validation_status: 'ok',

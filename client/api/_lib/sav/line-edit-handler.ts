@@ -40,6 +40,9 @@ export const lineEditBodySchema = z
     // clé présente=null (unset).
     qtyInvoiced: z.number().nonnegative().max(99999).nullable().optional(),
     unitInvoiced: z.enum(['kg', 'piece', 'liter']).nullable().optional(),
+    // V1.9-B — arbitrage opérateur (nullable : unset = awaiting_arbitration)
+    qtyArbitrated: z.number().nonnegative().max(99999).nullable().optional(),
+    unitArbitrated: z.enum(['kg', 'piece', 'liter']).nullable().optional(),
     unitPriceTtcCents: z.number().int().nonnegative().max(100000000).optional(),
     vatRateBpSnapshot: z.number().int().min(0).max(10000).optional(),
     creditCoefficient: z.number().min(0).max(1).optional(),

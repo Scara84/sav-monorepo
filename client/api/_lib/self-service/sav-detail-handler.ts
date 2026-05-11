@@ -63,6 +63,8 @@ interface SavLineRow {
   unit_requested: string | null
   validation_status: string
   validation_message: string | null
+  // V1.9-B DN-6 Option A — motif demande exposé côté self-service (read-only)
+  request_reason: string | null
 }
 
 interface SavFileRow {
@@ -150,7 +152,8 @@ const coreHandler: ApiHandler = async (req, res) => {
       lines:sav_lines (
         id, product_name_snapshot, product_code_snapshot,
         qty_invoiced, qty_requested, unit_invoiced, unit_requested,
-        validation_status, validation_message
+        validation_status, validation_message,
+        request_reason
       ),
       files:sav_files (
         id, sanitized_filename, original_filename, mime_type, size_bytes,
@@ -291,6 +294,9 @@ const coreHandler: ApiHandler = async (req, res) => {
       validationStatus: l.validation_status,
       validationStatusLabel: VALIDATION_STATUS_FR[l.validation_status] ?? l.validation_status,
       validationMessage: l.validation_message,
+      // V1.9-B DN-6 Option A — motif demande exposé en self-service (read-only)
+      // request_comment, qty_arbitrated, unit_arbitrated sont OOS V1.9-B (DN-3 + DN-10)
+      requestReason: l.request_reason ?? null,
     }))
 
     const files = (sav.files ?? []).map((f) => ({
