@@ -63,6 +63,8 @@ function toSavLineInput(l: {
   unitRequested: string
   qtyInvoiced: number | null
   unitInvoiced: string | null
+  qtyArbitrated: number | null
+  unitArbitrated: string | null
   unitPriceTtcCents: number | null
   vatRateBpSnapshot: number | null
   creditCoefficient: number
@@ -77,6 +79,13 @@ function toSavLineInput(l: {
     unit_invoiced: (l.unitInvoiced && UNITS.has(l.unitInvoiced)
       ? l.unitInvoiced
       : null) as SavLineInput['unit_invoiced'],
+    // V1.9-B — toujours inclure les champs arbitrage (présence détectée par
+    // `'qty_arbitrated' in input` côté engine : absent = backward compat
+    // V1.9-A, présent-null = awaiting_arbitration, présent-non-null = arbitré).
+    qty_arbitrated: l.qtyArbitrated,
+    unit_arbitrated: (l.unitArbitrated && UNITS.has(l.unitArbitrated)
+      ? l.unitArbitrated
+      : null) as SavLineInput['unit_arbitrated'],
     unit_price_ttc_cents: l.unitPriceTtcCents,
     vat_rate_bp_snapshot: l.vatRateBpSnapshot,
     credit_coefficient: l.creditCoefficient,
