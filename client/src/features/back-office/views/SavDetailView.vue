@@ -304,11 +304,12 @@ async function saveEditLine(l: SavDetailLine): Promise<void> {
   }
   // P7 (CR Edge-11) : cleanup draft pour éviter accumulation mémoire.
   delete editDraft[l.id]
-  // V1.9-B : refresh différé — savePatch retourne validationStatus depuis la RPC.
-  // La vue déclenche un refresh complet au prochain cycle de navigation (sav.version
-  // est mis à jour par onVersionUpdated). Pour voir creditAmountCents mis à jour,
-  // l'opérateur peut recharger manuellement.
-  // Note : refresh() immédiat était dans V1.9-A mais la RPC retourne déjà validationStatus.
+  // V1.9-B.3 : refresh post-save réintroduit. La RPC retourne validationStatus
+  // mais pas creditAmountCents recomputé par le trigger, ni les autres colonnes
+  // recalculées. Sans refresh, l'opérateur voit l'état stale et croit que le
+  // save a échoué ("rien ne se passe"). Le refresh garantit que Row 3 affiche
+  // l'arbitrage saisi + l'avoir/validation à jour.
+  await refresh()
 }
 
 async function deleteLineConfirmed(l: SavDetailLine): Promise<void> {

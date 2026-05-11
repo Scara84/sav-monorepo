@@ -618,9 +618,9 @@ describe('V1.9-B S-07 — Édition Row 3 : inputs arbitrage + save patch correct
     await arbitrationRow.find('[data-testid="save-line-100"]').trigger('click')
     await flushPromises()
 
-    // Le fetch PATCH a été appelé
-    expect(saveMock).toHaveBeenCalledTimes(1)
-    const patchCall = saveMock.mock.calls[0] as [string, { body?: string }]
+    // V1.9-B.3 : 2 fetch calls — PATCH save + GET refresh post-save
+    expect(saveMock).toHaveBeenCalledTimes(2)
+    const patchCall = saveMock.mock.calls[0] as [string, { body?: string; method?: string }]
     const patchBody = JSON.parse(patchCall[1]?.body ?? '{}') as Record<string, unknown>
     // Le patch doit contenir qtyArbitrated (valeur convertie depuis l'input)
     expect(patchBody).toHaveProperty('qtyArbitrated')
