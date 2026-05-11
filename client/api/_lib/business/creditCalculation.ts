@@ -211,30 +211,34 @@ export function computeSavLineCredit(input: SavLineInput): SavLineComputed {
     unit_arbitrated !== undefined && unit_arbitrated !== null ? unit_arbitrated : unit_invoiced
   ) as Unit
 
-  // 3+4. Résolution des unités : même unité OU conversion pièce↔kg
-  // La résolution s'appuie sur la source effective (arbitrée).
+  // 3+4. Résolution des unités
+  // V1.9-B.4 : avec arbitrage (qty_arbitrated set), l'opérateur a déjà décidé
+  // dans l'unité de facturation/arbitrage — pas de check unit_mismatch (la
+  // « conversion » de l'unité demandée a été faite mentalement par l'opérateur).
+  // L'avoir = qty_arbitrated × PU_HT × coef directement dans l'unité d'arbitrage.
+  // Sans arbitrage (backward compat V1.9-A) : tentative conversion piece↔kg
+  // sinon unit_mismatch bloquant.
   let price_effective = unit_price_ht_cents
   let qty_invoiced_converted: number | null = qty_effective_source
 
-  if (unit_effective_source !== unit_requested) {
+  if (!hasArbitration && unit_effective_source !== unit_requested) {
     const hasWeight = piece_to_kg_weight_g !== null && piece_to_kg_weight_g > 0
     const weight_g = piece_to_kg_weight_g as number
 
     if (unit_requested === 'kg' && unit_effective_source === 'piece' && hasWeight) {
-      // Cas A : adhérent demande en kg, arbitré en pièces
+      // Cas A : adhérent demande en kg, facturé en pièces
       price_effective = roundCents((unit_price_ht_cents * 1000) / weight_g)
       qty_invoiced_converted = roundQty3((qty_effective_source * weight_g) / 1000)
     } else if (unit_requested === 'piece' && unit_effective_source === 'kg' && hasWeight) {
-      // Cas B : adhérent demande en pièces, arbitré en kg
+      // Cas B : adhérent demande en pièces, facturé en kg
       price_effective = roundCents((unit_price_ht_cents * weight_g) / 1000)
       qty_invoiced_converted = roundQty3((qty_effective_source * 1000) / weight_g)
     } else {
-      // Pas de conversion définie → unit_mismatch bloquant
-      const sourceUnitLabel = hasArbitration ? 'arbitrée' : 'facturée'
+      // Pas de conversion définie → unit_mismatch bloquant (V1.9-A backward compat)
       return {
         credit_amount_cents: null,
         validation_status: 'unit_mismatch',
-        validation_message: `Unité demandée (${unit_requested}) ≠ unité ${sourceUnitLabel} (${unit_effective_source}) — conversion indisponible`,
+        validation_message: `Unité demandée (${unit_requested}) ≠ unité facturée (${unit_effective_source}) — conversion indisponible`,
       }
     }
   }
