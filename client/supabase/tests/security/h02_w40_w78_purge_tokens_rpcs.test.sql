@@ -279,28 +279,43 @@ DECLARE
   v_jti_sst_old_used   uuid := gen_random_uuid();
   v_jti_sst_old_exp    uuid := gen_random_uuid();
   v_jti_sst_recent     uuid := gen_random_uuid();
+  -- Story 5-8 polymorphique : magic_link_tokens CHECK XOR member|operator
+  -- Pour respecter target_xor + FK members(id), pull un member_id réel.
+  v_member_id          bigint;
 BEGIN
+  SELECT id INTO v_member_id FROM public.members LIMIT 1;
+  IF v_member_id IS NULL THEN
+    RAISE EXCEPTION 'FAIL setup (XOR): aucun membre en DB pour respecter magic_link_tokens_target_xor + FK members(id). Insère au moins 1 membre avant de lancer Bloc F.';
+  END IF;
+
   -- magic_link_tokens (3 rows : 2 éligibles purge, 1 récent conservé)
-  INSERT INTO public.magic_link_tokens (jti, issued_at, expires_at, used_at, ip_hash)
+  -- target_kind='member' + member_id NOT NULL pour respecter le CHECK XOR Story 5-8
+  INSERT INTO public.magic_link_tokens (jti, issued_at, expires_at, used_at, ip_hash, target_kind, member_id)
   VALUES
     -- Row 1 : utilisé il y a > 7 jours → purge (used_at IS NOT NULL AND used_at < cutoff)
     (v_jti_mlt_old_used,
      now() - interval '10 days',
      now() - interval '9 days',
      now() - interval '8 days',
-     'sha256-test-h02-mlt-old-used'),
+     'sha256-test-h02-mlt-old-used',
+     'member',
+     v_member_id),
     -- Row 2 : expiré non-consommé il y a > 7 jours → purge (used_at IS NULL AND expires_at < cutoff)
     (v_jti_mlt_old_exp,
      now() - interval '10 days',
      now() - interval '8 days',
      NULL,
-     'sha256-test-h02-mlt-old-exp'),
+     'sha256-test-h02-mlt-old-exp',
+     'member',
+     v_member_id),
     -- Row 3 : récent (< 7 jours) → CONSERVÉ
     (v_jti_mlt_recent,
      now() - interval '2 days',
      now() + interval '5 days',
      NULL,
-     'sha256-test-h02-mlt-recent')
+     'sha256-test-h02-mlt-recent',
+     'member',
+     v_member_id)
   ON CONFLICT (jti) DO NOTHING;
 
   -- sav_submit_tokens (3 rows : 2 éligibles purge, 1 récent conservé)
