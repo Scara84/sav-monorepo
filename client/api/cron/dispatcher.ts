@@ -4,6 +4,7 @@ import type { ApiRequest, ApiResponse } from '../_lib/types'
 import { authorizeCron } from './_authorize'
 import { runCleanupRateLimits } from '../_lib/cron-runners/cleanup-rate-limits'
 import { runPurgeTokens } from '../_lib/cron-runners/purge-tokens'
+import { runPurgeSavSubmitTokens } from '../_lib/cron-runners/purge-sav-submit-tokens'
 import { runPurgeDrafts } from '../_lib/cron-runners/purge-drafts'
 import { runThresholdAlerts } from '../_lib/cron-runners/threshold-alerts'
 import { runRetryEmails } from '../_lib/cron-runners/retry-emails'
@@ -42,6 +43,13 @@ export default async function handler(req: ApiRequest, res: ApiResponse): Promis
 
   await safeRun(results, 'cleanupRateLimits', () => runCleanupRateLimits({ requestId }), requestId)
   await safeRun(results, 'purgeTokens', () => runPurgeTokens({ requestId }), requestId)
+  // H-02 AC#3 : 7e runner — purge sav_submit_tokens (ordering D-10 : après purgeTokens, avant purgeDrafts)
+  await safeRun(
+    results,
+    'purgeSavSubmitTokens',
+    () => runPurgeSavSubmitTokens({ requestId }),
+    requestId
+  )
   await safeRun(results, 'purgeDrafts', () => runPurgeDrafts({ requestId }), requestId)
   await safeRun(results, 'thresholdAlerts', () => runThresholdAlerts({ requestId }), requestId)
   // Story 6.6 : retry-emails APRÈS thresholdAlerts (qui enqueue) — ordre logique
