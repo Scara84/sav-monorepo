@@ -1,5 +1,5 @@
 -- ============================================================
--- Migration : 20260509120000_email_outbox_enrichment.sql
+-- Migration : 20260509120100_email_outbox_enrichment.sql (renamed from 20260509120000 — collision PK schema_migrations avec capture_sav_extend_pricing, 2026-05-12 sprint H-01)
 -- Domaine   : Epic 6 Story 6.1 — enrichissement email_outbox + notification_prefs
 -- ============================================================
 -- Pourquoi : la table `email_outbox` (Story 3.5, migration 20260422140000)

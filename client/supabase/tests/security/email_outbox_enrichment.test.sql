@@ -2,7 +2,7 @@
 -- Tests SQL — Story 6.1 : email_outbox enrichment + notification_prefs
 -- ATDD RED-PHASE SCAFFOLD (généré par bmad-testarch-atdd)
 --
--- Couvre la migration cible `20260509120000_email_outbox_enrichment.sql` :
+-- Couvre la migration cible `20260509120100_email_outbox_enrichment.sql` :
 --   - 9 colonnes ajoutées (recipient_member_id, recipient_operator_id,
 --     scheduled_at, attempts, next_attempt_at, smtp_message_id,
 --     template_data, account, updated_at)

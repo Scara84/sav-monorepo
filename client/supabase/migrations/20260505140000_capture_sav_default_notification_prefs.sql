@@ -7,7 +7,7 @@
 -- notification_prefs_schema_chk" pour tout email non encore présent en
 -- table `members`.
 --
--- Cause racine : la migration `20260509120000_email_outbox_enrichment.sql`
+-- Cause racine : la migration `20260509120100_email_outbox_enrichment.sql`
 -- (Story 6.6/6.7) a ajouté un CHECK qui exige notification_prefs avec 2 clés
 -- bool obligatoires `status_updates` + `weekly_recap`. La RPC originale
 -- `20260421150000_rpc_capture_sav_from_webhook.sql:65` insérait `'{}'::jsonb`
