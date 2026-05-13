@@ -159,6 +159,7 @@ export function useSavDetail(id: Ref<number>) {
   const auditTrail = ref<SavDetailAudit[]>([])
   const settingsSnapshot = ref<SettingsSnapshot>({ ...EMPTY_SETTINGS })
   const creditNote = ref<SavDetailCreditNote | null>(null)
+  const creditNoteDegraded = ref(false)
   const loading = ref(false)
   const error = ref<SavDetailErrorKind | null>(null)
   // F49 (CR Epic 3) : AbortController + check id-at-resolution pour éviter
@@ -210,12 +211,16 @@ export function useSavDetail(id: Ref<number>) {
         error.value = 'server_error'
         return
       }
-      const body = (await res.json()) as { data: SavDetailPayload }
+      const body = (await res.json()) as {
+        data: SavDetailPayload
+        meta?: { creditNoteDegraded?: boolean }
+      }
       if (seq !== requestSeq || seenId !== id.value) return
       sav.value = body.data.sav
       comments.value = body.data.comments
       auditTrail.value = body.data.auditTrail
       creditNote.value = body.data.creditNote ?? null
+      creditNoteDegraded.value = body.meta?.creditNoteDegraded === true
       // Review P4 — normalise tout champ absent/undefined à null pour que les
       // checks `=== null` en aval (composables, computed) soient fiables.
       const incoming = body.data.settingsSnapshot
@@ -253,6 +258,7 @@ export function useSavDetail(id: Ref<number>) {
     auditTrail,
     settingsSnapshot,
     creditNote,
+    creditNoteDegraded,
     loading,
     error,
     refresh: fetchDetail,

@@ -27,8 +27,17 @@ import { unitMarginHtCents } from '../lib/computeMargin'
 const route = useRoute()
 const router = useRouter()
 const savId = computed(() => Number(route.params['id']))
-const { sav, comments, auditTrail, settingsSnapshot, creditNote, loading, error, refresh } =
-  useSavDetail(savId)
+const {
+  sav,
+  comments,
+  auditTrail,
+  settingsSnapshot,
+  creditNote,
+  creditNoteDegraded,
+  loading,
+  error,
+  refresh,
+} = useSavDetail(savId)
 const isNotFound = computed(() => (error.value as string | null) === 'not_found')
 const hasOtherError = computed(() => error.value !== null && !isNotFound.value)
 
@@ -418,6 +427,7 @@ async function transitionStatus(target: SavStatus, opts: TransitionOptions = {})
         version: localVersion.value,
         ...(opts.note ? { note: opts.note } : {}),
       }),
+      signal: AbortSignal.timeout(30_000), // F-15 H-07
     })
     // CR F-8 : 401/403 — session perdue → redirect login (cohérent useSavDetail).
     if (res.status === 401 || res.status === 403) {
@@ -466,7 +476,11 @@ async function transitionStatus(target: SavStatus, opts: TransitionOptions = {})
     await refresh()
     return true
   } catch (e) {
-    toastMessage.value = e instanceof Error ? e.message : 'Erreur réseau'
+    if (e instanceof DOMException && e.name === 'AbortError') {
+      toastMessage.value = 'La requête a pris trop de temps, réessayez.'
+    } else {
+      toastMessage.value = e instanceof Error ? e.message : 'Erreur réseau'
+    }
     return false
   } finally {
     transitioning.value = null
@@ -516,7 +530,9 @@ async function cancelSav(): Promise<void> {
 // --- Workflow back-office : émission avoir ---------------------------------
 const showEmitCreditButton = computed<boolean>(
   () =>
-    (sav.value?.status === 'validated' || sav.value?.status === 'in_progress') && !creditNote.value
+    (sav.value?.status === 'validated' || sav.value?.status === 'in_progress') &&
+    !creditNote.value &&
+    !creditNoteDegraded.value
 )
 const emitDialogOpen = ref(false)
 const emitting = ref(false)
@@ -914,6 +930,15 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
     <template v-else-if="sav">
       <!-- Header -->
       <section class="header card" :aria-labelledby="'sav-detail-title'">
+        <!-- H-07 F-10 — bannière dégradation avoir -->
+        <div
+          v-if="creditNoteDegraded"
+          class="credit-note-degraded-banner"
+          role="alert"
+          data-testid="credit-note-degraded-banner"
+        >
+          Données d'avoir indisponibles — rafraîchissez la page pour réessayer.
+        </div>
         <div class="header-title-row">
           <h1 id="sav-detail-title">{{ sav.reference }}</h1>
           <span :class="['status-badge', STATUS_COLOR[sav.status] ?? 'bg-gray']">
@@ -2601,5 +2626,15 @@ tbody.sav-line-group[data-blocking='true'] > tr > td:first-child {
 .margin-total-footer.margin-negative {
   background: #fef2f2;
   border-color: #fecaca;
+}
+
+/* H-07 F-10 — bannière dégradation avoir */
+.credit-note-degraded-banner {
+  background: #fef3c7; /* amber-100 */
+  border-left: 4px solid #d97706; /* amber-600 */
+  padding: 0.75rem 1rem;
+  margin-bottom: 0.75rem;
+  border-radius: 4px;
+  font-size: 0.9rem;
 }
 </style>

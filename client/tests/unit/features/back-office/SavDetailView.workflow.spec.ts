@@ -53,6 +53,7 @@ function makeSavPayload(
     version: number
     lines: unknown[]
     creditNote: unknown
+    creditNoteDegraded: boolean
   }> = {}
 ): unknown {
   return {
@@ -91,6 +92,7 @@ function makeSavPayload(
       settingsSnapshot: { vat_rate_default_bp: 550, group_manager_discount_bp: 400 },
       creditNote: overrides.creditNote ?? null,
     },
+    meta: { creditNoteDegraded: overrides.creditNoteDegraded ?? false },
   }
 }
 
@@ -581,5 +583,236 @@ describe('SavDetailView — workflow back-office (transitions + émission avoir)
     // Résoudre la 1re — laisse la situation propre pour le test suivant
     resolveFirst(jsonResponse(200, { data: { savId: 1, status: 'received', version: 3 } }))
     await flushPromises()
+  })
+
+  // ---------------------------------------------------------------------------
+  // H-07 — UI réseau lent : bannière creditNoteDegraded + masquage bouton Émettre
+  //         + timeout 30s transitions (F-10 + F-15)
+  // ---------------------------------------------------------------------------
+
+  it('W-12 F-10 bannière creditNoteDegraded=true + bouton Émettre masqué + autres boutons non affectés', async () => {
+    const lines = [
+      {
+        id: 1,
+        productId: null,
+        productCodeSnapshot: 'X',
+        productNameSnapshot: 'Pommes',
+        qtyRequested: 1,
+        unitRequested: 'kg',
+        qtyInvoiced: 1,
+        unitInvoiced: 'kg',
+        unitPriceTtcCents: 200,
+        vatRateBpSnapshot: 550,
+        creditCoefficient: 1,
+        creditCoefficientLabel: null,
+        pieceToKgWeightG: null,
+        creditAmountCents: 200,
+        validationStatus: 'ok',
+        validationMessage: null,
+        position: 1,
+        lineNumber: 1,
+      },
+    ]
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/api/auth/me')) return jsonResponse(200, ME_RESPONSE)
+      return jsonResponse(
+        200,
+        makeSavPayload({ status: 'validated', version: 5, lines, creditNoteDegraded: true })
+      )
+    })
+    ;(globalThis as unknown as { fetch: unknown }).fetch = fetchMock
+
+    const SavDetailView = await importSavDetailView()
+    const router = makeRouter()
+    await router.push('/admin/sav/1')
+    await router.isReady()
+    const wrapper = mount(SavDetailView, { global: { plugins: [router] } })
+    await flushPromises()
+
+    // Bannière dégradée visible avec rôle alert
+    const banner = wrapper.find('[data-testid="credit-note-degraded-banner"]')
+    expect(banner.exists()).toBe(true)
+    expect(banner.attributes('role')).toBe('alert')
+    expect(banner.text()).toContain("Données d'avoir indisponibles")
+
+    // Bouton Émettre l'avoir masqué (AC#2 — pas disabled, absent)
+    expect(wrapper.find('[data-testid="sav-emit-credit-btn"]').exists()).toBe(false)
+
+    // Les autres boutons workflow ne sont PAS affectés par creditNoteDegraded
+    expect(wrapper.find('[data-testid="sav-close-btn"]').exists()).toBe(true)
+    expect(wrapper.find('[data-testid="sav-cancel-btn"]').exists()).toBe(true)
+  })
+
+  it('W-13 F-10 régression : creditNoteDegraded absent/false → bannière absente + bouton Émettre visible', async () => {
+    const lines = [
+      {
+        id: 1,
+        productId: null,
+        productCodeSnapshot: 'X',
+        productNameSnapshot: 'Pommes',
+        qtyRequested: 1,
+        unitRequested: 'kg',
+        qtyInvoiced: 1,
+        unitInvoiced: 'kg',
+        unitPriceTtcCents: 200,
+        vatRateBpSnapshot: 550,
+        creditCoefficient: 1,
+        creditCoefficientLabel: null,
+        pieceToKgWeightG: null,
+        creditAmountCents: 200,
+        validationStatus: 'ok',
+        validationMessage: null,
+        position: 1,
+        lineNumber: 1,
+      },
+    ]
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input)
+      if (url.includes('/api/auth/me')) return jsonResponse(200, ME_RESPONSE)
+      // meta.creditNoteDegraded: false explicitement
+      return jsonResponse(
+        200,
+        makeSavPayload({ status: 'validated', version: 5, lines, creditNoteDegraded: false })
+      )
+    })
+    ;(globalThis as unknown as { fetch: unknown }).fetch = fetchMock
+
+    const SavDetailView = await importSavDetailView()
+    const router = makeRouter()
+    await router.push('/admin/sav/1')
+    await router.isReady()
+    const wrapper = mount(SavDetailView, { global: { plugins: [router] } })
+    await flushPromises()
+
+    // Pas de bannière
+    expect(wrapper.find('[data-testid="credit-note-degraded-banner"]').exists()).toBe(false)
+
+    // Bouton Émettre visible (comportement V1.7 préservé)
+    expect(wrapper.find('[data-testid="sav-emit-credit-btn"]').exists()).toBe(true)
+  })
+
+  it('W-14 F-15 timeout 30s : AbortError sur transition → toast "trop de temps" + bouton ré-cliquable', async () => {
+    const abortError = Object.assign(new DOMException('signal timed out'), { name: 'AbortError' })
+    let patchCallCount = 0
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const method = (init?.method ?? 'GET').toUpperCase()
+      if (url.includes('/api/auth/me')) return jsonResponse(200, ME_RESPONSE)
+      if (method === 'PATCH' && url.includes('/status')) {
+        patchCallCount++
+        return Promise.reject(abortError)
+      }
+      return jsonResponse(200, makeSavPayload({ status: 'draft', version: 2 }))
+    })
+    ;(globalThis as unknown as { fetch: unknown }).fetch = fetchMock
+
+    const SavDetailView = await importSavDetailView()
+    const router = makeRouter()
+    await router.push('/admin/sav/1')
+    await router.isReady()
+    const wrapper = mount(SavDetailView, { global: { plugins: [router] } })
+    await flushPromises()
+
+    // Vérifier que le bouton est initialement présent
+    const receiveBtn = wrapper.find('[data-testid="sav-receive-btn"]')
+    expect(receiveBtn.exists()).toBe(true)
+
+    await receiveBtn.trigger('click')
+    await flushPromises()
+
+    // Toast exact H-07
+    const toast = wrapper.find('[data-testid="sav-toast"]')
+    expect(toast.exists()).toBe(true)
+    expect(toast.text()).toContain('La requête a pris trop de temps, réessayez')
+
+    // Bouton ré-activé (transitioning.value === null → bouton n'est plus disabled)
+    const receiveBtnAfter = wrapper.find('[data-testid="sav-receive-btn"]')
+    expect(receiveBtnAfter.exists()).toBe(true)
+    expect(receiveBtnAfter.attributes('disabled')).toBeUndefined()
+
+    // Aucun refresh appelé (la transition a échoué, pas de re-fetch)
+    // Le fetch count doit être 2 : 1 initial GET + 1 PATCH rejeté (pas de GET refresh)
+    const getCalls = (fetchMock.mock.calls as Array<[RequestInfo | URL, RequestInit?]>).filter(
+      ([url, init]) =>
+        (init?.method ?? 'GET').toUpperCase() === 'GET' && !String(url).includes('/api/auth/me')
+    )
+    expect(getCalls).toHaveLength(1) // uniquement le fetch initial, pas de refresh
+  })
+
+  it('W-15 F-15 TypeError réseau classique ≠ AbortError → message générique, pas "trop de temps"', async () => {
+    const networkError = new TypeError('Failed to fetch')
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const method = (init?.method ?? 'GET').toUpperCase()
+      if (url.includes('/api/auth/me')) return jsonResponse(200, ME_RESPONSE)
+      if (method === 'PATCH' && url.includes('/status')) {
+        return Promise.reject(networkError)
+      }
+      return jsonResponse(200, makeSavPayload({ status: 'draft', version: 2 }))
+    })
+    ;(globalThis as unknown as { fetch: unknown }).fetch = fetchMock
+
+    const SavDetailView = await importSavDetailView()
+    const router = makeRouter()
+    await router.push('/admin/sav/1')
+    await router.isReady()
+    const wrapper = mount(SavDetailView, { global: { plugins: [router] } })
+    await flushPromises()
+
+    await wrapper.find('[data-testid="sav-receive-btn"]').trigger('click')
+    await flushPromises()
+
+    const toast = wrapper.find('[data-testid="sav-toast"]')
+    expect(toast.exists()).toBe(true)
+    // Le message NE doit PAS être le message "trop de temps" (branche AbortError)
+    expect(toast.text()).not.toContain('La requête a pris trop de temps')
+    // Le message doit être le message d'erreur réseau
+    expect(toast.text()).toContain('Failed to fetch')
+  })
+
+  it('W-16 F-15 AbortError sur cancelSav avec note → toast + body.note préservé + transitioning libéré', async () => {
+    const promptSpy = vi.spyOn(window, 'prompt').mockReturnValue('motif test')
+    const abortError = Object.assign(new DOMException('signal timed out'), { name: 'AbortError' })
+    const capturedBodies: Array<Record<string, unknown>> = []
+    const fetchMock = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input)
+      const method = (init?.method ?? 'GET').toUpperCase()
+      if (url.includes('/api/auth/me')) return jsonResponse(200, ME_RESPONSE)
+      if (method === 'PATCH' && url.includes('/status')) {
+        const body = JSON.parse((init?.body as string) ?? '{}') as Record<string, unknown>
+        capturedBodies.push(body)
+        return Promise.reject(abortError)
+      }
+      return jsonResponse(200, makeSavPayload({ status: 'in_progress', version: 2 }))
+    })
+    ;(globalThis as unknown as { fetch: unknown }).fetch = fetchMock
+
+    const SavDetailView = await importSavDetailView()
+    const router = makeRouter()
+    await router.push('/admin/sav/1')
+    await router.isReady()
+    const wrapper = mount(SavDetailView, { global: { plugins: [router] } })
+    await flushPromises()
+
+    await wrapper.find('[data-testid="sav-cancel-btn"]').trigger('click')
+    await flushPromises()
+
+    // Toast exact H-07
+    const toast = wrapper.find('[data-testid="sav-toast"]')
+    expect(toast.exists()).toBe(true)
+    expect(toast.text()).toContain('La requête a pris trop de temps, réessayez')
+
+    // Le body PATCH incluait bien note: "motif test" (timeout appliqué après serialisation)
+    expect(capturedBodies).toHaveLength(1)
+    expect(capturedBodies[0]?.['note']).toBe('motif test')
+    expect(capturedBodies[0]?.['status']).toBe('cancelled')
+
+    // transitioning libéré → bouton Annuler ré-activé
+    const cancelBtnAfter = wrapper.find('[data-testid="sav-cancel-btn"]')
+    expect(cancelBtnAfter.exists()).toBe(true)
+    expect(cancelBtnAfter.attributes('disabled')).toBeUndefined()
+
+    promptSpy.mockRestore()
   })
 })
