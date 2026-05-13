@@ -10,6 +10,7 @@ import {
   storeOperatorTokenIssue,
   hashEmail,
   hashIp,
+  isSafeReturnTo,
   MAGIC_LINK_TTL_SEC,
 } from '../../_lib/auth/magic-link'
 import { renderOperatorMagicLinkEmail } from '../../_lib/auth/magic-link-email'
@@ -63,6 +64,25 @@ const coreHandler: ApiHandler = async (req, res) => {
   const ipSrc = readIp(req)
   const ipHash = ipSrc ? hashIp(ipSrc) : undefined
 
+  // H-04 AC#2 — capturer ?returnTo depuis la query string (GET-style param sur un POST)
+  const rawReturnTo = req.query?.['returnTo']
+  const returnToCandidate = Array.isArray(rawReturnTo) ? rawReturnTo[0] : rawReturnTo
+  // returnToInQuery : présence brute du paramètre (y compris ?returnTo= vide)
+  const returnToInQuery = returnToCandidate !== undefined
+  // returnToProvided : non-vide ET utilisable (sémantique "non-vide ET safe ET utilisable")
+  const returnToProvided = returnToInQuery && returnToCandidate !== ''
+  const returnToSafe = returnToProvided && isSafeReturnTo(returnToCandidate)
+  const safeReturnTo: string | undefined = returnToSafe ? returnToCandidate : undefined
+
+  // H-04 AC#2(d) M-2 — log warn si returnTo présent (même vide) mais rejeté (signal attaque potentiel)
+  if (returnToInQuery && !returnToSafe) {
+    logger.warn('operator magic-link issue returnTo rejected', {
+      requestId,
+      length: returnToCandidate?.length ?? 0,
+      firstByte: returnToCandidate?.slice(0, 1) ?? '',
+    })
+  }
+
   try {
     const operator = await findActiveOperatorByEmail(email)
     if (!operator) {
@@ -79,7 +99,10 @@ const coreHandler: ApiHandler = async (req, res) => {
       return
     }
 
-    const { token, jti, expiresAt } = signOperatorMagicLink(operator.id, magicSecret)
+    // H-04 AC#2(b) — passer returnTo dans l'options bag si safe
+    const { token, jti, expiresAt } = signOperatorMagicLink(operator.id, magicSecret, {
+      ...(safeReturnTo !== undefined ? { returnTo: safeReturnTo } : {}),
+    })
 
     const storeArgs: Parameters<typeof storeOperatorTokenIssue>[0] = {
       jti,
@@ -125,7 +148,13 @@ const coreHandler: ApiHandler = async (req, res) => {
       emailHash: hashEmail(email),
       ...(ipHash ? { ipHash } : {}),
       ...(ua ? { userAgent: ua } : {}),
-      metadata: mailSent ? { jti } : { jti, reason: 'smtp_failure' },
+      metadata: mailSent
+        ? {
+            jti,
+            return_to_provided: returnToProvided,
+            ...(returnToProvided ? { return_to_safe: returnToSafe } : {}),
+          }
+        : { jti, reason: 'smtp_failure' },
     }).catch(() => undefined)
 
     res.status(202).json({ ok: true, message: 'Si un compte existe, vous recevrez un email.' })

@@ -10,10 +10,11 @@ import {
   findTokenByJti,
   hashEmail,
   hashIp,
+  isSafeReturnTo,
 } from '../../_lib/auth/magic-link'
 import { findOperatorById, logAuthEvent, operatorToSessionUser } from '../../_lib/auth/operator'
 import { issueSessionCookie, OPERATOR_SESSION_TTL_SEC } from '../../_lib/auth/session'
-import type { ApiHandler, ApiRequest } from '../../_lib/types'
+import type { ApiHandler, ApiRequest, ApiResponse } from '../../_lib/types'
 
 const querySchema = z.object({
   token: z.string().min(20).max(4096),
@@ -25,12 +26,17 @@ const querySchema = z.object({
  * - Vérifie signature + TTL JWT (MAGIC_LINK_SECRET) + kind='operator'
  * - Marque jti consommé (idempotent)
  * - Émet cookie session (TTL = OPERATOR_SESSION_TTL_HOURS * 3600, défaut 8h)
- * - Redirect 302 /admin sur succès
+ * - Redirect 302 vers returnTo (claim JWT) ou /admin sur succès
  *
- * Codes d'erreur (JSON, pas de redirect en V1) :
- *   401 LINK_EXPIRED    — JWT exp < now
- *   410 LINK_CONSUMED   — jti déjà consommé
- *   401 UNAUTHENTICATED — signature KO, jti inconnu, kind mismatch, opérateur désactivé
+ * Codes d'erreur (H-04 AC#1 : redirect 302 /admin/login?error=<code>) :
+ *   expired  — JWT exp < now
+ *   consumed — jti déjà consommé
+ *   invalid  — bad_signature, malformed, bad_payload, jti inconnu, kind mismatch, opérateur désactivé
+ *
+ * Exceptions conservées en JSON sendError (PATTERN-H04-VERIFY-REDIRECT-VS-JSON-ERROR) :
+ *   400 — token absent/malformé (Zod) → pas un opérateur légitime
+ *   405 — METHOD_NOT_ALLOWED → dev/crawler
+ *   500 — SERVER_ERROR → config cassée, un redirect masquerait l'incident
  */
 const coreHandler: ApiHandler = async (req, res) => {
   const requestId = ensureRequestId(req)
@@ -57,7 +63,7 @@ const coreHandler: ApiHandler = async (req, res) => {
 
   const verified = verifyMagicLink(token, magicSecret)
   if (!verified.ok) {
-    const reason = 'reason' in verified ? (verified as { reason: string }).reason : 'unknown'
+    const reason = verified.reason
     if (reason === 'expired') {
       await logAuthEvent({
         eventType: 'operator_magic_link_failed',
@@ -65,7 +71,8 @@ const coreHandler: ApiHandler = async (req, res) => {
         ...(ua ? { userAgent: ua } : {}),
         metadata: { reason: 'expired' },
       }).catch(() => undefined)
-      sendError(res, 'LINK_EXPIRED', 'Lien expiré', requestId)
+      // H-04 AC#1 : redirect 302 /admin/login?error=expired
+      redirectToLoginError(res, 'expired')
       return
     }
     await logAuthEvent({
@@ -74,7 +81,8 @@ const coreHandler: ApiHandler = async (req, res) => {
       ...(ua ? { userAgent: ua } : {}),
       metadata: { reason },
     }).catch(() => undefined)
-    sendError(res, 'UNAUTHENTICATED', 'Lien invalide', requestId)
+    // H-04 AC#1 : signature KO, malformed, bad_payload → code 'invalid'
+    redirectToLoginError(res, 'invalid')
     return
   }
 
@@ -88,7 +96,8 @@ const coreHandler: ApiHandler = async (req, res) => {
       ...(ua ? { userAgent: ua } : {}),
       metadata: { reason: 'kind_mismatch', kind: verified.payload.kind },
     }).catch(() => undefined)
-    sendError(res, 'UNAUTHENTICATED', 'Lien invalide', requestId)
+    // H-04 AC#1 : kind_mismatch → code 'invalid'
+    redirectToLoginError(res, 'invalid')
     return
   }
 
@@ -100,7 +109,8 @@ const coreHandler: ApiHandler = async (req, res) => {
       ...(ua ? { userAgent: ua } : {}),
       metadata: { reason: 'jti_unknown' },
     }).catch(() => undefined)
-    sendError(res, 'UNAUTHENTICATED', 'Lien inconnu', requestId)
+    // H-04 AC#1 : jti_unknown → code 'invalid'
+    redirectToLoginError(res, 'invalid')
     return
   }
   if (stored.target_kind !== 'operator') {
@@ -112,7 +122,8 @@ const coreHandler: ApiHandler = async (req, res) => {
       ...(ua ? { userAgent: ua } : {}),
       metadata: { reason: 'wrong_target_kind', target_kind: stored.target_kind },
     }).catch(() => undefined)
-    sendError(res, 'UNAUTHENTICATED', 'Lien invalide', requestId)
+    // H-04 AC#1 : wrong_target_kind → code 'invalid'
+    redirectToLoginError(res, 'invalid')
     return
   }
   if (stored.used_at !== null) {
@@ -122,7 +133,8 @@ const coreHandler: ApiHandler = async (req, res) => {
       ...(ua ? { userAgent: ua } : {}),
       metadata: { reason: 'already_consumed' },
     }).catch(() => undefined)
-    sendError(res, 'LINK_CONSUMED', 'Lien déjà utilisé', requestId)
+    // H-04 AC#1 : already_consumed → code 'consumed'
+    redirectToLoginError(res, 'consumed')
     return
   }
 
@@ -134,7 +146,8 @@ const coreHandler: ApiHandler = async (req, res) => {
   const consumed = await consumeToken(verified.payload.jti)
   if (!consumed) {
     // Race condition (2 clicks simultanés) ou ré-consommation
-    sendError(res, 'LINK_CONSUMED', 'Lien déjà utilisé', requestId)
+    // H-04 AC#1 : race consumed → code 'consumed'
+    redirectToLoginError(res, 'consumed')
     return
   }
 
@@ -148,7 +161,8 @@ const coreHandler: ApiHandler = async (req, res) => {
       ...(ua ? { userAgent: ua } : {}),
       metadata: { reason: 'operator_disabled', jti_consumed: verified.payload.jti },
     }).catch(() => undefined)
-    sendError(res, 'UNAUTHENTICATED', 'Compte désactivé', requestId)
+    // H-04 AC#1 : operator_disabled → code 'invalid'
+    redirectToLoginError(res, 'invalid')
     return
   }
 
@@ -159,17 +173,26 @@ const coreHandler: ApiHandler = async (req, res) => {
     secret: sessionSecret,
   })
 
+  // H-04 AC#4 : lire le claim returnTo + re-valider defense-in-depth
+  const claimedReturnTo = verified.payload.returnTo
+  const safeReturnTo = isSafeReturnTo(claimedReturnTo) ? claimedReturnTo : '/admin'
+
   await logAuthEvent({
     eventType: 'operator_magic_link_verified',
     operatorId: operator.id,
     emailHash: hashEmail(operator.email),
     ...(ipHash ? { ipHash } : {}),
     ...(ua ? { userAgent: ua } : {}),
-    metadata: { jti: verified.payload.jti, ttl_sec: ttlSec },
+    // H-04 AC#4(c) : telemetry return_to_used
+    metadata: {
+      jti: verified.payload.jti,
+      ttl_sec: ttlSec,
+      return_to_used: safeReturnTo === '/admin' ? 'default' : 'custom',
+    },
   }).catch(() => undefined)
 
   res.setHeader('Set-Cookie', sessionCookie)
-  res.setHeader('Location', '/admin')
+  res.setHeader('Location', safeReturnTo)
   res.status(302).end()
 }
 
@@ -199,6 +222,26 @@ function readIp(req: ApiRequest): string | undefined {
   const firstFwd = Array.isArray(fwd) ? fwd[0] : fwd
   if (typeof firstFwd === 'string' && firstFwd.length > 0) return firstFwd.split(',')[0]?.trim()
   return undefined
+}
+
+// ---- helpers ----
+
+/**
+ * H-04 AC#1 (DN-2 Option A — inline verify.ts) — Redirige vers la page login
+ * avec un code d'erreur contextualisé au lieu de renvoyer du JSON brut.
+ *
+ * Mapping reason → code URL (cf. AC#1(h)) :
+ *   expired            → /admin/login?error=expired
+ *   already_consumed   → /admin/login?error=consumed
+ *   bad_signature | malformed | bad_payload | jti_unknown | kind_mismatch |
+ *   wrong_target_kind | operator_disabled → /admin/login?error=invalid
+ *
+ * Note : extraire dans _lib/auth/redirect-helpers.ts si 2e callsite apparaît
+ * (PATTERN-RULE-OF-THREE).
+ */
+function redirectToLoginError(res: ApiResponse, code: 'expired' | 'consumed' | 'invalid'): void {
+  res.setHeader('Location', `/admin/login?error=${code}`)
+  res.status(302).end()
 }
 
 // Rate-limit anti-brute-force : 20 tentatives/heure/IP (calque adhérent verify).
