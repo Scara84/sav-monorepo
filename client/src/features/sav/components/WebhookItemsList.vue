@@ -721,12 +721,14 @@ export default {
         let uploadErrors = []
         const uploadPromises = allFiles.map(async (file) => {
           const imgObj = fileMapping.get(file)
+          imgObj.uploadError = false // AC#2 M1 — reset au début de chaque tentative (idempotent retry)
           try {
             currentUploadFile.value = file.name
             // V1.6 AC#9 : uploadToBackend retourne { webUrl, itemId } (pas string)
             const uploadResult = await uploadToBackend(file, savDossier)
             imgObj.uploadedUrl = uploadResult.webUrl
             imgObj.itemId = uploadResult.itemId
+            imgObj.uploadError = false // AC#2 M1 — reset explicite sur success (defense-in-depth)
             uploadedFiles.value++
           } catch (e) {
             imgObj.uploadError = true
@@ -765,8 +767,23 @@ export default {
         }
 
         currentUploadFile.value = excelFile.filename
-        await uploadToBackend(excelFile, savDossier, true)
-        uploadedFiles.value++
+
+        // AC#3 M2 — try/catch local Excel cohérent avec le pattern image upload (lignes 722-736)
+        // AC#3 M3 — Le retour { webUrl, itemId } est volontairement discarded :
+        // captureWebhookSchema.files[] ne trace que les images (cf. capture-webhook.ts:56-68).
+        // L'Excel est uploadé sur OneDrive pour archivage dossier uniquement (visible via
+        // folderShareLink ligne 772). DN-2 V1.6.1 = ne PAS persister Excel onedriveItemId
+        // côté backend (pas de changement schema requis).
+        try {
+          await uploadToBackend(excelFile, savDossier, true)
+          uploadedFiles.value++
+        } catch (e) {
+          uploadStatus.value = 'error'
+          uploadErrorMessage.value = `Échec de l'upload du fichier Excel (${excelFile.filename}) : ${e.message || 'Erreur inconnue'}`
+          globalLoading.value = false
+          console.error(`Erreur upload Excel ${excelFile.filename}:`, e)
+          return // AC#3 — early-exit intentionnel (return discard, pattern lignes 752-753)
+        }
 
         // ÉTAPE 4 : Obtenir le lien de partage pour le dossier global
         const folderShareLink = await getFolderShareLink(savDossier)

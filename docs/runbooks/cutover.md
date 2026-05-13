@@ -446,7 +446,82 @@ FROM sav_files
 ORDER BY id;
 ```
 
-### Si ça casse (rollback)
+### Si ça casse
+
+> Cette section enrichie V1.6.1 (H-05 AC#5 M5) couvre les 4 cas d'erreur opérationnels
+> rencontrables pendant les 6 curl Graph + UPDATE SQL Editor + INSERT audit_trail.
+> La procédure rollback générique (post-erreur, restauration ancienne valeur) reste
+> documentée en fin de section.
+
+#### Cas 1 — Graph API répond 429 Too Many Requests (throttle)
+
+**Symptôme** : un `curl` Graph (étape 3 procédure manuelle) renvoie HTTP 429 + header `Retry-After: <N>` (ex. `Retry-After: 30`).
+
+**Cause** : trop de requêtes Graph dans la fenêtre. Le runbook V1.6 exécute 6 curl séquentiels (1 par ligne polluée), volumétrie minime, mais peut tomber sur un quota tenant si d'autres opérations Graph sont simultanées.
+
+**Remediation** :
+1. Lire le header `Retry-After` (en secondes, ex. 30).
+2. Attendre **≥ 2× la valeur** retournée (sécurité tenant, ex. `sleep 60`).
+3. Re-exécuter le `curl` pour la même ligne (idempotent — pas d'UPDATE encore lancé).
+4. Si 429 persiste après 3 tentatives : pauser **5-10 minutes**, ré-évaluer (autres opérations consommatrices ? Tenant Graph quota dépassé ?).
+5. Si bloqué > 30 min : escalader à `antho.scara@gmail.com` + reporter le runbook à H+24.
+
+**Anti-pattern** : ne PAS lancer `for i in 1..6; do curl; done` en boucle serrée sans backoff — augmente la pénalité throttle. Préférer 1×curl, vérifier le statut, passer au suivant.
+
+#### Cas 2 — Graph API répond 403 Forbidden (scope absent ou token expiré)
+
+**Symptôme** : un `curl` Graph renvoie HTTP 403 avec body :
+```json
+{"error":{"code":"accessDenied","message":"Either scp or roles claim need to be present in the token."}}
+```
+ou
+```json
+{"error":{"code":"InvalidAuthenticationToken","message":"Access token has expired or is not yet valid."}}
+```
+
+**Cause** : (a) le token Bearer utilisé n'a pas le scope `Files.Read.All` (ou équivalent app-permission), OU (b) le token est expiré (Graph tokens app-only durent ~1h).
+
+**Remediation** :
+1. **Vérifier le scope** : décoder le JWT du Bearer (ex. via `jwt.io` ou `echo $TOKEN | cut -d'.' -f2 | base64 -d | jq .roles`). Roles attendus : `Files.Read.All` ou `Sites.Read.All`.
+2. Si le scope manque : confirmer la configuration Azure AD app registration.
+3. **Rotate le token** : refaire un POST `https://login.microsoftonline.com/<tenant>/oauth2/v2.0/token` avec `grant_type=client_credentials` + `scope=https://graph.microsoft.com/.default`. Stocker le nouveau Bearer.
+4. Re-exécuter le `curl` Graph pour la ligne courante (idempotent).
+5. **NE PAS** committer le token rotaté dans le repo — env vars Vercel ou export shell uniquement.
+
+#### Cas 3 — audit_trail INSERT bloqué par RLS (rôle non service_role)
+
+**Symptôme** : l'INSERT audit_trail (étape INSERT SQL Editor) renvoie :
+```
+ERROR: 42501: new row violates row-level security policy for table "audit_trail"
+```
+
+**Cause** : l'utilisateur connecté au SQL Editor utilise le rôle `authenticated` ou `anon` au lieu de `service_role`. La policy RLS `audit_trail_insert_service_role_only` (cf. migration 7-5) bloque les INSERT depuis tout autre rôle.
+
+**Remediation** :
+1. **Vérifier le rôle SQL Editor** : Supabase Studio → SQL Editor → top-right "Role" dropdown → sélectionner `service_role`.
+2. Si l'option `service_role` n'apparaît pas : l'utilisateur n'est pas admin Supabase — escalader à `antho.scara@gmail.com` (project owner) pour exécuter l'INSERT.
+3. Re-exécuter l'INSERT audit_trail.
+4. **NE PAS désactiver la RLS** (`ALTER TABLE audit_trail DISABLE ROW LEVEL SECURITY`) pour contourner — c'est une régression sécurité critique.
+
+#### Cas 4 — CSV backup non writable (path absent, permissions, disk full)
+
+**Symptôme** : la commande de sauvegarde CSV (étape backup pré-UPDATE) renvoie :
+- `bash: No such file or directory` (dossier `results/` absent)
+- `bash: Permission denied` (droits écriture)
+- `No space left on device` (disque plein)
+
+**Cause** : environnement local mal préparé ou disque saturé.
+
+**Remediation** :
+1. **Dossier absent** : `mkdir -p client/scripts/cutover/results` puis retry.
+2. **Permission denied** : vérifier `ls -la client/scripts/cutover/` + `chmod +w results/` si nécessaire.
+3. **Disque plein** : `df -h .` pour confirmer. Libérer espace (vider `~/Downloads`, `node_modules` orphelines) avant retry.
+4. **NE PAS** sauter l'étape CSV — c'est le seul filet de sécurité forensique pré-UPDATE.
+5. **Vérifier** que le CSV créé est UTF-8 BOM (`file results/backfill-...csv` doit afficher `UTF-8 Unicode (with BOM)`).
+
+---
+
+### Si ça casse (rollback générique — post-erreur, restauration ancienne valeur)
 
 Le backfill est **non-destructif** (UPDATE d'une colonne de métadonnées, pas de suppression). En cas d'erreur :
 

@@ -141,3 +141,43 @@ describe('docs — iso-fact preservation: pre-existing runbooks untouched', () =
     expect(src).toMatch(/cutover-make-runbook|story.*5.?7|5-7/i)
   })
 })
+
+// ---------------------------------------------------------------------------
+// Case 5 — H-05 AC#5 : cutover.md §V1.6 "Si ça casse" enrichi 4 cas (V1.6.1)
+// RED before H-05 patch, GREEN after adding 4 error cases to cutover.md
+// ---------------------------------------------------------------------------
+
+describe('cutover.md — §V1.6 Si ça casse : 4 keywords opérationnels (H-05 AC#5)', () => {
+  it('H-05 — cutover.md §V1.6 "Si ça casse" contient le keyword 429 (Graph throttle cas 1)', () => {
+    if (!existsSync(resolve(RUNBOOKS_DIR, 'cutover.md'))) return
+    const src = readRunbook('cutover')
+    // Extract the section from "### Si ça casse" to the next ### heading or end of file
+    const sectionMatch = src.match(/### Si ça casse[\s\S]*?(?=\n---|\n## |\n### (?!Si ça casse)|$)/)
+    const section = sectionMatch ? sectionMatch[0] : src
+    expect(section).toMatch(/429/)
+  })
+
+  it('H-05 — cutover.md §V1.6 "Si ça casse" contient le keyword 403 (Graph scope absent cas 2)', () => {
+    if (!existsSync(resolve(RUNBOOKS_DIR, 'cutover.md'))) return
+    const src = readRunbook('cutover')
+    const sectionMatch = src.match(/### Si ça casse[\s\S]*?(?=\n---|\n## |\n### (?!Si ça casse)|$)/)
+    const section = sectionMatch ? sectionMatch[0] : src
+    expect(section).toMatch(/403/)
+  })
+
+  it('H-05 — cutover.md §V1.6 "Si ça casse" contient le keyword audit_trail (RLS cas 3)', () => {
+    if (!existsSync(resolve(RUNBOOKS_DIR, 'cutover.md'))) return
+    const src = readRunbook('cutover')
+    const sectionMatch = src.match(/### Si ça casse[\s\S]*?(?=\n---|\n## |\n### (?!Si ça casse)|$)/)
+    const section = sectionMatch ? sectionMatch[0] : src
+    expect(section).toMatch(/audit_trail/)
+  })
+
+  it('H-05 — cutover.md §V1.6 "Si ça casse" contient le keyword CSV (backup non writable cas 4)', () => {
+    if (!existsSync(resolve(RUNBOOKS_DIR, 'cutover.md'))) return
+    const src = readRunbook('cutover')
+    const sectionMatch = src.match(/### Si ça casse[\s\S]*?(?=\n---|\n## |\n### (?!Si ça casse)|$)/)
+    const section = sectionMatch ? sectionMatch[0] : src
+    expect(section).toMatch(/CSV/)
+  })
+})

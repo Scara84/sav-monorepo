@@ -218,8 +218,19 @@ export function useApiClient() {
   /**
    * Upload tous les fichiers en parallèle avec gestion d'erreurs.
    * Retourne { success, url, itemId, fileName } — itemId = Graph opaque ID (V1.6 AC#9).
+   *
+   * @deprecated V1.6.1 (H-05 AC#4 M4) — Non appelée en production (`grep` transverse 2026-05-13
+   * confirme 0 appelant dans `src/`, `api/`, `scripts/`). Le shape de retour
+   * `{ success: false, error: msg }` ne distingue pas `GRAPH_ITEM_ID_MISSING/INVALID`
+   * d'une erreur transport (axios 4xx/5xx, timeout). Si un futur appelant émerge,
+   * refactor préalable obligatoire pour propager `errorCode: 'GRAPH_ITEM_ID_INVALID' |
+   * 'NETWORK_ERROR' | 'GRAPH_403' | 'GRAPH_429' | ...` dans le shape (V1.7+ scope).
+   * Tests existants `useApiClient.test.js:307-372` conservés pour rétrocompat
+   * du contrat actuel — ne PAS supprimer la fonction sans confirmer l'absence
+   * d'appelant en runtime via grep + smoke prod.
    */
   const uploadFilesParallel = async (files, savDossier) => {
+    // TODO V1.7+ : refactor errorCode shape OR supprimer si confirmé 0 appelant 60 jours post-V1.6.1
     const uploadPromises = files.map(async (fileObj) => {
       const fileName = fileObj.file?.name || fileObj.filename
       try {
