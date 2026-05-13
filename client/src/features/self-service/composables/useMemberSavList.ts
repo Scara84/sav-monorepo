@@ -44,6 +44,8 @@ export interface UseMemberSavListReturn {
   load: (opts?: { statusFilter?: 'open' | 'closed' | 'all'; q?: string }) => Promise<void>
   loadMore: () => Promise<void>
   abort: () => void
+  // H-08 PATTERN-H08-A — clear state sans déclencher de fetch (reset onglet sans coût réseau).
+  reset: () => void
 }
 
 export function useMemberSavList(scope: MemberSavScope = 'self'): UseMemberSavListReturn {
@@ -66,6 +68,18 @@ export function useMemberSavList(scope: MemberSavScope = 'self'): UseMemberSavLi
       inflightController.abort()
       inflightController = null
     }
+  }
+
+  // H-08 PATTERN-H08-A — clear state interne sans déclencher de fetch.
+  // Utilisé au switch vers l'onglet 'self' pour que le retour sur 'group'
+  // parte d'un état propre (pas de q résiduel, pas de cursor orphelin).
+  function reset(): void {
+    abort()
+    data.value = []
+    meta.value = null
+    error.value = null
+    lastStatusFilter.value = 'all'
+    lastQ.value = ''
   }
 
   async function fetchPage(
@@ -159,5 +173,5 @@ export function useMemberSavList(scope: MemberSavScope = 'self'): UseMemberSavLi
     }
   }
 
-  return { data, meta, loading, error, load, loadMore, abort }
+  return { data, meta, loading, error, load, loadMore, abort, reset }
 }

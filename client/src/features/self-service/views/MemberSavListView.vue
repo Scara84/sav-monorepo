@@ -244,7 +244,13 @@ function goToDetail(id: number): void {
 }
 
 function onFilterChange(): void {
-  // V1 : filtre statut client-side uniquement (pas de re-fetch).
+  // H-08 AC#3 — sur l'onglet group, le filtre statut doit être appliqué côté
+  // serveur (cohérence pagination cursor + filtre q server-side).
+  // Sur l'onglet self, V1 reste client-side via `visibleRows` (data déjà chargée,
+  // pas de pagination cursor active).
+  if (activeTab.value === 'group') {
+    void groupList.load({ statusFilter: filter.value, q: groupQ.value })
+  }
 }
 
 function onTabClick(tab: MemberSavScope): void {
@@ -253,14 +259,16 @@ function onTabClick(tab: MemberSavScope): void {
   // pour éviter les races (le composable abort() est idempotent).
   if (tab === 'group') {
     selfList.abort()
-    // Lazy-load groupList la première fois qu'on ouvre l'onglet.
+    // H-08 AC#2 — lazy-load groupList la première fois qu'on ouvre l'onglet.
+    // Utilise filter.value (et non 'all' hardcodé) pour aligner backend et UI.
     if (groupList.meta.value === null && !groupList.loading.value) {
-      void groupList.load({ statusFilter: 'all' })
+      void groupList.load({ statusFilter: filter.value })
     }
   } else {
-    groupList.abort()
-    // CR W6.5-7 (2026-04-29) — reset `groupQ` quand on quitte l'onglet group
-    // pour éviter qu'il persiste cross-tab et confuse l'UX au retour.
+    // H-08 AC#1 — reset complet (state composable + UI) au switch vers self.
+    // reset() appelle abort() en interne, puis clear data/meta/lastQ/lastStatusFilter.
+    // Ainsi le retour sur l'onglet group repart d'un état propre (pas de q résiduel).
+    groupList.reset()
     groupQ.value = ''
   }
 }
