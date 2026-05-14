@@ -574,7 +574,7 @@ development_status:
 
   # Sprint 4 — Ops post-prod (manuel / post-déploiement)
   h-13-checklist-j30: done  # W73+W75 résolus 2026-05-14 (env vars nettoyées + bloc HMAC résiduel + Pennylane v2 validation passive OK). W72 découplé → h-13c, W76 découplé → h-13b.
-  h-13b-w76-communication-adherents: backlog  # W76 découplé de h-13 — décision PM (banner/email/inaction) bloquante. Pas de date plancher (lié volume email_mismatch post-h-13).
+  h-13b-w76-communication-adherents: backlog  # W76 découplé de h-13 — pré-décision PM 2026-05-14: (c) inaction documentée (volume <50/jour observé) — confirmer 28 mai sur baseline 30j vraie. Re-trigger ≥100/jour → ré-ouvrir en (a) banner.
   h-13c-make-scenarios-deletion: backlog  # W72 découplé de h-13 — suppression Make scenarios 3197846+3203836. Pas de date plancher (scenarios disabled inertes). Coût marginal ~18€/mois jugé acceptable temporairement. DN-7 2026-05-14.
   h-14-benchmarks-prod: backlog  # R-bench reports.ts + W68 bench MARTINEZ : à exécuter après déploiement prod (URL stable + MSAL + OneDrive configurés). Manuel.
 
