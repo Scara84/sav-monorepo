@@ -14,7 +14,17 @@ import { ref } from 'vue'
  *   - load(savId)
  *   - addComment(body) — optimistic (insert head, replace on 201, rollback on err)
  *   - reload()
+ *   - reset()         — H-11: cleanup polling + refs (PATTERN-H08-A)
+ *
+ * H-11 Polling (PATTERN-H11-A + PATTERN-H11-B):
+ *   - Démarre un polling 30s si creditNote.hasPdf === false après load()
+ *   - S'arrête dès que hasPdf === true, creditNote absent, reset(), ou cap 20 tentatives
+ *   - pollOnce() ne touche pas loading/error (silent best-effort)
  */
+
+// LOW-4: named constants — importable in spec for assertions
+export const POLL_INTERVAL_MS = 30_000
+export const POLL_MAX_ATTEMPTS = 20
 
 export interface MemberSavLine {
   id: number
@@ -80,6 +90,7 @@ export interface UseMemberSavDetailReturn {
   reload: () => Promise<void>
   addComment: (body: string) => Promise<{ ok: true } | { ok: false; reason: string }>
   refreshAfterUpload: () => Promise<void>
+  reset: () => void
 }
 
 export function useMemberSavDetail(): UseMemberSavDetailReturn {
@@ -88,7 +99,70 @@ export function useMemberSavDetail(): UseMemberSavDetailReturn {
   const error = ref<LoadError>(null)
   const lastSavId = ref<number | null>(null)
 
+  // PATTERN-H11-A: function-scoped non-reactive handles (per-instance, not shared)
+  let pollTimer: ReturnType<typeof setInterval> | null = null
+  let pollAttempts = 0
+
+  // HIGH-3: disposed flag — set by reset() to prevent ghost-writes after unmount
+  let disposed = false
+
+  // -------------------------------------------------------------------------
+  // H-11 PATTERN-H11-A — Polling stop
+  // -------------------------------------------------------------------------
+  function stopPolling(): void {
+    if (pollTimer !== null) {
+      clearInterval(pollTimer)
+      pollTimer = null
+    }
+    pollAttempts = 0
+  }
+
+  // -------------------------------------------------------------------------
+  // H-11 PATTERN-H11-B — Silent fetch (ne touche pas loading/error)
+  // -------------------------------------------------------------------------
+  async function pollOnce(): Promise<void> {
+    if (lastSavId.value === null) return
+    try {
+      const res = await fetch(`/api/self-service/sav/${lastSavId.value}`, {
+        method: 'GET',
+        credentials: 'include',
+        headers: { Accept: 'application/json' },
+      })
+      if (!res.ok) return // silent fail — retentera dans 30s
+      const body = (await res.json()) as { data: MemberSavDetail }
+      // HIGH-3: guard against ghost-write after reset() (disposed instance)
+      if (disposed) return
+      data.value = body.data // remplace en place — pas de loading flicker
+      const cn = body.data.creditNote
+      if (!cn || cn.hasPdf === true) {
+        stopPolling()
+      }
+    } catch {
+      // silent — retentera dans 30s
+    }
+  }
+
+  // -------------------------------------------------------------------------
+  // H-11 PATTERN-H11-A — Démarrage conditionnel du polling
+  // -------------------------------------------------------------------------
+  function startPollingIfNeeded(): void {
+    if (pollTimer !== null) return // ne pas empiler (AC #2 (e))
+    const cn = data.value?.creditNote
+    if (!cn) return // pas d'avoir → pas de polling (AC #1 (i))
+    if (cn.hasPdf === true) return // PDF dispo → pas de polling (AC #1 (j))
+    pollAttempts = 0
+    pollTimer = setInterval(() => {
+      pollAttempts += 1
+      if (pollAttempts > POLL_MAX_ATTEMPTS) {
+        stopPolling()
+        return
+      }
+      void pollOnce()
+    }, POLL_INTERVAL_MS)
+  }
+
   async function load(savId: number): Promise<void> {
+    stopPolling() // AC #1 (h) — stoppe l'ancien polling avant nouveau fetch
     lastSavId.value = savId
     loading.value = true
     error.value = null
@@ -109,7 +183,10 @@ export function useMemberSavDetail(): UseMemberSavDetailReturn {
         return
       }
       const body = (await res.json()) as { data: MemberSavDetail }
+      // HIGH-3 / MEDIUM-5: guard against ghost-write if reset() called while in-flight
+      if (disposed) return
       data.value = body.data
+      startPollingIfNeeded() // AC #1 (f) — démarre le polling si creditNote pending
     } catch {
       error.value = 'generic'
       data.value = null
@@ -120,6 +197,20 @@ export function useMemberSavDetail(): UseMemberSavDetailReturn {
 
   async function reload(): Promise<void> {
     if (lastSavId.value !== null) await load(lastSavId.value)
+  }
+
+  // -------------------------------------------------------------------------
+  // H-11 AC #2 (a) — reset() exposé publiquement (PATTERN-H08-A)
+  // -------------------------------------------------------------------------
+  function reset(): void {
+    // HIGH-3: mark instance as disposed BEFORE stopPolling so any in-flight
+    // pollOnce() or load() that resolves after reset() won't ghost-write data.
+    disposed = true
+    stopPolling()
+    data.value = null
+    error.value = null
+    loading.value = false
+    lastSavId.value = null
   }
 
   async function addComment(body: string): Promise<{ ok: true } | { ok: false; reason: string }> {
@@ -181,5 +272,5 @@ export function useMemberSavDetail(): UseMemberSavDetailReturn {
     await reload()
   }
 
-  return { data, loading, error, load, reload, addComment, refreshAfterUpload }
+  return { data, loading, error, load, reload, addComment, refreshAfterUpload, reset }
 }

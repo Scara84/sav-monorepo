@@ -99,7 +99,7 @@
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, watch } from 'vue'
 import { useRoute, RouterLink } from 'vue-router'
 import { useMemberSavDetail } from '../composables/useMemberSavDetail'
 import MemberSavSummary from '../components/MemberSavSummary.vue'
@@ -120,7 +120,10 @@ import MemberSavStatusHistory from '../components/MemberSavStatusHistory.vue'
  */
 
 const route = useRoute()
-const { data, loading, error, load, addComment, refreshAfterUpload } = useMemberSavDetail()
+const { data, loading, error, load, addComment, refreshAfterUpload, reset } = useMemberSavDetail()
+
+// H-11 AC #2 (b) — cleanup polling quand l'adhérent navigue ailleurs
+onBeforeUnmount(() => reset())
 
 // Story 6.5 AC #9 — nom court de l'adhérent propriétaire pour le badge groupe.
 const memberFullName = computed<string>(() => {
