@@ -40,7 +40,7 @@ async function applyFilters(): Promise<void> {
 async function onRetry(push: ErpPushItem): Promise<void> {
   retrying.value[push.id] = true
   try {
-    await erp.retryPush(push.id)
+    await erp.retryPush(push.id, { removeFromList: filters.status === 'failed' })
     showToast('success', `Push ${push.id} replanifié — le cron le reprendra.`)
   } catch {
     showToast('error', erp.error.value ?? 'Retry impossible.')

@@ -1,10 +1,13 @@
-/* global globalThis */
 import { describe, it, expect, vi, beforeEach } from 'vitest'
-import { mount } from '@vue/test-utils'
+import { mount, flushPromises } from '@vue/test-utils'
 
 /**
  * Story 5.7 AC #6 — Home.vue input validation cutover.
  * UX change : input passe de hashid 14 chars à `F-YYYY-NNNNN`.
+ *
+ * H-10 W95 — Mise à jour : les alert() ont été remplacés par un toast inline.
+ * Les tests 5.7 assertant sur stubAlert ont été mis à jour pour asserter
+ * sur le DOM [role="alert"] à la place (comportement final inchangé, UX améliorée).
  */
 
 const mocks = vi.hoisted(() => ({
@@ -29,17 +32,12 @@ vi.mock('../../components/HeroSection.vue', () => ({
 
 import HomeView from '../Home.vue'
 
-const flush = () => new Promise((r) => setTimeout(r, 0))
-
 const $router = { push: vi.fn() }
-const stubAlert = vi.fn()
 
 beforeEach(() => {
   mocks.lookupCalls = []
   mocks.lookupError = null
   $router.push.mockReset()
-  stubAlert.mockReset()
-  globalThis.alert = stubAlert
 })
 
 function makeWrapper() {
@@ -57,8 +55,7 @@ describe('Home.vue — input numéro facture cutover Story 5.7', () => {
     await w.find('#invoiceNumber').setValue('F-2025-12345')
     await w.find('#email').setValue('user@example.com')
     await w.find('form').trigger('submit.prevent')
-    await flush()
-    await flush()
+    await flushPromises()
     expect(mocks.lookupCalls.length).toBe(1)
     expect(mocks.lookupCalls[0]).toEqual({
       invoiceNumber: 'F-2025-12345',
@@ -70,26 +67,28 @@ describe('Home.vue — input numéro facture cutover Story 5.7', () => {
     expect(arg.query.invoiceNumber).toBe('F-2025-12345')
   })
 
-  it("saisie ZF4SLLB1CU (legacy hashid) → message d'erreur, pas de fetch", async () => {
+  it("saisie ZF4SLLB1CU (legacy hashid) → toast d'erreur, pas de fetch", async () => {
+    // H-10 W95 : alert() remplacé par toast [role="alert"]
     const w = makeWrapper()
     await w.find('#invoiceNumber').setValue('ZF4SLLB1CU')
     await w.find('#email').setValue('user@example.com')
     await w.find('form').trigger('submit.prevent')
-    await flush()
+    await flushPromises()
     expect(mocks.lookupCalls.length).toBe(0)
-    expect(stubAlert).toHaveBeenCalledWith(
-      'Le numéro de facture doit avoir le format F-AAAA-NNNNN.'
-    )
+    const toast = w.find('[role="alert"]')
+    expect(toast.exists()).toBe(true)
+    expect(toast.text()).toContain('F-AAAA-NNNNN')
   })
 
-  it("saisie F-25-X invalide → message d'erreur", async () => {
+  it("saisie F-25-X invalide → toast d'erreur", async () => {
+    // H-10 W95 : alert() remplacé par toast [role="alert"]
     const w = makeWrapper()
     await w.find('#invoiceNumber').setValue('F-25-X')
     await w.find('#email').setValue('user@example.com')
     await w.find('form').trigger('submit.prevent')
-    await flush()
+    await flushPromises()
     expect(mocks.lookupCalls.length).toBe(0)
-    expect(stubAlert).toHaveBeenCalled()
+    expect(w.find('[role="alert"]').exists()).toBe(true)
   })
 
   it('trim + uppercase tolérés (f-2025-37039 → F-2025-37039)', async () => {
@@ -97,32 +96,33 @@ describe('Home.vue — input numéro facture cutover Story 5.7', () => {
     await w.find('#invoiceNumber').setValue('  f-2025-37039  ')
     await w.find('#email').setValue('user@example.com')
     await w.find('form').trigger('submit.prevent')
-    await flush()
-    await flush()
+    await flushPromises()
     expect(mocks.lookupCalls[0]?.invoiceNumber).toBe('F-2025-37039')
   })
 
-  it('404 → alert "Référence facture incorrecte"', async () => {
+  it('404 → toast "Référence facture incorrecte."', async () => {
+    // H-10 W95 : alert() remplacé par toast [role="alert"]
     mocks.lookupError = { response: { status: 404 } }
     const w = makeWrapper()
     await w.find('#invoiceNumber').setValue('F-2099-99999')
     await w.find('#email').setValue('user@example.com')
     await w.find('form').trigger('submit.prevent')
-    await flush()
-    await flush()
-    expect(stubAlert).toHaveBeenCalledWith('Référence facture incorrecte.')
+    await flushPromises()
+    const toast = w.find('[role="alert"]')
+    expect(toast.exists()).toBe(true)
+    expect(toast.text()).toContain('Référence facture incorrecte.')
   })
 
-  it('429 → alert rate-limit', async () => {
+  it('429 → toast rate-limit', async () => {
+    // H-10 W95 : alert() remplacé par toast [role="alert"]
     mocks.lookupError = { response: { status: 429 } }
     const w = makeWrapper()
     await w.find('#invoiceNumber').setValue('F-2025-12345')
     await w.find('#email').setValue('user@example.com')
     await w.find('form').trigger('submit.prevent')
-    await flush()
-    await flush()
-    expect(stubAlert).toHaveBeenCalledWith(
-      'Trop de tentatives, merci de réessayer dans quelques instants.'
-    )
+    await flushPromises()
+    const toast = w.find('[role="alert"]')
+    expect(toast.exists()).toBe(true)
+    expect(toast.text()).toContain('Trop de tentatives')
   })
 })

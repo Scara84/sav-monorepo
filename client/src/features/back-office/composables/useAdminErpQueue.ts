@@ -37,7 +37,8 @@ export interface UseAdminErpQueueApi {
   loading: Ref<boolean>
   error: Ref<string | null>
   fetchPushes: (filters: ErpQueueFilters, cursor?: string) => Promise<void>
-  retryPush: (id: number) => Promise<void>
+  // H-10 W117 — opts.removeFromList contrôle la suppression vs mutation en place (rétrocompat).
+  retryPush: (id: number, opts?: { removeFromList?: boolean }) => Promise<void>
 }
 
 interface ApiErrorShape {
@@ -96,7 +97,10 @@ export function useAdminErpQueue(): UseAdminErpQueueApi {
     }
   }
 
-  async function retryPush(id: number): Promise<void> {
+  // H-10 W117 PATTERN-H10-B — Signature étendue rétrocompat : opts.removeFromList
+  // permet au caller de contrôler si la ligne doit être supprimée de la liste locale
+  // (cas filtre status='failed') ou mutée en status='pending' (comportement par défaut).
+  async function retryPush(id: number, opts?: { removeFromList?: boolean }): Promise<void> {
     error.value = null
     try {
       const res = await fetch(`/api/admin/erp-queue/${id}/retry`, {
@@ -110,16 +114,21 @@ export function useAdminErpQueue(): UseAdminErpQueueApi {
         error.value = msg
         throw new Error(msg)
       }
-      // Le push passe en pending — on update localement.
-      const idx = pushes.value.findIndex((p) => p.id === id)
-      if (idx >= 0) {
-        const cur = pushes.value[idx]!
-        pushes.value[idx] = {
-          ...cur,
-          status: 'pending',
-          attempts: 0,
-          last_error: null,
-          next_retry_at: null,
+      if (opts?.removeFromList === true) {
+        // Retire la ligne de la liste — cohérent si le filtre courant exclut le nouveau status.
+        pushes.value = pushes.value.filter((p) => p.id !== id)
+      } else {
+        // Rétrocompat : mute la ligne en place vers status='pending'.
+        const idx = pushes.value.findIndex((p) => p.id === id)
+        if (idx >= 0) {
+          const cur = pushes.value[idx]!
+          pushes.value[idx] = {
+            ...cur,
+            status: 'pending',
+            attempts: 0,
+            last_error: null,
+            next_retry_at: null,
+          }
         }
       }
     } catch (e) {

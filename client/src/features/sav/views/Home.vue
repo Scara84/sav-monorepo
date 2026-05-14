@@ -8,6 +8,14 @@
         <h2 class="text-2xl font-extrabold mb-6 text-center text-[color:var(--main-orange)]">
           Demande de Service Après-Vente
         </h2>
+        <!-- H-10 W95 — Toast inline non-bloquant (remplace les alert() de Story 5.7). -->
+        <!-- role="alert" + aria-live="assertive" : annonce immédiate pour screen readers. -->
+        <div v-if="toast" role="alert" aria-live="assertive" :class="`toast toast-${toast.kind}`">
+          {{ toast.message }}
+          <button type="button" class="toast-dismiss" @click="dismissToast" aria-label="Fermer">
+            ×
+          </button>
+        </div>
         <form @submit.prevent="submitForm" class="space-y-4">
           <div>
             <label
@@ -39,7 +47,7 @@
               Adresse e-mail :
             </label>
             <p class="text-sm text-gray-500 italic mb-2 ml-0.5">
-              Il s’agit de l’adresse mail indiquée sur votre facture.
+              Il s'agit de l'adresse mail indiquée sur votre facture.
             </p>
             <input
               type="email"
@@ -70,14 +78,36 @@ export default {
     return {
       invoiceNumber: '',
       email: '',
+      // H-10 W95 — état toast inline (remplace les alert() bloquants).
+      // null = pas de toast visible. kind: 'error' | 'success'.
+      toast: null,
+      // M-1 — référence au timer en vol pour clearTimeout avant re-déclenchement.
+      toastTimer: null,
     }
   },
   methods: {
+    // H-10 W95 PATTERN-H10 — Toast non-bloquant avec auto-dismiss 5s.
+    // Durée 5s (vs 4s ErpQueueView) : page publique, utilisateurs moins habitués.
+    // M-1 — clearTimeout avant chaque nouvel appel évite le dismiss prématuré
+    // par un timer précédent toujours en vol (race 2 erreurs rapprochées).
+    showError(message) {
+      if (this.toastTimer) clearTimeout(this.toastTimer)
+      this.toast = { kind: 'error', message }
+      this.toastTimer = setTimeout(() => {
+        this.toast = null
+        this.toastTimer = null
+      }, 5000)
+    },
+    dismissToast() {
+      if (this.toastTimer) clearTimeout(this.toastTimer)
+      this.toastTimer = null
+      this.toast = null
+    },
     async submitForm() {
       const invoiceNumber = (this.invoiceNumber || '').trim().toUpperCase()
       // Story 5.7 — input direct = numéro Pennylane F-YYYY-NNNNN (UX cutover Make).
       if (!/^F-\d{4}-\d{1,8}$/.test(invoiceNumber)) {
-        alert('Le numéro de facture doit avoir le format F-AAAA-NNNNN.')
+        this.showError('Le numéro de facture doit avoir le format F-AAAA-NNNNN.')
         return
       }
       try {
@@ -101,22 +131,28 @@ export default {
         if (error.response) {
           const status = error.response.status
           if (status === 404) {
-            alert('Référence facture incorrecte.')
+            this.showError('Référence facture incorrecte.')
             return
           }
           if (status === 400) {
             const msg = error.response.data?.error?.message || 'Email incorrect.'
-            alert(msg)
+            this.showError(msg)
             return
           }
           if (status === 429) {
-            alert('Trop de tentatives, merci de réessayer dans quelques instants.')
+            this.showError('Trop de tentatives, merci de réessayer dans quelques instants.')
             return
           }
         }
-        alert('Une erreur est survenue lors de la recherche de votre facture.')
+        this.showError('Une erreur est survenue lors de la recherche de votre facture.')
       }
     },
+  },
+  // M-1 — Vue 3 Options API lifecycle hook (beforeDestroy = Vue 2 équivalent).
+  // Empêche un state update (this.toast = null) sur instance déjà unmountée
+  // si l'utilisateur navigue pendant qu'un timer est en vol.
+  beforeUnmount() {
+    if (this.toastTimer) clearTimeout(this.toastTimer)
   },
 }
 </script>
@@ -128,5 +164,44 @@ export default {
   z-index: 100;
   background: var(--bg-white, #fff);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+}
+</style>
+
+<style scoped>
+/* H-10 W95 — Toast inline non-bloquant. Pattern dupliqué (conforme AC #2.6 / DN-3). */
+.toast {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  padding: 0.75rem 1rem;
+  border-radius: 0.5rem;
+  margin-bottom: 1rem;
+  font-size: 0.95rem;
+  font-weight: 500;
+}
+.toast-error {
+  background: #fde8e8;
+  color: #c62828;
+  border: 1px solid #f5c6c6;
+}
+.toast-success {
+  background: #e8f5e9;
+  color: #2e7d32;
+  border: 1px solid #c8e6c9;
+}
+.toast-dismiss {
+  background: none;
+  border: none;
+  cursor: pointer;
+  font-size: 1.2rem;
+  line-height: 1;
+  padding: 0 0.25rem;
+  color: inherit;
+  opacity: 0.7;
+  flex-shrink: 0;
+}
+.toast-dismiss:hover {
+  opacity: 1;
 }
 </style>

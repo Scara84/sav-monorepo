@@ -248,6 +248,8 @@ function closeExportModal(): void {
 // `exportToast`. Pas de dépendance toast lib externe — mini overlay local.
 const csvExport = useSavExport()
 const exportMenuOpen = ref(false)
+// H-10 W48 — ref sur le bouton trigger Export pour restaurer le focus après fermeture Esc.
+const exportTriggerRef = ref<HTMLButtonElement | null>(null)
 const exportToast = ref<{
   variant: 'info' | 'success' | 'error'
   message: string
@@ -259,6 +261,12 @@ function toggleExportMenu(): void {
 }
 function closeExportMenu(): void {
   exportMenuOpen.value = false
+}
+// H-10 W48 PATTERN-H10-A — Fermeture Esc + restauration focus (WCAG 2.1 AA).
+function onMenuEscape(): void {
+  if (!exportMenuOpen.value) return
+  exportMenuOpen.value = false
+  exportTriggerRef.value?.focus()
 }
 // P14 CR — auto-dismiss du toast success après 4s (info/error restent
 // jusqu'à action user). Token capture pour ne pas dismiss un toast plus
@@ -318,11 +326,13 @@ async function runExport(format: ExportFormat): Promise<void> {
           Export fournisseur
         </button>
         <!-- Story 5.4 AC #8 — Bouton « Exporter » avec menu CSV/XLSX. -->
-        <div class="export-csv-wrapper">
+        <!-- H-10 W48 — @keydown.esc.stop scoped au wrapper (DN-1(a)) : ferme le menu et restaure le focus. -->
+        <div class="export-csv-wrapper" @keydown.esc.stop="onMenuEscape">
           <button
             type="button"
             class="btn-export"
             data-testid="btn-export-csv"
+            ref="exportTriggerRef"
             :aria-expanded="exportMenuOpen"
             aria-haspopup="menu"
             :disabled="csvExport.downloading.value"

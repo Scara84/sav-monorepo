@@ -29,7 +29,9 @@ const querySchema = z.object({
 interface RpcRow {
   product_id: number | string
   product_code: string
-  name_fr: string
+  // H-10 R5 DN-4β — name_fr est string | null : la table de retour SQL n'a pas de NOT NULL
+  // même si products.name_fr est NOT NULL côté source. Fallback appliqué dans le .map().
+  name_fr: string | null
   sav_count: number | string
   total_cents: number | string
 }
@@ -97,7 +99,8 @@ export const topProductsHandler: ApiHandler = async (req, res) => {
     const items: TopProductItem[] = rows.map((r) => ({
       product_id: num(r.product_id),
       product_code: r.product_code,
-      name_fr: r.name_fr,
+      // H-10 R5 PATTERN-H10-C — Fallback si name_fr null/vide : afficher le product_code.
+      name_fr: r.name_fr?.trim() || r.product_code,
       sav_count: num(r.sav_count),
       total_cents: num(r.total_cents),
     }))

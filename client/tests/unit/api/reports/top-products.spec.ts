@@ -137,4 +137,95 @@ describe('GET /api/reports/top-products', () => {
     const body = res.jsonBody as { data: { window_days: number } }
     expect(body.data.window_days).toBe(90)
   })
+
+  // ---------------------------------------------------------------------------
+  // H-10 R5 — Fallback name_fr → product_code quand name_fr est null/vide
+  // Stratégie β retenue (DN-4 β) : fallback côté handler TS (pas de migration SQL).
+  // AC #4.2 : name_fr: r.name_fr?.trim() || r.product_code dans le .map()
+  // ---------------------------------------------------------------------------
+
+  it('R5-β: name_fr null → fallback sur product_code dans la réponse (AC #4.2)', async () => {
+    // RED avant dev : le handler retourne actuellement name_fr=null tel quel
+    // (pas de fallback), donc items[0].name_fr sera null au lieu de 'PROD-A'.
+    state.rpcRows = [
+      {
+        product_id: 1,
+        product_code: 'PROD-A',
+        name_fr: null as unknown as string, // RPC peut retourner null (type table SQL sans NOT NULL)
+        sav_count: 5,
+        total_cents: 100,
+      },
+    ]
+    const res = mockRes()
+    await topProductsHandler(operatorReq({}), res)
+    expect(res.statusCode).toBe(200)
+    const body = res.jsonBody as {
+      data: { items: Array<{ name_fr: string; product_code: string }> }
+    }
+    expect(body.data.items).toHaveLength(1)
+    // Après le fix R5-β, name_fr doit être le product_code (fallback)
+    expect(body.data.items[0]!.name_fr).toBe('PROD-A')
+    // product_code doit être préservé tel quel
+    expect(body.data.items[0]!.product_code).toBe('PROD-A')
+  })
+
+  it('R5-β: name_fr chaîne vide → fallback sur product_code (AC #4.2)', async () => {
+    // RED avant dev : name_fr='' retourné tel quel (cellule vide en UI).
+    // Après fix : trim() de '' = '' → falsy → fallback sur product_code.
+    state.rpcRows = [
+      {
+        product_id: 2,
+        product_code: 'PROD-B',
+        name_fr: '',
+        sav_count: 3,
+        total_cents: 50,
+      },
+    ]
+    const res = mockRes()
+    await topProductsHandler(operatorReq({}), res)
+    expect(res.statusCode).toBe(200)
+    const body = res.jsonBody as {
+      data: { items: Array<{ name_fr: string; product_code: string }> }
+    }
+    expect(body.data.items[0]!.name_fr).toBe('PROD-B')
+  })
+
+  it('R5-β: name_fr avec espaces seuls → fallback sur product_code (AC #4.2 trim)', async () => {
+    // RED avant dev : name_fr='   ' retourné tel quel après trim() → '' → fallback.
+    state.rpcRows = [
+      {
+        product_id: 3,
+        product_code: 'PROD-C',
+        name_fr: '   ',
+        sav_count: 1,
+        total_cents: 20,
+      },
+    ]
+    const res = mockRes()
+    await topProductsHandler(operatorReq({}), res)
+    const body = res.jsonBody as {
+      data: { items: Array<{ name_fr: string }> }
+    }
+    expect(body.data.items[0]!.name_fr).toBe('PROD-C')
+  })
+
+  it('R5-β: name_fr non vide → préservé tel quel, pas de fallback (happy path préservé)', async () => {
+    // GREEN : le handler préserve déjà la valeur quand name_fr est non vide.
+    // Ce test garantit la non-régression post-fix.
+    state.rpcRows = [
+      {
+        product_id: 4,
+        product_code: 'PROD-D',
+        name_fr: 'Pomme Golden 5kg',
+        sav_count: 8,
+        total_cents: 200,
+      },
+    ]
+    const res = mockRes()
+    await topProductsHandler(operatorReq({}), res)
+    const body = res.jsonBody as {
+      data: { items: Array<{ name_fr: string }> }
+    }
+    expect(body.data.items[0]!.name_fr).toBe('Pomme Golden 5kg')
+  })
 })
