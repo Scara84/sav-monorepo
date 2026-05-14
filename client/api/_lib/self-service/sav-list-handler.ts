@@ -224,6 +224,7 @@ const coreHandler: ApiHandler = async (req, res) => {
   interface SelfServiceSavBuilder {
     eq: (c: string, v: unknown) => SelfServiceSavBuilder
     neq: (c: string, v: unknown) => SelfServiceSavBuilder
+    is: (c: string, v: null) => SelfServiceSavBuilder
     in: (c: string, v: unknown[]) => SelfServiceSavBuilder
     or: (f: string) => SelfServiceSavBuilder
     ilike: (c: string, v: string) => SelfServiceSavBuilder
@@ -245,6 +246,7 @@ const coreHandler: ApiHandler = async (req, res) => {
       query = (base as unknown as SelfServiceSavBuilder)
         .eq('group_id', user.groupId as number)
         .neq('member_id', memberId)
+        .is('members.anonymized_at', null) // H-12 W6.5-3 — RGPD : exclure les SAV liés à un member anonymisé
     } else {
       query = (base as unknown as SelfServiceSavBuilder).eq('member_id', memberId)
     }

@@ -21,7 +21,12 @@ interface SavTestRow {
   total_amount_cents: number
   line_count: number
   has_credit_note: boolean
-  members?: { first_name: string | null; last_name: string | null; email?: string | null }
+  members?: {
+    first_name: string | null
+    last_name: string | null
+    email?: string | null
+    anonymized_at?: string | null
+  }
 }
 
 const db = vi.hoisted(() => ({
@@ -39,6 +44,7 @@ const db = vi.hoisted(() => ({
   capturedFilters: {
     eqs: [] as Array<[string, unknown]>,
     neqs: [] as Array<[string, unknown]>,
+    is: [] as Array<[string, unknown]>,
     ins: [] as Array<[string, unknown[]]>,
     ilikes: [] as Array<[string, string]>,
     ors: [] as string[],
@@ -54,6 +60,7 @@ vi.mock('../../../../api/_lib/clients/supabase-admin', () => {
       neqMember: undefined as number | undefined,
       statusIn: undefined as string[] | undefined,
       qIlike: undefined as string | undefined,
+      excludeAnonymized: false as boolean,
     }
     const builder: Record<string, unknown> = {
       eq(col: string, val: unknown) {
@@ -65,6 +72,13 @@ vi.mock('../../../../api/_lib/clients/supabase-admin', () => {
       neq(col: string, val: unknown) {
         db.capturedFilters.neqs.push([col, val])
         if (col === 'member_id') filters.neqMember = Number(val)
+        return builder
+      },
+      is(col: string, val: unknown) {
+        db.capturedFilters.is.push([col, val])
+        if (col === 'members.anonymized_at' && val === null) {
+          filters.excludeAnonymized = true
+        }
         return builder
       },
       in(col: string, vals: unknown[]) {
@@ -114,6 +128,11 @@ vi.mock('../../../../api/_lib/clients/supabase-admin', () => {
           // Mock simpliste : retire les `%` et `\` pour le matching client-mock.
           const needle = filters.qIlike.replace(/[\\%]/g, '').toLowerCase()
           rows = rows.filter((r) => (r.members?.last_name ?? '').toLowerCase().includes(needle))
+        }
+        if (filters.excludeAnonymized) {
+          // H-12 W6.5-3 — RGPD : exclure les SAV dont members.anonymized_at IS NOT NULL.
+          // `undefined` est traité comme null (membre actif, pas anonymisé).
+          rows = rows.filter((r) => (r.members?.anonymized_at ?? null) === null)
         }
         return resolve({ data: rows, error: null, count: rows.length })
       },
@@ -202,6 +221,7 @@ function resetCaptured(): void {
   db.capturedFilters = {
     eqs: [],
     neqs: [],
+    is: [],
     ins: [],
     ilikes: [],
     ors: [],
@@ -453,5 +473,154 @@ describe('GET /api/self-service/sav — Story 6.5 scope=group', () => {
     expect(res.statusCode).toBe(200)
     // .or(...) appelé pour le cursor
     expect(db.capturedFilters.ors.some((s) => s.includes('received_at.lt.'))).toBe(true)
+  })
+
+  // ---------------------------------------------------------------------------
+  // H-12 W6.5-3 — RGPD filtrage membres anonymisés scope=group
+  // ---------------------------------------------------------------------------
+
+  it("S6.5 W6.5-3-T1 scope=group exclut le SAV d'un member anonymisé", async () => {
+    const { savListHandler } = await import('../../../../api/_lib/self-service/sav-list-handler')
+    // SAV id=2 : member 77 anonymisé (anonymized_at IS NOT NULL) → doit disparaître.
+    pushSav({
+      id: 2,
+      member_id: 77,
+      group_id: 5,
+      members: {
+        first_name: 'ANON',
+        last_name: 'XXX_a1b2c3d4',
+        anonymized_at: '2026-05-01T10:00:00Z',
+      },
+    })
+    // SAV id=3 : member 88 actif (anonymized_at IS NULL) → doit rester visible.
+    pushSav({
+      id: 3,
+      member_id: 88,
+      group_id: 5,
+      members: { first_name: 'Sophie', last_name: 'Durand', anonymized_at: null },
+    })
+    const req = mockReq({
+      method: 'GET',
+      cookies: { sav_session: managerToken(42, 5) },
+      query: { scope: 'group' },
+    })
+    const res = mockRes()
+    await savListHandler(req, res)
+    expect(res.statusCode).toBe(200)
+    const body = res.jsonBody as { data: Array<{ id: number }> }
+    // Seul id=3 (membre actif) doit apparaître.
+    expect(body.data).toHaveLength(1)
+    expect(body.data[0]!.id).toBe(3)
+    // Le filtre .is('members.anonymized_at', null) doit avoir été posé sur le builder.
+    const isFilter = db.capturedFilters.is.find(([col]) => col === 'members.anonymized_at')
+    expect(isFilter).toBeDefined()
+    expect(isFilter![1]).toBeNull()
+  })
+
+  it('S6.5 W6.5-3-T2 scope=group — members actifs (anonymized_at=null) toujours visibles (régression)', async () => {
+    const { savListHandler } = await import('../../../../api/_lib/self-service/sav-list-handler')
+    // Trois SAV liés à trois membres actifs du groupe 5, tous anonymized_at=null.
+    pushSav({
+      id: 10,
+      member_id: 71,
+      group_id: 5,
+      members: { first_name: 'Alice', last_name: 'Dupont', anonymized_at: null },
+    })
+    pushSav({
+      id: 11,
+      member_id: 72,
+      group_id: 5,
+      members: { first_name: 'Bob', last_name: 'Martin', anonymized_at: null },
+    })
+    pushSav({
+      id: 12,
+      member_id: 73,
+      group_id: 5,
+      members: { first_name: 'Claire', last_name: 'Bernard', anonymized_at: null },
+    })
+    const req = mockReq({
+      method: 'GET',
+      cookies: { sav_session: managerToken(42, 5) },
+      query: { scope: 'group' },
+    })
+    const res = mockRes()
+    await savListHandler(req, res)
+    expect(res.statusCode).toBe(200)
+    const body = res.jsonBody as {
+      data: Array<{ id: number; member?: { firstName: string | null; lastName: string | null } }>
+    }
+    // Tous les 3 SAV de membres actifs doivent être présents.
+    expect(body.data).toHaveLength(3)
+    const ids = body.data.map((r) => r.id).sort((a, b) => a - b)
+    expect(ids).toEqual([10, 11, 12])
+    // Les firstName/lastName sont bien exposés (pas de régression privacy côté actifs).
+    expect(body.data[0]!.member).toBeDefined()
+    expect(body.data[0]!.member!.lastName).toBeDefined()
+  })
+
+  it('S6.5 W6.5-3-T4 scope=group + q=XXX — filtre RGPD prévaut sur recherche nom partiel (M-1)', async () => {
+    const { savListHandler } = await import('../../../../api/_lib/self-service/sav-list-handler')
+    // SAV id=2 : member anonymisé dont last_name suit le pattern Story 5.7 (XXX_<hash8>).
+    // Sans le filtre .is('members.anonymized_at', null), le ilike '%XXX%' le matcherait → fuite RGPD.
+    pushSav({
+      id: 2,
+      member_id: 77,
+      group_id: 5,
+      members: {
+        first_name: 'ANON',
+        last_name: 'XXX_a1b2c3d4',
+        anonymized_at: '2026-05-01T10:00:00Z',
+      },
+    })
+    // SAV id=3 : member actif dont last_name="Martin" → ne matche pas q=XXX.
+    pushSav({
+      id: 3,
+      member_id: 88,
+      group_id: 5,
+      members: { first_name: 'Sophie', last_name: 'Martin', anonymized_at: null },
+    })
+    const req = mockReq({
+      method: 'GET',
+      cookies: { sav_session: managerToken(42, 5) },
+      query: { scope: 'group', q: 'XXX' },
+    })
+    const res = mockRes()
+    await savListHandler(req, res)
+    expect(res.statusCode).toBe(200)
+    const body = res.jsonBody as { data: Array<{ id: number }> }
+    // (a) Aucun résultat : l'anonymisé est éliminé par RGPD, l'actif ne matche pas q=XXX.
+    expect(body.data).toHaveLength(0)
+    // (b) Le filtre .is('members.anonymized_at', null) doit avoir été posé.
+    const isFilter = db.capturedFilters.is.find(([col]) => col === 'members.anonymized_at')
+    expect(isFilter).toBeDefined()
+    expect(isFilter![1]).toBeNull()
+    // (c) Le filtre ilike sur members.last_name pour q=XXX doit avoir été posé.
+    const ilikeFilter = db.capturedFilters.ilikes.find(([col]) => col === 'members.last_name')
+    expect(ilikeFilter).toBeDefined()
+    expect(ilikeFilter![1]).toMatch(/XXX/i)
+  })
+
+  it("S6.5 W6.5-3-T3 scope=self — le filtre RGPD anonymized_at N'est PAS posé", async () => {
+    const { savListHandler } = await import('../../../../api/_lib/self-service/sav-list-handler')
+    // Un SAV appartenant au member 42 lui-même (scope=self).
+    pushSav({ id: 1, member_id: 42, group_id: 5 })
+    const req = mockReq({
+      method: 'GET',
+      cookies: { sav_session: memberToken(42) },
+      query: { scope: 'self' },
+    })
+    const res = mockRes()
+    await savListHandler(req, res)
+    expect(res.statusCode).toBe(200)
+    const body = res.jsonBody as { data: Array<{ id: number; member?: unknown }> }
+    // Le SAV du user est bien retourné.
+    expect(body.data).toHaveLength(1)
+    expect(body.data[0]!.id).toBe(1)
+    // Aucun filtre .is('members.anonymized_at', null) ne doit être posé côté self.
+    const isFilter = db.capturedFilters.is.find(([col]) => col === 'members.anonymized_at')
+    expect(isFilter).toBeUndefined()
+    // Le SELECT_EXPR_SELF ne doit PAS contenir 'anonymized_at' ni 'members'.
+    expect(db.capturedFilters.selectExpr).not.toMatch(/anonymized_at/i)
+    expect(db.capturedFilters.selectExpr).not.toMatch(/members/i)
   })
 })
