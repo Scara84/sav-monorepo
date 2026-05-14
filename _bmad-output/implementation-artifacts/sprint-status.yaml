@@ -575,7 +575,8 @@ development_status:
   # Sprint 4 — Ops post-prod (manuel / post-déploiement)
   h-13-checklist-j30: done  # W73+W75 résolus 2026-05-14 (env vars nettoyées + bloc HMAC résiduel + Pennylane v2 validation passive OK). W72 découplé → h-13c, W76 découplé → h-13b.
   h-13b-w76-communication-adherents: done  # 2026-05-14 — option (c) inaction documentée. Volume email_mismatch J+16 <50/jour qualitatif (jugement PM, baseline 30j vraie déclinée). Re-trigger ≥100/jour → ré-ouvrir en (a) banner.
-  h-13c-make-scenarios-deletion: backlog  # W72 découplé de h-13 — suppression Make scenarios 3197846+3203836. Pas de date plancher (scenarios disabled inertes). Coût marginal ~18€/mois jugé acceptable temporairement. DN-7 2026-05-14.
+  h-13c-make-scenarios-deletion: backlog  # W72 découplé de h-13 — suppression Make scenarios 3197846+3203836. Pas de date plancher (scenarios disabled inertes). Coût marginal ~18€/mois jugé acceptable temporairement. DN-7 2026-05-14. App-side decouple livré orthogonalement par h-13d (sentinel verrouille code-side, suppression UI Make reste pending).
+  h-13d-app-decouple-make: done  # 2026-05-14 commit b050cc6 — découplage app-side post-cutover 5.7 : docs/commentaires/fixtures purgés des refs Make au présent (12 fichiers, +144/-52, 0 runtime change) + sentinel git-grep verrouille MAKE_WEBHOOK_HMAC_SECRET / hook.*.make.com / process.env.MAKE* / VITE_WEBHOOK_URL=. Orthogonal à h-13c (qui reste backlog pour suppression UI Make).
   h-14-benchmarks-prod: backlog  # R-bench reports.ts + W68 bench MARTINEZ : à exécuter après déploiement prod (URL stable + MSAL + OneDrive configurés). Manuel.
 
   # Deferred — ne pas faire maintenant
