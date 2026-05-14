@@ -12,7 +12,7 @@
  *   into the webhook payload so the backend stores them without needing a
  *   server-side Pennylane re-fetch at submit time.
  *
- * Field mapping (source: docs/integrations/make-capture-flow.md):
+ * Field mapping (source: docs/integrations/make-capture-flow.archived-2026-04-28.md — flow Make retiré cutover 5.7, doc conservée pour le field-mapping):
  *   Pennylane line field     Webhook field        Conversion
  *   unit_amount (€ decimal)  unitPriceTtcCents     × 100 + Math.round
  *   amount + quantity        unitPriceTtcCents      fallback: (amount / qty) × 100 + round

@@ -19,13 +19,14 @@ import { formatErrors } from './_lib/middleware/with-validation'
 import type { ApiHandler, ApiRequest } from './_lib/types'
 
 /**
- * Story 5.7 AC #1 — `/api/invoices/lookup` (remplace Make scenario 3197846).
+ * Story 5.7 AC #1 — `/api/invoices/lookup` (Pennylane V2 lookup, endpoint
+ * back-office anonyme — a remplacé l'ancien lookup Make scenario 3197846
+ * retiré au cutover 2026-04-28).
  *
  * Multiplexing `?op=lookup` (cap Vercel Hobby = 12 functions, ce fichier
  * occupe le 12e slot — toute future story DOIT multiplexer ici ou ailleurs).
  *
- * Anonymous (pas d'auth, pas de cookie) — calque le pattern « webhook
- * anonymous » du scenario Make. Protections :
+ * Anonymous (pas d'auth, pas de cookie). Protections :
  *   - rate-limit 5 req/min/IP (volumétrie pic Fruitstock ~10 SAV/jour ;
  *     5/min largement suffisant, marge 720× sur le pic légitime)
  *   - validation Zod stricte du format `F-YYYY-NNNNN` (refuse les hashids

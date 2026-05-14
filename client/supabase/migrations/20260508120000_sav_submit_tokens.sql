@@ -4,14 +4,14 @@
 -- Story    : 5.7 — Cutover Make → app (parité Pennylane + emails)
 -- ============================================================
 -- Pourquoi : décision PM 2026-04-28 — `webhooks/capture.ts` est consommé
--- post-cutover par le **front** (browser) qui ne peut pas calculer la
--- signature HMAC `MAKE_WEBHOOK_HMAC_SECRET` (secret server-side). Pour
--- préserver le contrat URL `/api/webhooks/capture` tout en autorisant
--- l'appel browser, on introduit un mode auth alternatif :
--- l'endpoint anonyme `/api/self-service/draft?op=submit-token` délivre
--- un JWT HS256 single-use (scope `sav-submit`, exp 5 min) que le front
--- envoie en header `X-Capture-Token` à `webhooks/capture.ts` à la place
--- de `X-Webhook-Signature`.
+-- post-cutover par le **front** (browser) qui ne peut pas calculer une
+-- signature HMAC server-side (le secret partagé avec l'ex-flow Make.com a
+-- été retiré au cutover). Pour préserver le contrat URL
+-- `/api/webhooks/capture` tout en autorisant l'appel browser, on introduit
+-- un mode auth alternatif : l'endpoint anonyme
+-- `/api/self-service/draft?op=submit-token` délivre un JWT HS256 single-use
+-- (scope `sav-submit`, exp 5 min) que le front envoie en header
+-- `X-Capture-Token` à `webhooks/capture.ts`.
 --
 -- Choix de design (Dev Notes Story 5.7) : nouvelle table dédiée
 -- `sav_submit_tokens` plutôt qu'extension polymorphique de

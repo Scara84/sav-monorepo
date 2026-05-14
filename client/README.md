@@ -59,13 +59,15 @@ npm run test:e2e
 
 ## Variables d'environnement
 
-Créez un fichier `.env` à la racine du projet avec les variables suivantes :
+Créez un fichier `.env` à la racine du projet en partant de [`.env.example`](.env.example) (référence exhaustive maintenue à jour). Variables minimales pour démarrer :
 
 ```env
-VITE_API_KEY=...                           # envoyée en X-API-Key aux routes /api/*
-VITE_WEBHOOK_URL=https://hook.make.com/... # lookup facture
-VITE_WEBHOOK_URL_DATA_SAV=https://...      # soumission SAV
+VITE_API_KEY=...                # envoyée en X-API-Key aux routes /api/*
+VITE_SUPABASE_URL=...           # projet Supabase
+VITE_SUPABASE_PUBLISHABLE_KEY=...
 ```
+
+> Note historique (Story 5.7 — cutover 2026-04-28) : les variables `VITE_WEBHOOK_URL` et `VITE_WEBHOOK_URL_DATA_SAV` ont été retirées avec la suppression du flow Make.com. Le SPA appelle désormais `/api/webhooks/capture` directement (même origine) avec un JWT capture-token.
 
 Détails complets : [docs/development-guide-client.md](../docs/development-guide-client.md) et [docs/api-contracts-vercel.md](../docs/api-contracts-vercel.md).
 

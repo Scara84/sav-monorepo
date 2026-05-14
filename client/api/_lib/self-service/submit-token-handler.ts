@@ -12,9 +12,9 @@ import type { ApiHandler, ApiRequest } from '../types'
  *
  * Délivre un capture-token éphémère (JWT HS256, scope `sav-submit`, exp 5
  * min, single-use) que le front utilise pour appeler
- * `POST /api/webhooks/capture` avec `X-Capture-Token: <jwt>` à la place de
- * la signature HMAC `MAKE_WEBHOOK_HMAC_SECRET` (que le browser ne peut pas
- * calculer — secret server-side).
+ * `POST /api/webhooks/capture` avec `X-Capture-Token: <jwt>`. Signé avec
+ * `MAGIC_LINK_SECRET` (mutualisé avec les magic-links membre — secret
+ * server-side jamais exposé au bundle).
  *
  * Anonyme (pas d'auth, pas de cookie). Protections :
  *   - rate-limit 10 req/min/IP

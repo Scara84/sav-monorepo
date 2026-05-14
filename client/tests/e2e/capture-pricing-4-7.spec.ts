@@ -7,20 +7,23 @@
  *   AC #7 — Opérateur ouvre /admin/sav/:id après submit membre avec prix complets
  *           → tableau lignes affiche PU TTC réel (pas « — »)
  *
- * Prérequis (gated OPS) :
- *   - Make scenario 3203836 configuré pour envoyer les 4 champs (étape Pennylane lookup)
+ * Prérequis (post-cutover Story 5.7) :
+ *   - SPA self-service capable d'appeler `/api/invoices/lookup` (Pennylane V2)
+ *     puis de soumettre le payload enrichi (4 champs prix) à `/api/webhooks/capture`
+ *     via capture-token JWT
  *   - PLAYWRIGHT_BASE_URL pointing to preview Vercel deployment
- *   - AUTH_STORAGE_STATE (operator MSAL session) pour /admin/sav/:id
+ *   - AUTH_STORAGE_STATE (operator magic-link session) pour /admin/sav/:id
  *   - FIXTURE_SAV_ID : id du SAV créé par le test membre (ou seedé manuellement)
  *
  * RED PHASE — ce test échoue tant que :
  *   1. La migration 4.7 n'est pas déployée en preview
  *   2. Le schema Zod n'est pas étendu (AC #1)
- *   3. Make sandbox n'envoie pas les 4 champs (gated OPS)
+ *   3. Le SPA n'enrichit pas le payload avec les 4 champs prix (AC #4)
  *
- * NOTE: Si le test est exécuté sans Make sandbox actif, le SAV capturé
- * aura des prix NULL (comportement legacy) et le test échouera sur
- * l'assertion "PU TTC réel". C'est intentionnel en phase RED.
+ * NOTE: Si le test est exécuté sans `/api/invoices/lookup` opérationnel
+ * en preview (Pennylane V2 down ou env var manquante), le SAV capturé
+ * aura des prix NULL et le test échouera sur l'assertion "PU TTC réel".
+ * C'est intentionnel en phase RED.
  *
  * Pattern: réutilise admin-sav-thumbnails-v1-5.spec.ts (storage state MSAL).
  * Run: npx playwright test client/tests/e2e/capture-pricing-4-7.spec.ts

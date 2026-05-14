@@ -1,11 +1,23 @@
-# Make.com — Capture Flow (Webhook SAV)
+# Make.com — Capture Flow (Webhook SAV) — **ARCHIVÉ**
 
-Intégration Make.com scenario **3203836** → webhook `/api/webhooks/capture`.
+> **⚠️ DOCUMENT OBSOLÈTE depuis le cutover Story 5.7 — 2026-04-28.**
+>
+> Le flow Make.com a été retiré : le SPA front appelle désormais `/api/webhooks/capture` directement (même origine) avec un capture-token JWT single-use. La présente doc est conservée pour deux raisons :
+>
+> 1. **Field-mapping de référence** — `buildCaptureItemPrices.js` documente toujours son mapping `Pennylane → webhook` en pointant vers ce fichier (sections V1.0 et V1.1 ci-dessous).
+> 2. **Contexte historique** — le post-mortem cutover ([docs/cutover-make-runbook.md](../cutover-make-runbook.md)) référence ce flow.
+>
+> Pour le contrat **actuel** du endpoint : voir [docs/api-contracts-vercel.md §`/api/webhooks/capture`](../api-contracts-vercel.md). Ne pas réintroduire de nouveau flow Make.com sans story dédiée (rollback à 5σ accepté DN-7 2026-05-14, scenarios Make ciblés pour suppression dans h-13c).
+
+---
+
+Intégration Make.com scenario **3203836** → webhook `/api/webhooks/capture` (historique).
 
 ## Changelog
 
 | Date | Version | Description |
 |------|---------|-------------|
+| 2026-04-28 | V1.2 | Cutover Story 5.7 — flow Make retiré (doc archivée, valeur référence field-mapping conservée) |
 | 2026-05-09 | V1.1 | Story 4.7 — extension prix facture, OPS Make scenario 3203836 |
 | 2026-04-21 | V1.0 | Story 2.2 — capture initiale webhook SAV |
 

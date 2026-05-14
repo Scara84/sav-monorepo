@@ -18,18 +18,18 @@ import { waitUntilOrVoid } from '../_lib/pdf/wait-until'
 import type { ApiHandler, ApiRequest } from '../_lib/types'
 
 /**
- * POST /api/webhooks/capture — Story 2.2 + Story 5.7 cutover.
+ * POST /api/webhooks/capture — Story 2.2 + Story 5.7 cutover (2026-04-28).
  *
- * Contrat post-cutover Make :
+ * Contrat actuel (Make retiré J+0, plus de fallback HMAC) :
  *   - Auth UNIQUE par capture-token JWT (header `X-Capture-Token`),
  *     scope='sav-submit', single-use via `sav_submit_tokens`. Émis par
  *     `/api/self-service/submit-token` (anonyme rate-limité).
- *   - HMAC `X-Webhook-Signature` retiré (Story 5.7) — Make tué J+0,
- *     pas de fenêtre de cohabitation. Le rollback éventuel se fait côté
- *     front via réactivation `VITE_WEBHOOK_URL*` (Make redevient receiver
- *     de bout en bout sans toucher à `/webhooks/capture`).
  *   - Persistence atomique via RPC Postgres `capture_sav_from_webhook`.
  *   - webhook_inbox : INSERT AVANT vérif token (traçabilité des 401).
+ *
+ * Historique : la branche HMAC `X-Webhook-Signature` (héritage flow Make
+ * 3203836) a été retirée au cutover. Rollback à 5σ accepté DN-7 2026-05-14.
+ * Cf. docs/cutover-make-runbook.md.
  */
 
 export const config = { api: { bodyParser: false } }

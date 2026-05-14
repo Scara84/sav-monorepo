@@ -1,14 +1,14 @@
 /**
  * Templates emails SAV — Story 5.7 AC #2.
  *
- * Calque fonctionnel des modules Make scenario 3203836 :
- *  - module 2 (« sav-internal »)  → `renderSavInternalNotification`
- *  - module 24 (« customer-ack ») → `renderSavCustomerAck`
+ *  - `renderSavInternalNotification` — notification interne SAV (équiv.
+ *    ex-module Make 2 « sav-internal »)
+ *  - `renderSavCustomerAck` — accusé de réception membre (équiv. ex-module
+ *    Make 24 « customer-ack »)
  *
- * Parité **fonctionnelle** uniquement (contenu, sujet, destinataires) — le
- * markup HTML peut diverger légèrement (Make utilisait `</br>` HTML5 invalid,
- * on emploie `<br/>` standard). Les tests snapshot garantissent la non-
- * régression visuelle entre rebuilds.
+ * Parité **fonctionnelle** uniquement (contenu, sujet, destinataires). Markup
+ * HTML standard `<br/>` (l'ancien flow Make.com émettait `</br>` HTML5 invalid,
+ * non répliqué). Les tests snapshot garantissent la non-régression visuelle.
  */
 
 export type Unit = 'kg' | 'piece' | 'liter' | 'g'

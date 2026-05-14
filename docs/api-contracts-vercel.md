@@ -199,7 +199,7 @@ Les handlers individuels [`purge-tokens.ts`](../client/api/cron/purge-tokens.ts)
 
 ## `POST /api/self-service/upload-session` + `POST /api/self-service/upload-complete` (Epic 2 Story 2.4)
 
-Flow upload OneDrive 3 étapes côté adhérent connecté. Équivalent du `api/upload-session.js` legacy (API-key Make.com) mais scopé à une session magic-link membre.
+Flow upload OneDrive 3 étapes côté adhérent connecté, scopé à une session magic-link membre.
 
 ### Flow front complet
 
@@ -218,20 +218,20 @@ Flow upload OneDrive 3 étapes côté adhérent connecté. Équivalent du `api/u
 
 Composable [`useOneDriveUpload`](../client/src/features/self-service/composables/useOneDriveUpload.ts) et composant [`FileUploader.vue`](../client/src/features/self-service/components/FileUploader.vue) encapsulent le flow complet avec barre de progression, retry expo 2×, et emit `@uploaded`/`@error`.
 
-Le legacy [`api/upload-session.js`](../client/api/upload-session.js) (API-key Make.com) reste actif pour le flow Phase 1 pendant le shadow run — à déprécier Epic 7.
-
 ---
 
-## `POST /api/webhooks/capture` (Epic 2 Story 2.2)
+## `POST /api/webhooks/capture` (Epic 2 Story 2.2 + cutover Story 5.7)
 
-Réception webhook Make.com signé HMAC-SHA256. Cf. [handler](../client/api/webhooks/capture.ts) et section `integration-architecture.md` §Base de données — schéma capture SAV.
+Réception webhook capture-SAV émis par le SPA front (même origine) avec un capture-token JWT single-use. Cf. [handler](../client/api/webhooks/capture.ts) et section `integration-architecture.md` §Base de données — schéma capture SAV.
 
-- **Auth** : HMAC header `X-Webhook-Signature: sha256=<hex>` sur raw body.
-- **Env requise** : `MAKE_WEBHOOK_HMAC_SECRET` (32 bytes hex, partagé scénario Make.com).
+> **Cutover Story 5.7 — 2026-04-28** : la branche HMAC `X-Webhook-Signature` héritée du flow Make.com a été retirée (Make tué J+0, fenêtre de cohabitation 0). Auth est désormais 100 % JWT capture-token. Historique : [docs/cutover-make-runbook.md](./cutover-make-runbook.md).
+
+- **Auth** : header `X-Capture-Token: <jwt>` (HS256, scope `sav-submit`, exp 5 min, single-use). Token émis par `GET /api/self-service/draft?op=submit-token` (anonyme rate-limité 10/min/IP), persisté dans `sav_submit_tokens` pour consume atomique.
+- **Env requise** : `MAGIC_LINK_SECRET` (signe/vérifie le capture-token — mutualisé avec les magic-links membre).
 - **Rate limit** : 60 POST / min / IP.
-- **Idempotence** : côté Make.com (pas côté serveur — 2 POST identiques → 2 SAV distincts).
+- **Idempotence** : côté front (pas côté serveur — 2 POST identiques → 2 SAV distincts ; le token single-use limite à 1 réelle exécution).
 - **Persistence** : RPC atomique Postgres `capture_sav_from_webhook(jsonb)` (1 transaction).
-- **Traçabilité** : `webhook_inbox` rempli AVANT vérif signature (401 audités).
+- **Traçabilité** : `webhook_inbox` rempli AVANT vérif token (401 audités).
 
 ---
 
