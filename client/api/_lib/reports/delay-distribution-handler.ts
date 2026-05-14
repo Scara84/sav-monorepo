@@ -13,7 +13,7 @@ import type { ApiHandler } from '../types'
  * (percentile_cont 0.5 / 0.9, AVG, MIN, MAX, COUNT).
  *
  * Query params :
- *   - from / to : YYYY-MM-DD ISO (UTC). Range max 2 ans.
+ *   - from / to : YYYY-MM-DD ISO (UTC). Range max 24 mois calendaires.
  *   - basis (P11) : 'received' (défaut, V1) — SAV reçus dans la fenêtre
  *                   (cohort, comportement historique)
  *                 | 'closed' — SAV clos dans la fenêtre (activité période,
@@ -28,11 +28,36 @@ import type { ApiHandler } from '../types'
  */
 
 const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}$/
-const MAX_RANGE_DAYS = 2 * 365 + 1 // 2 ans + 1 jour bissextile tolérance
+// H-09 R8 — Validation en mois calendaires (remplace MAX_RANGE_DAYS = 731).
+// L'ancien calcul daysDiffInclusive retournait 732 pour 2024-01-01→2026-01-01
+// (bissextile), refusant à tort une période de 2 ans calendaires exactes.
+// Pattern identique à cost-timeline-handler.ts:31 (MAX_RANGE_MONTHS = 36).
+const MAX_RANGE_MONTHS = 24
+
+/**
+ * M1 — Valide qu'une string YYYY-MM-DD est une date calendaire réelle.
+ * Le regex accepte lexicalement `2024-13-01` ou `2024-02-30` — ce refine
+ * vérifie le round-trip UTC pour rejeter ces cas sémantiquement invalides.
+ */
+function isValidCalendarDate(s: string): boolean {
+  const [y, m, d] = s.split('-').map(Number) as [number, number, number]
+  const dt = new Date(Date.UTC(y, m - 1, d))
+  return dt.getUTCFullYear() === y && dt.getUTCMonth() === m - 1 && dt.getUTCDate() === d
+}
 
 const querySchema = z.object({
-  from: z.string().regex(ISO_DATE_RE, 'from doit être au format YYYY-MM-DD'),
-  to: z.string().regex(ISO_DATE_RE, 'to doit être au format YYYY-MM-DD'),
+  from: z
+    .string()
+    .regex(ISO_DATE_RE, 'from doit être au format YYYY-MM-DD')
+    .refine(isValidCalendarDate, {
+      message: 'from : date calendaire invalide (ex: mois ou jour hors plage)',
+    }),
+  to: z
+    .string()
+    .regex(ISO_DATE_RE, 'to doit être au format YYYY-MM-DD')
+    .refine(isValidCalendarDate, {
+      message: 'to : date calendaire invalide (ex: mois ou jour hors plage)',
+    }),
   // P11 : selector cohort 'received' (défaut V1) vs activité 'closed'.
   basis: z.enum(['received', 'closed']).optional().default('received'),
 })
@@ -70,11 +95,16 @@ function num(v: number | string): number {
   return typeof v === 'number' ? v : Number(v)
 }
 
-function daysDiffInclusive(from: string, to: string): number {
-  const fromMs = Date.parse(`${from}T00:00:00.000Z`)
-  const toMs = Date.parse(`${to}T00:00:00.000Z`)
-  if (!Number.isFinite(fromMs) || !Number.isFinite(toMs)) return Number.POSITIVE_INFINITY
-  return Math.floor((toMs - fromMs) / (24 * 3600 * 1000)) + 1
+/**
+ * H-09 R8 — Différence calendaire en mois entre deux dates YYYY-MM-DD.
+ * Équivalent pure-JS de date-fns `differenceInCalendarMonths` (zéro dep).
+ * Ignore le jour du mois : 2024-01-31 → 2026-01-01 = 24 mois.
+ * Ex : 2024-01-01 → 2026-01-01 = (2026-2024)*12 + (1-1) = 24 mois.
+ */
+function monthsDiffCalendar(from: string, to: string): number {
+  const [fy, fm] = from.split('-').map(Number) as [number, number]
+  const [ty, tm] = to.split('-').map(Number) as [number, number]
+  return (ty - fy) * 12 + (tm - fm)
 }
 
 export const delayDistributionHandler: ApiHandler = async (req, res) => {
@@ -107,11 +137,11 @@ export const delayDistributionHandler: ApiHandler = async (req, res) => {
     return
   }
 
-  const days = daysDiffInclusive(q.from, q.to)
-  if (days > MAX_RANGE_DAYS) {
-    sendError(res, 'VALIDATION_FAILED', 'Période > 2 ans', requestId, {
+  const months = monthsDiffCalendar(q.from, q.to)
+  if (months > MAX_RANGE_MONTHS) {
+    sendError(res, 'VALIDATION_FAILED', 'Période > 24 mois', requestId, {
       code: 'PERIOD_TOO_LARGE',
-      max_days: MAX_RANGE_DAYS,
+      max_months: MAX_RANGE_MONTHS,
     })
     return
   }
@@ -190,4 +220,4 @@ export const delayDistributionHandler: ApiHandler = async (req, res) => {
   }
 }
 
-export const __testables = { daysDiffInclusive, nullableNum, num }
+export const __testables = { monthsDiffCalendar, isValidCalendarDate, nullableNum, num }

@@ -452,11 +452,18 @@ const coreHandler: ApiHandler = async (req, res) => {
   try {
     const admin = supabaseAdmin()
 
-    // 3. Count exact (head: true → pas de rows transférés). Permet de
+    // 3. Count estimation (head: true → pas de rows transférés). Permet de
     // décider rapidement SWITCH_TO_XLSX / EXPORT_TOO_LARGE sans charger
     // le payload complet.
+    // W53 H-09 — On utilise count:'estimated' (PostgREST blend : exact pour
+    // petit N, planned pour grand N). Disponible dans supabase-js ≥ 2.103.3 /
+    // postgrest-js (confirmé ligne 884 du source). Pour N < 1000, PostgREST
+    // bascule automatiquement sur COUNT(*) exact — élimine le false-positive
+    // EMPTY_RESULT lorsque pg_class.reltuples vaut 0 post-ANALYZE tardif.
+    // Pour N >> 1000, l'estimation planned est maintenue (< 1ms vs COUNT plein).
+    // DN-2(b) : 'estimated' remplace 'planned' — meilleure précision petit N.
     const countQ = applyFilters(
-      admin.from('sav').select('id', { count: 'exact', head: true }) as unknown as QueryBuilder,
+      admin.from('sav').select('id', { count: 'estimated', head: true }) as unknown as QueryBuilder,
       q
     )
     const countResult = (await (countQ as unknown as PromiseLike<{
@@ -475,12 +482,31 @@ const coreHandler: ApiHandler = async (req, res) => {
     }
     const rowCount = countResult.count ?? 0
 
-    if (rowCount > HARD_LIMIT_ROWS) {
+    // DN-2(c) belt-and-braces : à proximité du seuil dur (≥ 80 % de HARD_LIMIT),
+    // l'estimation peut sous-estimer et laisser passer un volume réel > 50 000.
+    // On ré-execute la query avec count:'exact' pour décision déterministe.
+    // Surcoût uniquement à proximité du seuil (40 000+ lignes, cas rare en V1).
+    let finalRowCount = rowCount
+    if (rowCount >= HARD_LIMIT_ROWS * 0.8 && rowCount <= HARD_LIMIT_ROWS) {
+      const exactQ = applyFilters(
+        admin.from('sav').select('id', { count: 'exact', head: true }) as unknown as QueryBuilder,
+        q
+      )
+      const exactResult = (await (exactQ as unknown as PromiseLike<{
+        count: number | null
+        error: { message: string } | null
+      }>)) as { count: number | null; error: { message: string } | null }
+      if (!exactResult.error) {
+        finalRowCount = exactResult.count ?? rowCount
+      }
+    }
+
+    if (finalRowCount > HARD_LIMIT_ROWS) {
       const durationMs = Date.now() - startedAt
       logger.warn('export.csv.too_large', {
         requestId,
         filters_hash: filtersHash,
-        row_count: rowCount,
+        row_count: finalRowCount,
         durationMs,
       })
       sendError(
@@ -490,45 +516,34 @@ const coreHandler: ApiHandler = async (req, res) => {
         requestId,
         {
           code: 'EXPORT_TOO_LARGE',
-          row_count: rowCount,
+          row_count: finalRowCount,
           max_rows: HARD_LIMIT_ROWS,
         }
       )
       return
     }
 
-    // P13 CR — résultat vide : signaler explicitement à l'UI au lieu d'envoyer
-    // un fichier header-only que l'opérateur prend pour un succès légitime.
-    if (rowCount === 0) {
-      const durationMs = Date.now() - startedAt
-      logger.info('export.csv.empty', {
-        requestId,
-        filters_hash: filtersHash,
-        row_count: 0,
-        durationMs,
-        format,
-      })
-      res.status(200).json({
-        warning: 'EMPTY_RESULT',
-        row_count: 0,
-        message: 'Aucun SAV ne correspond aux filtres sélectionnés.',
-      })
-      return
-    }
+    // H-09 H1 — EMPTY_RESULT décidé post-fetch (pas sur l'estimation count).
+    // Avec count:'estimated', PostgREST est exact pour petit N, mais en test
+    // et en cas de pg_class désynchronisé, count peut valoir 0 alors que des
+    // rows existent réellement. On ne court-circuite plus sur finalRowCount===0 ;
+    // la branche EMPTY_RESULT est déplacée après le fetch (rows.length===0).
+    // L'optimisation perfo du count est conservée pour EXPORT_TOO_LARGE et
+    // SWITCH_TO_XLSX — seule la branche vide est différée.
 
-    if (rowCount > CSV_SOFT_LIMIT_ROWS && format === 'csv') {
+    if (finalRowCount > CSV_SOFT_LIMIT_ROWS && format === 'csv') {
       const durationMs = Date.now() - startedAt
       logger.info('export.csv.warning', {
         requestId,
         filters_hash: filtersHash,
-        row_count: rowCount,
+        row_count: finalRowCount,
         durationMs,
         format,
       })
       // 200 + JSON warning (ne pas générer le CSV — économise RAM).
       res.status(200).json({
         warning: 'SWITCH_TO_XLSX',
-        row_count: rowCount,
+        row_count: finalRowCount,
         message: `L'export CSV est limité à ${CSV_SOFT_LIMIT_ROWS} lignes. Utilisez format=xlsx.`,
       })
       return
@@ -558,17 +573,53 @@ const coreHandler: ApiHandler = async (req, res) => {
 
     const rows = (dataResult.data ?? []).map(projectExportRow)
 
-    // P10 CR — détection truncation silencieuse (TOCTOU count vs fetch, ou
-    // cap PostgREST `db-max-rows` cf. W49). On ne bloque pas l'export — le
-    // fichier reste utile — mais on log warn pour signaler l'incohérence.
-    if (rows.length < rowCount || rows.length === HARD_LIMIT_ROWS) {
-      logger.warn('export.csv.possibly_truncated', {
+    // P13 CR — résultat vide décidé sur le fetch réel (H-09 H1 : déplacé
+    // post-fetch pour éviter le false-positive EMPTY_RESULT quand l'estimation
+    // count retourne 0 à tort alors que des rows existent).
+    if (rows.length === 0) {
+      const durationMs = Date.now() - startedAt
+      logger.info('export.csv.empty', {
         requestId,
         filters_hash: filtersHash,
-        expected_count: rowCount,
+        row_count: 0,
+        durationMs,
+        format,
+      })
+      res.status(200).json({
+        warning: 'EMPTY_RESULT',
+        row_count: 0,
+        message: 'Aucun SAV ne correspond aux filtres sélectionnés.',
+      })
+      return
+    }
+
+    // DN-2(c) belt-and-braces — hard error post-fetch : si rows.length atteint
+    // HARD_LIMIT_ROWS (cap .limit()), le dataset réel est > 50k (troncation
+    // silencieuse côté PostgREST). Renvoyer un CSV partiel serait une violation
+    // de data integrity (opérateur croit exporter tout mais obtient 50k/60k).
+    // Data integrity > UX : on retourne 400 EXPORT_TOO_LARGE.
+    if (rows.length === HARD_LIMIT_ROWS) {
+      const durationMs = Date.now() - startedAt
+      logger.warn('export.csv.too_large_post_fetch', {
+        requestId,
+        filters_hash: filtersHash,
+        estimated_count: finalRowCount,
         fetched_count: rows.length,
         hard_limit: HARD_LIMIT_ROWS,
+        durationMs,
       })
+      sendError(
+        res,
+        'VALIDATION_FAILED',
+        'Export trop volumineux. Restreignez vos filtres.',
+        requestId,
+        {
+          code: 'EXPORT_TOO_LARGE',
+          row_count: rows.length,
+          max_rows: HARD_LIMIT_ROWS,
+        }
+      )
+      return
     }
 
     const cols = buildColumns()

@@ -465,6 +465,46 @@ describe('GET /api/reports/export-csv', () => {
     const body = res.jsonBody as { error: { details: { code: string } } }
     expect(body.error.details.code).toBe('QUERY_FAILED')
   })
+
+  // H-09 W53 AC #1 — count:'estimated' passé à .select() (H-09 H1 fix : 'planned'→'estimated')
+  // Asserts that the count-phase .select() call uses count:'estimated' (PostgREST
+  // blend : exact pour petit N, planned pour grand N), not count:'exact' (full-table
+  // COUNT) ni count:'planned' (pg_class pur, peut retourner 0 sur table récente).
+  // The mock captures every .select() call in state.builderState.calls —
+  // we find the one with head:true (count phase) and assert the count option.
+  it("H-09 W53 — count:'estimated' passé à .select() lors de la phase count", async () => {
+    state.builderState.count = 3
+    state.builderState.rows = [makeRow(), makeRow({ id: 2 }), makeRow({ id: 3 })]
+    const res = mockRes()
+    await exportSavCsvHandler(operatorReq({}), res)
+    // Find the select call that corresponds to the count phase (head: true).
+    const countSelectCall = state.builderState.calls.find(
+      (c) => c.method === 'select' && (c.args[1] as { head?: boolean } | undefined)?.head === true
+    )
+    expect(countSelectCall).toBeDefined()
+    const opts = countSelectCall!.args[1] as { count: string; head: boolean }
+    expect(opts.count).toBe('estimated')
+    expect(opts.count).not.toBe('exact')
+    expect(opts.count).not.toBe('planned')
+  })
+
+  // H-09 W53 M5 — regression guard : estimation count=0 mais rows non-vides → CSV généré
+  // Simule le cas où l'estimation count retourne 0 (pg_class désynchronisé ou
+  // bug 'planned') alors que le fetch réel retourne des rows. La décision
+  // EMPTY_RESULT doit être prise sur rows.length (post-fetch), pas sur count.
+  // Expected : 200 + CSV body (pas { warning: 'EMPTY_RESULT' }).
+  it('H-09 W53 — count estimation = 0 mais rows non-vides → CSV généré (pas EMPTY_RESULT)', async () => {
+    state.builderState.count = 0 // estimation renvoie 0 (pg_class désynchronisé)
+    state.builderState.rows = [makeRow()] // fetch réel retourne 1 row
+    const res = mockRes()
+    await exportSavCsvHandler(operatorReq({}), res)
+    // Doit générer le CSV, pas retourner EMPTY_RESULT
+    expect(res.statusCode).toBe(200)
+    // Doit être un fichier CSV (Content-Type), pas un JSON warning
+    expect(res.headers['content-type']).toContain('text/csv')
+    // Sanity : pas de body JSON EMPTY_RESULT
+    expect(res.jsonBody).toBeUndefined()
+  })
 })
 
 /**

@@ -122,6 +122,45 @@ describe('GET /api/reports/delay-distribution', () => {
     expect(body.error.details.code).toBe('PERIOD_TOO_LARGE')
   })
 
+  // H-09 R8 AC #2 — validation range en mois calendaires (RED until R8 patch)
+
+  // Test A : 2 ans calendaires avec année bissextile (2024-01-01 → 2026-01-01).
+  // daysDiffInclusive retourne 732j (> MAX_RANGE_DAYS 731) → 400 avec l'ancien code.
+  // Avec monthsDiffCalendar: (2026-2024)*12 + (1-1) = 24 mois = MAX_RANGE_MONTHS → 200 OK.
+  it('H-09 R8 Test A — 2 ans calendaires bissextiles (2024-01-01 → 2026-01-01, 732j, 24 mois) → 200 OK', async () => {
+    state.rpcRows = [
+      {
+        p50_hours: 48,
+        p90_hours: 120,
+        avg_hours: 60,
+        min_hours: 1,
+        max_hours: 500,
+        n_samples: 100,
+      },
+    ]
+    const res = mockRes()
+    await delayDistributionHandler(operatorReq({ from: '2024-01-01', to: '2026-01-01' }), res)
+    expect(res.statusCode).toBe(200)
+    const body = res.jsonBody as { data: { basis: string } }
+    expect(body.data.basis).toBe('received')
+  })
+
+  // Test B : 25 mois calendaires (2024-01-01 → 2026-02-01) → 400 PERIOD_TOO_LARGE.
+  // Avec la nouvelle logique : (2026-2024)*12 + (2-1) = 25 mois > 24 → 400.
+  // Le payload d'erreur doit contenir max_months:24 (plus max_days:731).
+  it('H-09 R8 Test B — 25 mois calendaires (2024-01-01 → 2026-02-01) → 400 PERIOD_TOO_LARGE + max_months:24', async () => {
+    const res = mockRes()
+    await delayDistributionHandler(operatorReq({ from: '2024-01-01', to: '2026-02-01' }), res)
+    expect(res.statusCode).toBe(400)
+    const body = res.jsonBody as {
+      error: { details: { code: string; max_months?: number; max_days?: number } }
+    }
+    expect(body.error.details.code).toBe('PERIOD_TOO_LARGE')
+    expect(body.error.details.max_months).toBe(24)
+    // After R8 patch, max_days must be gone — replaced by max_months.
+    expect(body.error.details.max_days).toBeUndefined()
+  })
+
   it('500 QUERY_FAILED si la RPC échoue', async () => {
     state.rpcError = { message: 'fn not found' }
     const res = mockRes()
