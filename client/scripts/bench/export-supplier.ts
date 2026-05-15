@@ -91,6 +91,8 @@ interface Result {
   body?: unknown
 }
 
+// DO NOT replace with _bench-utils.ts:pctl — floor-based is intentional for Story 5.6 historical
+// comparability. See H-14 review HIGH-1.
 function pctl(sorted: number[], p: number): number {
   if (sorted.length === 0) return 0
   const idx = Math.min(sorted.length - 1, Math.floor((p / 100) * sorted.length))
