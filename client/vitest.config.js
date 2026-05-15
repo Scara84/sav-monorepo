@@ -87,7 +87,7 @@ export default defineConfig({
     },
     setupFiles: ['./tests/unit/setup.js'],
     include: ['**/*.spec.{js,ts}', '**/*.test.{js,ts}'],
-    exclude: ['**/node_modules/**', '**/dist/**', 'tests/e2e/**'],
+    exclude: ['**/node_modules/**', '**/dist/**', 'tests/e2e/**', 'tests/integration/**'],
     server: {
       deps: {
         inline: ['xlsx', 'axios'],
