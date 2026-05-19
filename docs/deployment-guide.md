@@ -40,7 +40,7 @@ Vercel détecte automatiquement le dossier `client/api/` et compile chaque fichi
 | `VITE_WEBHOOK_URL_DATA_SAV` | Webhook Make.com — soumission SAV |
 | `VITE_API_KEY` | Clé envoyée en `X-API-Key` aux routes Vercel `/api/*` |
 | `VITE_MAINTENANCE_MODE` | `'1'` pour activer `/maintenance`, `'0'` sinon |
-| `VITE_MAINTENANCE_BYPASS_TOKEN` | Token passé via `?bypass=...` pour contourner |
+| `VITE_MAINTENANCE_BYPASS` | Token passé via `?bypass=...` pour contourner |
 
 ### Scope serverless (jamais exposé au bundle — pas de préfixe)
 

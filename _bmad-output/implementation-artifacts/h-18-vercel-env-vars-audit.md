@@ -1,6 +1,6 @@
 # Story H-18: Audit env vars Vercel — checklist manuelle + script de vérification
 
-Status: ready-for-dev
+Status: review
 sprint: hardening-post-v19b — Sprint Sécurité post-audit 2026-05-16
 size: S (~1h — checklist manuelle 10 min dashboard + script `audit:vercel-env` 30 min)
 priority: P1 — **bloquant promote prod après h-16+h-17**

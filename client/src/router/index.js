@@ -152,7 +152,7 @@ router.beforeEach((to) => {
   }
 
   const maintenanceEnabled = import.meta.env.VITE_MAINTENANCE_MODE === '1'
-  const bypassToken = import.meta.env.VITE_MAINTENANCE_BYPASS_TOKEN || ''
+  const bypassToken = import.meta.env.VITE_MAINTENANCE_BYPASS || ''
   const storedBypass = window.localStorage.getItem(MAINTENANCE_BYPASS_STORAGE_KEY) === 'true'
 
   const queryToken = to.query?.maintenance_bypass

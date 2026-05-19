@@ -56,7 +56,7 @@ Fichier : [client/src/router/index.js](../client/src/router/index.js)
 **Garde globale `beforeEach`** :
 
 - Lit `VITE_MAINTENANCE_MODE` (`'1'` ou `'0'`).
-- Lit un éventuel `?bypass=<token>` : si égal à `VITE_MAINTENANCE_BYPASS_TOKEN`, stocke `maintenance_bypass_enabled=1` en `localStorage`.
+- Lit un éventuel `?bypass=<token>` : si égal à `VITE_MAINTENANCE_BYPASS`, stocke `maintenance_bypass_enabled=1` en `localStorage`.
 - Si maintenance activée et pas de bypass → redirige vers `/maintenance`.
 
 ## Architecture du composant pivot
@@ -162,7 +162,7 @@ Voir détail dans [development-guide-client.md](./development-guide-client.md#va
 | `VITE_WEBHOOK_URL_DATA_SAV` | Webhook Make.com soumission SAV |
 | `VITE_API_KEY` | Clé API envoyée en `X-API-Key` aux routes Vercel `/api/*` |
 | `VITE_MAINTENANCE_MODE` | `'1'` pour activer `/maintenance` |
-| `VITE_MAINTENANCE_BYPASS_TOKEN` | Token de contournement maintenance |
+| `VITE_MAINTENANCE_BYPASS` | Token de contournement maintenance |
 
 ### Côté fonctions serverless (jamais exposées au navigateur — pas de préfixe)
 

@@ -19,6 +19,7 @@
     "format": "prettier --write src/",
     "typecheck": "vue-tsc --noEmit",
     "audit:schema": "node scripts/audit-handler-schema.mjs && node scripts/audit-check-constraints.mjs",
+    "audit:vercel-env": "node scripts/security/audit-vercel-env.mjs",
     "audit:check-constraints": "node scripts/audit-check-constraints.mjs",
     "audit:all": "npm run audit:schema",
     "test:integration": "vitest run --config vitest.config.integration.ts",

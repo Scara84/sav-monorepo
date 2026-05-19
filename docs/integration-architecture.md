@@ -127,7 +127,7 @@ Payload JSON incluant :
 | `VITE_API_KEY` | Clé envoyée en `X-API-Key` aux routes Vercel `/api/*` |
 | `VITE_WEBHOOK_URL` | Webhook Make.com — lookup facture |
 | `VITE_WEBHOOK_URL_DATA_SAV` | Webhook Make.com — soumission SAV |
-| `VITE_MAINTENANCE_MODE` / `VITE_MAINTENANCE_BYPASS_TOKEN` | Mode maintenance |
+| `VITE_MAINTENANCE_MODE` / `VITE_MAINTENANCE_BYPASS` | Mode maintenance |
 
 ### Scope serverless (Vercel env — jamais dans le bundle)
 
