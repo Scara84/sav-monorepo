@@ -1,6 +1,6 @@
 # Story H-16: Hardening RLS Supabase — REVOKE EXECUTE des RPC `SECURITY DEFINER` à `anon`/`authenticated`
 
-Status: ready-for-dev
+Status: review
 sprint: hardening-post-v19b — Sprint Sécurité post-audit 2026-05-16
 size: M (~3-4h — migration SQL + audit GUC code-side + tests d'isolation)
 priority: P0 — **ship blocker promote refonte → main**
@@ -298,6 +298,106 @@ Pour toute migration touchant les ACL d'une RPC, ajouter une assertion dans `scr
 - Memory : `feedback_test_integration_gap.md` (intégration test = vraie-DB, h-15 a posé `audit-check-constraints.mjs` — h-16 ajoute `h16-rpc-isolation-check`)
 - Memory : `project_preview_supabase_state_pre_cutover.md` (Preview state 2026-05-15)
 - Pattern référence GUC : H-01 `h-01-w13-rpc-set-config-securite.md` (PATTERN-V1.x-W13-RESET)
+
+---
+
+## Dev Agent Record — Pipeline BMAD CHECKPOINT 2026-05-20
+
+### Périmètre final livré (28 fonctions, pas 28 attendu story)
+
+| Catégorie | Nombre | Fonctions |
+|---|---|---|
+| worker-cron | 8 | claim_outbox_batch, mark_outbox_sent, mark_outbox_failed, purge_expired_magic_link_tokens, purge_expired_sav_submit_tokens, purge_audit_pii_for_member, enqueue_new_sav_alerts, enqueue_threshold_alert |
+| admin | 2 | admin_anonymize_member, update_settings_threshold_alert |
+| webhook | 1 | capture_sav_from_webhook |
+| rpc-metier | 17 | transition_sav_status, assign_sav, issue_credit_number, create_sav_line, update_sav_line, delete_sav_line, duplicate_sav, update_sav_tags, member_prefs_merge, sav_tags_suggestions, report_cost_timeline, report_top_products, report_delay_distribution, report_top_reasons, report_top_suppliers, report_products_over_threshold, **app_is_group_manager_of** (ajouté CR — helper RLS Story 6.5 oublié AC#1) |
+
+Les 2 "triggers" cités dans la story originale (`tg_email_outbox_maintain`, `settings_close_previous_version`) **n'existent pas en SECURITY DEFINER** sous ces noms → exclusion non nécessaire (D-USER-1 amendée).
+
+### Migrations appliquées en Preview viwgyrqpyryagzgvnfoi
+
+1. `20260522120000_h16_rpc_revoke_anon.sql` — REVOKE + GRANT + ALTER search_path + COMMENT sur 28 fonctions.
+2. `20260522120100_h16_revoke_public_fixup.sql` — **fixup critique** : `REVOKE EXECUTE FROM PUBLIC` sur 7 fonctions où le REVOKE FROM anon était no-op à cause du grant implicite PUBLIC (admin_anonymize_member, purge_audit_pii_for_member, purge_expired_magic_link_tokens, purge_expired_sav_submit_tokens, create_sav_line, update_sav_line, delete_sav_line).
+3. `20260522120200_h16_search_path_fixup.sql` — `ALTER FUNCTION sav_tags_suggestions SET search_path = public, pg_temp` (la seule fonction WEAK détectée live, CR Opus M1 corrigé).
+
+### Validation empirique post-application (preuve hard)
+
+- `pg_proc` 28 fonctions SECURITY DEFINER, `has_function_privilege('anon', ...)` = false sur 28/28 ✅
+- `has_function_privilege('authenticated', ...)` = true sur 17 rpc-metier (DN-2 intentionnel), false sur 11 worker/admin/webhook ✅
+- `has_function_privilege('service_role', ...)` = true sur 28/28 ✅
+- `search_path` figé : 22 STRICT (`public, pg_temp`) + 6 OK_PG_CATALOG (`public, pg_catalog`) — 0 MISSING / 0 WEAK ✅
+- COMMENT [H-16] sur 28/28 ✅
+- Bash isolation script : anon 28/28 PASS code:42501 + service_role 28/28 PASS no-deny ✅
+- Smoke browser AC#6 routes (/, /admin, /monespace/auth) : 0 console error, HTTP 200 ✅
+
+### Decisions user (CHECKPOINT pré-Step 3)
+
+- **D-USER-1** : Périmètre = 28 fonctions ; 2 "triggers" cités story exclus car n'existent pas en SECURITY DEFINER. +1 `app_is_group_manager_of` ajouté.
+- **D-USER-2** : AC#4(b) JWT authenticated fixture = SKIP V1 (OOS — symétrie REVOKE).
+- **D-USER-3** : Runbook `docs/runbooks/rls-context-binding.md` créé + étendu avec PATTERN-H16-A correct.
+- **D-USER-4** : Pas de `with-rls-context.ts` Node — pattern actuel (params RPC → set_config in-body) conservé.
+
+### Mitigation CR Opus H1 (fenêtre cutover Prod migrations 2-files)
+
+Le CR Opus a signalé une fenêtre théorique entre `20260522120000` et `20260522120100` (puis `120200`) où 7 fonctions privilégiées seraient encore accessibles à anon en cours d'application.
+
+**Mitigation factuelle (risque réel = 0)** :
+- Le cutover Prod = application de toutes les migrations refonte dans un nouveau projet Supabase (pas un pivot live de l'actuelle Prod `gfwbqvuyovexqklkpurg`).
+- La DB Prod actuelle **n'a pas** les 28 RPC vulnérables (elles arrivent en bloc avec les migrations refonte) — la `publishable_key` Prod actuelle ne donne donc pas accès à ces RPC car elles n'existent pas.
+- Les 3 migrations H-16 seront appliquées séquentiellement par `supabase db push` (ordre chronologique du nom). La fenêtre théorique d'exposition n'a aucun client connecté pendant le cutover.
+
+**Décision user** : laisser les 3 fichiers séparés (Option A acceptée — pas de fusion, drift Preview state évité).
+
+### Correction empirique CR Opus M1 (search_path metier)
+
+CR Opus a signalé "13 rpc-metier sans `SET search_path` inline" basé sur analyse des migration files. Audit live `pg_proc.proconfig` post-application H-16 montre en réalité :
+- 22/28 STRICT (`public, pg_temp`)
+- 6/28 OK (`public, pg_catalog` — pg_catalog = system read-only, non exploitable)
+- 1/28 WEAK : `sav_tags_suggestions` (`public` only)
+
+Seule **1 fonction** à fixer (vs 13 estimé). Migration `20260522120200_h16_search_path_fixup.sql` applique l'ALTER.
+
+### CR findings — statut
+
+| Finding | Sévérité | Statut |
+|---|---|---|
+| H1 cutover Prod fenêtre 2 migrations | HIGH | MITIGATED (risque réel = 0 — cutover = nouvelle DB) |
+| M1 search_path 13 rpc-metier | MEDIUM | OVER-EVALUATED (réel = 1 fonction, fixée) |
+| M2 Bloc E COMMENT 11/28 | MEDIUM | FIXED (étendu à 28) |
+| M3 Bloc D search_path 1/14 | MEDIUM | FIXED (étendu à 28) |
+| L1 service_role positive check | LOW | FIXED (28/28 PASS) |
+| L2 jq fallback bash | LOW | FIXED (jq prioritaire + grep fallback) |
+| L3 positive Preview ref | LOW | FIXED (warn-only) |
+| L4 PATTERN-H16-A runbook | LOW | FIXED (extension `rls-context-binding.md` avec anti-pattern + checklist) |
+| L5 enumeration via 42501 | LOW | DISMISSED (noms RPC déjà observables via SPA bundle) |
+| L6 app_is_group_manager_of REVOKE déjà en place | LOW | NOTED (idempotent OK) |
+
+### Lesson apprise (à intégrer dans memory feedback / pattern projet)
+
+**REVOKE FROM anon ≠ sécurité** quand la fonction a un `GRANT EXECUTE TO PUBLIC` implicite (défaut Postgres à la création). Pattern correct = **`REVOKE FROM PUBLIC` puis `GRANT TO service_role[, authenticated]`** explicite. Le subagent DEV a appliqué le pattern naïf (REVOKE FROM anon), créé un faux PASS sur 7 fonctions. Détecté par audit `has_function_privilege('anon', ...) = false` post-application qui montrait 7 fails.
+
+PATTERN-H16-A documenté dans `docs/runbooks/rls-context-binding.md`.
+
+### Smoke AC#6 — flows déférés
+
+Acceptés (même pattern que h-18 AC#6 déféré) :
+- (d) Transition statut SAV / (e) Création ligne / (f) Émission avoir / (g) Anonymisation RGPD : Preview DB vide post-reset 2026-05-15, pas de fixtures member/SAV/opérateur.
+- (h) Cron dispatcher : CRON_SECRET non local — h-18 déjà validé 200 OK 7 jobs 4.8s. Garantie technique H-16 via SQL Bloc B (service_role EXECUTE OK sur 11 worker).
+
+### Files livrés
+
+**Migrations** :
+- `client/supabase/migrations/20260522120000_h16_rpc_revoke_anon.sql` (NEW, 28 fonctions)
+- `client/supabase/migrations/20260522120100_h16_revoke_public_fixup.sql` (NEW, REVOKE PUBLIC fixup 7)
+- `client/supabase/migrations/20260522120200_h16_search_path_fixup.sql` (NEW, sav_tags_suggestions strict)
+
+**Tests** :
+- `client/supabase/tests/security/h16_rpc_revoke_anon.test.sql` (NEW, 5 blocs étendus 28/28)
+- `client/tests/integration/security/h16-guc-audit.spec.ts` (NEW, 13 tests static)
+- `scripts/security/h16-rpc-isolation-check.sh` (NEW, 28 anon + 28 service_role checks)
+
+**Documentation** :
+- `docs/runbooks/rls-context-binding.md` (NEW, étendu PATTERN-H16-A)
 
 ---
 
