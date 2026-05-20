@@ -21,7 +21,9 @@
     "audit:schema": "node scripts/audit-handler-schema.mjs && node scripts/audit-check-constraints.mjs",
     "audit:vercel-env": "node scripts/security/audit-vercel-env.mjs",
     "audit:check-constraints": "node scripts/audit-check-constraints.mjs",
+    "audit:xlsx-version": "node scripts/security/check-xlsx-version.mjs",
     "audit:all": "npm run audit:schema",
+    "prebuild": "node scripts/security/check-xlsx-version.mjs",
     "test:integration": "vitest run --config vitest.config.integration.ts",
     "verify:dpia": "node ../scripts/verify-dpia-signed.mjs",
     "cutover:seed": "npx tsx scripts/cutover/seed-credit-sequence.ts",
@@ -45,7 +47,7 @@
     "@supabase/supabase-js": "^2.103.3",
     "@vercel/functions": "^3.4.4",
     "@vueuse/core": "^14.2.1",
-    "axios": "^1.3.4",
+    "axios": "^1.16.1",
     "chart.js": "^4.5.1",
     "nodemailer": "^8.0.5",
     "p-limit": "^3.1.0",
@@ -54,7 +56,7 @@
     "vue": "^3.5.32",
     "vue-chartjs": "^5.3.3",
     "vue-router": "^4.1.6",
-    "xlsx": "^0.18.5",
+    "xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz",
     "zod": "^4.3.6"
   },
   "devDependencies": {

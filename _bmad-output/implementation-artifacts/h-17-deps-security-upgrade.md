@@ -43,6 +43,14 @@ so that **(a) l'exploit XLSX piégé via `import-supplier-prices-handler.ts` est
 - Smoke import fournisseur en Preview : 0 régression sur le parsing XLSX
 - Smoke appels axios browser : 0 erreur réseau
 
+**Outcome réalisé (2026-05-20, post-Step 3)** :
+- `xlsx` : `https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz` (pinned, sha512 lock OK)
+- `axios` : `^1.16.1` (npm a résolu `^1.15.2` vers la latest 1.x — satisfait AC#2, surface caller validée pure `axios.get/post` sans interceptors → safe)
+- `form-data` (transitive) : `4.0.5` (≥ 4.0.4 spec, dédupliqué via bump axios)
+- `npm audit --omit=dev` : `high: 0, critical: 0, moderate: 1` (ws@8.18.2 résiduel, voir OOS-6)
+- Tests : `h-17-deps-security-upgrade.spec.ts` 32/32 GREEN + `import-supplier-prices.spec.ts` 34/34 GREEN (post-bump, 763ms, no regression)
+- Compensating control : `scripts/security/check-xlsx-version.mjs` exit 0 + branché en `prebuild` Vercel (deploy gate, DN-B option A)
+
 ---
 
 ## Acceptance Criteria
@@ -213,6 +221,9 @@ POC payloads disponibles dans le GHSA referenced.
 - **OOS-3** : Remplacement `xlsx` par `exceljs` ou autre lib (refactor non trivial).
 - **OOS-4** : Renforcement parsing XLSX serveur (taille max, structure validée pré-parse, sandbox worker) — defense-in-depth indépendamment des CVE upstream.
 - **OOS-5** : `npm audit` gate CI bloquant — actuellement `lint:business` + `verify:dpia` sont les gates. Promouvoir `audit:deps` en gate V2.
+- **OOS-6** : `ws@8.18.2` MODERATE résiduel (GHSA-58qx-3vcg-4xpx, uninitialized memory disclosure) — transitive via `@supabase/realtime-js@2.103.3 → ws@8.18.2`. `fixAvailable: true` via bump `@supabase/supabase-js` minor. Deferred V2 hygiène devDeps/runtime : pas de surface d'exploit runtime (WS endpoint = Supabase trusted, pas de connexion WS attaquant-contrôlée côté browser). À tracker dans une story h-19 deps-hygiene.
+- **OOS-7** : Vraie fixture binaire prototype-pollution POC (`tests/fixtures/exploits/proto-pollution-poc.xlsx`) sourcée du GHSA repo — le test `H17-AC4c` actuel utilise `aoa_to_sheet` + round-trip qui n'exerce PAS verbatim le code path GHSA-4r6h-8v6p-xvw6. Le contrôle binding reste l'assert version-floor ≥0.19.3 + `check-xlsx-version.mjs`. Deferred V2.
+- **OOS-8** : Test ReDoS via `worker_thread` avec timeout dur — le test `H17-AC4d` actuel utilise `Promise.race` + `setTimeout` qui n'attrape PAS un parse synchrone bloqué CPU-bound (l'event loop est gelé). Le contrôle binding reste l'assert version-floor ≥0.20.2 + `check-xlsx-version.mjs`. Deferred V2.
 
 ---
 

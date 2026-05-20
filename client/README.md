@@ -74,3 +74,31 @@ Détails complets : [docs/development-guide-client.md](../docs/development-guide
 ## Bonnes pratiques
 
 Consultez le fichier `VUE_BEST_PRACTICES.md` pour les directives de développement.
+
+## Gestion des dépendances — cas particuliers
+
+### xlsx (SheetJS) — CDN, pas npm registry
+
+**Pourquoi `xlsx` n'est pas sur npm.** SheetJS a quitté le registry npm en 2023. La version corrigée (≥0.20.3 — fermeture CVE prototype pollution GHSA-4r6h-8v6p-xvw6 et ReDoS GHSA-5pgg-2g8v-p4x9) n'est disponible que sur leur CDN officiel.
+
+`package.json` reference :
+
+```json
+"xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+```
+
+**Pour bumper xlsx** (nouvelle version SheetJS) :
+
+```bash
+npm install https://cdn.sheetjs.com/xlsx-X.Y.Z/xlsx-X.Y.Z.tgz
+```
+
+Remplacer `X.Y.Z` par la version cible. Préférer un pin explicite (pas `xlsx-latest.tgz`) pour l'auditabilité (DN-1, PATTERN-H17-A).
+
+**CI gate** : `scripts/security/check-xlsx-version.mjs` — exit 1 si version installée < 0.20.3 ou si `package.json` ne pointe pas vers `cdn.sheetjs.com`.
+
+```bash
+node scripts/security/check-xlsx-version.mjs
+```
+
+`npm audit` n'affiche **pas** les CVE xlsx après la migration CDN (le registry npm ne connaît pas la version CDN — c'est attendu et documenté). Le gate ci-dessus est le contrôle compensatoire (story h-17, DN-3).
