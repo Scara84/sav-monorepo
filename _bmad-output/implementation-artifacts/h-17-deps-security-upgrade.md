@@ -1,6 +1,6 @@
 # Story H-17: Bump deps sécurité — `xlsx` (CDN SheetJS) + `axios` + `form-data`
 
-Status: ready-for-dev
+Status: done
 sprint: hardening-post-v19b — Sprint Sécurité post-audit 2026-05-16
 size: S (~1h — bump + run tests + smoke import fournisseur)
 priority: P0 — **ship blocker promote refonte → main**
