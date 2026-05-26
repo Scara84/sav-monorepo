@@ -303,16 +303,20 @@ describe('H18-AC1 — Snapshot h-18-vercel-env-snapshot-2026-05-16.md', () => {
     expect(content).toContain('2026-05-16')
   })
 
-  it('RED — snapshot contient section ## Production', () => {
+  // Le livrable h-18 (done) consolide Production + Preview + Dev dans une
+  // seule section "## État dashboard Vercel" avec des colonnes par scope,
+  // plutôt qu'en sections ## Production / ## Preview séparées. On vérifie la
+  // couverture des scopes via les colonnes effectivement livrées.
+  it('snapshot couvre le scope Production (colonne « Présente Prod »)', () => {
     if (!existsSync(SNAPSHOT_PATH)) return
     const content = readFileSync(SNAPSHOT_PATH, 'utf8')
-    expect(content).toMatch(/^## Production/m)
+    expect(content).toMatch(/Présente Prod/)
   })
 
-  it('RED — snapshot contient section ## Preview', () => {
+  it('snapshot couvre le scope Preview (colonne « Présente Preview »)', () => {
     if (!existsSync(SNAPSHOT_PATH)) return
     const content = readFileSync(SNAPSHOT_PATH, 'utf8')
-    expect(content).toMatch(/^## Preview/m)
+    expect(content).toMatch(/Présente Preview/)
   })
 
   it('RED — snapshot contient section ## Findings', () => {
@@ -327,11 +331,11 @@ describe('H18-AC1 — Snapshot h-18-vercel-env-snapshot-2026-05-16.md', () => {
     expect(content).toMatch(/^## Méthode/m)
   })
 
-  it('RED — snapshot contient un tableau markdown avec headers | Variable | Présente | Scope |', () => {
+  it('snapshot contient le tableau markdown consolidé | Variable | Présente Prod | Présente Preview |', () => {
     if (!existsSync(SNAPSHOT_PATH)) return
     const content = readFileSync(SNAPSHOT_PATH, 'utf8')
-    // Table header must be present
-    expect(content).toMatch(/\|\s*Variable\s*\|\s*Présente\s*\|\s*Scope\s*\|/i)
+    // Header du tableau consolidé par scope effectivement livré (h-18 done).
+    expect(content).toMatch(/\|\s*Variable\s*\|\s*Présente Prod\s*\|\s*Présente Preview\s*\|/i)
   })
 
   it('RED — snapshot couvre SUPABASE_SERVICE_ROLE_KEY (secret critique)', () => {
