@@ -114,7 +114,7 @@ function parseEnvExample(): string[] {
   for (const line of content.split('\n')) {
     const trimmed = line.trim()
     if (trimmed.startsWith('#') || !trimmed.includes('=')) continue
-    const name = trimmed.split('=')[0].trim()
+    const name = trimmed.split('=')[0]!.trim()
     if (name) vars.push(name)
   }
   return vars

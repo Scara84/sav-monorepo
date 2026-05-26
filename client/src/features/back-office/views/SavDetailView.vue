@@ -9,7 +9,7 @@ import ImportSupplierPricesDialog from '../components/ImportSupplierPricesDialog
 import SavTagsBar from '../components/SavTagsBar.vue'
 import DuplicateButton from '../components/DuplicateButton.vue'
 import OperatorFileUploader from '../components/OperatorFileUploader.vue'
-import type { SavLineInput } from '../../../../api/_lib/business/creditCalculation'
+import type { SavLineInput, Unit } from '../../../../api/_lib/business/creditCalculation'
 import { formatDiff } from '../utils/format-audit-diff'
 import { isOneDriveWebUrlTrusted } from '../../../shared/utils/onedrive-whitelist'
 import { useCurrentUser } from '../../../shared/composables/useCurrentUser'
@@ -95,7 +95,7 @@ function toSavLineInput(l: {
     qty_arbitrated: l.qtyArbitrated,
     unit_arbitrated: (l.unitArbitrated && UNITS.has(l.unitArbitrated)
       ? l.unitArbitrated
-      : null) as SavLineInput['unit_arbitrated'],
+      : null) as Unit | null,
     unit_price_ttc_cents: l.unitPriceTtcCents,
     // V1.9-B.2 — override opérateur PU TTC (Row 3, NULL = fallback facture)
     unit_price_ttc_arbitrated_cents: l.unitPriceTtcArbitratedCents,

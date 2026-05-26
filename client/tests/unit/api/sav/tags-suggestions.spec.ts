@@ -110,7 +110,7 @@ describe('GET /api/sav/tags/suggestions (Story 3.7b AC#13)', () => {
     const body = res.jsonBody as { data: { suggestions: Array<{ tag: string; usage: number }> } }
     expect(body.data.suggestions).toHaveLength(3)
     // usage 5 tags come before usage 2
-    expect(body.data.suggestions[0].usage).toBeGreaterThanOrEqual(body.data.suggestions[2].usage)
+    expect(body.data.suggestions[0]!.usage).toBeGreaterThanOrEqual(body.data.suggestions[2]!.usage)
   })
 
   it('TS-02: 200 avec q=rapp → filter ILIKE passe correctement au handler', async () => {

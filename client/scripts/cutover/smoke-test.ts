@@ -728,9 +728,12 @@ async function main(): Promise<void> {
   const supabase = supabaseAdmin()
 
   // Check ERP feature flag
+  // PostgREST builders sont des thenables (PromiseLike) sans `.catch` : on passe
+  // le handler de rejet en 2e argument de `.then` (sinon `.catch is not a function`
+  // au runtime + erreur typecheck).
   const { data: erpTables } = await supabase
     .rpc('query_pg_tables', { table_name: 'erp_push_queue' })
-    .catch(() => ({ data: null }))
+    .then((r) => r, () => ({ data: null }))
   const erpPushQueueExists = Array.isArray(erpTables) && erpTables.length > 0
 
   // HARDEN-6 (M-2): upsert sentinel member with null check
@@ -739,7 +742,7 @@ async function main(): Promise<void> {
     .upsert({ email: smokeEmail, last_name: 'SMOKE-TEST' }, { onConflict: 'email' })
     .select('id')
     .single()
-    .catch((err) => ({ data: null, error: err as Error }))
+    .then((r) => r, (err: unknown) => ({ data: null, error: err as Error }))
 
   if (memberErr || !(memberData as Record<string, unknown> | null)?.['id']) {
     console.error('SENTINEL_MEMBER_UPSERT_FAILED', memberErr)
@@ -758,7 +761,7 @@ async function main(): Promise<void> {
       .order('created_at', { ascending: false })
       .limit(1)
       .single()
-      .catch(() => ({ data: null }))
+      .then((r) => r, () => ({ data: null }))
     return data as { kind: string; recipient_email: string; status: string } | null
   }
 
@@ -770,7 +773,7 @@ async function main(): Promise<void> {
       .order('created_at', { ascending: false })
       .limit(1)
       .single()
-      .catch(() => ({ data: null }))
+      .then((r) => r, () => ({ data: null }))
     return data as { idempotency_key: string; status: string } | null
   }
 

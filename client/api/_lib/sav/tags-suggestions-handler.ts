@@ -48,7 +48,7 @@ function tagsSuggestionsCore(): ApiHandler {
       return
     }
 
-    const { q, limit } = req.query as z.infer<typeof querySchema>
+    const { q, limit } = req.query as unknown as z.infer<typeof querySchema>
 
     try {
       // Query via Postgres function (unit tests mock any non-rate-limit rpc call)

@@ -552,7 +552,7 @@ describe('V1.9-B S-06 — Motif visible: reason-pill quand requestReason set, fa
 
 describe('V1.9-B S-07 — Édition Row 3 : inputs arbitrage + save patch correct', () => {
   it('édition → input edit-qty-arbitrated-100 + edit-unit-arbitrated-100 visibles dans Row 3 ; save émet patch avec nouveaux champs', async () => {
-    const saveMock = vi.fn(() =>
+    const saveMock = vi.fn((..._args: unknown[]) =>
       Promise.resolve({
         status: 200,
         ok: true,
@@ -620,7 +620,7 @@ describe('V1.9-B S-07 — Édition Row 3 : inputs arbitrage + save patch correct
 
     // V1.9-B.3 : 2 fetch calls — PATCH save + GET refresh post-save
     expect(saveMock).toHaveBeenCalledTimes(2)
-    const patchCall = saveMock.mock.calls[0] as [string, { body?: string; method?: string }]
+    const patchCall = saveMock.mock.calls[0] as unknown as [string, { body?: string; method?: string }]
     const patchBody = JSON.parse(patchCall[1]?.body ?? '{}') as Record<string, unknown>
     // Le patch doit contenir qtyArbitrated (valeur convertie depuis l'input)
     expect(patchBody).toHaveProperty('qtyArbitrated')

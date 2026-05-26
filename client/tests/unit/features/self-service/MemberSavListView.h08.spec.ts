@@ -128,7 +128,7 @@ function getSearchParams(fetchMock: ReturnType<typeof vi.fn>, callIndex: number)
 /**
  * Retourne toutes les URLs appelées par le mock fetch (sans les appels /api/auth/me).
  */
-function getSavUrls(fetchMock: ReturnType<typeof vi.fn>): string[] {
+function getSavUrls(fetchMock: ReturnType<typeof vi.fn<any[], any>>): string[] {
   return fetchMock.mock.calls
     .map((c) => String(c[0]))
     .filter((u) => u.includes('/api/self-service/sav'))
@@ -494,7 +494,7 @@ describe('H-08: Filtres recherche self-service (MemberSavListView)', () => {
     await flushPromises()
 
     // AC T-W6.5-7-D — le signal doit avoir été aborted
-    expect(abortedSignal?.aborted).toBe(true)
+    expect((abortedSignal as AbortSignal | null)?.aborted).toBe(true)
 
     // AC T-W6.5-7-D — error.value reste null (AbortError non fatal)
     // Sur l'onglet self, on doit voir les rows self et pas d'erreur

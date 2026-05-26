@@ -20,7 +20,13 @@
  */
 
 import * as xlsx from 'xlsx'
+import * as fs from 'node:fs'
 import { supabaseAdmin } from '../../api/_lib/clients/supabase-admin'
+
+// Le build CDN SheetJS (xlsx-0.20.3.tgz, cf. package.json h-17) ne bind pas
+// `fs` automatiquement comme le faisait le build npm. Sans set_fs, xlsx.readFile()
+// lève "Cannot access file". Obligatoire pour la lecture disque côté Node.
+xlsx.set_fs(fs)
 
 interface ProductInsert {
   code: string

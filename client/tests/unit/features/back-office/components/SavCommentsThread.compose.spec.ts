@@ -89,7 +89,7 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
-async function mountDetailWithFetch(fetchMock: ReturnType<typeof vi.fn>) {
+async function mountDetailWithFetch(fetchMock: ReturnType<typeof vi.fn<any[], any>>) {
   ;(globalThis as unknown as { fetch: unknown }).fetch = fetchMock
   const SavDetailView = await importSavDetailView()
   const router = makeRouter()

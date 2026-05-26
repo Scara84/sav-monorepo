@@ -18,8 +18,14 @@
  */
 
 import * as XLSX from 'xlsx'
+import * as fs from 'node:fs'
 import { writeFileSync, mkdirSync, statSync, readFileSync } from 'node:fs'
 import { join, resolve, dirname } from 'node:path'
+
+// Le build CDN SheetJS (xlsx-0.20.3.tgz, cf. package.json h-17) ne bind pas
+// `fs` automatiquement comme le faisait le build npm. Sans set_fs, XLSX.writeFile()
+// n'écrit rien sur disque → statSync échoue en ENOENT. Obligatoire côté Node.
+XLSX.set_fs(fs)
 import { fileURLToPath } from 'node:url'
 import { createHash } from 'node:crypto'
 
