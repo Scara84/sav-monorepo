@@ -82,6 +82,14 @@ const routes = [
         component: () => import('@/features/back-office/views/SavDetailView.vue'),
       },
       {
+        // Story 8.1 — DN-1=A : route de PREMIER NIVEAU (sœur de admin-sav-detail, PAS enfant).
+        // SavDetailView n'a pas de <router-view> → une route enfant ne se monterait jamais.
+        // Chemin absolu : /admin/sav/:id/demande-fournisseur
+        path: 'sav/:id/demande-fournisseur',
+        name: 'admin-sav-demande-fournisseur',
+        component: () => import('@/features/back-office/views/SupplierClaimView.vue'),
+      },
+      {
         path: 'exports/history',
         name: 'admin-export-history',
         component: () => import('@/features/back-office/views/ExportHistoryView.vue'),

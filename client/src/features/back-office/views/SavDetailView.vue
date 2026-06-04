@@ -1084,6 +1084,21 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
           >
             Importer prix fournisseur
           </button>
+          <!-- Story 8.1 — Demande remboursement fournisseur (AC #1, FR3) :
+               visible quel que soit le statut du SAV (FR3) ; RBAC enforced server-side (AC #3).
+               CTA proéminent si sav.status === 'validated' (DN-3, FR2). -->
+          <button
+            type="button"
+            :class="['btn-sm', sav.status === 'validated' ? 'cta-primary' : '']"
+            data-testid="supplier-claim-btn"
+            @click="router.push({ name: 'admin-sav-demande-fournisseur', params: { id: sav.id } })"
+          >
+            {{
+              sav.status === 'validated'
+                ? 'Préparer la demande fournisseur'
+                : 'Demande de remboursement fournisseur'
+            }}
+          </button>
         </div>
 
         <!-- Assign-me error toast -->
