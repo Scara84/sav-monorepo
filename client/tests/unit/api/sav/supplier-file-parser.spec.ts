@@ -221,6 +221,28 @@ describe('Parser-01f: M-1 — détection par contenu, séparateurs CATEGORIE exc
     expect(result.rows).toHaveLength(1)
     expect(result.rows[0]!.codeFr).toBe('425-1K')
   })
+
+  it('M1-c: séparateur CATEGORIE AVEC un CODE numérique (cas FICHIER RÉEL) → skippé, jamais compté comme produit', () => {
+    // ⚠️ Régression du gap fixture↔réel (UAT 8.1) : dans le vrai data.xlsx, les
+    // séparateurs ont un CODE numérique peuplé (17/1/13) + DESIGNATON "CATEGORIE : …",
+    // cols H-M en #N/A. Le test "codeFr absent" ne les attrape donc PAS — seul
+    // isCategorySeparatorRow (par contenu) les exclut.
+    const wb = buildWorkbook({
+      fgRows: [
+        // Séparateur réel : CODE=17 (présent !), DESIGNATON "  CATEGORIE : ALGUES", H-M = #N/A
+        [17, '  CATEGORIE : ALGUES', 0, 0, 0, 0, 0, '#N/A', '#N/A', '#N/A', '#N/A', '#N/A', '#N/A', '278'],
+        // Produit normal
+        ['1022-5K', 'Produit A', 19.9, '10%', 'kg', 8, 7, '1022', 'Prod A', 'Kilos', 34.3, 4.89, 34.23, '278'],
+      ],
+    })
+
+    const result = parseFactureGroupe(wb)
+    // Le séparateur (CODE=17) NE doit PAS être extrait comme produit
+    expect(result.rows).toHaveLength(1)
+    expect(result.rows[0]!.codeFr).toBe('1022-5K')
+    expect(result.rows.some((r) => r.codeFr === '17')).toBe(false)
+    expect(result.skippedRows).toBeGreaterThanOrEqual(1)
+  })
 })
 
 // ===========================================================================
@@ -253,6 +275,25 @@ describe('Parser-02: parseBdd — mapping par nom d\'en-tête (AC #7)', () => {
     const result = parseBdd(wb)
     expect(result.rows).toHaveLength(1)
     expect(result.skippedRows).toBe(1)
+  })
+
+  it('Parser-02c: séparateur CATEGORIE BDD AVEC un CODE (col B DESIGNATION (FR)) → skippé (cas fichier réel)', () => {
+    // Dans BDD, le texte "CATEGORIE" vit en col B (DESIGNATION (FR)), pas col D.
+    // Le séparateur a un CODE peuplé (17) → doit être skippé par contenu, pas extrait.
+    const wb = buildWorkbook({
+      bddRows: [
+        // Séparateur réel BDD : CODE=17, col B = "CATEGORIE : ALGUES", col D (ESP) vide
+        [17, '  CATEGORIE : ALGUES', ' CAT : ALGAS', '  ', '', ''],
+        // Produit normal
+        ['1022-5K', 'Produit A BIO 5kg', 'Product A', 'Producto A BIO', 'Málaga', ''],
+      ],
+    })
+
+    const result = parseBdd(wb)
+    expect(result.rows).toHaveLength(1)
+    expect(result.rows[0]!.code).toBe('1022-5K')
+    expect(result.rows.some((r) => r.code === '17')).toBe(false)
+    expect(result.skippedRows).toBeGreaterThanOrEqual(1)
   })
 })
 

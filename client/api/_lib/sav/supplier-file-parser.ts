@@ -160,6 +160,7 @@ const FG_NUMERIC_FIELDS = new Set<string>([
 
 const BDD_HEADER_MAP = {
   CODE: 'code',
+  'DESIGNATION (FR)': 'designationFr', // col B — utilisée UNIQUEMENT pour détecter les séparateurs CATEGORIE (pas dans BddRow)
   'DESIGNATION (ESP)': 'designationEs', // col D
   ORIGEN: 'origen', // col E
 } as const
@@ -261,8 +262,10 @@ function normalizeFechaAlbaran(v: unknown): { iso: string | null; raw: unknown; 
  *     souvent vides ou #N/A.
  *   - Elles doivent être ignorées comme lignes produit.
  *
- * Les lignes séparateur sans codeFr seront de toute façon skippées par la logique
- * codeFrTrimmed. Cette détection explicite sert à la robustesse et aux warnings.
+ * ⚠️ Mécanisme de skip PRIMAIRE : sur le vrai fichier SOL Y FRUTA les séparateurs
+ * ont un CODE numérique peuplé (17/1/13), donc le test "codeFr absent" ne les
+ * attrape pas — c'est ce test par contenu qui les exclut. Utilisé par
+ * parseFactureGroupe (col DESIGNATON) ET parseBdd (col DESIGNATION (FR)).
  */
 function isCategorySeparatorRow(fieldValues: Record<string, unknown>): boolean {
   const designation = fieldValues['designationFr']
@@ -315,13 +318,14 @@ export function parseFactureGroupe(wb: XLSX.WorkBook): FactureGroupeResult {
 
   // Lignes 2+ : détection par CONTENU (plus de DATA_START_ROW hardcodé).
   //
-  // Format réel SOL Y FRUTA (confirmé sur data.xlsx) :
+  // Format réel SOL Y FRUTA (confirmé sur data.xlsx, 999 lignes / 18 séparateurs) :
   //   - Ligne 1 = en-têtes de colonnes (CODE, DESIGNATON, …)
   //   - Lignes 2/3/4 = métadonnées commande (colonne N : REFERENCE / ALBARAN / FECHA)
-  //   - Ligne 5+ = lignes produit et séparateurs catégorie
+  //   - Lignes produit + séparateurs catégorie ("CATEGORIE : …") intercalés
   //
-  // La détection par contenu (codeFr absent = skip) gère naturellement les lignes
-  // métadonnées (elles n'ont pas de CODE) et les séparateurs CATEGORIE (idem).
+  // Deux familles de lignes sont ignorées :
+  //   1. Séparateurs catégorie → isCategorySeparatorRow (par CONTENU, même si CODE présent).
+  //   2. Lignes vides / métadonnées sans CODE → test codeFr absent.
   // Un warning est émis quand la colonne N (métadonnée) est peuplée mais A-G vides
   // (anomalie structurelle — ex. ligne métadonnée parsée comme donnée).
 
@@ -333,6 +337,17 @@ export function parseFactureGroupe(wb: XLSX.WorkBook): FactureGroupeResult {
       const fieldValues: Record<string, unknown> = {}
       for (const [col, field] of colToField) {
         fieldValues[field] = rawRow[col] ?? null
+      }
+
+      // Séparateur catégorie (DESIGNATON commence par "CATEGORIE") → ignoré,
+      // MÊME quand la colonne CODE est peuplée.
+      // ⚠️ Le vrai fichier SOL Y FRUTA a des séparateurs avec un CODE numérique
+      // (17/1/13) : se reposer sur "codeFr absent" ne suffit donc PAS — il faut
+      // le test par contenu ici, sinon les 18 séparateurs polluent les lignes
+      // produit (et la réconciliation Story 8.2).
+      if (isCategorySeparatorRow(fieldValues)) {
+        skippedRows++
+        continue
       }
 
       // codeFr = clé primaire pour filtrer les lignes vides
@@ -488,6 +503,13 @@ export function parseBdd(wb: XLSX.WorkBook): BddResult {
       const fieldValues: Record<string, unknown> = {}
       for (const [col, field] of colToField) {
         fieldValues[field] = rawRow[col] ?? null
+      }
+
+      // Séparateur catégorie (BDD : "CATEGORIE …" en col B DESIGNATION (FR)) → ignoré,
+      // même avec un CODE peuplé. Cohérent avec parseFactureGroupe.
+      if (isCategorySeparatorRow(fieldValues)) {
+        skippedRows++
+        continue
       }
 
       const codeRaw = fieldValues['code']
