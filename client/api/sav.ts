@@ -23,6 +23,7 @@ import { tagsSuggestionsHandler } from './_lib/sav/tags-suggestions-handler'
 import { importSupplierPricesHandler } from './_lib/sav/import-supplier-prices-handler'
 import { applySupplierPricesHandler } from './_lib/sav/apply-supplier-prices-handler'
 import { parseSupplierFileHandler } from './_lib/sav/parse-supplier-file-handler'
+import { reconcileSupplierClaimHandler } from './_lib/sav/reconcile-supplier-claim-handler'
 import type { ApiHandler, ApiRequest, ApiResponse } from './_lib/types'
 
 /**
@@ -125,6 +126,7 @@ const ALLOWED_OPS = new Set([
   'import-supplier-prices',
   'apply-supplier-prices',
   'parse-supplier-file',
+  'reconcile-supplier-claim',
 ])
 
 function parseOp(req: ApiRequest): string | null {
@@ -357,6 +359,16 @@ const dispatch: ApiHandler = async (req, res) => {
       return
     }
     return parseSupplierFileHandler(savId)(req, res)
+  }
+
+  // Story 8.2 — POST /api/sav/:id/demande-fournisseur/reconcile (réconciliation SOL Y FRUTA)
+  if (op === 'reconcile-supplier-claim') {
+    if (method !== 'POST') {
+      res.setHeader('Allow', 'POST')
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
+      return
+    }
+    return reconcileSupplierClaimHandler(savId)(req, res)
   }
 
   sendError(res, 'NOT_FOUND', 'Route non disponible', requestId)

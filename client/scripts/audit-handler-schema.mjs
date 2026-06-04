@@ -221,6 +221,11 @@ const SCHEMA = {
     'supplier_reference',
     'supplier_price_imported_at',
     'supplier_price_source',
+    // Story V1.9-B-2 + OQ-1 (8.2) — colonnes déjà en production, snapshot antérieur incomplet
+    'qty_arbitrated',
+    'unit_arbitrated',
+    'request_reason',
+    'request_comment',
   ],
   sav_reference_sequence: ['year', 'last_number'],
   sav_submit_tokens: ['jti', 'issued_at', 'expires_at', 'used_at', 'ip_hash', 'user_agent'],
