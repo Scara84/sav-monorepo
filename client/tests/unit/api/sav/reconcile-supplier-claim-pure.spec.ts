@@ -315,7 +315,7 @@ describe('PURE-05: Ordre critique — conversion g→kg AVANT cap (AC #6 Dev Not
       qtyArbitrated: 5000, // 5000 grammes
       qtyInvoiced: null,
       unitArbitrated: 'g',
-      cause: 'Abîmé',
+      cause: 'abime', // FR12 : slug réel stocké (capture), pas le libellé
     }
 
     const bddRow = null // pas de BDD pour ce test
@@ -329,7 +329,7 @@ describe('PURE-05: Ordre critique — conversion g→kg AVANT cap (AC #6 Dev Not
         bdd: { rows: [], skippedRows: 0, warnings: [] },
         fileMeta: { filename: 'test.xlsx', sizeBytes: 100, sheetsDetected: [], parser: 'test' },
       },
-      motifMap: new Map([['Abîmé', 'estropeado']]),
+      motifMap: new Map([['abime', 'estropeado']]), // keyé sur clé normalisée (comme buildMotifMap)
     }
 
     const result = reconcile(input)
@@ -741,7 +741,7 @@ describe('PURE-09: reconcile — déterminisme (AC #7, AC #11k)', () => {
           qtyArbitrated: 5,
           qtyInvoiced: null,
           unitArbitrated: 'kg',
-          cause: 'Abîmé',
+          cause: 'abime', // FR12 : slug réel stocké (capture), pas le libellé
         },
         {
           id: 'uuid-2',
@@ -777,7 +777,7 @@ describe('PURE-09: reconcile — déterminisme (AC #7, AC #11k)', () => {
         bdd: { rows: [{ code: '1022-5K', designationEs: 'Aguacate Hass BIO', origen: 'Málaga' }], skippedRows: 0, warnings: [] },
         fileMeta: { filename: 'test.xlsx', sizeBytes: 100, sheetsDetected: [], parser: 'test' },
       },
-      motifMap: new Map([['Abîmé', 'estropeado']]),
+      motifMap: new Map([['abime', 'estropeado']]), // keyé sur clé normalisée (comme buildMotifMap)
     }
 
     const r1 = reconcile(input)

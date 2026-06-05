@@ -29,6 +29,8 @@ import { logger } from '../logger'
 import { reconcile } from './reconcile-supplier-claim'
 import type { SavLineInput, SupplierFileParseResult } from './reconcile-supplier-claim'
 import type { ApiHandler, ApiRequest, ApiResponse } from '../types'
+// FR12 fix (Sprint Change Proposal 2026-06-05) : clé motif normalisée (slug↔libellé)
+import { normalizeCauseKey } from '../../../src/shared/validation/normalize-cause-key'
 
 // ---------------------------------------------------------------------------
 // RBAC — check group scope (réutilise pattern parse-supplier-file-handler.ts)
@@ -101,19 +103,19 @@ async function checkGroupScope(
  *
  * @throws Error si Supabase indisponible (DN-3 Option C : fail explicite → 503)
  */
-async function buildMotifMap(causes: string[]): Promise<Map<string, string | null>> {
-  if (causes.length === 0) return new Map()
-
+async function buildMotifMap(): Promise<Map<string, string | null>> {
   const admin = supabaseAdmin()
 
-  // AC #4 — 1 seul SELECT bulk : WHERE list_code='sav_cause' AND is_active=true AND value=ANY(causes)
-  // is_active=true : exclut les entrées désactivées (ex. anciens motifs archivés) — R2 fix
+  // FR12 fix : la cause stockée est un SLUG (`abime`) alors que validation_lists.value
+  // est un LIBELLÉ (`Abîmé`) → on NE PEUT PAS filtrer `.in('value', causes)` (0 match).
+  // On charge tous les motifs sav_cause actifs (≤10 lignes) et on keye sur la clé
+  // normalisée (normalizeCauseKey) — la jointure se fait ensuite côté lookup pur.
+  // is_active=true : exclut les entrées désactivées (ex. anciens motifs archivés).
   const { data, error } = await admin
     .from('validation_lists')
     .select('value, value_es')
     .eq('list_code', 'sav_cause')
     .eq('is_active', true)
-    .in('value', causes)
 
   if (error) {
     // DN-3 Option C : Supabase indisponible → throw (handler retourne 503)
@@ -123,7 +125,7 @@ async function buildMotifMap(causes: string[]): Promise<Map<string, string | nul
   const motifMap = new Map<string, string | null>()
   for (const row of data ?? []) {
     if (typeof row.value === 'string') {
-      motifMap.set(row.value, row.value_es ?? null)
+      motifMap.set(normalizeCauseKey(row.value), row.value_es ?? null)
     }
   }
   return motifMap
@@ -237,7 +239,8 @@ function reconcileSupplierClaimCore(savId: number): ApiHandler {
 
     let motifMap: Map<string, string | null>
     try {
-      motifMap = await buildMotifMap(uniqueCauses)
+      // Pas de cause à traduire → pas de requête validation_lists (préserve le no-op).
+      motifMap = uniqueCauses.length > 0 ? await buildMotifMap() : new Map()
     } catch (err) {
       // DN-3 Option C : Supabase indisponible → fail explicite 503
       logger.error('sav.reconcile-supplier-claim.validation_lists_error', {

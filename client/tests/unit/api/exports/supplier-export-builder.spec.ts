@@ -1,5 +1,6 @@
 import { describe, it, expect, vi, beforeEach, type MockInstance } from 'vitest'
 import * as XLSX from 'xlsx'
+import { createClient } from '@supabase/supabase-js'
 
 import {
   buildSupplierExport,
@@ -7,6 +8,12 @@ import {
   type SupplierExportConfig,
 } from '../../../../api/_lib/exports/supplierExportBuilder'
 import { rufinoConfig } from '../../../../api/_lib/exports/rufinoConfig'
+import { resolveTranslatedCause } from '../../../../api/_lib/exports/resolve-cause-translation'
+
+// FR12 real-DB gate (PATTERN-H14 skipIf) — symétrie avec RSC-18e (reconcile)
+const SUPABASE_URL = process.env['SUPABASE_URL'] ?? process.env['VITE_SUPABASE_URL']
+const SERVICE_ROLE = process.env['SUPABASE_SERVICE_ROLE_KEY']
+const HAS_DB = Boolean(SUPABASE_URL && SERVICE_ROLE)
 
 // ---------------------------------------------------------------
 // Fixtures
@@ -230,6 +237,34 @@ describe('buildSupplierExport — rufinoConfig', () => {
       expect(cell, `cell ${cellRef} missing`).toBeDefined()
       expect(cell!.f).toBe(expected)
     }
+  })
+
+  it('FR12 (discriminant) : cause stockée en SLUG (`abime`) + validation_lists en LIBELLÉ (`Abîmé`) → CAUSA traduite `estropeado`', async () => {
+    // Reproduit la prod : la capture stocke le slug `abime` dans
+    // validation_messages[{kind:'cause'}].text, mais validation_lists.value = `Abîmé`.
+    // AVANT le fix : list['abime'] === undefined → fallback FR `abime` + warning.
+    // APRÈS (lookup par clé normalisée) : match → `estropeado`, sans warning.
+    const rows = [
+      makeRow({ id: 1, validation_messages: [{ kind: 'cause', text: 'abime' }] }),
+    ]
+    const { client } = makeSupabaseMock(rows)
+
+    const result = await buildSupplierExport({
+      config: rufinoConfig,
+      period_from: new Date('2026-01-01T00:00:00Z'),
+      period_to: new Date('2026-01-31T00:00:00Z'),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      supabase: client as any,
+    })
+
+    const { rows: outRows } = readSheet(result.buffer)
+    expect(outRows[0]!['CAUSA']).toBe('estropeado')
+    // Pas de fallback → pas de warning translation.missing
+    const warnedMiss = warnSpy.mock.calls.some((args) => {
+      const msg = args[0]
+      return typeof msg === 'string' && msg.includes('export.translation.missing')
+    })
+    expect(warnedMiss).toBe(false)
   })
 
   it('traduction manquante (value_es NULL) → fallback FR + warning loggé', async () => {
@@ -878,5 +913,45 @@ describe('buildSupplierExport — rufinoConfig', () => {
       return typeof msg === 'string' && msg.includes('export.path.broken')
     })
     expect(warnedOnPathBroken).toBe(false)
+  })
+})
+
+// ===========================================================================
+// FR12 (M-4) — INTEGRATION réelle DB : la résolution motif export fonctionne
+// contre le VRAI validation_lists (libellés) avec un slug stocké (abime).
+// skipIf(!HAS_DB) (PATTERN-H14) — symétrie avec RSC-18e (reconcile).
+// Mémoire feedback_test_integration_gap : les mocks (fixtures libellés) ont
+// masqué le bug — ce test vraie-DB est le filet anti-faux-vert côté export.
+// ===========================================================================
+
+describe.skipIf(!HAS_DB)('FR12 real-DB — résolution motif export (Rufino/Martinez) contre validation_lists réel', () => {
+  it('slug `abime`/`manquant`/`autre` → traduction ES via resolveTranslatedCause sur le vrai référentiel', async () => {
+    const admin = createClient(SUPABASE_URL!, SERVICE_ROLE!, {
+      auth: { persistSession: false },
+    })
+    const { data, error } = await admin
+      .from('validation_lists')
+      .select('value, value_es')
+      .eq('list_code', 'sav_cause')
+      .eq('is_active', true)
+
+    expect(error).toBeNull()
+    const rows = (data ?? []) as Array<{ value: string; value_es: string | null }>
+    if (rows.length === 0) {
+      console.warn('[FR12 real-DB WARN] validation_lists sav_cause vide sur Preview — seed manquant')
+      return
+    }
+
+    // Reproduit ctx.translations['sav_cause'] tel que construit par loadTranslations
+    // (clé = libellé `value`, valeur = value_es non vide).
+    const list: Record<string, string> = {}
+    for (const r of rows) {
+      if (r.value_es !== null && r.value_es !== '') list[r.value] = r.value_es
+    }
+
+    // Les 3 slugs réels émis par la capture → traduction ES attendue.
+    expect(resolveTranslatedCause(list, 'abime')).toBe('estropeado')
+    expect(resolveTranslatedCause(list, 'manquant')).toBe('faltante')
+    expect(resolveTranslatedCause(list, 'autre')).toBe('otro')
   })
 })

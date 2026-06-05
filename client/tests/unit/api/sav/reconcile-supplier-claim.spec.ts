@@ -54,6 +54,8 @@ import { createClient } from '@supabase/supabase-js'
 import { signJwt } from '../../../../api/_lib/middleware/with-auth'
 import type { SessionUser } from '../../../../api/_lib/types'
 import { mockReq, mockRes } from '../_lib/test-helpers'
+// FR12 fix : clé motif normalisée (slug↔libellé) — utilisée par le test real-DB RSC-18e
+import { normalizeCauseKey } from '../../../../src/shared/validation/normalize-cause-key'
 
 const SECRET = 'test-secret-at-least-32-bytes-longxxx'
 
@@ -245,13 +247,12 @@ vi.mock('../../../../api/_lib/clients/supabase-admin', () => {
       if (table === 'validation_lists') {
         if (db.validationListsMode === 'throw-error') {
           // DN-3(iii) : Supabase indisponible → throw explicite → handler retourne 503
-          // Chaîne complète : select().eq(list_code).eq(is_active).in(causes) → reject
-          const throwingIn = { in: () => Promise.reject(new Error('Supabase connection timeout')) }
+          // FR12 fix : la chaîne ne filtre PLUS .in(causes) (slug ≠ libellé) →
+          // select().eq(list_code).eq(is_active) awaitée directement → reject au 2e .eq().
           return {
             select: () => ({
               eq: () => ({
-                eq: () => throwingIn,
-                in: () => Promise.reject(new Error('Supabase connection timeout')),
+                eq: () => Promise.reject(new Error('Supabase connection timeout')),
               }),
             }),
           }
@@ -270,28 +271,24 @@ vi.mock('../../../../api/_lib/clients/supabase-admin', () => {
         }
 
         // L-6 FIX: strict mock — only return data when is_active=true filter is applied.
-        // Chain: select().eq('list_code','sav_cause').eq('is_active',true).in(causes)
-        // The second .eq() MUST have col='is_active' and val=true.
-        // If production code removes .eq('is_active', true), isActiveFilterApplied stays
-        // false → the .in() at the wrong chain level gets empty data → tests FAIL.
-        // This makes the L-6 guard genuinely detect removal of the is_active filter.
+        // FR12 fix : la prod ne filtre PLUS .in('value', causes) (slug ≠ libellé →
+        // 0 match) ; elle charge tous les sav_cause actifs et keye sur la clé normalisée.
+        // Chain prod : select('value, value_es').eq('list_code','sav_cause').eq('is_active',true) [awaitée]
+        // The second .eq() MUST have col='is_active' and val=true. If production code removes
+        // .eq('is_active', true), isActiveFilterApplied stays false → empty data → tests FAIL.
         return {
           select: () => ({
             // First .eq() = list_code='sav_cause'
             eq: (_col1: string, _val1: unknown) => ({
-              // Second .eq() = is_active=true — STRICT: only set flag when correct args
+              // Second .eq() = is_active=true — STRICT: only set flag when correct args.
+              // Plus de .in() : la chaîne est awaitée ici → on renvoie une Promise.
               eq: (col2: string, val2: unknown) => {
                 if (col2 === 'is_active' && val2 === true) {
                   db.validationListsIsActiveFilterApplied = true
                 }
-                // Only return real data if is_active filter was applied
                 const data = db.validationListsIsActiveFilterApplied ? listData : []
-                return {
-                  in: () => Promise.resolve({ data, error: null }),
-                }
+                return Promise.resolve({ data, error: null })
               },
-              // If production code calls .in() directly (skipping second .eq()) → empty data
-              in: () => Promise.resolve({ data: [], error: null }),
             }),
           }),
         }
@@ -992,7 +989,10 @@ describe('RSC-09: precio null (AC #11h, AC #6)', () => {
 
 describe('RSC-10: Traduction motif — DN-3 (AC #11i)', () => {
   it('RSC-10a (i.1): cause connue → causaEs rempli depuis validation_lists.value_es', async () => {
-    // db.validationListsMode = 'normal' (défaut) → value_es = 'estropeado' pour 'Abîmé'
+    // FR12 (discriminant) : la capture stocke le SLUG `abime`, validation_lists.value
+    // est le LIBELLÉ `Abîmé`. AVANT le fix (.in('value', ['abime']) + map keyé libellé)
+    // → 0 match → causaEs='otro'. APRÈS (map keyé clé normalisée + lookup normalisé)
+    // → `estropeado`. Ce test échoue sur l'ancien code = prouve le fix.
     db.savLines = [
       {
         id: 'uuid-line-cause',
@@ -1001,7 +1001,35 @@ describe('RSC-10: Traduction motif — DN-3 (AC #11i)', () => {
         qty_arbitrated: 5,
         qty_invoiced: null,
         unit_arbitrated: 'kg',
-        request_reason: 'Abîmé',
+        request_reason: 'abime', // FR12 : slug réel stocké par la capture (≠ libellé validation_lists)
+      },
+    ]
+
+    const parsed = buildParsed({
+      fgRows: [{ codeFr: '1022-5K', qteFact: 9, precio: 5.29 }],
+      bddRows: [],
+    })
+
+    const res = mockRes()
+    await handler(reconcileReq(1, parsed), res)
+
+    expect(res.statusCode).toBe(200)
+    const body = res.jsonBody as { claimLines: Array<{ causaEs: string }> }
+    expect(body.claimLines[0]!.causaEs).toBe('estropeado')
+  })
+
+  it('RSC-10e (i.1bis): cause stockée en LIBELLÉ (back-office) → traduite aussi (idempotence)', async () => {
+    // Robustesse : si un jour la cause est stockée en libellé `Abîmé` (et non en slug),
+    // la normalisation symétrique matche tout de même → `estropeado`.
+    db.savLines = [
+      {
+        id: 'uuid-line-cause-label',
+        product_code_snapshot: '1022-5K',
+        product_name_snapshot: 'Avocat',
+        qty_arbitrated: 5,
+        qty_invoiced: null,
+        unit_arbitrated: 'kg',
+        request_reason: 'Abîmé', // libellé (cas back-office hypothétique)
       },
     ]
 
@@ -1028,7 +1056,7 @@ describe('RSC-10: Traduction motif — DN-3 (AC #11i)', () => {
         qty_arbitrated: 5,
         qty_invoiced: null,
         unit_arbitrated: 'kg',
-        request_reason: 'Abîmé',
+        request_reason: 'abime', // FR12 : slug réel stocké par la capture (≠ libellé validation_lists)
       },
     ]
 
@@ -1094,7 +1122,7 @@ describe('RSC-10: Traduction motif — DN-3 (AC #11i)', () => {
         qty_arbitrated: 5,
         qty_invoiced: null,
         unit_arbitrated: 'kg',
-        request_reason: 'Abîmé',
+        request_reason: 'abime', // FR12 : slug réel stocké par la capture (≠ libellé validation_lists)
       },
     ]
 
@@ -1496,6 +1524,34 @@ describe.skipIf(!HAS_DB)('RSC-18: validation_lists — INTEGRATION réelle DB Su
     }
   })
 
+  it('RSC-18e (FR12 real-DB): slug stocké `abime`/`manquant` → traduit via clé normalisée contre le VRAI validation_lists (libellés)', async () => {
+    // PATTERN-H15-A : preuve vraie-DB du fix FR12 (mémoire feedback_test_integration_gap).
+    // Le vrai validation_lists keye sur le LIBELLÉ (`Abîmé`) ; la capture stocke le SLUG
+    // (`abime`). On reconstruit le motifMap comme le handler corrigé (toutes les rows
+    // sav_cause actives, keyé sur normalizeCauseKey(value)) et on vérifie que le slug
+    // réel résout bien la traduction ES. AVANT le fix (lookup par value brute) → miss.
+    const { data, error } = await admin
+      .from('validation_lists')
+      .select('value, value_es')
+      .eq('list_code', 'sav_cause')
+      .eq('is_active', true)
+
+    expect(error).toBeNull()
+    const rows = (data ?? []) as Array<{ value: string; value_es: string | null }>
+    if (rows.length === 0) {
+      console.warn('[RSC-18e WARN] validation_lists sav_cause vide sur Preview — seed manquant')
+      return
+    }
+
+    const motifMap = new Map<string, string | null>()
+    for (const r of rows) motifMap.set(normalizeCauseKey(r.value), r.value_es ?? null)
+
+    // Les 3 slugs réels émis par la capture (WebhookItemsList.vue) → traduction ES attendue.
+    expect(motifMap.get(normalizeCauseKey('abime'))).toBe('estropeado')
+    expect(motifMap.get(normalizeCauseKey('manquant'))).toBe('faltante')
+    expect(motifMap.get(normalizeCauseKey('autre'))).toBe('otro')
+  })
+
   it('RSC-18d (H-1 skipIf): sav_lines ordered by position — real-DB confirms column exists and ordering is deterministic', async () => {
     // H-1 FIX: The handler adds .order('position', { ascending: true, nullsFirst: false }).
     // This integration test verifies the position column exists and SELECT with ORDER BY works.
@@ -1539,7 +1595,7 @@ describe('RSC-19: L-6 validation_lists mock strict is_active filter (CR fix L-6)
         qty_arbitrated: 5,
         qty_invoiced: null,
         unit_arbitrated: 'kg',
-        request_reason: 'Abîmé',
+        request_reason: 'abime', // FR12 : slug réel stocké par la capture (≠ libellé validation_lists)
       },
     ]
 

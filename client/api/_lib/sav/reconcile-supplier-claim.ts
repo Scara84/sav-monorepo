@@ -283,6 +283,8 @@ export function convertUnit(input: ConvertUnitInput): ConvertUnitOutput {
 
 import { applyCap, computeImporte } from '../../../src/shared/supplier-claim/math'
 export { applyCap, computeImporte }
+// FR12 fix (Sprint Change Proposal 2026-06-05) : clé motif normalisée (slug↔libellé)
+import { normalizeCauseKey } from '../../../src/shared/validation/normalize-cause-key'
 
 // ---------------------------------------------------------------------------
 // AC #3, #4, #5, #6, #7 — reconcile (orchestrateur pur)
@@ -394,9 +396,12 @@ export function reconcile(input: ReconcileInput): ReconcileResult {
       // AC #4 — traduction motif depuis motifMap injecté
       const cause = savLine.cause
       let causaEs: string | null = null
-      if (cause !== null && cause !== undefined) {
-        if (motifMap.has(cause)) {
-          const valueEs = motifMap.get(cause) ?? null
+      if (cause !== null && cause !== undefined && cause !== '') {
+        // FR12 fix : la cause stockée est un SLUG (`abime`) et motifMap est keyé sur
+        // la clé normalisée des libellés validation_lists → on normalise des 2 côtés.
+        const causeKey = normalizeCauseKey(cause)
+        if (motifMap.has(causeKey)) {
+          const valueEs = motifMap.get(causeKey) ?? null
           if (valueEs === null || valueEs === '') {
             causaEs = 'otro'
             warnings.push({ savLineId: savLine.id, type: 'cause-translation-missing' })

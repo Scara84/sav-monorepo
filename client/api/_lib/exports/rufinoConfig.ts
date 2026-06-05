@@ -28,6 +28,8 @@
 
 import { logger } from '../logger'
 import type { SupplierExportConfig, ExportRow } from './supplierExportBuilder'
+// FR12 fix (Sprint Change Proposal 2026-06-05) : résolution motif par clé normalisée (slug↔libellé)
+import { resolveTranslatedCause } from './resolve-cause-translation'
 
 // Largeurs colonnes (AC #8).
 const W_FECHA = 12
@@ -159,10 +161,11 @@ export const rufinoConfig: SupplierExportConfig = {
       source: {
         kind: 'computed',
         compute: (ctx) => {
-          const causeFr = extractCauseText(ctx.row)
-          if (!causeFr) return ''
-          const list = ctx.translations['sav_cause']
-          const translated = list ? list[causeFr] : undefined
+          const causeRaw = extractCauseText(ctx.row)
+          if (!causeRaw) return ''
+          // FR12 fix : résolution par clé normalisée (slug↔libellé) — helper partagé
+          // avec martinezConfig (anti-divergence).
+          const translated = resolveTranslatedCause(ctx.translations['sav_cause'], causeRaw)
           if (translated === undefined || translated === null || translated === '') {
             // Fallback FR + warn structuré. CR 5.1 LOW : on passe par `logger`
             // (comme le resolver validation_list built-in) pour uniformiser
@@ -170,9 +173,9 @@ export const rufinoConfig: SupplierExportConfig = {
             logger.warn('export.translation.missing', {
               supplier: ctx.supplier_code,
               list: 'sav_cause',
-              value: causeFr,
+              value: causeRaw,
             })
-            return causeFr
+            return causeRaw
           }
           return translated
         },

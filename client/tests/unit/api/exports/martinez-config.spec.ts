@@ -208,6 +208,25 @@ describe('buildSupplierExport — martinezConfig (Story 5.6)', () => {
     }
   })
 
+  it('FR12 (discriminant) : cause stockée en SLUG (`abime`) + validation_lists en LIBELLÉ (`Abîmé`) → DETERIORADO `estropeado`', async () => {
+    // H-1 CR : Martinez avait le MÊME bug que Rufino (lookup list[causeRaw] direct).
+    // Reproduit la prod : slug stocké, libellé au référentiel. AVANT le fix → fallback
+    // FR `abime`. APRÈS (resolveTranslatedCause normalisé) → `estropeado`, sans warning.
+    const rows = [makeRow({ id: 1, validation_messages: [{ kind: 'cause', text: 'abime' }] })]
+    const { client } = makeSupabaseMock(rows)
+
+    const result = await buildSupplierExport({
+      config: martinezConfig,
+      period_from: new Date('2026-02-01T00:00:00Z'),
+      period_to: new Date('2026-02-28T00:00:00Z'),
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      supabase: client as any,
+    })
+
+    const { rows: outRows } = readSheet(result.buffer)
+    expect(outRows[0]!['DETERIORADO']).toBe('estropeado')
+  })
+
   it('MARTINEZ vs RUFINO — même dataset, headers et nombre colonnes divergents (preuve config-driven)', async () => {
     const dataset = [
       makeRow({ id: 1 }),
