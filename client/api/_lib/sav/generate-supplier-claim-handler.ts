@@ -144,12 +144,15 @@ function validatePayload(
   }
 
   const meta = b['metadata'] as Record<string, unknown>
+  // Le parser xlsx peut produire reference/albaran en number (ex. albaran 3127) ;
+  // les colonnes DB sont text/date → on tolère string|number et on coerce en string.
+  const isStrOrNum = (v: unknown): boolean => typeof v === 'string' || typeof v === 'number'
   if (
-    typeof meta['reference'] !== 'string' ||
-    typeof meta['albaran'] !== 'string' ||
-    typeof meta['fechaAlbaran'] !== 'string'
+    !isStrOrNum(meta['reference']) ||
+    !isStrOrNum(meta['albaran']) ||
+    !isStrOrNum(meta['fechaAlbaran'])
   ) {
-    return { valid: false, code: 'VALIDATION_FAILED', message: 'metadata.reference/albaran/fechaAlbaran requis (string)' }
+    return { valid: false, code: 'VALIDATION_FAILED', message: 'metadata.reference/albaran/fechaAlbaran requis (string|number)' }
   }
 
   if (!Array.isArray(b['claimLines'])) {
@@ -177,9 +180,9 @@ function validatePayload(
 
   const payload: ArbitratedClaimPayload = {
     metadata: {
-      reference: meta['reference'] as string,
-      albaran: meta['albaran'] as string,
-      fechaAlbaran: meta['fechaAlbaran'] as string,
+      reference: String(meta['reference']),
+      albaran: String(meta['albaran']),
+      fechaAlbaran: String(meta['fechaAlbaran']),
     },
     creditNoteId: (b['creditNoteId'] as number | null | undefined) ?? null,
     claimLines: claimLines as ClaimLinePayload[],

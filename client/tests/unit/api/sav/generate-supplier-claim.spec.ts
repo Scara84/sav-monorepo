@@ -358,6 +358,26 @@ describe('GEN-01: happy path — 200 + Content-Type xlsx (AC #11a)', () => {
     expect(String(disposition)).toContain('attachment')
     expect(String(disposition)).toContain('.xlsx')
   })
+
+  // Anti-régression UAT 2026-06-05 : le parser xlsx produit albaran en NUMBER (ex. 3127),
+  // pas en string. La validation exigeait string → 400 VALIDATION_FAILED en réel (faux-vert
+  // car les fixtures utilisaient '3127' string). Discriminant : albaran number → 200.
+  it('GEN-01d: metadata.albaran en number (3127) → 200 (tolérance string|number, leçon UAT)', async () => {
+    const payload = makeValidPayload()
+    ;(payload.metadata as Record<string, unknown>)['albaran'] = 3127 // number, pas '3127'
+    const req = mockReq({
+      method: 'POST',
+      headers: {},
+      query: { id: '1' },
+      body: payload,
+      user: makeOperatorUser(10),
+    })
+    const res = mockRes()
+
+    await generateSupplierClaimHandler(1)(req, res)
+
+    expect(res.statusCode).toBe(200)
+  })
 })
 
 // ===========================================================================
