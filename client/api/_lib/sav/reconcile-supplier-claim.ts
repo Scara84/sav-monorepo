@@ -273,35 +273,16 @@ export function convertUnit(input: ConvertUnitInput): ConvertUnitOutput {
 }
 
 // ---------------------------------------------------------------------------
-// AC #6 — applyCap
+// AC #6 — applyCap + computeImporte
+// MEDIUM-1 (Story 8.3 CR fix) : implementations moved to shared pure module
+// so the client composable 8.3 and this server engine share the same code.
+// Imported here for use by the reconcile() orchestrator below, and re-exported
+// so all 8.2 test imports (import { applyCap, computeImporte } from '...') stay unchanged.
 // ORDRE CRITIQUE : la conversion g→kg doit être appliquée AVANT ce cap
 // ---------------------------------------------------------------------------
 
-/**
- * Plafonne qtyForCap à qteFact (capacité facturée fournisseur).
- * AC #6 : qteFact null|0 → retourne 0.
- */
-export function applyCap(input: { qtyForCap: number; qteFact: number | null }): number {
-  const { qtyForCap, qteFact } = input
-  if (qteFact === null || qteFact === 0) return 0
-  return Math.min(qtyForCap, qteFact)
-}
-
-// ---------------------------------------------------------------------------
-// AC #6 — computeImporte
-// Pas d'arrondi serveur (NFR-REL déterminisme)
-// ---------------------------------------------------------------------------
-
-/**
- * Calcule le montant = qty × precio.
- * - Si precio est null → retourne null (caller marque blockingForGeneration)
- * - Pas d'arrondi : produit exact en double-précision
- */
-export function computeImporte(input: { qty: number; precio: number | null }): number | null {
-  const { qty, precio } = input
-  if (precio === null) return null
-  return qty * precio
-}
+import { applyCap, computeImporte } from '../../../src/shared/supplier-claim/math'
+export { applyCap, computeImporte }
 
 // ---------------------------------------------------------------------------
 // AC #3, #4, #5, #6, #7 — reconcile (orchestrateur pur)
