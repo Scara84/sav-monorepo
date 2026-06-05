@@ -24,6 +24,7 @@ import { importSupplierPricesHandler } from './_lib/sav/import-supplier-prices-h
 import { applySupplierPricesHandler } from './_lib/sav/apply-supplier-prices-handler'
 import { parseSupplierFileHandler } from './_lib/sav/parse-supplier-file-handler'
 import { reconcileSupplierClaimHandler } from './_lib/sav/reconcile-supplier-claim-handler'
+import { generateSupplierClaimHandler } from './_lib/sav/generate-supplier-claim-handler'
 import type { ApiHandler, ApiRequest, ApiResponse } from './_lib/types'
 
 /**
@@ -127,6 +128,7 @@ const ALLOWED_OPS = new Set([
   'apply-supplier-prices',
   'parse-supplier-file',
   'reconcile-supplier-claim',
+  'generate-supplier-claim',
 ])
 
 function parseOp(req: ApiRequest): string | null {
@@ -369,6 +371,16 @@ const dispatch: ApiHandler = async (req, res) => {
       return
     }
     return reconcileSupplierClaimHandler(savId)(req, res)
+  }
+
+  // Story 8.4 — POST /api/sav/:id/demande-fournisseur/generate (génération + persistance + téléchargement)
+  if (op === 'generate-supplier-claim') {
+    if (method !== 'POST') {
+      res.setHeader('Allow', 'POST')
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
+      return
+    }
+    return generateSupplierClaimHandler(savId)(req, res)
   }
 
   sendError(res, 'NOT_FOUND', 'Route non disponible', requestId)

@@ -42,7 +42,27 @@ const {
   handleQtyBlur,
   updateComment,
   toggleLineExclusion,
+  // 8.4 : génération
+  generateState,
+  generateError,
+  generateResult,
+  generate,
+  retryGenerate,
+  resetToArbitrating,
 } = useSupplierClaimArbitration(savId, parseResult)
+
+// 8.4 : trigger generate (creditNoteId = null par défaut — DN-2=B)
+function onGenerate(): void {
+  void generate(null)
+}
+
+function onRetryGenerate(): void {
+  retryGenerate(null)
+}
+
+function onRegenerateClick(): void {
+  resetToArbitrating()
+}
 
 // Helpers for template
 function getQty(lineId: string | number): number {
@@ -427,16 +447,77 @@ function onCommentInput(lineId: string | number, event: Event): void {
           Génération bloquée : {{ blockingReasons.join(' ; ') }}
         </div>
 
+        <!-- Toast erreur génération (AC #12) -->
+        <div
+          v-if="generateState === 'generate-error' && generateError"
+          role="alert"
+          class="generate-error-toast"
+          data-testid="generate-error-toast"
+        >
+          <p>{{ generateError }}</p>
+          <button
+            class="retry-btn"
+            data-testid="generate-retry-btn"
+            @click="onRetryGenerate()"
+          >
+            Réessayer
+          </button>
+        </div>
+
+        <!-- Indicateur génération en cours (AC #12) -->
+        <div
+          v-if="generateState === 'generating'"
+          class="generating-indicator"
+          data-testid="generating-indicator"
+          aria-live="polite"
+        >
+          Génération en cours…
+        </div>
+
         <!-- Bouton Générer (présent mais potentiellement disabled — AC #8, DN-6) -->
+        <!-- Disabled aussi pendant la génération en cours (AC #12) -->
         <button
+          v-if="generateState !== 'generated'"
           class="generate-btn"
           data-testid="generate-btn"
-          :disabled="!canGenerateComputed"
-          :aria-disabled="canGenerateComputed ? 'false' : 'true'"
+          :disabled="!canGenerateComputed || generateState === 'generating'"
+          :aria-disabled="(!canGenerateComputed || generateState === 'generating') ? 'true' : 'false'"
+          @click="onGenerate()"
         >
-          Générer le document
+          <span v-if="generateState === 'generating'">Génération en cours…</span>
+          <span v-else>Générer le document</span>
         </button>
       </div>
+    </section>
+
+    <!-- =====================================================================
+         Story 8.4 — État "generated" (AC #12)
+         ===================================================================== -->
+    <section
+      v-if="generateState === 'generated'"
+      class="generated-state card"
+      data-testid="generated-state"
+    >
+      <h2>Réclamation générée</h2>
+
+      <!-- Toast success (AC #8) -->
+      <div
+        role="status"
+        class="generate-success-toast"
+        data-testid="generate-success-toast"
+      >
+        Réclamation générée — {{ generateResult?.lineCount }} ligne{{ (generateResult?.lineCount ?? 0) > 1 ? 's' : '' }}
+        <span v-if="generateResult?.filename"> · {{ generateResult.filename }}</span>
+      </div>
+
+      <!-- Bouton Régénérer (retour arbitrating — AC #13e) -->
+      <button
+        class="regenerate-btn"
+        data-testid="regenerate-btn"
+        @click="onRegenerateClick()"
+      >
+        Régénérer
+      </button>
     </section>
   </div>
 </template>

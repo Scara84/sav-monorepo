@@ -82,6 +82,14 @@ export interface ComputeTotalsResult {
 }
 
 export type ReconcileState = 'reconciling' | 'arbitrating' | 'reconcile-error'
+export type GenerateState = 'idle' | 'generating' | 'generated' | 'generate-error'
+
+export interface GenerateResult {
+  claimId?: number
+  totalImporteCents?: number
+  lineCount?: number
+  filename?: string
+}
 
 // ---------------------------------------------------------------------------
 // Formatter d'affichage (OQ-5 : Intl.NumberFormat fr-FR, comma)
@@ -278,6 +286,11 @@ export function useSupplierClaimArbitration(
   const reconcileState = ref<ReconcileState | null>(null)
   const reconcileError = ref<string | null>(null)
 
+  // 8.4 : state machine génération
+  const generateState = ref<GenerateState>('idle')
+  const generateError = ref<string | null>(null)
+  const generateResult = ref<GenerateResult | null>(null)
+
   // Données de réconciliation
   const claimLines = ref<ArbitrageClaimLine[]>([])
   const unmatchedSavLines = ref<ArbitrageUnmatchedLine[]>([])
@@ -436,6 +449,100 @@ export function useSupplierClaimArbitration(
   }
 
   // ---------------------------------------------------------------------------
+  // 8.4 : generate() — POST /api/sav?op=generate-supplier-claim (PATTERN-DIRECT-BLOB-DOWNLOAD)
+  // ---------------------------------------------------------------------------
+
+  async function generate(creditNoteId: number | null = null): Promise<void> {
+    if (!canGenerateComputed.value) return
+
+    generateState.value = 'generating'
+    generateError.value = null
+    generateResult.value = null
+
+    // Build payload (PATTERN-ARBITRATED-CLAIM-PAYLOAD, AC #2)
+    // Need access to parseResult to get metadata
+    const meta = (parseResult.value as Record<string, unknown> | null)?.['metadata'] as Record<string, unknown> | undefined
+
+    const payloadLines = claimLines.value.map((line) => {
+      const qty = arbitrageState.value.edits.get(line.savLineId) ?? line.qty
+      const excluded = arbitrageState.value.exclusions.get(line.savLineId) === true
+      const comentarios = arbitrageState.value.comments.get(line.savLineId) ?? ''
+      return {
+        savLineId: line.savLineId,
+        codigoEs: line.codigoEs ?? '',
+        productoEs: line.productoEs ?? '',
+        origen: line.origen ?? null,
+        qty,
+        unidad: line.unidad,
+        causaEs: line.causaEs ?? '',
+        precio: line.precio ?? null,
+        comentarios,
+        excluded,
+        blockingForGeneration: line.blockingForGeneration,
+        conversionFlag: line.conversionFlag,
+      }
+    })
+
+    const body = {
+      metadata: {
+        reference: meta?.['reference'] ?? '',
+        albaran: meta?.['albaran'] ?? '',
+        fechaAlbaran: meta?.['fechaAlbaran'] ?? '',
+      },
+      creditNoteId: creditNoteId ?? null,
+      claimLines: payloadLines,
+    }
+
+    try {
+      const res = await fetch(
+        `/api/sav?op=generate-supplier-claim&id=${savId.value}`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify(body),
+          credentials: 'include',
+        }
+      )
+
+      if (!res.ok) {
+        const errData = await res.json() as { error?: { message?: string; code?: string } }
+        generateError.value = errData.error?.message ?? `Erreur ${res.status} — génération impossible`
+        generateState.value = 'generate-error'
+        return
+      }
+
+      // Success : trigger download (PATTERN-DIRECT-BLOB-DOWNLOAD)
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const contentDisposition = res.headers.get('content-disposition') ?? ''
+      const filenameMatch = contentDisposition.match(/filename="([^"]+)"/)
+      const dlFilename = filenameMatch?.[1] ?? 'RECLAMACION_SOL_Y_FRUTA.xlsx'
+
+      const a = document.createElement('a')
+      a.href = url
+      a.download = dlFilename
+      a.click()
+      URL.revokeObjectURL(url)
+
+      generateResult.value = { filename: dlFilename, lineCount: payloadLines.filter((l) => !l.excluded).length }
+      generateState.value = 'generated'
+    } catch (err) {
+      generateError.value = err instanceof Error ? err.message : 'Erreur réseau — génération impossible'
+      generateState.value = 'generate-error'
+    }
+  }
+
+  function retryGenerate(creditNoteId: number | null = null): void {
+    void generate(creditNoteId)
+  }
+
+  function resetToArbitrating(): void {
+    generateState.value = 'idle'
+    generateError.value = null
+    generateResult.value = null
+  }
+
+  // ---------------------------------------------------------------------------
   // beforeunload guard (AC #10, OQ-3 — MANDATORY anti-false-green)
   // Must register OUR handler that sets the warning text
   // ---------------------------------------------------------------------------
@@ -523,6 +630,14 @@ export function useSupplierClaimArbitration(
     handleQtyBlur,
     updateComment,
     toggleLineExclusion,
+
+    // 8.4 : génération
+    generateState,
+    generateError,
+    generateResult,
+    generate,
+    retryGenerate,
+    resetToArbitrating,
 
     // Formatter (for template use)
     formatImporte,
