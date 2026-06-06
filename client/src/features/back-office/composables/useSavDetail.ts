@@ -127,12 +127,22 @@ export interface SavDetailCreditNote {
   issuedByOperatorId: number | null
 }
 
+// Story 8.5 — DN-2=A LOCKED : badge réclamation fournisseur
+export interface SavDetailSupplierClaim {
+  exists: true
+  latestGeneratedAt: string
+  latestTotalImporteCents: number
+  count: number
+}
+
 export interface SavDetailPayload {
   sav: SavDetailSav
   comments: SavDetailComment[]
   auditTrail: SavDetailAudit[]
   settingsSnapshot: SettingsSnapshot
   creditNote: SavDetailCreditNote | null
+  // Story 8.5 — badge réclamation (null si pas de réclamation ou dégradé)
+  supplierClaim?: SavDetailSupplierClaim | null
 }
 
 export type SavDetailErrorKind =
@@ -160,6 +170,8 @@ export function useSavDetail(id: Ref<number>) {
   const settingsSnapshot = ref<SettingsSnapshot>({ ...EMPTY_SETTINGS })
   const creditNote = ref<SavDetailCreditNote | null>(null)
   const creditNoteDegraded = ref(false)
+  // Story 8.5 — badge réclamation fournisseur (DN-2=A LOCKED)
+  const supplierClaim = ref<SavDetailSupplierClaim | null>(null)
   const loading = ref(false)
   const error = ref<SavDetailErrorKind | null>(null)
   // F49 (CR Epic 3) : AbortController + check id-at-resolution pour éviter
@@ -221,6 +233,8 @@ export function useSavDetail(id: Ref<number>) {
       auditTrail.value = body.data.auditTrail
       creditNote.value = body.data.creditNote ?? null
       creditNoteDegraded.value = body.meta?.creditNoteDegraded === true
+      // Story 8.5 — badge réclamation fournisseur (null si absent ou dégradé)
+      supplierClaim.value = body.data.supplierClaim ?? null
       // Review P4 — normalise tout champ absent/undefined à null pour que les
       // checks `=== null` en aval (composables, computed) soient fiables.
       const incoming = body.data.settingsSnapshot
@@ -259,6 +273,8 @@ export function useSavDetail(id: Ref<number>) {
     settingsSnapshot,
     creditNote,
     creditNoteDegraded,
+    // Story 8.5 — badge réclamation fournisseur
+    supplierClaim,
     loading,
     error,
     refresh: fetchDetail,

@@ -536,10 +536,25 @@ export function useSupplierClaimArbitration(
     void generate(creditNoteId)
   }
 
+  // CR fix M1 : AC #5/#7 — confirming Régénérer must fully reset ALL composable state
+  // so no stale arbitrage data (edits, exclusions, comments, clampMessages, claimLines,
+  // unmatchedSavLines, unusedSupplierLines) survives into the new session.
+  // The view is responsible for also resetting the upload composable (state/parseResult).
   function resetToArbitrating(): void {
     generateState.value = 'idle'
     generateError.value = null
     generateResult.value = null
+    // Clear all arbitrage state (M1 fix — was missing before CR)
+    edits.value = new Map()
+    exclusions.value = new Map()
+    comments.value = new Map()
+    clampMessages.value = new Map()
+    claimLines.value = []
+    unmatchedSavLines.value = []
+    unusedSupplierLines.value = []
+    reconcileState.value = null   // reset to initial state (null = no reconcile started)
+    reconcileError.value = null
+    unregisterBeforeUnload()
   }
 
   // ---------------------------------------------------------------------------

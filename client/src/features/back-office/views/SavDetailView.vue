@@ -34,6 +34,8 @@ const {
   settingsSnapshot,
   creditNote,
   creditNoteDegraded,
+  // Story 8.5 — badge réclamation fournisseur (AC #3)
+  supplierClaim,
   loading,
   error,
   refresh,
@@ -939,6 +941,28 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
         >
           Données d'avoir indisponibles — rafraîchissez la page pour réessayer.
         </div>
+
+        <!-- Story 8.5 — AC #3 : badge réclamation fournisseur (DN-2=A LOCKED) -->
+        <!-- Affiché si supplierClaim.exists — lien vers la page dédiée -->
+        <div
+          v-if="supplierClaim?.exists"
+          class="supplier-claim-badge"
+          data-testid="supplier-claim-badge"
+          role="status"
+        >
+          <span class="supplier-claim-badge-icon">📋</span>
+          Réclamation fournisseur émise le {{ formatDateTime(supplierClaim.latestGeneratedAt) }}
+          — {{ supplierClaim.count }} version{{ supplierClaim.count > 1 ? 's' : '' }}
+          — {{ formatEur(supplierClaim.latestTotalImporteCents) }}
+          <router-link
+            :to="`/admin/sav/${sav.id}/demande-fournisseur`"
+            class="supplier-claim-badge-link"
+            data-testid="supplier-claim-badge-link"
+          >
+            Voir la réclamation →
+          </router-link>
+        </div>
+
         <div class="header-title-row">
           <h1 id="sav-detail-title">{{ sav.reference }}</h1>
           <span :class="['status-badge', STATUS_COLOR[sav.status] ?? 'bg-gray']">
@@ -2651,5 +2675,36 @@ tbody.sav-line-group[data-blocking='true'] > tr > td:first-child {
   margin-bottom: 0.75rem;
   border-radius: 4px;
   font-size: 0.9rem;
+}
+
+/* Story 8.5 — AC #3 : badge réclamation fournisseur (DN-2=A LOCKED) */
+.supplier-claim-badge {
+  background: #f0fdf4; /* green-50 */
+  border-left: 4px solid #16a34a; /* green-600 */
+  padding: 0.625rem 1rem;
+  margin-bottom: 0.75rem;
+  border-radius: 4px;
+  font-size: 0.875rem;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+  color: #166534; /* green-800 */
+}
+
+.supplier-claim-badge-icon {
+  flex-shrink: 0;
+}
+
+.supplier-claim-badge-link {
+  margin-left: auto;
+  color: #15803d; /* green-700 */
+  font-weight: 600;
+  text-decoration: none;
+  white-space: nowrap;
+}
+
+.supplier-claim-badge-link:hover {
+  text-decoration: underline;
 }
 </style>

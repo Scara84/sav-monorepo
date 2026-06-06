@@ -603,7 +603,9 @@ describe('GEN-UI-06: état generated → click "Régénérer" → retour arbitra
     expect(regenerateBtn.text()).toMatch(/régénérer/i)
   })
 
-  it('GEN-UI-06b: click "Régénérer" → retour état arbitrating (grille visible, state préservé)', async () => {
+  it('GEN-UI-06b: click "Régénérer" → modale de confirmation → [Confirmer] → retour awaiting-upload (CR M2 fix — DN-4 no exception)', async () => {
+    // CR fix M2: onRegenerateFromGenerated() now routes through the confirmation modal (DN-4 LOCKED).
+    // Old behavior (direct jump to arbitrating) was removed — the modal is always shown.
     const { wrapper } = await mountAndReachArbitratingWithBlobResponse()
 
     // Aller en état generated
@@ -614,14 +616,29 @@ describe('GEN-UI-06: état generated → click "Régénérer" → retour arbitra
     // Vérifier qu'on est bien en generated
     expect(wrapper.find('[data-testid="generated-state"]').exists()).toBe(true)
 
-    // Cliquer "Régénérer"
+    // Cliquer "Régénérer" depuis l'état generated
     const regenerateBtn = wrapper.find('[data-testid="regenerate-btn"]')
     await regenerateBtn.trigger('click')
     await wrapper.vm.$nextTick()
 
-    // Retour à l'état arbitrating
-    const arbitrageGrid = wrapper.find('[data-testid="arbitrage-grid"]')
-    expect(arbitrageGrid.exists()).toBe(true)
+    // Modale doit apparaître (DN-4 — pas d'exception pour le chemin generated)
+    const modal = wrapper.find('[data-testid="regenerate-confirm-modal"]')
+    expect(modal.exists()).toBe(true)
+
+    // Confirmer → transition vers awaiting-upload
+    const confirmBtn = wrapper.find('[data-testid="regenerate-confirm-btn"]')
+    await confirmBtn.trigger('click')
+    await wrapper.vm.$nextTick()
+    await flushPromises()
+
+    // Après confirmation : awaiting-upload (écran d'import)
+    const awaitingState = wrapper.find('[data-testid="awaiting-upload-state"]')
+    const fileInput = wrapper.find('[data-testid="file-input"]')
+    const hasUploadUI = awaitingState.exists() || fileInput.exists()
+    expect(hasUploadUI).toBe(true)
+
+    // generated-state ne doit plus être visible
+    expect(wrapper.find('[data-testid="generated-state"]').exists()).toBe(false)
   })
 })
 

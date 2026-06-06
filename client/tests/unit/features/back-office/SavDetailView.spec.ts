@@ -287,3 +287,90 @@ describe('SavDetailView (Story 3.4)', () => {
     }
   })
 })
+
+// ===========================================================================
+// Story 8.5 — AC #3 : badge réclamation fournisseur (H2 fix — DN-2=A LOCKED)
+//
+// Ces tests sont LOAD-BEARING :
+//   TV-BADGE-01 : badge présent + texte correct quand supplierClaim.exists
+//   TV-BADGE-02 : badge absent quand supplierClaim est null
+//
+// Aller RED si : le badge est retiré, le data-testid est changé,
+// ou si supplierClaim null affiche quand même le badge.
+// ===========================================================================
+
+describe('Story 8.5 — AC #3 : badge réclamation fournisseur dans SavDetailView', () => {
+  it('TV-BADGE-01: supplierClaim.exists → badge data-testid="supplier-claim-badge" visible avec texte correct', async () => {
+    mockFetch({
+      data: {
+        ...SAV_PAYLOAD.data,
+        supplierClaim: {
+          exists: true,
+          latestGeneratedAt: '2026-06-05T10:00:00Z',
+          latestTotalImporteCents: 174,
+          count: 1,
+        },
+      },
+    })
+    const w = await mountDetail(1)
+    await flushPromises()
+
+    // Badge doit être présent
+    const badge = w.find('[data-testid="supplier-claim-badge"]')
+    expect(badge.exists()).toBe(true)
+
+    // Texte doit contenir "version" (count) et "€" (montant)
+    const badgeHtml = badge.html()
+    expect(badgeHtml).toMatch(/version/)
+    expect(badgeHtml).toMatch(/€|EUR/)
+
+    // Lien vers la demande fournisseur doit être présent
+    const link = w.find('[data-testid="supplier-claim-badge-link"]')
+    expect(link.exists()).toBe(true)
+  })
+
+  it('TV-BADGE-01b: count > 1 → badge affiche le bon nombre de versions', async () => {
+    mockFetch({
+      data: {
+        ...SAV_PAYLOAD.data,
+        supplierClaim: {
+          exists: true,
+          latestGeneratedAt: '2026-06-06T14:32:00Z',
+          latestTotalImporteCents: 348,
+          count: 3,
+        },
+      },
+    })
+    const w = await mountDetail(1)
+    await flushPromises()
+
+    const badge = w.find('[data-testid="supplier-claim-badge"]')
+    expect(badge.exists()).toBe(true)
+    expect(badge.text()).toMatch(/3.*version/i)
+  })
+
+  it('TV-BADGE-02: supplierClaim null → badge ABSENT (DISCRIMINANT — must go RED if badge always shown)', async () => {
+    mockFetch({
+      data: {
+        ...SAV_PAYLOAD.data,
+        supplierClaim: null,
+      },
+    })
+    const w = await mountDetail(1)
+    await flushPromises()
+
+    // Badge ne doit PAS être présent quand supplierClaim est null
+    const badge = w.find('[data-testid="supplier-claim-badge"]')
+    expect(badge.exists()).toBe(false)
+  })
+
+  it('TV-BADGE-03: supplierClaim absent de la réponse (undefined/non fourni) → badge absent', async () => {
+    // Réponse sans le champ supplierClaim (ancienne réponse / dégradation)
+    mockFetch(SAV_PAYLOAD) // SAV_PAYLOAD n'a pas supplierClaim
+    const w = await mountDetail(1)
+    await flushPromises()
+
+    const badge = w.find('[data-testid="supplier-claim-badge"]')
+    expect(badge.exists()).toBe(false)
+  })
+})

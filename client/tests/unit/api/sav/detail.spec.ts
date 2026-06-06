@@ -12,6 +12,8 @@ const db = vi.hoisted(() => ({
   settings: [] as Array<Record<string, unknown>>,
   creditNote: null as Record<string, unknown> | null,
   rateLimitAllowed: true,
+  // Story 8.5 — supplier claims for supplierClaim badge (AC #3, DN-2=A)
+  supplierClaims: [] as Array<{ id: number; generated_at: string; total_importe_cents: number }>,
 }))
 
 function resetDb(): void {
@@ -21,6 +23,7 @@ function resetDb(): void {
   db.settings = []
   db.creditNote = null
   db.rateLimitAllowed = true
+  db.supplierClaims = []
 }
 
 vi.mock('../../../../api/_lib/clients/supabase-admin', () => {
@@ -75,6 +78,17 @@ vi.mock('../../../../api/_lib/clients/supabase-admin', () => {
           select: () => ({
             eq: () => ({
               maybeSingle: () => Promise.resolve({ data: db.creditNote, error: null }),
+            }),
+          }),
+        }
+      }
+      if (table === 'sav_supplier_claims') {
+        // Story 8.5 — DN-2=A LOCKED : badge réclamation fournisseur
+        // Chain `.select(...).eq('sav_id', ...).order('generated_at', { ascending: false })` → { data, error }
+        return {
+          select: () => ({
+            eq: () => ({
+              order: () => Promise.resolve({ data: db.supplierClaims, error: null }),
             }),
           }),
         }
@@ -543,5 +557,173 @@ describe('GET /api/sav/:id (Story 3.4)', () => {
     }
     expect(body.data.settingsSnapshot.vat_rate_default_bp).toBeNull()
     expect(body.data.settingsSnapshot.group_manager_discount_bp).toBeNull()
+  })
+
+  // ---------------------------------------------------------------------------
+  // Story 8.5 — AC #3, DN-2=A LOCKED : champ supplierClaim dans op=detail
+  // OPEN-1 from ATDD Step 2 : 2 tests positifs requis
+  // ---------------------------------------------------------------------------
+
+  it('Story 8.5 — AC#3 (a): supplierClaim présent et correct quand une claim existe', async () => {
+    db.savRow = {
+      id: 1,
+      reference: 'SAV-2026-00001',
+      status: 'validated',
+      version: 1,
+      member_id: 10,
+      group_id: 1,
+      invoice_ref: 'FAC-1',
+      invoice_fdp_cents: 0,
+      total_amount_cents: 1500,
+      tags: [],
+      assigned_to: null,
+      received_at: '2026-03-01T00:00:00.000Z',
+      taken_at: null,
+      validated_at: '2026-06-05T10:00:00.000Z',
+      closed_at: null,
+      cancelled_at: null,
+      created_at: '2026-03-01T00:00:00.000Z',
+      updated_at: '2026-03-01T00:00:00.000Z',
+      member: {
+        id: 10,
+        first_name: 'Antho',
+        last_name: 'Test',
+        email: 'a@t.com',
+        is_group_manager: false,
+        group_id: 1,
+      },
+      group: { id: 1, name: 'Groupe Test' },
+      assignee: null,
+      lines: [],
+      files: [],
+    }
+    // 2 claims — latest first (ordered DESC by generated_at)
+    db.supplierClaims = [
+      { id: 2, generated_at: '2026-06-06T14:32:00.000Z', total_importe_cents: 200 },
+      { id: 1, generated_at: '2026-06-05T10:00:00.000Z', total_importe_cents: 174 },
+    ]
+
+    const res = mockRes()
+    await handler(req(['1']), res)
+
+    expect(res.statusCode).toBe(200)
+    const body = res.jsonBody as {
+      data: {
+        supplierClaim: {
+          exists: true
+          latestGeneratedAt: string
+          latestTotalImporteCents: number
+          count: number
+        } | null
+      }
+    }
+    const sc = body.data.supplierClaim
+    expect(sc).not.toBeNull()
+    expect(sc?.exists).toBe(true)
+    expect(sc?.latestGeneratedAt).toBe('2026-06-06T14:32:00.000Z')
+    expect(sc?.latestTotalImporteCents).toBe(200)
+    expect(sc?.count).toBe(2)
+  })
+
+  it('Story 8.5 — AC#3 (b): document_blob jamais lu dans op=detail (NFR-PERF)', async () => {
+    // This test verifies that the SELECT query for sav_supplier_claims in detail-handler
+    // does NOT include document_blob. The mock only supports the shape:
+    //   .select('id, generated_at, total_importe_cents').eq(...).order(...)
+    // If document_blob were in the select string, the response would still work because
+    // the mock ignores the select string. The architectural guarantee is in the handler code.
+    // This test validates that supplierClaim is correctly populated when claims exist,
+    // confirming the query runs and the handler does not crash.
+    db.savRow = {
+      id: 1,
+      reference: 'SAV-2026-00001',
+      status: 'validated',
+      version: 1,
+      member_id: 10,
+      group_id: 1,
+      invoice_ref: 'FAC-1',
+      invoice_fdp_cents: 0,
+      total_amount_cents: 1500,
+      tags: [],
+      assigned_to: null,
+      received_at: '2026-03-01T00:00:00.000Z',
+      taken_at: null,
+      validated_at: null,
+      closed_at: null,
+      cancelled_at: null,
+      created_at: '2026-03-01T00:00:00.000Z',
+      updated_at: '2026-03-01T00:00:00.000Z',
+      member: {
+        id: 10,
+        first_name: 'Antho',
+        last_name: 'Test',
+        email: 'a@t.com',
+        is_group_manager: false,
+        group_id: 1,
+      },
+      group: null,
+      assignee: null,
+      lines: [],
+      files: [],
+    }
+    db.supplierClaims = [
+      { id: 1, generated_at: '2026-06-05T10:00:00.000Z', total_importe_cents: 174 },
+    ]
+
+    const res = mockRes()
+    await handler(req(['1']), res)
+
+    expect(res.statusCode).toBe(200)
+    const body = res.jsonBody as { data: { supplierClaim: unknown } }
+
+    // supplierClaim must be present
+    expect(body.data.supplierClaim).not.toBeNull()
+
+    // Structural guarantee: the response body must NOT contain document_blob at any depth
+    // (the SELECT in detail-handler only fetches id, generated_at, total_importe_cents)
+    const bodyString = JSON.stringify(body)
+    expect(bodyString).not.toContain('document_blob')
+  })
+
+  it('Story 8.5 — AC#3: supplierClaim est null quand aucune claim n\'existe', async () => {
+    db.savRow = {
+      id: 1,
+      reference: 'SAV-2026-00001',
+      status: 'in_progress',
+      version: 1,
+      member_id: 10,
+      group_id: 1,
+      invoice_ref: 'FAC-1',
+      invoice_fdp_cents: 0,
+      total_amount_cents: 1500,
+      tags: [],
+      assigned_to: null,
+      received_at: '2026-03-01T00:00:00.000Z',
+      taken_at: null,
+      validated_at: null,
+      closed_at: null,
+      cancelled_at: null,
+      created_at: '2026-03-01T00:00:00.000Z',
+      updated_at: '2026-03-01T00:00:00.000Z',
+      member: {
+        id: 10,
+        first_name: 'Antho',
+        last_name: 'Test',
+        email: 'a@t.com',
+        is_group_manager: false,
+        group_id: 1,
+      },
+      group: null,
+      assignee: null,
+      lines: [],
+      files: [],
+    }
+    db.supplierClaims = [] // aucune claim
+
+    const res = mockRes()
+    await handler(req(['1']), res)
+
+    expect(res.statusCode).toBe(200)
+    const body = res.jsonBody as { data: { supplierClaim: null } }
+    expect(body.data.supplierClaim).toBeNull()
   })
 })

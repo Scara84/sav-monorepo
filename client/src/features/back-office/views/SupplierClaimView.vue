@@ -2,19 +2,20 @@
 /**
  * Story 8.1 — Vue "Demande de remboursement fournisseur" (DN-1=A : route dédiée)
  * Story 8.3 — Extension : grille d'arbitrage (PATTERN-CLIENT-ARBITRATION-GRID)
+ * Story 8.5 — Extension : état existing-claim + historique + re-download + régénération
  *
  * Route : /admin/sav/:id/demande-fournisseur
  *
- * Responsabilités :
- *   - Upload du fichier data.xlsx SOL Y FRUTA (composable useSupplierClaimUpload)
- *   - Appel POST /api/sav?op=parse-supplier-file&id=:savId
- *   - Preview minimale : metadata + compteurs lignes + warnings (8.1)
- *   - Après parse réussi : déclenchement automatique de reconcile-supplier-claim (8.3)
- *   - Grille d'arbitrage : édition qty, commentaires, exclusion lignes, total live (8.3)
- *   - Garde-fou génération FR21 : bouton "Générer" disabled + message inline (8.3)
- *   - Gestion d'erreur (toast) — 0 persistance (PATTERN-PARSE-PREVIEW-NO-PERSIST)
+ * State machine (8.5) :
+ *   - existing-claim   : affiche l'historique par défaut si claims.length > 0
+ *   - awaiting-upload  : écran d'import 8.1 (si claims=[] ou après confirm régénération)
+ *   - previewing       : après parse réussi
+ *   - arbitrating      : grille d'arbitrage 8.3
+ *   - generated        : après génération réussie → re-fetch historique → existing-claim
+ *
+ * PATTERN-DEFAULT-TO-HISTORY-IF-PRESENT posé en 8.5 (AC #5).
  */
-import { computed } from 'vue'
+import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useSupplierClaimUpload } from '../composables/useSupplierClaimUpload'
 import { useSupplierClaimArbitration, formatImporte } from '../composables/useSupplierClaimArbitration'
@@ -22,7 +23,157 @@ import { useSupplierClaimArbitration, formatImporte } from '../composables/useSu
 const route = useRoute()
 const savId = computed(() => Number(route.params['id']))
 
-const { state, parseResult, errorMessage, handleFileChange } = useSupplierClaimUpload(savId)
+// ---------------------------------------------------------------------------
+// 8.5 — State historique
+// ---------------------------------------------------------------------------
+
+interface SupplierClaimHistoryItem {
+  id: number
+  generatedAt: string
+  generatedByOperator: { id: number; fullName: string }
+  totalImporteCents: number
+  lineCount: number
+  filename: string
+  version: number
+  regenerationOf: number | null
+  isLatest: boolean
+  hasDocument: boolean
+}
+
+const claimHistory = ref<SupplierClaimHistoryItem[]>([])
+const historyLoading = ref(false)
+const historyError = ref<string | null>(null)
+
+// UI state machine
+type ViewState = 'loading' | 'existing-claim' | 'awaiting-upload' | 'previewing' | 'arbitrating' | 'generated'
+const viewState = ref<ViewState>('loading')
+
+// Modal de confirmation régénération (DN-4 LOCKED = A)
+const showRegenerateModal = ref(false)
+
+// Fetch historique depuis l'API
+async function fetchHistory(): Promise<void> {
+  historyLoading.value = true
+  historyError.value = null
+  try {
+    const res = await fetch(
+      `/api/sav?op=get-supplier-claim-history&id=${savId.value}`,
+      { credentials: 'include' }
+    )
+    if (!res.ok) {
+      historyError.value = `Erreur ${res.status}`
+      // Dégradation propre : erreur → afficher l'écran d'import (historique non disponible)
+      if (viewState.value === 'loading') {
+        viewState.value = 'awaiting-upload'
+      }
+      return
+    }
+    const data = await res.json() as { savId: number; claims: SupplierClaimHistoryItem[] }
+    claimHistory.value = data.claims ?? []
+
+    // PATTERN-DEFAULT-TO-HISTORY-IF-PRESENT (AC #5)
+    if (claimHistory.value.length > 0 && viewState.value === 'loading') {
+      viewState.value = 'existing-claim'
+    } else if (viewState.value === 'loading') {
+      viewState.value = 'awaiting-upload'
+    }
+  } catch (_err) {
+    historyError.value = 'Erreur réseau'
+    if (viewState.value === 'loading') {
+      viewState.value = 'awaiting-upload'
+    }
+  } finally {
+    historyLoading.value = false
+  }
+}
+
+onMounted(() => {
+  void fetchHistory()
+})
+
+// Historique repliable
+const historyExpanded = ref(false)
+
+// Latest claim (first in list — ordered DESC)
+const latestClaim = computed(() => claimHistory.value[0] ?? null)
+// Older claims (all except the first)
+const olderClaims = computed(() => claimHistory.value.slice(1))
+
+// ---------------------------------------------------------------------------
+// Re-télécharger (PATTERN-DIRECT-BLOB-DOWNLOAD hérité 8.4)
+// ---------------------------------------------------------------------------
+
+async function redownloadClaim(claimId: number, filename: string): Promise<void> {
+  try {
+    const res = await fetch(
+      `/api/sav?op=download-supplier-claim&id=${savId.value}&claimId=${claimId}`,
+      { credentials: 'include' }
+    )
+    if (!res.ok) return
+    const blob = await res.blob()
+    const url = URL.createObjectURL(blob)
+    const a = document.createElement('a')
+    a.href = url
+    a.download = filename
+    a.click()
+    URL.revokeObjectURL(url)
+  } catch (_err) {
+    // Silent — user can retry
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Modale régénération (DN-4 LOCKED = A)
+// ---------------------------------------------------------------------------
+
+function onRegenerateClick(): void {
+  showRegenerateModal.value = true
+}
+
+function onModalCancel(): void {
+  showRegenerateModal.value = false
+  // ZÉRO side-effect : pas de reset, pas de transition, pas de POST (AC #7)
+}
+
+function onModalConfirm(): void {
+  showRegenerateModal.value = false
+  // Transition vers awaiting-upload + reset composable (AC #5, AC #7)
+  resetArbitrageState()
+  viewState.value = 'awaiting-upload'
+}
+
+// Esc = Annuler (DN-4 LOCKED = A)
+function onKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape' && showRegenerateModal.value) {
+    onModalCancel()
+  }
+}
+
+onMounted(() => {
+  window.addEventListener('keydown', onKeydown)
+})
+
+onUnmounted(() => {
+  window.removeEventListener('keydown', onKeydown)
+})
+
+// ---------------------------------------------------------------------------
+// Upload composable (8.1)
+// ---------------------------------------------------------------------------
+
+const { state, parseResult, errorMessage, handleFileChange, reset: resetUpload } = useSupplierClaimUpload(savId)
+
+// Watch upload state to transition
+import { watch } from 'vue'
+watch(state, (newState) => {
+  if (newState === 'previewing' && viewState.value !== 'arbitrating') {
+    viewState.value = 'previewing'
+  }
+})
+
+// ---------------------------------------------------------------------------
+// Arbitrage composable (8.3 + 8.4)
+// ---------------------------------------------------------------------------
 
 const {
   reconcileState,
@@ -51,6 +202,42 @@ const {
   resetToArbitrating,
 } = useSupplierClaimArbitration(savId, parseResult)
 
+// Watch reconcileState to transition view
+watch(reconcileState, (newState) => {
+  if (newState === 'arbitrating') {
+    viewState.value = 'arbitrating'
+  } else if (newState === 'reconcile-error') {
+    // Stay on previewing — error shown inline
+  }
+})
+
+// Watch generateState — après génération réussie, re-fetch historique → existing-claim (AC #5)
+watch(generateState, async (newState) => {
+  if (newState === 'generated') {
+    viewState.value = 'generated'
+    // Re-fetch historique pour basculer en existing-claim avec la nouvelle version
+    await fetchHistory()
+    // Si on a des claims après le fetch, transitionner vers existing-claim
+    if (claimHistory.value.length > 0) {
+      viewState.value = 'existing-claim'
+    }
+  }
+})
+
+// CR fix M1 : AC #5/#7 — reset ALL state (arbitrage composable + upload composable)
+// so no stale data (edits, exclusions, comments, parseResult, state) survives into new session.
+function resetArbitrageState(): void {
+  resetToArbitrating()   // resets arbitrage Maps + generate* + reconcile*
+  resetUpload()          // resets upload state/parseResult/errorMessage
+}
+
+// Régénérer depuis l'état generated (8.4 fallback — quand l'historique n'est pas disponible)
+// CR fix M2 : DN-4 carve out NO exception — doit passer par la modale comme tous les chemins.
+// Après confirmation, on reset → awaiting-upload (AC #5/#7), PAS directement vers arbitrating.
+function onRegenerateFromGenerated(): void {
+  onRegenerateClick()
+}
+
 // 8.4 : trigger generate (creditNoteId = null par défaut — DN-2=B)
 function onGenerate(): void {
   void generate(null)
@@ -58,10 +245,6 @@ function onGenerate(): void {
 
 function onRetryGenerate(): void {
   retryGenerate(null)
-}
-
-function onRegenerateClick(): void {
-  resetToArbitrating()
 }
 
 // Helpers for template
@@ -109,14 +292,176 @@ function onCommentInput(lineId: string | number, event: Event): void {
   const el = event.target as HTMLInputElement | HTMLTextAreaElement
   updateComment(lineId, el.value)
 }
+
+// Format date FR
+function formatDateFR(isoDate: string): string {
+  try {
+    return new Intl.DateTimeFormat('fr-FR', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+      hour: '2-digit',
+      minute: '2-digit',
+    }).format(new Date(isoDate))
+  } catch {
+    return isoDate
+  }
+}
+
+// Format montant EUR from cents
+function formatEUR(cents: number): string {
+  return new Intl.NumberFormat('fr-FR', {
+    style: 'currency',
+    currency: 'EUR',
+  }).format(cents / 100)
+}
 </script>
 
 <template>
-  <div class="supplier-claim-view" data-testid="supplier-claim-view">
+  <div class="supplier-claim-view" data-testid="supplier-claim-view" @keydown.esc="onKeydown">
     <h1>Demande de remboursement fournisseur</h1>
 
-    <!-- Upload zone -->
-    <section class="upload-section card">
+    <!-- =====================================================================
+         Story 8.5 — État "existing-claim" (PATTERN-DEFAULT-TO-HISTORY-IF-PRESENT)
+         AC #5 — affiché par défaut quand claims.length > 0
+         ===================================================================== -->
+    <section
+      v-if="viewState === 'existing-claim'"
+      class="existing-claim-state card"
+      data-testid="existing-claim-state"
+    >
+      <h2>Réclamation fournisseur SOL Y FRUTA</h2>
+
+      <!-- Carte dernière version -->
+      <div v-if="latestClaim" class="latest-claim-card card">
+        <h3>Dernière version (v{{ latestClaim.version }})</h3>
+        <div class="claim-metadata-grid">
+          <div class="claim-meta-item">
+            <span class="meta-label">Date de génération</span>
+            <span class="meta-value">{{ formatDateFR(latestClaim.generatedAt) }}</span>
+          </div>
+          <div class="claim-meta-item">
+            <span class="meta-label">Généré par</span>
+            <span class="meta-value">{{ latestClaim.generatedByOperator.fullName }}</span>
+          </div>
+          <div class="claim-meta-item">
+            <span class="meta-label">Montant total</span>
+            <span class="meta-value">{{ formatEUR(latestClaim.totalImporteCents) }}</span>
+          </div>
+          <div class="claim-meta-item">
+            <span class="meta-label">Lignes</span>
+            <span class="meta-value">{{ latestClaim.lineCount }} ligne{{ latestClaim.lineCount > 1 ? 's' : '' }}</span>
+          </div>
+          <div class="claim-meta-item claim-meta-filename">
+            <span class="meta-label">Fichier</span>
+            <code class="meta-value filename-mono">{{ latestClaim.filename }}</code>
+          </div>
+        </div>
+
+        <div class="claim-actions">
+          <button
+            class="btn-primary"
+            data-testid="redownload-btn"
+            @click="redownloadClaim(latestClaim!.id, latestClaim!.filename)"
+          >
+            Re-télécharger
+          </button>
+          <button
+            class="btn-secondary"
+            data-testid="regenerate-btn"
+            @click="onRegenerateClick()"
+          >
+            Régénérer (nouvel import)
+          </button>
+        </div>
+      </div>
+
+      <!-- Section historique repliable -->
+      <div v-if="olderClaims.length > 0" class="history-section">
+        <button
+          class="history-toggle"
+          data-testid="history-toggle"
+          @click="historyExpanded = !historyExpanded"
+        >
+          {{ historyExpanded ? '▲' : '▼' }} Historique ({{ olderClaims.length }} version{{ olderClaims.length > 1 ? 's' : '' }} antérieure{{ olderClaims.length > 1 ? 's' : '' }})
+        </button>
+
+        <div v-if="historyExpanded" class="history-list">
+          <div
+            v-for="claim in olderClaims"
+            :key="claim.id"
+            class="history-item card"
+          >
+            <div class="history-item-header">
+              <strong>v{{ claim.version }}</strong>
+              <span class="history-item-date">{{ formatDateFR(claim.generatedAt) }}</span>
+              <span class="history-item-operator">{{ claim.generatedByOperator.fullName }}</span>
+              <span class="history-item-amount">{{ formatEUR(claim.totalImporteCents) }}</span>
+              <span class="history-item-lines">{{ claim.lineCount }} ligne{{ claim.lineCount > 1 ? 's' : '' }}</span>
+            </div>
+            <code class="filename-mono">{{ claim.filename }}</code>
+            <div class="history-item-actions">
+              <button
+                class="btn-secondary btn-sm"
+                data-testid="redownload-btn"
+                @click="redownloadClaim(claim.id, claim.filename)"
+              >
+                Re-télécharger cette version
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- =====================================================================
+         Modale de confirmation régénération (DN-4 LOCKED = A)
+         [Annuler] focus par défaut, Esc = Annuler, "L'historique précédent est conservé"
+         ===================================================================== -->
+    <div
+      v-if="showRegenerateModal"
+      class="modal-overlay"
+      data-testid="regenerate-confirm-modal"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="modal-title"
+    >
+      <div class="modal-dialog">
+        <h2 id="modal-title" class="modal-title">Confirmer la régénération ?</h2>
+        <p class="modal-body">
+          L'historique précédent est conservé.
+          La version v{{ latestClaim?.version }} actuelle restera consultable dans l'historique.
+        </p>
+        <div class="modal-actions">
+          <!-- [Annuler] focus par défaut (DN-4 LOCKED = A) -->
+          <button
+            ref="cancelBtnRef"
+            class="btn-secondary"
+            data-testid="regenerate-cancel-btn"
+            autofocus
+            @click="onModalCancel()"
+          >
+            Annuler
+          </button>
+          <button
+            class="btn-danger"
+            data-testid="regenerate-confirm-btn"
+            @click="onModalConfirm()"
+          >
+            Confirmer
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- =====================================================================
+         État "awaiting-upload" (8.1) — affiché si pas de claims OU après confirm régénération
+         ===================================================================== -->
+    <section
+      v-if="viewState === 'awaiting-upload' || viewState === 'previewing' || viewState === 'arbitrating' || viewState === 'generated'"
+      class="upload-section card"
+      data-testid="awaiting-upload-state"
+    >
       <h2>Importer le fichier SOL Y FRUTA</h2>
       <p class="hint">
         Déposez le fichier <code>data.xlsx</code> de la commande SOL Y FRUTA. Le système lira les
@@ -148,7 +493,7 @@ function onCommentInput(lineId: string | number, event: Event): void {
 
     <!-- Preview (AC #12c 8.1) — shown in previewing state (may overlap with reconciling) -->
     <section
-      v-if="state === 'previewing' && parseResult"
+      v-if="(viewState === 'previewing' || viewState === 'arbitrating') && state === 'previewing' && parseResult"
       class="preview-section card"
       data-testid="preview-panel"
     >
@@ -255,7 +600,7 @@ function onCommentInput(lineId: string | number, event: Event): void {
 
     <!-- Grille d'arbitrage (AC #2, état arbitrating) -->
     <section
-      v-if="reconcileState === 'arbitrating'"
+      v-if="viewState === 'arbitrating' && reconcileState === 'arbitrating'"
       class="arbitrage-section card"
       data-testid="arbitrage-grid"
     >
@@ -491,10 +836,12 @@ function onCommentInput(lineId: string | number, event: Event): void {
     </section>
 
     <!-- =====================================================================
-         Story 8.4 — État "generated" (AC #12)
+         Story 8.4 — État "generated" (immédiatement après génération)
+         Normalement court-circuité par le watch qui bascule vers existing-claim.
+         Affiché quand l'historique n'est pas encore disponible ou en erreur.
          ===================================================================== -->
     <section
-      v-if="generateState === 'generated'"
+      v-if="viewState === 'generated' && generateState === 'generated'"
       class="generated-state card"
       data-testid="generated-state"
     >
@@ -510,11 +857,12 @@ function onCommentInput(lineId: string | number, event: Event): void {
         <span v-if="generateResult?.filename"> · {{ generateResult.filename }}</span>
       </div>
 
-      <!-- Bouton Régénérer (retour arbitrating — AC #13e) -->
+      <!-- Bouton Régénérer — retour arbitrating (8.4 AC #13e — fallback si historique non chargé) -->
       <button
-        class="regenerate-btn"
+        class="btn-secondary"
         data-testid="regenerate-btn"
-        @click="onRegenerateClick()"
+        style="margin-top: 1rem;"
+        @click="onRegenerateFromGenerated()"
       >
         Régénérer
       </button>
@@ -856,5 +1204,236 @@ function onCommentInput(lineId: string | number, event: Event): void {
 
 .generate-btn:not(:disabled):hover {
   background: #1d4ed8;
+}
+
+/* Story 8.5 — existing-claim state */
+.existing-claim-state {
+  /* inherits .card */
+}
+
+.latest-claim-card {
+  background: #f0fdf4;
+  border-color: #86efac;
+  margin-top: 1rem;
+}
+
+.claim-metadata-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.claim-meta-filename {
+  grid-column: 1 / -1;
+}
+
+.claim-meta-item {
+  display: flex;
+  flex-direction: column;
+}
+
+.meta-label {
+  font-size: 0.75rem;
+  color: #6b7280;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.meta-value {
+  font-weight: 600;
+}
+
+.filename-mono {
+  font-family: monospace;
+  font-size: 0.8125rem;
+  color: #374151;
+  word-break: break-all;
+}
+
+.claim-actions {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+}
+
+/* History section */
+.history-section {
+  margin-top: 1rem;
+}
+
+.history-toggle {
+  background: none;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  padding: 0.375rem 0.75rem;
+  cursor: pointer;
+  font-size: 0.875rem;
+  color: #374151;
+}
+
+.history-toggle:hover {
+  background: #f9fafb;
+}
+
+.history-list {
+  margin-top: 0.75rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.history-item {
+  background: #f9fafb;
+  border-color: #e5e7eb;
+  padding: 0.75rem 1rem;
+}
+
+.history-item-header {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  flex-wrap: wrap;
+  margin-bottom: 0.375rem;
+}
+
+.history-item-date {
+  font-size: 0.875rem;
+  color: #6b7280;
+}
+
+.history-item-operator {
+  font-size: 0.875rem;
+  color: #374151;
+}
+
+.history-item-amount {
+  font-weight: 600;
+  color: #059669;
+}
+
+.history-item-lines {
+  font-size: 0.8125rem;
+  color: #9ca3af;
+}
+
+.history-item-actions {
+  margin-top: 0.5rem;
+}
+
+/* Buttons */
+.btn-primary {
+  background: #2563eb;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-primary:hover {
+  background: #1d4ed8;
+}
+
+.btn-secondary {
+  background: #f3f4f6;
+  color: #374151;
+  border: 1px solid #d1d5db;
+  border-radius: 6px;
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.btn-secondary:hover {
+  background: #e5e7eb;
+}
+
+.btn-danger {
+  background: #dc2626;
+  color: white;
+  border: none;
+  border-radius: 6px;
+  padding: 0.5rem 1rem;
+  font-size: 0.875rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.btn-danger:hover {
+  background: #b91c1c;
+}
+
+.btn-sm {
+  padding: 0.25rem 0.625rem;
+  font-size: 0.8125rem;
+}
+
+/* Modal (DN-4 LOCKED = A) */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal-dialog {
+  background: white;
+  border-radius: 8px;
+  padding: 2rem;
+  max-width: 480px;
+  width: 90%;
+  box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+}
+
+.modal-title {
+  margin: 0 0 0.75rem;
+  font-size: 1.25rem;
+  font-weight: 700;
+  color: #111827;
+}
+
+.modal-body {
+  color: #374151;
+  margin-bottom: 1.5rem;
+  line-height: 1.6;
+}
+
+.modal-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.75rem;
+}
+
+/* generated-state */
+.generated-state {
+  /* inherits .card */
+}
+
+.generate-success-toast {
+  background: #f0fdf4;
+  border: 1px solid #86efac;
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  color: #166534;
+}
+
+.generate-error-toast {
+  background: #fef2f2;
+  border: 1px solid #fca5a5;
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  color: #b91c1c;
+}
+
+.generating-indicator {
+  color: #6b7280;
+  font-style: italic;
 }
 </style>

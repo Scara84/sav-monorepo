@@ -90,6 +90,16 @@ vi.mock('../../../../api/_lib/clients/supabase-admin', () => {
           }),
         }
       }
+      // Story 8.5 — DN-2=A : badge réclamation fournisseur (additive, sans document_blob)
+      if (table === 'sav_supplier_claims') {
+        return {
+          select: () => ({
+            eq: () => ({
+              order: () => Promise.resolve({ data: [], error: null }),
+            }),
+          }),
+        }
+      }
       return {}
     },
     rpc: (fn: string) => {

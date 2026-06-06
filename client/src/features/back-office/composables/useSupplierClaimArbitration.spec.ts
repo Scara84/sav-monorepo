@@ -33,13 +33,16 @@
  */
 
 import { describe, it, expect } from 'vitest'
+import { ref, computed } from 'vue'
 import {
   clampQty,
   computeTotals,
   canGenerate,
   toggleExclude,
+  useSupplierClaimArbitration,
 } from './useSupplierClaimArbitration'
 import type { ArbitrageState, ArbitrageClaimLine, ArbitrageUnmatchedLine } from './useSupplierClaimArbitration'
+import type { SupplierFileParseResult } from './useSupplierClaimUpload'
 
 // ---------------------------------------------------------------------------
 // Fixture builders
@@ -386,5 +389,108 @@ describe('ARB-C-10: canGenerate — conditions (a) and (c) combined (AC #8)', ()
       exclusions: new Map<string | number, boolean>([['u1', true], ['l2', true]]),
     })
     expect(canGenerate(state)).toBe(true)
+  })
+})
+
+// ===========================================================================
+// ARB-C-11 — resetToArbitrating(): clears ALL arbitrage state (Story 8.5 LOW-1 fix)
+//
+// LOAD-BEARING — this test MUST go RED if resetToArbitrating() stops clearing
+// any of the collections below. It seeds real values into all collections before
+// calling reset, then asserts each is empty/initial after the call.
+//
+// RED-if-reverted proof: comment out ANY of the clearing lines in resetToArbitrating()
+// (e.g. `edits.value = new Map()`) and the corresponding assertion below will fail.
+// ===========================================================================
+
+describe('ARB-C-11: resetToArbitrating() — clears ALL arbitrage state (Story 8.5, M1)', () => {
+  it('ARB-C-11a: seeds edits + exclusions + comments + clampMessages + claimLines + unmatchedSavLines + unusedSupplierLines → resetToArbitrating() empties them all', () => {
+    // Create a minimal savId computed ref and a null parseResult (no auto-reconcile)
+    const savId = computed(() => 42)
+    const parseResult = ref<SupplierFileParseResult | null>(null)
+
+    const {
+      edits,
+      exclusions,
+      comments,
+      clampMessages,
+      claimLines,
+      unmatchedSavLines,
+      unusedSupplierLines,
+      generateState,
+      generateError,
+      generateResult,
+      reconcileState,
+      updateQty,
+      updateComment,
+      toggleLineExclusion,
+      resetToArbitrating,
+    } = useSupplierClaimArbitration(savId, parseResult)
+
+    // ---- Seed claimLines (needed for toggleLineExclusion to register line id) ----
+    // Directly assign via the exposed ref (it's a Ref<ArbitrageClaimLine[]>)
+    claimLines.value = [
+      makeClaimLine({ savLineId: 'r1', qty: 3 }),
+      makeClaimLine({ savLineId: 'r2', qty: 1, blockingForGeneration: true }),
+    ]
+    unmatchedSavLines.value = [makeUnmatchedLine({ savLineId: 'u1' })]
+    unusedSupplierLines.value = [{ codeFr: 'X99', codigoEs: 'X99-ES', descripcionEs: 'Unused' }]
+
+    // ---- Seed edits ----
+    updateQty('r1', 7)
+    updateQty('r2', 0)
+    expect(edits.value.size).toBe(2)
+
+    // ---- Seed exclusions ----
+    toggleLineExclusion('r1')
+    expect(exclusions.value.get('r1')).toBe(true)
+
+    // ---- Seed comments ----
+    updateComment('r1', 'test comment')
+    expect(comments.value.get('r1')).toBe('test comment')
+
+    // ---- Seed clampMessages directly (no public setter — assign via ref) ----
+    clampMessages.value = new Map([['r1', 'Quantité plafonnée à 9']])
+    expect(clampMessages.value.size).toBe(1)
+
+    // ---- Seed generateState / generateError / generateResult ----
+    // These are exposed refs — assign directly to simulate post-generate state
+    generateState.value = 'generated'
+    generateError.value = 'some error'
+    generateResult.value = { claimId: 99, filename: 'test.xlsx' }
+
+    // ---- Seed reconcileState ----
+    reconcileState.value = 'arbitrating'
+
+    // ---- Verify state is seeded before reset ----
+    expect(edits.value.size).toBeGreaterThan(0)
+    expect(exclusions.value.size).toBeGreaterThan(0)
+    expect(comments.value.size).toBeGreaterThan(0)
+    expect(clampMessages.value.size).toBeGreaterThan(0)
+    expect(claimLines.value.length).toBeGreaterThan(0)
+    expect(unmatchedSavLines.value.length).toBeGreaterThan(0)
+    expect(unusedSupplierLines.value.length).toBeGreaterThan(0)
+    expect(generateState.value).toBe('generated')
+    expect(generateError.value).not.toBeNull()
+    expect(generateResult.value).not.toBeNull()
+    expect(reconcileState.value).not.toBeNull()
+
+    // ---- CALL resetToArbitrating() ----
+    resetToArbitrating()
+
+    // ---- ASSERT ALL ARE CLEARED ----
+    // If any of these fail after commenting out the corresponding line in resetToArbitrating(),
+    // the test goes RED — this is the load-bearing discriminant.
+    expect(edits.value.size).toBe(0)          // RED if `edits.value = new Map()` removed
+    expect(exclusions.value.size).toBe(0)     // RED if `exclusions.value = new Map()` removed
+    expect(comments.value.size).toBe(0)       // RED if `comments.value = new Map()` removed
+    expect(clampMessages.value.size).toBe(0)  // RED if `clampMessages.value = new Map()` removed
+    expect(claimLines.value).toHaveLength(0)  // RED if `claimLines.value = []` removed
+    expect(unmatchedSavLines.value).toHaveLength(0)   // RED if `unmatchedSavLines.value = []` removed
+    expect(unusedSupplierLines.value).toHaveLength(0) // RED if `unusedSupplierLines.value = []` removed
+    expect(generateState.value).toBe('idle')  // RED if `generateState.value = 'idle'` removed
+    expect(generateError.value).toBeNull()    // RED if `generateError.value = null` removed
+    expect(generateResult.value).toBeNull()   // RED if `generateResult.value = null` removed
+    expect(reconcileState.value).toBeNull()   // RED if `reconcileState.value = null` removed
   })
 })

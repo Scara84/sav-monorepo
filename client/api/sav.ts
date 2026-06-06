@@ -25,6 +25,8 @@ import { applySupplierPricesHandler } from './_lib/sav/apply-supplier-prices-han
 import { parseSupplierFileHandler } from './_lib/sav/parse-supplier-file-handler'
 import { reconcileSupplierClaimHandler } from './_lib/sav/reconcile-supplier-claim-handler'
 import { generateSupplierClaimHandler } from './_lib/sav/generate-supplier-claim-handler'
+import { getSupplierClaimHistoryHandler } from './_lib/sav/get-supplier-claim-history-handler'
+import { downloadSupplierClaimHandler } from './_lib/sav/download-supplier-claim-handler'
 import type { ApiHandler, ApiRequest, ApiResponse } from './_lib/types'
 
 /**
@@ -105,6 +107,13 @@ function parseFileId(req: ApiRequest): number | null {
   return parseBigintId(str)
 }
 
+function parseClaimId(req: ApiRequest): number | null {
+  const raw = (req.query as Record<string, unknown> | undefined)?.['claimId']
+  if (raw === undefined || raw === null) return null
+  const str = Array.isArray(raw) ? String(raw[0]) : String(raw)
+  return parseBigintId(str)
+}
+
 // F19/F95 (CR Epic 3) : `op` doit provenir des rewrites vercel.json.
 // Absence = requête directe sur /api/sav (list) — autorisée, défaut `list`.
 // Une valeur inconnue doit retourner 404 explicite au lieu de silently
@@ -129,6 +138,8 @@ const ALLOWED_OPS = new Set([
   'parse-supplier-file',
   'reconcile-supplier-claim',
   'generate-supplier-claim',
+  'get-supplier-claim-history',
+  'download-supplier-claim',
 ])
 
 function parseOp(req: ApiRequest): string | null {
@@ -154,6 +165,8 @@ const dispatch: ApiHandler = async (req, res) => {
   const savId = parseSavId(req)
   const lineId = parseLineId(req)
   const fileId = parseFileId(req)
+  // Story 8.5 — claimId for download-supplier-claim (parsed BEFORE cleanup)
+  const claimId = parseClaimId(req)
 
   // Nettoyage : le router ne doit pas polluer `req.query` des handlers avec
   // nos params de routing.
@@ -163,6 +176,7 @@ const dispatch: ApiHandler = async (req, res) => {
     delete q['id']
     delete q['lineId']
     delete q['fileId']
+    delete q['claimId']
   }
 
   // op=tags-suggestions → GET /api/sav/tags/suggestions
@@ -381,6 +395,30 @@ const dispatch: ApiHandler = async (req, res) => {
       return
     }
     return generateSupplierClaimHandler(savId)(req, res)
+  }
+
+  // Story 8.5 — GET /api/sav/:id/demande-fournisseur/history (historique réclamations)
+  if (op === 'get-supplier-claim-history') {
+    if (method !== 'GET') {
+      res.setHeader('Allow', 'GET')
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
+      return
+    }
+    return getSupplierClaimHistoryHandler(savId)(req, res)
+  }
+
+  // Story 8.5 — GET /api/sav/:id/demande-fournisseur/download (re-download claim historique)
+  if (op === 'download-supplier-claim') {
+    if (method !== 'GET') {
+      res.setHeader('Allow', 'GET')
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
+      return
+    }
+    if (claimId === null) {
+      sendError(res, 'VALIDATION_FAILED', 'claimId invalide ou manquant', requestId)
+      return
+    }
+    return downloadSupplierClaimHandler(savId, claimId)(req, res)
   }
 
   sendError(res, 'NOT_FOUND', 'Route non disponible', requestId)

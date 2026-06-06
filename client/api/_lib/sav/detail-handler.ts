@@ -126,7 +126,7 @@ function buildCoreHandler(savId: number): ApiHandler {
       // Review P5 — un seul `nowIso` partagé pour la fenêtre de validité
       // (évite le drift sub-ms entre `.lte(valid_from)` et `.or(valid_to)`).
       const nowIso = new Date().toISOString()
-      const [savResult, commentsResult, auditResult, settingsResult, creditNoteResult] =
+      const [savResult, commentsResult, auditResult, settingsResult, creditNoteResult, supplierClaimResult] =
         await Promise.allSettled([
           admin.from('sav').select(SAV_SELECT).eq('id', savId).maybeSingle(),
           admin
@@ -154,6 +154,13 @@ function buildCoreHandler(savId: number): ApiHandler {
             )
             .eq('sav_id', savId)
             .maybeSingle(),
+          // Story 8.5 — DN-2=A LOCKED : badge réclamation fournisseur (additif, sans document_blob)
+          // NFR-PERF : document_blob JAMAIS lu dans cette query (payload op=detail reste léger)
+          admin
+            .from('sav_supplier_claims')
+            .select('id, generated_at, total_importe_cents')
+            .eq('sav_id', savId)
+            .order('generated_at', { ascending: false }),
         ])
 
       // SAV principal : fail ou reject → 500 (pas de rendu partiel possible).
@@ -312,6 +319,43 @@ function buildCoreHandler(savId: number): ApiHandler {
         })
       }
 
+      // Story 8.5 — DN-2=A LOCKED : badge réclamation fournisseur
+      // Forme allégée : { exists, latestGeneratedAt, latestTotalImporteCents, count }
+      // NFR-PERF : document_blob JAMAIS lu (sélect minimal — generated_at + total_importe_cents seulement)
+      let supplierClaim: {
+        exists: true
+        latestGeneratedAt: string
+        latestTotalImporteCents: number
+        count: number
+      } | null = null
+      if (
+        supplierClaimResult.status === 'fulfilled' &&
+        !supplierClaimResult.value.error
+      ) {
+        const claimRows = (supplierClaimResult.value.data ?? []) as Array<{
+          id: number
+          generated_at: string
+          total_importe_cents: number
+        }>
+        if (claimRows.length > 0) {
+          // Rows are ordered DESC by generated_at → first row is the latest
+          const latest = claimRows[0]!
+          supplierClaim = {
+            exists: true,
+            latestGeneratedAt: latest.generated_at,
+            latestTotalImporteCents: latest.total_importe_cents,
+            count: claimRows.length,
+          }
+        }
+      } else if (supplierClaimResult.status === 'rejected') {
+        // Dégradation propre — supplierClaim reste null (badge non affiché, non bloquant)
+        logger.warn('sav.detail.supplier_claim_degraded', {
+          requestId,
+          savId,
+          reason: String(supplierClaimResult.reason),
+        })
+      }
+
       const durationMs = Date.now() - startedAt
       logger.info('sav.detail.success', {
         requestId,
@@ -338,6 +382,8 @@ function buildCoreHandler(savId: number): ApiHandler {
           auditTrail,
           settingsSnapshot,
           creditNote,
+          // Story 8.5 — DN-2=A LOCKED : badge réclamation fournisseur (additif)
+          supplierClaim,
         },
         meta: {
           commentsDegraded,
