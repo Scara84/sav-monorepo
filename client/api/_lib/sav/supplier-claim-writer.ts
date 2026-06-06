@@ -63,7 +63,7 @@ export interface ClaimWorkbookResult {
 
 export const SOL_Y_FRUTA_HEADERS = [
   'FECHA',
-  'REFERENCE',
+  'REFERENCE COMMANDE', // DN-9 : libellé exact du vrai fichier SOL Y FRUTA (témoin SUIVI_SAV_2026.xlsx), pas l'abrégé "REFERENCE" de l'epic
   'FECHA ALBARAN',
   'ALBARAN',
   'CODIGO',

@@ -200,7 +200,7 @@ vi.mock('../../../../api/_lib/sav/supplier-claim-writer', () => ({
     // Créer un vrai classeur SheetJS minimal (évite les faux-verts par fixture dégénérée)
     const wb = XLSX.utils.book_new()
     const wsData = [
-      ['FECHA', 'REFERENCE', 'FECHA ALBARAN', 'ALBARAN', 'CODIGO', 'PRODUCTO', 'ORIGEN', 'PESO', 'ENVASE', 'CAUSA', 'PRECIO', 'COMENTARIOS', 'IMPORTE'],
+      ['FECHA', 'REFERENCE COMMANDE', 'FECHA ALBARAN', 'ALBARAN', 'CODIGO', 'PRODUCTO', 'ORIGEN', 'PESO', 'ENVASE', 'CAUSA', 'PRECIO', 'COMENTARIOS', 'IMPORTE'],
       ['2026-06-05', '278_26S21_11', '2026-05-26', '3127', '1022', 'Aguacate', 'Málaga', 5, 'Kilos', 'estropeado', 5.29, '', 26.45],
     ]
     const ws = XLSX.utils.aoa_to_sheet(wsData)

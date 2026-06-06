@@ -34,6 +34,8 @@
  */
 
 import { describe, it, expect } from 'vitest'
+import { readFileSync, existsSync } from 'node:fs'
+import path from 'node:path'
 import * as XLSX from 'xlsx'
 import { buildClaimWorkbook } from '../../../../api/_lib/sav/supplier-claim-writer'
 import type { ClaimWriterInput } from '../../../../api/_lib/sav/supplier-claim-writer'
@@ -45,7 +47,7 @@ import type { ClaimWriterInput } from '../../../../api/_lib/sav/supplier-claim-w
 
 const SOL_Y_FRUTA_EXPECTED_HEADERS = [
   'FECHA',
-  'REFERENCE',
+  'REFERENCE COMMANDE', // DN-9 : libellé exact du témoin réel SUIVI_SAV_2026.xlsx
   'FECHA ALBARAN',
   'ALBARAN',
   'CODIGO',
@@ -421,44 +423,40 @@ describe('WRITER-04: déterminisme blob (AC #9)', () => {
 
 describe('WRITER-05: conformité en-têtes vs fichier témoin réel (DN-9)', () => {
   /**
-   * BLOQUÉ SUR DN-9 — fichier témoin SUIVI SOL Y FRUTA réel anonymisé non fourni.
+   * DN-9 fourni par le PO 2026-06-06 : témoin réel client/tests/fixtures/SUIVI_SAV_2026.xlsx.
+   * La feuille « SUIVI_SAV_2024 » (titrée « SUIVI SAV 2026 ») porte le format ES courant ;
+   * ses 13 colonnes cœur SOL Y FRUTA sont en ligne 2 (la ligne 1 est le titre), colonnes C..O :
+   *   FECHA · REFERENCE COMMANDE · FECHA ALBARAN · ALBARAN · CODIGO · PRODUCTO · ORIGEN ·
+   *   PESO · ENVASE · CAUSA · PRECIO · COMENTARIOS · IMPORTE
+   * Les colonnes A/B (SEM TRATAMIENTO/SEM PEDIDO) et P+ (ESTATUTO…) sont hors-scope V1 (Epic 9).
    *
-   * Action requise (PO = Antho) : fournir le fichier témoin à placer dans
-   * client/tests/fixtures/suivi-sol-y-fruta-witness.xlsx (DN-9 story 8.4 §R-8).
-   *
-   * Ce test DOIT rester en skip tant que le fichier témoin n'est pas fourni.
-   * NE PAS créer une fixture dégénérée qui donnerait un faux-vert (leçons :
-   *   - feedback_xlsx_cellformula_cached_value.md : fixture dégénérée masquait le bug
-   *   - feedback_test_integration_gap.md : faux-vert structurel)
-   *
-   * Une fois le fichier témoin fourni :
-   *   1. Le déposer dans client/tests/fixtures/suivi-sol-y-fruta-witness.xlsx
-   *   2. Supprimer le .todo() et décommenter le corps du test
-   *   3. Le test vérifie la conformité bit-à-bit des 13 en-têtes (ordre + casse + accents)
+   * Anti-faux-vert : on lit les en-têtes RÉELS du témoin (pas une constante recopiée) et on
+   * compare bit-à-bit aux en-têtes générés par le writer. Découverte DN-9 : la colonne 2 du
+   * vrai fichier est « REFERENCE COMMANDE », pas l'abrégé « REFERENCE » de l'epic FR22 → writer aligné.
    */
-  it.todo(
-    'WRITER-05a [BLOQUÉ DN-9]: en-têtes du writer correspondent bit-à-bit au fichier témoin réel SOL Y FRUTA'
-    // async () => {
-    //   const witnessPath = path.join(__dirname, '../../../fixtures/suivi-sol-y-fruta-witness.xlsx')
-    //   if (!existsSync(witnessPath)) {
-    //     throw new Error('[WRITER-05] Fichier témoin absent : client/tests/fixtures/suivi-sol-y-fruta-witness.xlsx — fournir via DN-9 (PO = Antho)')
-    //   }
-    //   const witnessBytes = readFileSync(witnessPath)
-    //   const witnessWb = XLSX.read(witnessBytes, { type: 'buffer' })
-    //   const witnessSheet = witnessWb.Sheets[witnessWb.SheetNames[0]]
-    //
-    //   const colLetters = 'ABCDEFGHIJKLM'.split('')
-    //   const witnessHeaders = colLetters.map((col) => witnessSheet[`${col}1`]?.v ?? null)
-    //
-    //   const input = makeWriterInput()
-    //   const { blob } = buildClaimWorkbook(input)
-    //   const wb = parseWorkbookFromBuffer(blob)
-    //   const sheet = getSheetRows(wb, 'SUIVI')
-    //   const ourHeaders = colLetters.map((col) => sheet[`${col}1`]?.v ?? null)
-    //
-    //   expect(ourHeaders).toEqual(witnessHeaders)
-    // }
-  )
+  it('WRITER-05a: en-têtes du writer = 13 colonnes cœur du témoin réel SOL Y FRUTA (bit-à-bit)', () => {
+    const witnessPath = path.join(__dirname, '../../../fixtures/SUIVI_SAV_2026.xlsx')
+    if (!existsSync(witnessPath)) {
+      throw new Error('[WRITER-05] Fichier témoin absent : client/tests/fixtures/SUIVI_SAV_2026.xlsx')
+    }
+    const witnessWb = XLSX.read(readFileSync(witnessPath), { type: 'buffer' })
+    const witnessSheet = witnessWb.Sheets['SUIVI_SAV_2024']
+    if (!witnessSheet) throw new Error('[WRITER-05] feuille SUIVI_SAV_2024 absente du témoin')
+
+    // 13 colonnes cœur = C..O, ligne 2 (row index 2 en 1-indexed) du témoin
+    const witnessCols = ['C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O']
+    const witnessHeaders = witnessCols.map((col) => witnessSheet[`${col}2`]?.v ?? null)
+
+    // En-têtes générés par le writer : onglet SUIVI, ligne 1, colonnes A..M
+    const { blob } = buildClaimWorkbook(makeWriterInput())
+    const wb = XLSX.read(blob, { type: 'buffer' })
+    const sheet = wb.Sheets['SUIVI']
+    if (!sheet) throw new Error('[WRITER-05] onglet SUIVI absent du document généré')
+    const ourCols = ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M']
+    const ourHeaders = ourCols.map((col) => sheet[`${col}1`]?.v ?? null)
+
+    expect(ourHeaders).toEqual(witnessHeaders)
+  })
 })
 
 // ---------------------------------------------------------------------------
