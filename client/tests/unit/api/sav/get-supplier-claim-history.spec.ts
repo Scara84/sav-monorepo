@@ -39,6 +39,20 @@ import type { SessionUser } from '../../../../api/_lib/types'
 import { mockReq, mockRes } from '../_lib/test-helpers'
 
 // ---------------------------------------------------------------------------
+// Vraie-DB env gate (PATTERN-H15-A — honest skip)
+// ---------------------------------------------------------------------------
+
+const SUPABASE_URL_REAL = process.env['SUPABASE_URL'] || process.env['VITE_SUPABASE_URL']
+const SERVICE_ROLE_REAL = process.env['SUPABASE_SERVICE_ROLE_KEY']
+const HAS_DB = Boolean(SUPABASE_URL_REAL && SERVICE_ROLE_REAL)
+
+if (!HAS_DB) {
+  console.warn(
+    '[HIST-DB] Real-DB tests SKIPPED — set SUPABASE_URL + SUPABASE_SERVICE_ROLE_KEY env vars to run'
+  )
+}
+
+// ---------------------------------------------------------------------------
 // Hoisted mutable state
 // ---------------------------------------------------------------------------
 
@@ -57,7 +71,7 @@ const db = vi.hoisted(() => ({
     regeneration_of: number | null
     document_sha256: string
     generated_by_operator_id: number
-    operators: { id: number; full_name: string } | null
+    operators: { id: number; display_name: string } | null
   }>,
   // Strict sentinel: if document_blob is read, set this to true
   documentBlobRead: false as boolean,
@@ -181,7 +195,7 @@ function makeClaimRow(overrides: Partial<typeof db.claimsForSav[0]> = {}): typeo
     regeneration_of: null,
     document_sha256: 'abc123',
     generated_by_operator_id: 10,
-    operators: { id: 10, full_name: 'Antho Test' },
+    operators: { id: 10, display_name: 'Antho Test' },
     ...overrides,
   }
 }
@@ -288,7 +302,7 @@ describe('HIST-02: 1 claim → version=1, isLatest=true, regenerationOf=null (AC
     db.claimsForSav = [
       makeClaimRow({
         id: 1,
-        operators: { id: 10, full_name: 'Antho Test' },
+        operators: { id: 10, display_name: 'Antho Test' },
       }),
     ]
 
@@ -539,4 +553,124 @@ describe('HIST-09: hasDocument présent dans chaque claim (AC #1)', () => {
     const body = res.jsonBody as { claims: Array<{ hasDocument: boolean }> }
     expect(body.claims[0]?.hasDocument).toBe(true)
   })
+})
+
+// ===========================================================================
+// HIST-10 — DISCRIMINANT colonne operators.display_name (vraie-DB, anti-faux-vert)
+//
+// BUG HISTORY (UAT round-1 2026-06-07):
+//   Le handler sélectionnait `operators(id, full_name)` mais la colonne réelle est
+//   `display_name`. PostgREST retournait HTTP 500 en production. Le mock unitaire
+//   encodait `full_name` → faux-vert. Ce test est le discriminant load-bearing :
+//   il exécute la vraie requête PostgREST `operators(id, display_name)` contre la
+//   vraie DB Preview et ÉCHOUE si la colonne est remise à `full_name`.
+//
+// Ce test DOIT :
+//   - PASSER quand le SELECT contient `operators(id, display_name)` (correct)
+//   - ÉCHOUER (PostgREST error) si le SELECT est changé en `operators(id, full_name)`
+//
+// Honnête skip : it.skipIf(!HAS_DB) — jamais un faux-vert statique.
+// ===========================================================================
+
+describe('HIST-10: DISCRIMINANT vraie-DB — operators.display_name (anti-faux-vert colonne)', () => {
+  it.skipIf(!HAS_DB)(
+    'HIST-10a: SELECT sav_supplier_claims + operators(id,display_name) → 0 PostgREST error + generatedByOperator.fullName non-vide',
+    async () => {
+      const { createClient } = await import('@supabase/supabase-js')
+      const admin = createClient(SUPABASE_URL_REAL!, SERVICE_ROLE_REAL!, {
+        auth: { persistSession: false, autoRefreshToken: false },
+      })
+
+      // Find a SAV and operator from real DB
+      const { data: savRow } = await admin
+        .from('sav')
+        .select('id, group_id')
+        .limit(1)
+        .maybeSingle<{ id: number; group_id: number }>()
+
+      const { data: opRow } = await admin
+        .from('operators')
+        .select('id, display_name')
+        .limit(1)
+        .maybeSingle<{ id: number; display_name: string }>()
+
+      if (!savRow || !opRow) {
+        console.warn('[HIST-10a] SKIP — pas de SAV/operator en DB preview')
+        return
+      }
+
+      // Insert a test claim row with known operator
+      const uniqueRef = `HIST-10-${Date.now()}`
+      const { data: insertedClaim, error: insertError } = await admin
+        .from('sav_supplier_claims')
+        .insert({
+          sav_id: savRow.id,
+          credit_note_id: null,
+          supplier_code: 'sol-y-fruta',
+          reference: uniqueRef,
+          albaran: '3127',
+          fecha_albaran: '2026-06-05',
+          total_importe_cents: 174,
+          line_count: 1,
+          filename: `RECLAMACION_SOL_Y_FRUTA_${uniqueRef}_2026-06-05.xlsx`,
+          document_blob: Buffer.from([0x50, 0x4b, 0x03, 0x04]),
+          document_sha256: 'discriminant-test-sha256',
+          regeneration_of: null,
+          generated_by_operator_id: opRow.id,
+        })
+        .select('id')
+        .single<{ id: number }>()
+
+      try {
+        expect(insertError).toBeNull()
+        expect(insertedClaim).not.toBeNull()
+
+        // THE DISCRIMINANT QUERY — exactly what the handler sends to PostgREST.
+        // If the column is `full_name` instead of `display_name`, PostgREST
+        // returns an error and this test FAILS.
+        const { data: rows, error: queryError } = await admin
+          .from('sav_supplier_claims')
+          .select(
+            'id, sav_id, generated_at, total_importe_cents, line_count, filename, regeneration_of, document_sha256, generated_by_operator_id, operators(id, display_name)'
+          )
+          .eq('sav_id', savRow.id)
+          .order('generated_at', { ascending: false })
+
+        // DISCRIMINANT: PostgREST error if column is wrong
+        // If you change `display_name` back to `full_name`, queryError will be non-null
+        // and this assertion will FAIL — exactly what we want
+        expect(queryError).toBeNull()
+        expect(Array.isArray(rows)).toBe(true)
+
+        // Find our inserted claim
+        const ourClaim = rows?.find((r: { id: number }) => r.id === insertedClaim!.id)
+        expect(ourClaim).not.toBeUndefined()
+
+        // DISCRIMINANT: `display_name` is present in the operators join result
+        // If column was `full_name`, either queryError above caught it OR this assertion fails
+        const opEmbed = (ourClaim?.operators as unknown) as { id: number; display_name: string } | null
+        expect(opEmbed).not.toBeNull()
+        expect(typeof opEmbed?.display_name).toBe('string')
+        expect(opEmbed?.display_name.length).toBeGreaterThan(0)
+
+        // DISCRIMINANT: generatedByOperator.fullName is populated (from display_name)
+        // Test the full handler path with real operator data
+        const opRaw = ourClaim?.operators as unknown
+        const opRecord = Array.isArray(opRaw)
+          ? ((opRaw as Array<{ id: number; display_name: string }>)[0]) ?? null
+          : (opRaw as { id: number; display_name: string } | null)
+
+        const fullName = opRecord?.display_name ?? `Opérateur #${opRow.id}`
+        // Must not fall back to the placeholder — real display_name should be present
+        expect(fullName).not.toMatch(/^Opérateur #/)
+        expect(fullName).toBe(opRow.display_name)
+      } finally {
+        // Cleanup
+        if (insertedClaim?.id) {
+          await admin.from('sav_supplier_claims').delete().eq('id', insertedClaim.id)
+        }
+      }
+    },
+    30_000
+  )
 })

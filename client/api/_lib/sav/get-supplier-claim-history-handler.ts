@@ -38,7 +38,7 @@ interface ClaimRow {
   document_sha256: string | null
   generated_by_operator_id: number
   // Supabase join can return single object or array depending on join type
-  operators: { id: number; full_name: string } | { id: number; full_name: string }[] | null
+  operators: { id: number; display_name: string } | { id: number; display_name: string }[] | null
 }
 
 export interface SupplierClaimHistoryItem {
@@ -152,7 +152,7 @@ function getSupplierClaimHistoryCore(savId: number): ApiHandler {
     const { data: rows, error: dbError } = await admin
       .from('sav_supplier_claims')
       .select(
-        'id, sav_id, generated_at, total_importe_cents, line_count, filename, regeneration_of, document_sha256, generated_by_operator_id, operators(id, full_name)'
+        'id, sav_id, generated_at, total_importe_cents, line_count, filename, regeneration_of, document_sha256, generated_by_operator_id, operators(id, display_name)'
       )
       .eq('sav_id', savId)
       .order('generated_at', { ascending: false })
@@ -188,7 +188,7 @@ function getSupplierClaimHistoryCore(savId: number): ApiHandler {
         generatedAt: row.generated_at,
         generatedByOperator: {
           id: row.generated_by_operator_id,
-          fullName: opRecord?.full_name ?? `Opérateur #${row.generated_by_operator_id}`,
+          fullName: opRecord?.display_name ?? `Opérateur #${row.generated_by_operator_id}`,
         },
         totalImporteCents: row.total_importe_cents,
         lineCount: row.line_count,

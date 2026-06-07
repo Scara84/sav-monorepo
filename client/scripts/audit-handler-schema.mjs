@@ -387,7 +387,7 @@ function extractColumns(expr) {
 
 /**
  * Extract embed table refs: `alias:tableName(...)` or `tableName(...)`.
- * Returns array of { embed, parent } — embed is the table name referenced.
+ * Returns array of embed table names (to check table existence).
  */
 function extractEmbeds(expr) {
   const out = []
@@ -399,6 +399,68 @@ function extractEmbeds(expr) {
     const tableRef = m[2] ?? m[1]
     if (POSTGREST_KEYWORDS.has(tableRef.toLowerCase())) continue
     out.push(tableRef)
+  }
+  return out
+}
+
+/**
+ * Extract embed column names for a given embed.
+ * Finds `tableName(col1, col2, ...)` patterns (top-level only — no nested embeds within the embed body).
+ * Returns array of { embedTable, col } pairs.
+ *
+ * This catches the `operators(id, full_name)` class of bugs (W113 embed-column gap).
+ * Only validates DIRECT (non-nested) column names inside the embed body — nested sub-embeds
+ * are skipped (they would be caught as a separate embed entry).
+ */
+function extractEmbedColumns(expr) {
+  const out = []
+  // Match tableName(...) or alias:tableName!fk(...) — capture tableName + raw body
+  // We use a simple approach: find each `tableName(` start, then extract the body up to the matching `)`
+  const re =
+    /(?:^|,|\s)(?:[a-z_][a-z_0-9]*\s*:\s*)?([a-z_][a-z_0-9]*)(?:![a-z_]+)?\s*\(/gi
+  let m
+  while ((m = re.exec(expr))) {
+    const embedTable = m[1]
+    if (POSTGREST_KEYWORDS.has(embedTable.toLowerCase())) continue
+    if (!SCHEMA[embedTable]) continue // Table existence checked separately by extractEmbeds
+
+    // Extract the body between the opening `(` and its matching `)`
+    const openIdx = m.index + m[0].length - 1 // position of `(`
+    let depth = 1
+    let i = openIdx + 1
+    while (i < expr.length && depth > 0) {
+      if (expr[i] === '(') depth++
+      else if (expr[i] === ')') depth--
+      i++
+    }
+    const embedBody = expr.slice(openIdx + 1, i - 1)
+
+    // Strip nested embed bodies from the embed body to get only direct columns
+    let strippedBody = ''
+    let innerDepth = 0
+    for (const ch of embedBody) {
+      if (ch === '(') innerDepth++
+      else if (ch === ')') innerDepth--
+      else if (innerDepth === 0) strippedBody += ch
+    }
+
+    // Parse direct column names in the embed body
+    const parts = strippedBody
+      .split(',')
+      .map((s) => s.trim())
+      .filter(Boolean)
+
+    for (const part of parts) {
+      // alias:col → col; col → col; skip table references (contain !)
+      if (part.includes('!')) continue
+      const colName = part.includes(':') ? part.split(':').pop().trim() : part
+      const clean = colName.replace(/::[a-z]+$/i, '').trim()
+      if (!clean || clean === '*') continue
+      if (POSTGREST_KEYWORDS.has(clean.toLowerCase())) continue
+      // Skip if it looks like a table name (it's another embed reference stripped of its body)
+      if (Object.prototype.hasOwnProperty.call(SCHEMA, clean)) continue
+      out.push({ embedTable, col: clean })
+    }
   }
   return out
 }
@@ -439,6 +501,20 @@ for (const file of walk(ROOT)) {
         drifts.push({ kind: 'unknown_embed_table', file: rel, table, embedTable })
       }
     }
+    // Validate columns INSIDE embed bodies (W113 embed-column gap — catches `operators(id, full_name)` class of bugs).
+    for (const { embedTable, col } of extractEmbedColumns(expr)) {
+      const embedColSet = new Set(SCHEMA[embedTable] ?? [])
+      if (!embedColSet.has(col)) {
+        drifts.push({
+          kind: 'unknown_embed_column',
+          file: rel,
+          table,
+          embedTable,
+          column: col,
+          expr: expr.replace(/\s+/g, ' ').slice(0, 100),
+        })
+      }
+    }
   }
 }
 
@@ -466,6 +542,8 @@ for (const [file, fileDrifts] of Object.entries(byFile)) {
       console.log(`    × from('${d.table}') — table not in schema`)
     else if (d.kind === 'unknown_embed_table')
       console.log(`    × ${d.table} embeds ${d.embedTable} — embed table not in schema`)
+    else if (d.kind === 'unknown_embed_column')
+      console.log(`    × ${d.table} embeds ${d.embedTable}.${d.column} — embed column not in schema  (in: ${d.expr})`)
   }
   console.log('')
 }
