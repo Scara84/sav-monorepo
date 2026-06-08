@@ -20,13 +20,15 @@
 // ---------------------------------------------------------------------------
 
 /**
- * Plafonne qtyForCap à qteFact (capacité facturée fournisseur).
- * AC #6 (Story 8.2) : qteFact null|0 → retourne 0.
+ * Plafonne qtyForCap à capMax (borne explicite dans l'unité du fournisseur).
+ * AC #6 (Story 8.2) : capMax null|0 → retourne 0.
+ * Story 8.6 : signature renommée qteFact → capMax pour supporter le plafond kg
+ * (capMax = kilosNetos quand base=Kilos, sinon = qteFact — PATTERN-EFFECTIVE-CAP-EXPOSURE).
  */
-export function applyCap(input: { qtyForCap: number; qteFact: number | null }): number {
-  const { qtyForCap, qteFact } = input
-  if (qteFact === null || qteFact === 0) return 0
-  return Math.min(qtyForCap, qteFact)
+export function applyCap(input: { qtyForCap: number; capMax: number | null }): number {
+  const { qtyForCap, capMax } = input
+  if (capMax === null || capMax === 0) return 0
+  return Math.min(qtyForCap, capMax)
 }
 
 // ---------------------------------------------------------------------------

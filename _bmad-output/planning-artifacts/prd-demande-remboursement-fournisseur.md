@@ -330,7 +330,7 @@ resserré (produire le doc, pas de suivi) ; tout le reste différé V2.
 - FR10 : Le système signale les lignes SAV sans correspondance dans le fichier (non appariées).
 - FR11 : Pour chaque ligne appariée, le système récupère le code fournisseur ES, la désignation ES, l'origine, le prix unitaire fournisseur, l'unité fournisseur et la quantité facturée.
 - FR12 : Le système traduit le motif SAV en motif fournisseur (abîmé→`estropeado`, manquant→`faltante`, autre→`otro`).
-- FR13 : Le système applique la conversion d'unité SAV↔fournisseur (dont g→kg ÷1000) et annote les cas ambigus (« ATTENTION A CONVERTIR ») ou inconnus (« Unité non reconnue »).
+- FR13 : Le système applique la conversion d'unité SAV↔fournisseur (dont g→kg ÷1000) et annote les cas ambigus (« ATTENTION A CONVERTIR ») ou inconnus (« Unité non reconnue »). **[AMENDÉ Story 8.6 — 2026-06-08]** : Le cas pièce↔kilo (cellule 4 : `unit_arbitrated=piece`, `kilosPiezas=Kilos`) est désormais **résolu automatiquement** via la donnée `Kilos Netos` du fichier fournisseur (facteur de conversion = `kilosNetos / qteFact` kg/pièce, plafond = `kilosNetos` kg). Le legacy VBA laissait cette conversion à l'humain ; on l'outille désormais. Quand `Kilos Netos` est absent ou nul, le cas reste signalé « ATTENTION A CONVERTIR » et bloque la génération (`blockingForGeneration=true`).
 - FR14 : Le système propose par défaut une quantité réclamée = quantité remboursée au client.
 - FR15 : Le système plafonne la quantité réclamée à la quantité réellement facturée par le fournisseur (`QTE_FACT`).
 - FR16 : Le système calcule le montant réclamé par ligne = quantité réclamée × prix unitaire fournisseur.

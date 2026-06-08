@@ -50,6 +50,13 @@ export interface ArbitrageClaimLine {
   blockingForGeneration: boolean
   productNameSnapshot: string | null
   comentarios: string
+  /** Story 8.6 — ADDITIVE — plafond effectif dans l'unité du fournisseur (PATTERN-EFFECTIVE-CAP-EXPOSURE).
+   *  Utilisé par computeTotals pour borner dans la bonne unité (kg si Kilos). */
+  effectiveCap?: number | null
+  /** Story 8.6 — ADDITIVE — unité du plafond effectif ('Kilos' ou 'Unidades'). */
+  effectiveCapUnit?: string | null
+  /** Story 8.6 — ADDITIVE — commentaire de conversion pièce→kg. */
+  conversionComment?: string | null
 }
 
 export interface ArbitrageUnmatchedLine {
@@ -111,14 +118,17 @@ export function formatImporte(value: number): string {
 
 /**
  * Plafonne une quantité saisie.
- * - qty > qteFact → qteFact
+ * - qty > cap → cap
  * - qty < 0 → 0
  * - qty = NaN → prevValid
+ *
+ * HIGH-1 (CR fix): renamed bound param qteFact → cap (unit-agnostic).
+ * Callers must feed effectiveCap (kg for Kilos lines) or qteFact (pieces for Unidades lines).
  */
-export function clampQty(qty: number, qteFact: number, prevValid: number): number {
+export function clampQty(qty: number, cap: number, prevValid: number): number {
   if (isNaN(qty)) return prevValid
   if (qty < 0) return 0
-  if (qty > qteFact) return qteFact
+  if (qty > cap) return cap
   return qty
 }
 
@@ -169,8 +179,14 @@ export function computeTotals(state: ArbitrageState): ComputeTotalsResult {
       : line.qty
 
     // HIGH-2: clamp at read time so un-blurred values don't leak into display/total.
-    // qteFact null means blockingForGeneration (already filtered above), so always non-null here.
-    const effectiveQty = Math.min(Math.max(rawQty, 0), line.qteFact ?? 0)
+    // Story 8.6 (AC #5 parité): use effectiveCap when provided (kg for Kilos base),
+    // fall back to qteFact for Unidades (pièces). This ensures client and server compute
+    // the same cap bound (PATTERN-EFFECTIVE-CAP-EXPOSURE).
+    // qteFact/effectiveCap null means blockingForGeneration (already filtered above).
+    const capBound = line.effectiveCap !== undefined && line.effectiveCap !== null
+      ? line.effectiveCap
+      : (line.qteFact ?? 0)
+    const effectiveQty = Math.min(Math.max(rawQty, 0), capBound)
 
     // importe = qty × precio (null si precio null — ne compte pas)
     const importe = computeImporte({ qty: effectiveQty, precio: line.precio })
@@ -411,21 +427,24 @@ export function useSupplierClaimArbitration(
     clampMessages.value = newClampMap
   }
 
-  function handleQtyBlur(lineId: string | number, inputValue: string, qteFact: number): void {
+  function handleQtyBlur(lineId: string | number, inputValue: string, cap: number, capUnit?: string): void {
     const numValue = parseFloat(inputValue)
     const line = claimLines.value.find((l) => l.savLineId === lineId)
     const prevValid = edits.value.get(lineId) ?? line?.qty ?? 0
 
-    const clamped = clampQty(numValue, qteFact, prevValid)
+    // HIGH-1 (CR fix): clamp on cap (effectiveCap in kg for Kilos lines, qteFact in pieces otherwise)
+    const clamped = clampQty(numValue, cap, prevValid)
     const newEdits = new Map(edits.value)
     newEdits.set(lineId, clamped)
     edits.value = newEdits
 
     // Show clamp message if value was out of bounds
-    const wasOOB = isNaN(numValue) || numValue < 0 || numValue > qteFact
+    const wasOOB = isNaN(numValue) || numValue < 0 || numValue > cap
     if (wasOOB) {
       const newClampMap = new Map(clampMessages.value)
-      newClampMap.set(lineId, `Quantité plafonnée à la quantité facturée fournisseur (${qteFact})`)
+      // HIGH-1 (CR fix): message includes unit — "(X kg)" for Kilos, "(X)" for Unidades
+      const capDisplay = `${cap}${capUnit === 'Kilos' ? ' kg' : ''}`
+      newClampMap.set(lineId, `Quantité plafonnée à la quantité facturée fournisseur (${capDisplay})`)
       clampMessages.value = newClampMap
     } else {
       const newClampMap = new Map(clampMessages.value)

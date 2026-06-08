@@ -494,3 +494,196 @@ describe('ARB-C-11: resetToArbitrating() — clears ALL arbitrage state (Story 8
     expect(reconcileState.value).toBeNull()   // RED if `reconcileState.value = null` removed
   })
 })
+
+// ===========================================================================
+// HIGH-2 (Story 8.6 CR fix) — INPUT PATH for converted cellule-4 line
+//
+// These tests exercise handleQtyBlur (the operator INPUT path) — NOT just computeTotals.
+// They MUST FAIL under pre-fix client code which clamps on qteFact=1 pièce.
+//
+// RED PROOF (pre-fix):
+//   handleQtyBlur called with cap=line.qteFact=1 (pièces):
+//     blur(5) → clamped to 1 (qteFact) ← BUG: should be 2 (kg)
+//     blur(1.5) → clamped to 1 (qteFact) ← BUG: should NOT be clamped (1.5 ≤ 2 kg)
+//   Post-fix: handleQtyBlur receives cap=effectiveCap=2 (kg):
+//     blur(5) → clamped to 2 (kg) ← CORRECT
+//     blur(1.5) → stays 1.5 (1.5 ≤ 2 kg) ← CORRECT
+// ===========================================================================
+
+describe('ARB-HIGH2: INPUT path — handleQtyBlur for converted cellule-4 line (Story 8.6 CR HIGH-2)', () => {
+  /**
+   * Setup helper: creates a composable instance seeded with a converted courgette line
+   * (effectiveCap=2 kg, effectiveCapUnit='Kilos', qteFact=1 pièce)
+   */
+  function setupComposableWithCourgette() {
+    const savId = computed(() => 42)
+    const parseResult = ref<SupplierFileParseResult | null>(null)
+
+    const composable = useSupplierClaimArbitration(savId, parseResult)
+
+    // Seed a converted cellule-4 courgette line (post-reconcile hydration)
+    const courgetteLine: ArbitrageClaimLine = {
+      savLineId: 'courgette-3115',
+      codeFr: '3115-2K',
+      codigoEs: '3115',
+      productoEs: 'Calabacín verde',
+      origen: 'España',
+      unidad: 'Kilos',
+      conversionFlag: 'converti pièce→kg',
+      causaEs: 'faltante',
+      precio: 1.69,
+      qty: 2,                // POST-FIX: qty en kg (server computed)
+      peso: 2,
+      qteFact: 1,            // qteFact original = 1 pièce facturée
+      importe: 3.38,
+      blockingForGeneration: false,
+      productNameSnapshot: 'Courgette verte 2kg',
+      comentarios: 'converti pièce→kg via Kilos Netos (2 kg)',
+      effectiveCap: 2,       // kg bound (kilosNetos) — exposé par serveur
+      effectiveCapUnit: 'Kilos',
+      conversionComment: 'converti pièce→kg via Kilos Netos (2 kg)',
+    }
+    composable.claimLines.value = [courgetteLine]
+    // Initialize edit with server qty
+    const initEdits = new Map<string | number, number>()
+    initEdits.set('courgette-3115', 2)
+    composable.edits.value = initEdits
+
+    return composable
+  }
+
+  it(
+    'ARB-HIGH2-a: blur(5) on courgette (effectiveCap=2 kg, qteFact=1 pièce) → clamped to 2 (kg), ' +
+    'NOT to 1 (qteFact) — proves INPUT path uses effectiveCap ' +
+    '[MUST FAIL under pre-fix code: pre-fix handleQtyBlur(cap=qteFact=1) → clamps to 1]',
+    () => {
+      const { handleQtyBlur, edits, clampMessages } = setupComposableWithCourgette()
+
+      // Operator types "5" (kg) → blur
+      // Template calls: handleQtyBlur(lineId, '5', line.effectiveCap ?? line.qteFact, line.effectiveCapUnit)
+      // = handleQtyBlur('courgette-3115', '5', 2, 'Kilos')
+      handleQtyBlur('courgette-3115', '5', 2, 'Kilos')
+
+      // POST-FIX: clamped to 2 (kg), NOT to 1 (pièce)
+      expect(edits.value.get('courgette-3115')).toBe(2)
+
+      // Clamp message must contain "2 kg" (not "1" or bare "1")
+      const msg = clampMessages.value.get('courgette-3115')
+      expect(msg).toBeDefined()
+      expect(msg).toMatch(/2 kg/)  // "(2 kg)" unit-aware message
+      expect(msg).not.toMatch(/\(1\)/)  // NOT the old pieces-only message
+    }
+  )
+
+  it(
+    'ARB-HIGH2-b: blur(1.5) on courgette (effectiveCap=2 kg) → stays 1.5 (NOT clamped to 1) ' +
+    '[MUST FAIL under pre-fix code: pre-fix clamps 1.5 to qteFact=1]',
+    () => {
+      const { handleQtyBlur, edits, clampMessages } = setupComposableWithCourgette()
+
+      // Operator types "1.5" (kg) → blur
+      handleQtyBlur('courgette-3115', '1.5', 2, 'Kilos')
+
+      // POST-FIX: 1.5 ≤ 2 kg → NOT clamped (stays 1.5)
+      expect(edits.value.get('courgette-3115')).toBe(1.5)
+
+      // No clamp message shown (value in bounds)
+      const msg = clampMessages.value.get('courgette-3115')
+      expect(msg).toBeUndefined()
+    }
+  )
+
+  it(
+    'ARB-HIGH2-c: Unidades line (effectiveCap=undefined, qteFact=7) — INPUT path unchanged ' +
+    '[pieces lines still clamp on qteFact — backward compat]',
+    () => {
+      const savId = computed(() => 42)
+      const parseResult = ref<SupplierFileParseResult | null>(null)
+      const composable = useSupplierClaimArbitration(savId, parseResult)
+
+      // Unidades line (no effectiveCap)
+      const unidadesLine: ArbitrageClaimLine = {
+        savLineId: 'avocat-1022',
+        codeFr: '1022-5K',
+        codigoEs: '1022',
+        productoEs: 'Aguacate BIO',
+        origen: 'Málaga',
+        unidad: 'Unidades',
+        conversionFlag: 'ok',
+        causaEs: 'estropeado',
+        precio: 4.89,
+        qty: 5,
+        peso: 5,
+        qteFact: 7,
+        importe: 5 * 4.89,
+        blockingForGeneration: false,
+        productNameSnapshot: 'Avocat BIO',
+        comentarios: '',
+        // No effectiveCap / effectiveCapUnit (Unidades line)
+      }
+      composable.claimLines.value = [unidadesLine]
+      const initEdits = new Map<string | number, number>()
+      initEdits.set('avocat-1022', 5)
+      composable.edits.value = initEdits
+
+      // Template calls: handleQtyBlur(lineId, '10', line.effectiveCap ?? line.qteFact, line.effectiveCapUnit)
+      // = handleQtyBlur('avocat-1022', '10', undefined ?? 7, undefined)
+      // = handleQtyBlur('avocat-1022', '10', 7, undefined)
+      composable.handleQtyBlur('avocat-1022', '10', 7, undefined)
+
+      // Clamped to 7 (qteFact pieces) — unchanged behavior
+      expect(composable.edits.value.get('avocat-1022')).toBe(7)
+
+      const msg = composable.clampMessages.value.get('avocat-1022')
+      expect(msg).toBeDefined()
+      // Unidades message: no 'kg' suffix
+      expect(msg).not.toMatch(/kg/)
+      expect(msg).toMatch(/7/)  // "(7)" — no kg
+    }
+  )
+
+  it(
+    'ARB-HIGH2-d: cellule-2 Kilos line (effectiveCap=kilosNetos=8.1, qteFact=4) — INPUT clamps on kg bound ' +
+    '[proves effectiveCap fix applies to ALL Kilos lines, not just converted cellule-4]',
+    () => {
+      const savId = computed(() => 42)
+      const parseResult = ref<SupplierFileParseResult | null>(null)
+      const composable = useSupplierClaimArbitration(savId, parseResult)
+
+      // Cellule-2 (kg+Kilos, passthrough, flag=ok) — pêche plate
+      const kgLine: ArbitrageClaimLine = {
+        savLineId: 'peche-3104',
+        codeFr: '3104-2K',
+        codigoEs: '3104',
+        productoEs: 'Melocotón',
+        origen: 'España',
+        unidad: 'Kilos',
+        conversionFlag: 'ok',
+        causaEs: 'estropeado',
+        precio: 3.24,
+        qty: 4,
+        peso: 4,
+        qteFact: 4,            // qteFact = 4 pièces
+        importe: 4 * 3.24,
+        blockingForGeneration: false,
+        productNameSnapshot: 'Pêche plate',
+        comentarios: '',
+        effectiveCap: 8.1,     // kilosNetos=8.1 kg (HIGH-1 fix: Kilos lines use kilosNetos as cap)
+        effectiveCapUnit: 'Kilos',
+      }
+      composable.claimLines.value = [kgLine]
+      const initEdits = new Map<string | number, number>()
+      initEdits.set('peche-3104', 4)
+      composable.edits.value = initEdits
+
+      // Blur 10 kg → should clamp to 8.1 (kilosNetos), NOT to 4 (qteFact pieces)
+      composable.handleQtyBlur('peche-3104', '10', 8.1, 'Kilos')
+
+      expect(composable.edits.value.get('peche-3104')).toBe(8.1)
+
+      const msg = composable.clampMessages.value.get('peche-3104')
+      expect(msg).toBeDefined()
+      expect(msg).toMatch(/8\.1 kg/)  // message with kg unit
+    }
+  )
+})

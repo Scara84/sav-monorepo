@@ -18,24 +18,26 @@ import { applyCap, computeImporte } from './math'
 // ===========================================================================
 
 describe('MATH-01: applyCap — parity with 8.2 PURE-03 server tests', () => {
-  it('MATH-01a: qtyForCap=10, qteFact=4 → 4 (cap activated)', () => {
-    expect(applyCap({ qtyForCap: 10, qteFact: 4 })).toBe(4)
+  // Story 8.6: parameter renamed qteFact → capMax (PATTERN-EFFECTIVE-CAP-EXPOSURE)
+  // Semantics unchanged: capMax = cap bound in the supplier's unit (kg if Kilos, pieces if Unidades)
+  it('MATH-01a: qtyForCap=10, capMax=4 → 4 (cap activated)', () => {
+    expect(applyCap({ qtyForCap: 10, capMax: 4 })).toBe(4)
   })
 
-  it('MATH-01b: qtyForCap=3, qteFact=7 → 3 (cap inactive, qty < qteFact)', () => {
-    expect(applyCap({ qtyForCap: 3, qteFact: 7 })).toBe(3)
+  it('MATH-01b: qtyForCap=3, capMax=7 → 3 (cap inactive, qty < capMax)', () => {
+    expect(applyCap({ qtyForCap: 3, capMax: 7 })).toBe(3)
   })
 
-  it('MATH-01c: qtyForCap=5, qteFact=5 → 5 (equality = cap not activated)', () => {
-    expect(applyCap({ qtyForCap: 5, qteFact: 5 })).toBe(5)
+  it('MATH-01c: qtyForCap=5, capMax=5 → 5 (equality = cap not activated)', () => {
+    expect(applyCap({ qtyForCap: 5, capMax: 5 })).toBe(5)
   })
 
-  it('MATH-01d: qteFact=null → 0 (degenerate: missing qteFact)', () => {
-    expect(applyCap({ qtyForCap: 5, qteFact: null })).toBe(0)
+  it('MATH-01d: capMax=null → 0 (degenerate: missing cap bound)', () => {
+    expect(applyCap({ qtyForCap: 5, capMax: null })).toBe(0)
   })
 
-  it('MATH-01e: qteFact=0 → 0 (zero qteFact is blocking)', () => {
-    expect(applyCap({ qtyForCap: 5, qteFact: 0 })).toBe(0)
+  it('MATH-01e: capMax=0 → 0 (zero cap is blocking)', () => {
+    expect(applyCap({ qtyForCap: 5, capMax: 0 })).toBe(0)
   })
 })
 

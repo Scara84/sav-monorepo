@@ -212,27 +212,29 @@ describe('PURE-02: convertUnit — matrice 6 cellules + 2 dégénérés (AC #5, 
 // Ordre CRITIQUE : conversion g→kg AVANT cap (R-3 : cap en grammes = 1000× faux)
 // ===========================================================================
 
-describe('PURE-03: applyCap — plafond QTE_FACT (AC #6, AC #12f)', () => {
-  it('PURE-03a: qtyForCap=10, qteFact=4 → 4 (cap activé, AC #12f)', () => {
-    expect(applyCap({ qtyForCap: 10, qteFact: 4 })).toBe(4)
+describe('PURE-03: applyCap — plafond cap (AC #6, AC #12f)', () => {
+  // Story 8.6: parameter renamed qteFact → capMax (PATTERN-EFFECTIVE-CAP-EXPOSURE)
+  // capMax = cap bound in the supplier's unit (kg when base=Kilos, pieces when base=Unidades)
+  it('PURE-03a: qtyForCap=10, capMax=4 → 4 (cap activé, AC #12f)', () => {
+    expect(applyCap({ qtyForCap: 10, capMax: 4 })).toBe(4)
   })
 
-  it('PURE-03b: qtyForCap=3, qteFact=7 → 3 (cap inactif, qty < qteFact)', () => {
-    expect(applyCap({ qtyForCap: 3, qteFact: 7 })).toBe(3)
+  it('PURE-03b: qtyForCap=3, capMax=7 → 3 (cap inactif, qty < capMax)', () => {
+    expect(applyCap({ qtyForCap: 3, capMax: 7 })).toBe(3)
   })
 
-  it('PURE-03c: qtyForCap=5, qteFact=5 → 5 (égalité = cap non activé)', () => {
-    expect(applyCap({ qtyForCap: 5, qteFact: 5 })).toBe(5)
+  it('PURE-03c: qtyForCap=5, capMax=5 → 5 (égalité = cap non activé)', () => {
+    expect(applyCap({ qtyForCap: 5, capMax: 5 })).toBe(5)
   })
 
-  it('PURE-03d: qteFact=null → 0 (cas dégénéré : qteFact manquant → qty=0)', () => {
-    // AC #6 : qteFact null → qty=0 + warning qte-fact-missing (géré par reconcile)
-    // applyCap seul : retourne 0 si qteFact null/0
-    expect(applyCap({ qtyForCap: 5, qteFact: null })).toBe(0)
+  it('PURE-03d: capMax=null → 0 (cas dégénéré : borne manquante → qty=0)', () => {
+    // AC #6 : capMax null → qty=0 + warning qte-fact-missing (géré par reconcile)
+    // applyCap seul : retourne 0 si capMax null/0
+    expect(applyCap({ qtyForCap: 5, capMax: null })).toBe(0)
   })
 
-  it('PURE-03e: qteFact=0 → 0 (qteFact zéro = bloquant)', () => {
-    expect(applyCap({ qtyForCap: 5, qteFact: 0 })).toBe(0)
+  it('PURE-03e: capMax=0 → 0 (borne zéro = bloquant)', () => {
+    expect(applyCap({ qtyForCap: 5, capMax: 0 })).toBe(0)
   })
 })
 

@@ -60,18 +60,27 @@ export interface SavLineInput {
   cause: string | null
 }
 
-export type ConversionFlag = 'ok' | 'ATTENTION A CONVERTIR' | 'Unité non reconnue'
+export type ConversionFlag = 'ok' | 'ATTENTION A CONVERTIR' | 'Unité non reconnue' | 'converti pièce→kg'
 
 export interface ConvertUnitInput {
   unit: string | null
   kilosPiezas: string | null
   qty: number
+  /** Story 8.6 — facteur de conversion pièce→kg : poids net total facturé (kg).
+   *  Requis pour résoudre la cellule 4 (piece+Kilos). null = dégénéré → detect-only + bloquant. */
+  kilosNetos?: number | null
+  /** Story 8.6 — quantité facturée (pièces) servant de diviseur pour kilosNetos/qteFact.
+   *  Requis pour résoudre la cellule 4. null/0 = dégénéré → detect-only + bloquant. */
+  qteFact?: number | null
 }
 
 export interface ConvertUnitOutput {
   envase: number
   unidad: string
   conversionFlag: ConversionFlag
+  /** Story 8.6 — chaîne de traçabilité COMENTARIOS pour la cellule 4 résolue.
+   *  Non-null uniquement quand conversionFlag='converti pièce→kg'. */
+  conversionComment?: string | null
 }
 
 export interface ClaimLinePreview {
@@ -95,6 +104,14 @@ export interface ClaimLinePreview {
   causaEs: string | null
   comentarios: string
   blockingForGeneration: boolean
+  /** Story 8.6 — ADDITIVE — plafond effectif dans l'unité du fournisseur (kg si Kilos, pièces sinon).
+   *  Exposé au client pour que clampQty borne dans la bonne unité (PATTERN-EFFECTIVE-CAP-EXPOSURE). */
+  effectiveCap: number | null
+  /** Story 8.6 — ADDITIVE — unité du plafond effectif ('Kilos' ou 'Unidades'). */
+  effectiveCapUnit: string | null
+  /** Story 8.6 — ADDITIVE — chaîne COMENTARIOS de traçabilité de conversion pièce→kg.
+   *  Non-null uniquement pour la cellule 4 résolue (conversionFlag='converti pièce→kg'). */
+  conversionComment: string | null
 }
 
 export interface UnmatchedSavLine {
@@ -258,9 +275,23 @@ export function convertUnit(input: ConvertUnitInput): ConvertUnitOutput {
     return { envase: qty, unidad: 'Unidades', conversionFlag: 'ok' }
   }
 
-  // Cellule 4 : piece + Kilos → ambigu
+  // Cellule 4 : piece + Kilos → résoudre via kilosNetos/qteFact (Story 8.6)
+  // Si kilosNetos > 0 ET qteFact > 0 → conversion résolue (DN-A=B : flag 'converti pièce→kg')
+  // Sinon → detect-only (dégénéré Q2 : kilosNetos absent/0 ou qteFact≤0 → ATTENTION A CONVERTIR)
   if (normalizedUnit === 'piece' && kp === 'Kilos') {
-    return { envase: qty, unidad: 'Kilos', conversionFlag: 'ATTENTION A CONVERTIR' }
+    const kilosNetos = input.kilosNetos ?? null
+    const qteFact = input.qteFact ?? null
+    if (kilosNetos !== null && kilosNetos > 0 && qteFact !== null && qteFact > 0) {
+      // Cellule 4 résolue : envase = qty × (kilosNetos / qteFact)
+      const facteur = kilosNetos / qteFact
+      const envase = qty * facteur
+      // LOW-1 (CR fix): format kilosNetos as fr-FR (comma decimal) for COMENTARIOS consistency
+      const kilosNetosFormatted = new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 3 }).format(kilosNetos)
+      const conversionComment = `converti pièce→kg via Kilos Netos (${kilosNetosFormatted} kg)`
+      return { envase, unidad: 'Kilos', conversionFlag: 'converti pièce→kg', conversionComment }
+    }
+    // Dégénéré Q2 : detect-only (kilosNetos absent/0/qteFact≤0) → blockingForGeneration posé par reconcile
+    return { envase: qty, unidad: 'Kilos', conversionFlag: 'ATTENTION A CONVERTIR', conversionComment: null }
   }
 
   // Cellule 5 : g|kg + Unidades → ambigu
@@ -428,29 +459,76 @@ export function reconcile(input: ReconcileInput): ReconcileResult {
       }
 
       // AC #5 + AC #6 — conversion d'unité (AVANT cap — ordre critique R-3)
+      // Story 8.6 : passer kilosNetos + qteFact pour résoudre la cellule 4 (piece+Kilos)
       const unitConversion = convertUnit({
         unit: savLine.unitArbitrated,
         kilosPiezas: fgRow.kilosPiezas,
         qty: qtyDefaultClient,
+        kilosNetos: fgRow.kilosNetos,
+        qteFact: fgRow.qteFact,
       })
 
       // La valeur post-conversion est le qtyForCap (dans l'unité du fournisseur)
       const qtyForCap = unitConversion.envase
 
-      // AC #6 — plafond QTE_FACT (APRÈS conversion — ordre critique)
+      // AC #6 — plafond (APRÈS conversion — ordre critique)
+      // Story 8.6 (AC #3) : si cellule 4 dégénérée (kilosNetos absent/0, qteFact≤0)
+      //   → blockingForGeneration=true + warning 'conversion-impossible-kilos-netos-missing'
       let blockingForGeneration = false
       let qty: number
       let importe: number | null
 
       const qteFact = fgRow.qteFact
 
-      if (qteFact === null || qteFact === 0) {
+      // Story 8.6 AC #3 : dégénéré cellule 4 → bloquant avant même le cap
+      if (unitConversion.conversionFlag === 'ATTENTION A CONVERTIR' &&
+          unitConversion.unidad === 'Kilos' &&
+          qteFact !== null && qteFact !== 0) {
+        // Cellule 4 detect-only (kilosNetos absent/0) → blocage génération
+        // On pose qty = envase (passthrough) mais blockingForGeneration = true
+        qty = qtyForCap
+        importe = computeImporte({ qty, precio: fgRow.precio })
+        blockingForGeneration = true
+        warnings.push({
+          savLineId: savLine.id,
+          type: 'conversion-impossible-kilos-netos-missing',
+        })
+      } else if (unitConversion.conversionFlag === 'Unité non reconnue') {
+        // MEDIUM-3 / AC #1 / DN-Q6: unité indéterminée → blocage génération (pas de conversion silencieuse)
+        // "bloquant — pas de conversion silencieuse" (DN-Q6 implémentation)
+        qty = qtyForCap
+        importe = computeImporte({ qty, precio: fgRow.precio })
+        blockingForGeneration = true
+        warnings.push({
+          savLineId: savLine.id,
+          type: 'unit-unrecognized-blocking',
+        })
+      } else if (qteFact === null || qteFact === 0) {
         qty = 0
         importe = 0
         blockingForGeneration = true
         warnings.push({ savLineId: savLine.id, type: 'qte-fact-missing' })
       } else {
-        qty = applyCap({ qtyForCap, qteFact })
+        // Story 8.6 (NEW-1 fix) — Compute effectiveCap ONCE, use for BOTH the server cap bound
+        // AND the exposed effectiveCap field. This ensures server↔client can never diverge.
+        //
+        // Rule (unified — same as the client effectiveCap rule from HIGH-1 CR fix):
+        //   unidad='Kilos' AND kilosNetos > 0 → capMax = kilosNetos (kg bound)
+        //   otherwise                          → capMax = qteFact   (pieces bound)
+        //
+        // Covers ALL Kilos lines (cellule-1 g→kg, cellule-2 kg+Kilos, cellule-4 converted),
+        // not just cellule-4. For Unidades lines (pièces), capMax = qteFact (unchanged).
+        // Previously only cellule-4 used kilosNetos; cellule-2 used qteFact on the server
+        // while effectiveCap exposed kilosNetos to the client → divergence for qty in
+        // [qteFact, kilosNetos]. Proof: qteFact=4, kilosNetos=8.1, precio=3.24, qty=6
+        // → server 12.96€ (cap on qteFact=4 → qty=4) vs client 19.44€ (cap on kilosNetos=8.1 → qty=6).
+        const kilosNetosForCap = fgRow.kilosNetos
+        const capMax: number | null =
+          (unitConversion.unidad === 'Kilos' && kilosNetosForCap != null && kilosNetosForCap > 0)
+            ? kilosNetosForCap
+            : qteFact
+
+        qty = applyCap({ qtyForCap, capMax })
 
         // AC #6 — precio null|0 → importe null + blockingForGeneration + warning
         // L-1 FIX: emit warning for precio===0 as well (AC #6 spec: "null/0" → blocking)
@@ -463,6 +541,22 @@ export function reconcile(input: ReconcileInput): ReconcileResult {
           importe = computeImporte({ qty, precio: fgRow.precio })
         }
       }
+
+      // Story 8.6 (AC #4) — plafond effectif exposé au client (PATTERN-EFFECTIVE-CAP-EXPOSURE)
+      // NEW-1 fix: effectiveCap is now the SAME variable as capMax (computed above in the else branch,
+      // or falls back to the appropriate bound for the blocking paths). This ensures they can never
+      // diverge. For the blocking paths (dégénéré, unrecognized unit, qteFact=null/0), the
+      // effectiveCap is still meaningful for display but the line is blocked anyway.
+      // We recompute using the same unified rule so effectiveCap is always set correctly.
+      const kilosNetosForEffectiveCap = fgRow.kilosNetos
+      const effectiveCap: number | null =
+        (unitConversion.unidad === 'Kilos' && kilosNetosForEffectiveCap != null && kilosNetosForEffectiveCap > 0)
+          ? kilosNetosForEffectiveCap
+          : fgRow.qteFact
+      const effectiveCapUnit: string | null = unitConversion.unidad || null
+
+      // Story 8.6 (AC #2) — COMENTARIOS de traçabilité pour la cellule 4 résolue
+      const conversionComment: string | null = unitConversion.conversionComment ?? null
 
       // AC #7 — construction claimLine
       const claimLine: ClaimLinePreview = {
@@ -484,8 +578,12 @@ export function reconcile(input: ReconcileInput): ReconcileResult {
         precio: fgRow.precio,
         importe,
         causaEs,
-        comentarios: '',
+        comentarios: conversionComment ?? '',
         blockingForGeneration,
+        // Story 8.6 — ADDITIVE fields (AC #4, AC #6)
+        effectiveCap,
+        effectiveCapUnit,
+        conversionComment,
       }
 
       claimLines.push(claimLine)
@@ -531,7 +629,9 @@ export function reconcile(input: ReconcileInput): ReconcileResult {
   const linesMatched = claimLines.length
   const linesUnmatched = unmatchedSavLines.length
   const linesBlocking = claimLines.filter((l) => l.blockingForGeneration).length
+  // Exclure les lignes bloquantes du total (DISC-07d / DISC-03b — parité client computeTotals)
   const totalImporte = claimLines.reduce((acc, l) => {
+    if (l.blockingForGeneration) return acc
     if (typeof l.importe === 'number') return acc + l.importe
     return acc
   }, 0)

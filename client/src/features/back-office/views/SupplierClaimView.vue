@@ -278,9 +278,10 @@ function onQtyInput(lineId: string | number, event: Event): void {
   }
 }
 
-function onQtyBlur(lineId: string | number, qteFact: number | null, event: Event): void {
+function onQtyBlur(lineId: string | number, cap: number | null, capUnit: string | null | undefined, event: Event): void {
   const el = event.target as HTMLInputElement
-  handleQtyBlur(lineId, el.value, qteFact ?? 0)
+  // HIGH-1 (CR fix): pass cap (effectiveCap ?? qteFact) + capUnit to handleQtyBlur
+  handleQtyBlur(lineId, el.value, cap ?? 0, capUnit ?? undefined)
   // Sync input element value after clamping
   const clamped = edits.value.get(lineId)
   if (clamped !== undefined) {
@@ -651,12 +652,12 @@ function formatEUR(cents: number): string {
                   type="number"
                   :data-testid="`qty-input-${line.savLineId}`"
                   min="0"
-                  :max="line.qteFact !== null ? String(line.qteFact) : undefined"
+                  :max="(line.effectiveCap ?? line.qteFact) !== null ? String(line.effectiveCap ?? line.qteFact) : undefined"
                   step="any"
                   :value="getQty(line.savLineId)"
                   :disabled="isExcluded(line.savLineId)"
                   @input="onQtyInput(line.savLineId, $event)"
-                  @blur="onQtyBlur(line.savLineId, line.qteFact, $event)"
+                  @blur="onQtyBlur(line.savLineId, line.effectiveCap ?? line.qteFact, line.effectiveCapUnit, $event)"
                 />
                 <!-- Clamp message (AC #3) -->
                 <div
