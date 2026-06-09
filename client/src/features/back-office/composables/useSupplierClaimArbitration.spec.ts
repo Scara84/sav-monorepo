@@ -39,6 +39,7 @@ import {
   computeTotals,
   canGenerate,
   toggleExclude,
+  buildClampMessage,
   useSupplierClaimArbitration,
 } from './useSupplierClaimArbitration'
 import type { ArbitrageState, ArbitrageClaimLine, ArbitrageUnmatchedLine } from './useSupplierClaimArbitration'
@@ -450,7 +451,8 @@ describe('ARB-C-11: resetToArbitrating() — clears ALL arbitrage state (Story 8
     expect(comments.value.get('r1')).toBe('test comment')
 
     // ---- Seed clampMessages directly (no public setter — assign via ref) ----
-    clampMessages.value = new Map([['r1', 'Quantité plafonnée à 9']])
+    // Seed au format courant (unité-correcte) ; l'assertion de reset porte sur .size, pas le contenu.
+    clampMessages.value = new Map([['r1', 'Quantité plafonnée à la quantité facturée fournisseur (9 kg)']])
     expect(clampMessages.value.size).toBe(1)
 
     // ---- Seed generateState / generateError / generateResult ----
@@ -684,6 +686,116 @@ describe('ARB-HIGH2: INPUT path — handleQtyBlur for converted cellule-4 line (
       const msg = composable.clampMessages.value.get('peche-3104')
       expect(msg).toBeDefined()
       expect(msg).toMatch(/8\.1 kg/)  // message with kg unit
+    }
+  )
+})
+
+// ===========================================================================
+// ARB-CAPMSG — Libellé du message de cap avec unité + mention conversion
+// (anti-confusion pièce/kilo — fix supplier-claim cap message)
+//
+// RED PROOF (pré-fix, message = `(${cap}${capUnit==='Kilos'?' kg':''})`):
+//   - ligne Unidades avec unite='Pièce' → pré-fix « (7) » SANS unité → assertion 'pièce' RED
+//   - ligne 'ATTENTION A CONVERTIR' (cap=1 pièce, capUnit='Kilos') → pré-fix « (1 kg) »
+//       → contient « 1 kg » (FAUX) et NI « pièce » NI « convertir » → 3 assertions RED
+// ===========================================================================
+
+describe('ARB-CAPMSG: buildClampMessage — unité-correcte + mention conversion (pure)', () => {
+  it('ARB-CAPMSG-pure-a: conflit ATTENTION A CONVERTIR → unité fournisseur + avertissement, jamais « X kg »', () => {
+    const msg = buildClampMessage(1, 'Kilos', {
+      conversionFlag: 'ATTENTION A CONVERTIR',
+      unite: 'Pièce',
+    })
+    expect(msg).toMatch(/1 pièce/i)        // cap+unité ENSEMBLE = « 1 Pièce » (assertion positive forte)
+    expect(msg).toMatch(/convertir/i)      // mention conversion manuelle
+    expect(msg).toMatch(/au kilo/i)        // explique que le prix est au kilo
+    expect(msg).not.toMatch(/1\s*kg/)      // PAS « 1 kg » (le bug pré-fix)
+  })
+
+  it('ARB-CAPMSG-pure-b: ligne pièces/Unidades (flag ok) → suffixe unité fournisseur', () => {
+    const msg = buildClampMessage(7, undefined, { conversionFlag: 'ok', unite: 'Pièce' })
+    expect(msg).toMatch(/7 pièce/i)
+    expect(msg).not.toMatch(/kg/)
+  })
+
+  it('ARB-CAPMSG-pure-c: ligne convertie/kg (capUnit Kilos) → suffixe « kg » (non régressé)', () => {
+    const msg = buildClampMessage(2, 'Kilos', { conversionFlag: 'converti pièce→kg', unite: 'Pièce' })
+    expect(msg).toMatch(/2 kg/)
+    expect(msg).not.toMatch(/pièce/i)      // converti : la valeur EST en kg, pas en pièces
+  })
+
+  it('ARB-CAPMSG-pure-d: unite absent (non-Kilos) → fallback sans suffixe', () => {
+    const msg = buildClampMessage(7, undefined, { conversionFlag: 'ok', unite: null })
+    expect(msg).toContain('(7)')
+    expect(msg).not.toMatch(/kg/)
+  })
+})
+
+describe('ARB-CAPMSG: INPUT path — handleQtyBlur produit le message unité-correcte', () => {
+  function setupWithLine(line: ArbitrageClaimLine) {
+    const savId = computed(() => 42)
+    const parseResult = ref<SupplierFileParseResult | null>(null)
+    const composable = useSupplierClaimArbitration(savId, parseResult)
+    composable.claimLines.value = [line]
+    composable.edits.value = new Map([[line.savLineId, line.qty]])
+    return composable
+  }
+
+  it(
+    'ARB-CAPMSG-in-a: ligne Unidades (unite=Pièce, qteFact=7) blur(10) → message contient l\'unité « pièce » ' +
+    '[RED pré-fix : message « (7) » sans unité]',
+    () => {
+      const line = makeClaimLine({
+        savLineId: 'avocat-1022',
+        unidad: 'Unidades',
+        conversionFlag: 'ok',
+        qty: 5,
+        qteFact: 7,
+        unite: 'Pièce',
+        // pas d'effectiveCap → cap = qteFact = 7 (pièces)
+      })
+      const { handleQtyBlur, edits, clampMessages } = setupWithLine(line)
+
+      // Template : handleQtyBlur(lineId, '10', effectiveCap ?? qteFact, effectiveCapUnit)
+      handleQtyBlur('avocat-1022', '10', 7, undefined)
+
+      expect(edits.value.get('avocat-1022')).toBe(7)  // calc inchangé (clamp sur qteFact)
+      const msg = clampMessages.value.get('avocat-1022')
+      expect(msg).toBeDefined()
+      expect(msg).toMatch(/7 pièce/i)  // cap+unité ENSEMBLE = « 7 Pièce »
+    }
+  )
+
+  it(
+    'ARB-CAPMSG-in-b: ligne ATTENTION A CONVERTIR (Calabacín : cap=1 pièce, capUnit=Kilos, unite=Pièce) blur(5) → ' +
+    'unité fournisseur + avertissement conversion, jamais « 1 kg » ' +
+    '[RED pré-fix : message « (1 kg) » trompeur]',
+    () => {
+      const line = makeClaimLine({
+        savLineId: 'calabacin-3115',
+        codigoEs: '3115',
+        productoEs: 'Calabacín',
+        unidad: 'Kilos',
+        conversionFlag: 'ATTENTION A CONVERTIR',
+        precio: 1.69,
+        qty: 1,
+        qteFact: 1,
+        unite: 'Pièce',
+        effectiveCap: 1,            // = qteFact (PIÈCES) — pas de conversion appliquée
+        effectiveCapUnit: 'Kilos',  // effectiveCapUnit MENT (la valeur est en pièces)
+        blockingForGeneration: true,
+      })
+      const { handleQtyBlur, edits, clampMessages } = setupWithLine(line)
+
+      // Template : handleQtyBlur(lineId, '5', effectiveCap ?? qteFact, effectiveCapUnit)
+      handleQtyBlur('calabacin-3115', '5', 1, 'Kilos')
+
+      expect(edits.value.get('calabacin-3115')).toBe(1)  // calc inchangé (clamp sur le cap=1)
+      const msg = clampMessages.value.get('calabacin-3115')
+      expect(msg).toBeDefined()
+      expect(msg).toMatch(/1 pièce/i)      // cap+unité fournisseur ENSEMBLE = « 1 Pièce »
+      expect(msg).toMatch(/convertir/i)    // avertissement de conversion manuelle
+      expect(msg).not.toMatch(/1\s*kg/)    // PAS « 1 kg » (le bug d'origine)
     }
   )
 })

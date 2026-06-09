@@ -57,6 +57,10 @@ export interface ArbitrageClaimLine {
   effectiveCapUnit?: string | null
   /** Story 8.6 — ADDITIVE — commentaire de conversion pièce→kg. */
   conversionComment?: string | null
+  /** UNITE fournisseur brute (ex. « Pièce ») issue de FACTURE_GROUPE.
+   *  ADDITIVE — utilisée pour libeller le message de cap dans la bonne unité
+   *  (le cap = qteFact est exprimé dans CETTE unité quand la conversion n'est pas appliquée). */
+  unite?: string | null
 }
 
 export interface ArbitrageUnmatchedLine {
@@ -258,6 +262,52 @@ export function buildBlockingReasons(state: ArbitrageState): string[] {
   }
 
   return reasons
+}
+
+// ---------------------------------------------------------------------------
+// Message de plafonnement de quantité (libellé only — anti-confusion pièce/kilo)
+//
+// Le cap passé à handleQtyBlur vaut `line.effectiveCap ?? line.qteFact`, et `capUnit`
+// vaut `line.effectiveCapUnit`. PROBLÈME : pour une ligne en conflit d'unité non
+// auto-converti (conversionFlag = 'ATTENTION A CONVERTIR'), le serveur expose
+// effectiveCap = qteFact (en PIÈCES) mais effectiveCapUnit = 'Kilos' → afficher
+// « X kg » serait FAUX (la valeur est en pièces). L'unité correcte du cap dépend
+// donc de l'état de conversion :
+//   - conflit 'ATTENTION A CONVERTIR' → cap = qteFact en unité fournisseur → line.unite
+//   - sinon, capUnit === 'Kilos' (converti/passthrough) → cap en kg → « kg »
+//   - sinon (pièces/Unidades) → line.unite si présent, sinon pas de suffixe (fallback)
+// Pure (exporté pour tests). Ne touche AUCUN calcul (clampQty/IMPORTE inchangés).
+// ---------------------------------------------------------------------------
+
+export function buildClampMessage(
+  cap: number,
+  capUnit: string | undefined,
+  line: Pick<ArbitrageClaimLine, 'conversionFlag' | 'unite'> | undefined
+): string {
+  const isConversionConflict = line?.conversionFlag === 'ATTENTION A CONVERTIR'
+  const unite = line?.unite ?? null
+
+  let unitLabel: string | null
+  if (isConversionConflict) {
+    unitLabel = unite
+  } else if (capUnit === 'Kilos') {
+    unitLabel = 'kg'
+  } else {
+    unitLabel = unite
+  }
+
+  const capDisplay = unitLabel ? `${cap} ${unitLabel}` : `${cap}`
+
+  if (isConversionConflict) {
+    // capUnit === 'Kilos' ⇒ prix au kilo (cellule 4 pièce→Kilos). Sinon (ex. g/kg→Unidades),
+    // rester générique pour ne pas affirmer à tort « le prix est au kilo ».
+    const detail = capUnit === 'Kilos'
+      ? ' le prix est au kilo — vérifiez la quantité en kg avant de générer.'
+      : ' vérifiez la quantité dans la bonne unité avant de générer.'
+    return `Plafonné à ${capDisplay} (qté facturée fournisseur). ⚠ Unité à convertir :${detail}`
+  }
+
+  return `Quantité plafonnée à la quantité facturée fournisseur (${capDisplay})`
 }
 
 // ---------------------------------------------------------------------------
@@ -465,9 +515,9 @@ export function useSupplierClaimArbitration(
     const wasOOB = isNaN(numValue) || numValue < 0 || numValue > cap
     if (wasOOB) {
       const newClampMap = new Map(clampMessages.value)
-      // HIGH-1 (CR fix): message includes unit — "(X kg)" for Kilos, "(X)" for Unidades
-      const capDisplay = `${cap}${capUnit === 'Kilos' ? ' kg' : ''}`
-      newClampMap.set(lineId, `Quantité plafonnée à la quantité facturée fournisseur (${capDisplay})`)
+      // Libellé unité-correcte + mention conversion (anti-confusion pièce/kilo).
+      // `line` est déjà résolu ci-dessus (porte conversionFlag + unite).
+      newClampMap.set(lineId, buildClampMessage(cap, capUnit, line))
       clampMessages.value = newClampMap
     } else {
       const newClampMap = new Map(clampMessages.value)
