@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref, watch } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { useSavDetail, type SavDetailLine } from '../composables/useSavDetail'
 import { useSavLinePreview } from '../composables/useSavLinePreview'
@@ -596,12 +596,112 @@ async function submitEmit(): Promise<void> {
     }
     emitDialogOpen.value = false
     await refresh()
+    // spec credit-note-pdf-regenerate-feedback : la génération PDF est async
+    // (waitUntil) ; on poll l'état pour éviter le « en cours » figé à l'infini.
+    maybeStartPdfPoll()
   } catch (e) {
     emitError.value = e instanceof Error ? e.message : 'Erreur réseau'
   } finally {
     emitting.value = false
   }
 }
+
+// --- spec credit-note-pdf-regenerate-feedback : poll + régénération PDF ------
+// Le PDF d'avoir est généré en tâche de fond après émission. On poll l'état de
+// façon bornée ; si le timeout expire sans `pdfWebUrl`, on bascule en phase
+// `failed` (message + bouton « Régénérer le PDF » → endpoint synchrone existant).
+const PDF_POLL_INTERVAL_MS = 3000
+const PDF_POLL_MAX_ATTEMPTS = 5
+
+const PDF_FAILURE_MESSAGES: Record<string, string> = {
+  PDF_GENERATION_FAILED:
+    'Génération impossible : données manquantes (paramètres société non renseignés ?). Contactez un administrateur.',
+  PDF_RENDER_FAILED:
+    'Échec du rendu du document. Réessayez ; si ça persiste, contactez un admin.',
+  PDF_UPLOAD_FAILED: "Échec de l'envoi du PDF (OneDrive indisponible). Réessayez.",
+}
+const PDF_FAILURE_FALLBACK = 'Échec de la régénération du PDF.'
+const PDF_RATE_LIMITED_MSG = 'Trop de tentatives. Patientez avant de réessayer.'
+const PDF_FAILED_DEFAULT_MSG =
+  "Le PDF n'a pas pu être généré automatiquement. Vous pouvez relancer la génération."
+
+const pdfPolling = ref(false)
+const regenerating = ref(false)
+const regenerateError = ref<string | null>(null)
+
+// Token d'annulation : tout `await` reprend en vérifiant `token === pdfPollToken`.
+// Incrémenté à `onUnmounted` (et à chaque nouveau poll) pour invalider l'ancien.
+let pdfPollToken = 0
+
+const creditNotePdfPhase = computed<'ready' | 'pending' | 'failed'>(() =>
+  creditNote.value?.pdfWebUrl ? 'ready' : pdfPolling.value ? 'pending' : 'failed'
+)
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function pollPdfStatus(): Promise<void> {
+  const token = ++pdfPollToken
+  pdfPolling.value = true
+  regenerateError.value = null
+  try {
+    for (let attempt = 0; attempt < PDF_POLL_MAX_ATTEMPTS; attempt++) {
+      await sleep(PDF_POLL_INTERVAL_MS)
+      if (token !== pdfPollToken) return // annulé (unmount / nouveau poll)
+      await refresh()
+      if (token !== pdfPollToken) return
+      if (creditNote.value?.pdfWebUrl) return // prêt → stop
+    }
+  } finally {
+    if (token === pdfPollToken) pdfPolling.value = false
+  }
+}
+
+function maybeStartPdfPoll(): void {
+  if (creditNote.value && !creditNote.value.pdfWebUrl && !pdfPolling.value) {
+    void pollPdfStatus()
+  }
+}
+
+async function regeneratePdf(): Promise<void> {
+  const cn = creditNote.value
+  if (!cn || regenerating.value) return
+  regenerating.value = true
+  regenerateError.value = null
+  try {
+    const res = await fetch(
+      `/api/credit-notes/${encodeURIComponent(cn.numberFormatted)}/regenerate-pdf`,
+      { method: 'POST', credentials: 'include' }
+    )
+    if (res.ok) {
+      await refresh() // pdfWebUrl désormais renseigné → phase `ready` → lien
+      return
+    }
+    const body = (await res.json().catch(() => null)) as {
+      error?: { details?: { code?: string; failure_kind?: string } }
+    } | null
+    const details = body?.error?.details
+    if (res.status === 409 && details?.code === 'PDF_ALREADY_GENERATED') {
+      await refresh() // course bénigne : le PDF a fini entre-temps
+      return
+    }
+    if (res.status === 429) {
+      regenerateError.value = PDF_RATE_LIMITED_MSG
+      return
+    }
+    const kind = details?.failure_kind
+    regenerateError.value = (kind && PDF_FAILURE_MESSAGES[kind]) || PDF_FAILURE_FALLBACK
+  } catch {
+    regenerateError.value = PDF_FAILURE_FALLBACK
+  } finally {
+    regenerating.value = false
+  }
+}
+
+onUnmounted(() => {
+  pdfPollToken++ // invalide tout poll en cours
+})
 
 onMounted(() => {
   void refresh()
@@ -1531,9 +1631,13 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
         </dl>
         <!-- CR F-3 : lien désactivé tant que le PDF n'est pas généré (Story 4.5
              écrit pdfWebUrl quand le rendu OneDrive est terminé). Sinon le clic
-             ouvre une page d'erreur. -->
+             ouvre une page d'erreur.
+             spec credit-note-pdf-regenerate-feedback : 3 phases (ready / pending
+             / failed). En `failed` (génération async échouée ou timeout du poll)
+             on offre le bouton « Régénérer le PDF » plutôt qu'un « en cours »
+             figé à l'infini. -->
         <a
-          v-if="creditNote.pdfWebUrl"
+          v-if="creditNotePdfPhase === 'ready'"
           class="credit-note-pdf-link"
           :href="`/api/credit-notes/${creditNote.numberFormatted}/pdf`"
           target="_blank"
@@ -1543,13 +1647,27 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
           Télécharger le PDF
         </a>
         <span
-          v-else
+          v-else-if="creditNotePdfPhase === 'pending'"
           class="credit-note-pdf-link credit-note-pdf-link--disabled"
           aria-disabled="true"
-          data-testid="credit-note-pdf-link"
+          data-testid="credit-note-pdf-pending"
         >
-          PDF en cours de génération…
+          Génération du PDF en cours…
         </span>
+        <div v-else class="credit-note-pdf-failed" data-testid="credit-note-pdf-failed">
+          <p class="credit-note-pdf-failed-msg" data-testid="credit-note-pdf-failed-msg">
+            {{ regenerateError ?? PDF_FAILED_DEFAULT_MSG }}
+          </p>
+          <button
+            type="button"
+            class="credit-note-regenerate-btn"
+            :disabled="regenerating"
+            data-testid="credit-note-regenerate-btn"
+            @click="regeneratePdf"
+          >
+            {{ regenerating ? 'Régénération…' : 'Régénérer le PDF' }}
+          </button>
+        </div>
       </section>
 
       <!-- Modale émission avoir — CR F-7 : a11y ESC + backdrop click pour
@@ -2332,6 +2450,31 @@ a:focus-visible {
   font-style: italic;
 }
 .credit-note-pdf-link:hover {
+  background: #f3f4f6;
+}
+/* spec credit-note-pdf-regenerate-feedback : état d'échec génération PDF */
+.credit-note-pdf-failed {
+  margin-top: 0.5rem;
+}
+.credit-note-pdf-failed-msg {
+  margin: 0 0 0.5rem;
+  color: #b91c1c;
+  font-size: 0.875rem;
+}
+.credit-note-regenerate-btn {
+  padding: 0.5rem 0.75rem;
+  background: #fff;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  color: #1f2937;
+  font-weight: 600;
+  cursor: pointer;
+}
+.credit-note-regenerate-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.credit-note-regenerate-btn:not(:disabled):hover {
   background: #f3f4f6;
 }
 /* Modale émission avoir */
