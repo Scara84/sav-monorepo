@@ -261,6 +261,22 @@ export function buildBlockingReasons(state: ArbitrageState): string[] {
 }
 
 // ---------------------------------------------------------------------------
+// 8.7 — Type ClientDemandLine (projection 1:1 sav_lines pour contrôle visuel)
+// Exporté pour réutilisation par SupplierClaimView.vue et les tests
+// ---------------------------------------------------------------------------
+
+export interface ClientDemandLine {
+  savLineId: string | number
+  codeFr: string | null
+  designationFr: string | null
+  qtyRequested: number | null
+  unitRequested: string | null
+  qtyArbitrated: number | null
+  unitArbitrated: string | null
+  requestReason: string | null
+}
+
+// ---------------------------------------------------------------------------
 // Response type from reconcile-supplier-claim op
 // ---------------------------------------------------------------------------
 
@@ -289,6 +305,8 @@ interface ReconcileResponse {
     }
     warnings: unknown[]
   }
+  // 8.7 (AC #5) — bloc additif optionnel (défensif : serveur ancien sans savLines → fallback [])
+  savLines?: ClientDemandLine[]
 }
 
 // ---------------------------------------------------------------------------
@@ -311,6 +329,9 @@ export function useSupplierClaimArbitration(
   const claimLines = ref<ArbitrageClaimLine[]>([])
   const unmatchedSavLines = ref<ArbitrageUnmatchedLine[]>([])
   const unusedSupplierLines = ref<ArbitrageUnusedLine[]>([])
+
+  // 8.7 (AC #5) — projection 1:1 sav_lines pour la table « Demande client » (read-only)
+  const clientDemandLines = ref<ClientDemandLine[]>([])
 
   // State d'arbitrage (DN-3 = Maps réactives)
   // MEDIUM-3: These are ref<Map> (NOT reactive(Map)). Vue tracks .value reassignment only.
@@ -381,6 +402,8 @@ export function useSupplierClaimArbitration(
       claimLines.value = result.claimLines
       unmatchedSavLines.value = result.unmatchedSavLines ?? []
       unusedSupplierLines.value = result.unusedSupplierLines ?? []
+      // 8.7 (AC #5) — hydrate clientDemandLines (fallback [] si serveur ancien sans savLines)
+      clientDemandLines.value = result.savLines ?? []
 
       // Initialize edits + comments from claimLines defaults
       const newEdits = new Map<string | number, number>()
@@ -571,6 +594,7 @@ export function useSupplierClaimArbitration(
     claimLines.value = []
     unmatchedSavLines.value = []
     unusedSupplierLines.value = []
+    clientDemandLines.value = []  // 8.7 (AC #5) — reset propre (cohérent M1 fix CR 8.5)
     reconcileState.value = null   // reset to initial state (null = no reconcile started)
     reconcileError.value = null
     unregisterBeforeUnload()
@@ -630,6 +654,7 @@ export function useSupplierClaimArbitration(
         claimLines.value = []
         unmatchedSavLines.value = []
         unusedSupplierLines.value = []
+        clientDemandLines.value = []  // 8.7 (AC #5) — reset avant re-réconciliation (MEDIUM-2 8.3)
         void runReconcile()
       }
     },
@@ -647,6 +672,7 @@ export function useSupplierClaimArbitration(
     claimLines,
     unmatchedSavLines,
     unusedSupplierLines,
+    clientDemandLines,  // 8.7 (AC #5) — projection 1:1 sav_lines pour table « Demande client »
     edits,
     exclusions,
     comments,

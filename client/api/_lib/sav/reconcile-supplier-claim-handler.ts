@@ -28,6 +28,21 @@ import { supabaseAdmin } from '../clients/supabase-admin'
 import { logger } from '../logger'
 import { reconcile } from './reconcile-supplier-claim'
 import type { SavLineInput, SupplierFileParseResult } from './reconcile-supplier-claim'
+
+// ---------------------------------------------------------------------------
+// 8.7 — Type ClientDemandLine (projection 1:1 sav_lines côté client)
+// ---------------------------------------------------------------------------
+
+export interface ClientDemandLine {
+  savLineId: string | number
+  codeFr: string | null
+  designationFr: string | null
+  qtyRequested: number | null
+  unitRequested: string | null
+  qtyArbitrated: number | null
+  unitArbitrated: string | null
+  requestReason: string | null
+}
 import type { ApiHandler, ApiRequest, ApiResponse } from '../types'
 // FR12 fix (Sprint Change Proposal 2026-06-05) : clé motif normalisée (slug↔libellé)
 import { normalizeCauseKey } from '../../../src/shared/validation/normalize-cause-key'
@@ -195,7 +210,7 @@ function reconcileSupplierClaimCore(savId: number): ApiHandler {
     const admin = supabaseAdmin()
     const { data: rawSavLines, error: savLinesError } = await admin
       .from('sav_lines')
-      .select('id, product_code_snapshot, product_name_snapshot, qty_arbitrated, qty_invoiced, unit_arbitrated, request_reason')
+      .select('id, product_code_snapshot, product_name_snapshot, qty_requested, unit_requested, qty_arbitrated, qty_invoiced, unit_arbitrated, request_reason')
       .eq('sav_id', savId)
       .order('position', { ascending: true, nullsFirst: false })
       .order('id', { ascending: true })
@@ -211,15 +226,20 @@ function reconcileSupplierClaimCore(savId: number): ApiHandler {
     }
 
     // OQ-1 : mapper request_reason → cause pour le helper pur
-    const savLines: SavLineInput[] = (rawSavLines ?? []).map((row: {
+    // 8.7 : typage étendu avec qty_requested + unit_requested (AC #3)
+    const rawRows = (rawSavLines ?? []) as Array<{
       id: string | number
       product_code_snapshot: string | null
       product_name_snapshot: string | null
+      qty_requested: number | null
+      unit_requested: string | null
       qty_arbitrated: number | null
       qty_invoiced: number | null
       unit_arbitrated: string | null
       request_reason: string | null
-    }) => ({
+    }>
+
+    const savLines: SavLineInput[] = rawRows.map((row) => ({
       id: row.id,
       productCodeSnapshot: row.product_code_snapshot,
       productNameSnapshot: row.product_name_snapshot,
@@ -227,6 +247,20 @@ function reconcileSupplierClaimCore(savId: number): ApiHandler {
       qtyInvoiced: row.qty_invoiced,
       unitArbitrated: row.unit_arbitrated,
       cause: row.request_reason, // OQ-1 : request_reason → cause
+    }))
+
+    // 8.7 (DN-A Option A) : construire le bloc savLines dans le handler à partir de rawRows
+    // Projection 1:1 de sav_lines — inclut TOUTES les lignes (appariées et non-appariées, AC #7)
+    // Ordre préservé (PATTERN-DETERMINISTIC-ORDER : position + id déjà appliqués au SELECT)
+    const clientDemandLines: ClientDemandLine[] = rawRows.map((row) => ({
+      savLineId: row.id,
+      codeFr: row.product_code_snapshot,
+      designationFr: row.product_name_snapshot,
+      qtyRequested: row.qty_requested,
+      unitRequested: row.unit_requested,
+      qtyArbitrated: row.qty_arbitrated,
+      unitArbitrated: row.unit_arbitrated,
+      requestReason: row.request_reason,
     }))
 
     // --- Lookup bulk validation_lists (OQ-2, AC #4, PATTERN-BULK-VALIDATION-LOOKUP) ---
@@ -286,6 +320,9 @@ function reconcileSupplierClaimCore(savId: number): ApiHandler {
       unusedSupplierLines: result.unusedSupplierLines,
       totals: result.totals,
       meta: result.meta,
+      // 8.7 (AC #2, DN-A Option A) — bloc additif strict : sav_lines projeté 1:1
+      // Inclut toutes les lignes SAV (appariées + non-appariées) pour contrôle visuel
+      savLines: clientDemandLines,
     })
   }
 }

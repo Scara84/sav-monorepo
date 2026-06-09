@@ -25,6 +25,9 @@ pnpm-debug.log*
 /playwright-report/
 /test-results/
 
+# Fixtures Excel sensibles — fichiers UAT locaux, ne pas committer
+tests/fixtures/*.xlsm
+
 # Local dev tooling (non committé)
 dev-api-server.cjs
 .vercel

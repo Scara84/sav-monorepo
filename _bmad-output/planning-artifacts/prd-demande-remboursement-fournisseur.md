@@ -355,6 +355,9 @@ resserré (produire le doc, pas de suivi) ; tout le reste différé V2.
 ### Sécurité & accès
 - FR28 : Seuls les opérateurs (dans leur scope groupe) et les admins peuvent accéder à la fonction et générer une réclamation.
 
+### Visibilité de contrôle (Story 8.7 — 2026-06-09)
+- **FR29 — Visibilité de contrôle de la demande client.** Sous la table d'arbitrage de la réclamation fournisseur, l'écran affiche une table « Demande client » en lecture seule listant pour chaque ligne SAV : Code FR, Désignation, Qté demandée, Unité demandée, Qté remboursée client (arbitrée), Unité arbitrée, Motif. La table inclut **toutes** les lignes SAV (appariées et non-appariées) et permet à l'opérateur de vérifier d'un coup d'œil la cohérence entre ce que l'adhérent a demandé et ce qui est arbitré pour la réclamation fournisseur — en particulier les divergences d'unité résolues automatiquement par la conversion pièce↔kilo (FR13 amendée 8.6). FR29 implémentée par Story 8.7 (2026-06-09) ; valeur métier complémentaire de FR13 (conversion 8.6).
+
 > **Note de périmètre V1 :** dans l'écran d'arbitrage, seules la **quantité réclamée** (FR17, plafonnée) et le **commentaire** (FR20) sont éditables. Le motif (CAUSA) et le prix fournisseur (PRECIO) sont en lecture seule en V1 (dérivés du fichier) — édition manuelle différée si besoin futur.
 
 ## Non-Functional Requirements

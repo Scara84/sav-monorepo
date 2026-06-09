@@ -19,6 +19,7 @@ import { computed, ref, onMounted, onUnmounted } from 'vue'
 import { useRoute } from 'vue-router'
 import { useSupplierClaimUpload } from '../composables/useSupplierClaimUpload'
 import { useSupplierClaimArbitration, formatImporte } from '../composables/useSupplierClaimArbitration'
+import ClientDemandTable from '../components/ClientDemandTable.vue'
 
 const route = useRoute()
 const savId = computed(() => Number(route.params['id']))
@@ -181,6 +182,7 @@ const {
   claimLines,
   unmatchedSavLines,
   unusedSupplierLines,
+  clientDemandLines,  // 8.7 (AC #5) — projection 1:1 sav_lines pour table « Demande client »
   edits,
   exclusions,
   comments,
@@ -731,6 +733,15 @@ function formatEUR(cents: number): string {
           </tfoot>
         </table>
       </div>
+
+      <!-- 8.7 (AC #1/#6) — Table « Demande client » (contrôle visuel read-only)
+           Rendue APRÈS la table arbitrage, AVANT la section unmatched.
+           v-if : masquée si clientDemandLines est vide (AC #6).
+           Extrait en sous-composant ClientDemandTable.vue pour testabilité isolée. -->
+      <ClientDemandTable
+        v-if="clientDemandLines.length > 0"
+        :lines="clientDemandLines"
+      />
 
       <!-- Section A — Lignes SAV non appariées (AC #6) -->
       <section
