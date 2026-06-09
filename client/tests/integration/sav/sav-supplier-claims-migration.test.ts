@@ -822,4 +822,127 @@ describe.skipIf(!HAS_DB)('INT-8.4 — sav_supplier_claims migration (vraie DB)',
     expect((lines![1] as { position: number }).position).toBe(2)
     expect((lines![1] as { codigo_es: string }).codigo_es).toBe('3301')
   }, 30_000)
+
+  // ===========================================================================
+  // INT-14 — Contrat type `date` : fecha_albaran vide → la coercion handler '' → null
+  //          est OBLIGATOIRE (le mock unitaire GEN-20a ne peut pas le prouver).
+  //
+  // Bug réel UAT 2026-06-09 (fichier 505, N3/N4 vides) : le handler passait '' au RPC
+  // → garde du RPC `p_claim->>'fecha_albaran' IS NULL` faux pour '' → branche ELSE
+  // → `''::date` → "invalid input syntax for type date" → 500 supplier_claim_persist_failed.
+  //
+  // Ce test exerce le VRAI ::date via la RPC (impossible avec le mock rpc unitaire qui
+  // renvoie {data:42} quels que soient les args) :
+  //   (a) DISCRIMINANT — RPC avec fecha_albaran:'' → erreur Postgres (prouve pourquoi
+  //       la coercion handler est nécessaire ; documente le contrat du RPC).
+  //   (b) FIX — RPC avec fecha_albaran:null + albaran:null → succès, row persistée
+  //       avec fecha_albaran IS NULL et albaran IS NULL.
+  // Réf mémoire feedback_test_integration_gap (PATTERN-H15-A) : les mocks ne
+  // reproduisent pas le contrat type `date` → ce cas DOIT être couvert en vraie-DB.
+  // ===========================================================================
+
+  it("INT-14: contrat ::date — fecha_albaran '' rejeté par le RPC ; null accepté → row fecha_albaran/albaran NULL", async () => {
+    if (!testSavId || !testOperatorId) {
+      console.warn('[INT-14] SKIP — pas de SAV/operator disponible')
+      return
+    }
+
+    // Le RPC lit document_blob_hex (string hex) → decode(..., 'hex') vers la colonne
+    // bytea NOT NULL (migration ligne 126). On reproduit le contrat exact du handler.
+    const fakeBlobHex = Buffer.from('fake-xlsx-INT-14').toString('hex')
+
+    // --- (a) DISCRIMINANT : '' (ce que l'ancien handler passait) → erreur ::date ---
+    const { error: emptyDateError } = await admin.rpc('insert_supplier_claim_with_lines', {
+      p_claim: {
+        sav_id: testSavId,
+        credit_note_id: null,
+        supplier_code: 'sol-y-fruta',
+        reference: `INT-14a-${UNIQUE_RUN}`,
+        albaran: '',
+        fecha_albaran: '', // ← provoque `invalid input syntax for type date: ""`
+        total_importe_cents: 100,
+        line_count: 1,
+        filename: 'test-int14-empty.xlsx',
+        document_blob_hex: fakeBlobHex,
+        document_sha256: `sha256-INT-14a-${UNIQUE_RUN}`,
+        regeneration_of: null,
+        generated_by_operator_id: testOperatorId,
+      },
+      p_lines: [
+        {
+          sav_line_id: testSavLineId ?? 1,
+          position: 1,
+          codigo_es: '1022',
+          producto_es: 'Aguacate',
+          origen: null,
+          peso_qty: 5,
+          unidad: 'Kilos',
+          causa_es: 'estropeado',
+          precio_cents: 100,
+          comentarios: '',
+          importe_cents: 500,
+          conversion_flag: 'ok',
+        },
+      ],
+    })
+
+    // Le RPC réel rejette '' sur une colonne date — c'est précisément le 500 d'origine.
+    expect(emptyDateError).not.toBeNull()
+    expect(emptyDateError?.message ?? '').toMatch(/invalid input syntax for type date|date/i)
+
+    // --- (b) FIX : null (ce que le handler passe désormais) → succès + row NULL ---
+    const { data: claimId, error: nullDateError } = await admin.rpc(
+      'insert_supplier_claim_with_lines',
+      {
+        p_claim: {
+          sav_id: testSavId,
+          credit_note_id: null,
+          supplier_code: 'sol-y-fruta',
+          reference: `INT-14b-${UNIQUE_RUN}`,
+          albaran: null, // coercion handler '' → null (cohérence, colonne text nullable)
+          fecha_albaran: null, // coercion handler '' → null → garde IS NULL → branche NULL
+          total_importe_cents: 100,
+          line_count: 1,
+          filename: 'test-int14-null.xlsx',
+          document_blob_hex: fakeBlobHex,
+          document_sha256: `sha256-INT-14b-${UNIQUE_RUN}`,
+          regeneration_of: null,
+          generated_by_operator_id: testOperatorId,
+        },
+        p_lines: [
+          {
+            sav_line_id: testSavLineId ?? 1,
+            position: 1,
+            codigo_es: '1022',
+            producto_es: 'Aguacate',
+            origen: null,
+            peso_qty: 5,
+            unidad: 'Kilos',
+            causa_es: 'estropeado',
+            precio_cents: 100,
+            comentarios: '',
+            importe_cents: 500,
+            conversion_flag: 'ok',
+          },
+        ],
+      }
+    )
+
+    expect(nullDateError).toBeNull()
+    expect(claimId).not.toBeNull()
+
+    const newClaimId = typeof claimId === 'number' ? claimId : Number(claimId)
+    createdClaimIds.push(newClaimId)
+
+    // Relire la row : fecha_albaran ET albaran doivent être NULL (pas '' ni '1970-01-01')
+    const { data: row, error: readError } = await admin
+      .from('sav_supplier_claims')
+      .select('fecha_albaran, albaran')
+      .eq('id', newClaimId)
+      .single<{ fecha_albaran: string | null; albaran: string | null }>()
+
+    expect(readError).toBeNull()
+    expect(row?.fecha_albaran).toBeNull()
+    expect(row?.albaran).toBeNull()
+  }, 30_000)
 })
