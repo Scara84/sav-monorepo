@@ -17,7 +17,8 @@
  *   INT-01 (AC #4 i)   : INSERT minimal happy path passe (sans credit_note_id — DN-2=B)
  *   INT-02 (AC #4 i)   : INSERT avec credit_note_id présent (si une row credit_notes existe)
  *   INT-03 (AC #4 ii)  : CHECK constraint supplier_code='sol-y-fruta' — valeur interdite rejetée
- *   INT-04 (AC #4 iii) : CHECK constraint conversion_flag IN ('ok','ATTENTION A CONVERTIR','Unité non reconnue')
+ *   INT-04  (AC #4 iii) : CHECK constraint conversion_flag — valeur interdite rejetée
+ *   INT-04b (hotfix 8.7) : conversion_flag 'converti pièce→kg' (8.6) accepté (migration 20260609000000)
  *   INT-05 (AC #4 iii) : CHECK constraint price_cents > 0 (rejet si 0)
  *   INT-06 (AC #4 iv)  : FK credit_note_id → credit_notes(id) rejette id inexistant (non-null)
  *   INT-07 (AC #4 iv)  : FK credit_note_id NULL accepté (DN-2=B LOCKED)
@@ -273,6 +274,62 @@ describe.skipIf(!HAS_DB)('INT-8.4 — sav_supplier_claims migration (vraie DB)',
 
     expect(lineError).not.toBeNull()
     expect(lineError?.code).toBe('23514') // check_violation
+  }, 30_000)
+
+  // INT-04b — conversion_flag 'converti pièce→kg' ACCEPTÉ (hotfix 8.7, migration
+  // 20260609000000). Discriminant : sous l'ancienne contrainte 8.4 (3 valeurs), cet
+  // INSERT échouait avec 23514 → la persistance d'une réclamation convertie pièce→kg
+  // était impossible (bug d'intégration 8.4↔8.6). Après fix : INSERT accepté.
+  it("INT-04b: CHECK constraint conversion_flag — 'converti pièce→kg' (8.6) accepté", async () => {
+    if (!testSavId || !testOperatorId || !testSavLineId) {
+      console.warn('[INT-04b] SKIP — pas de SAV/operator/sav_line disponible')
+      return
+    }
+
+    const fakeBlob = Buffer.from('fake')
+    const { data: claim, error: claimError } = await admin
+      .from('sav_supplier_claims')
+      .insert({
+        sav_id: testSavId,
+        credit_note_id: null,
+        supplier_code: 'sol-y-fruta',
+        reference: `INT-04b-${UNIQUE_RUN}`,
+        albaran: '3127',
+        fecha_albaran: '2026-06-05',
+        total_importe_cents: 100,
+        line_count: 1,
+        filename: 'test.xlsx',
+        document_blob: fakeBlob,
+        document_sha256: `sha256-INT-04b-${UNIQUE_RUN}`,
+        regeneration_of: null,
+        generated_by_operator_id: testOperatorId,
+      })
+      .select('id')
+      .single<{ id: number }>()
+
+    expect(claimError).toBeNull()
+    if (!claim?.id) return
+    createdClaimIds.push(claim.id)
+
+    const { error: lineError } = await admin
+      .from('sav_supplier_claim_lines')
+      .insert({
+        claim_id: claim.id,
+        sav_line_id: testSavLineId,
+        position: 1,
+        codigo_es: '3104',
+        producto_es: 'Paraguaya',
+        origen: 'Nacional',
+        peso_qty: 1.52,
+        unidad: 'Kilos',
+        causa_es: 'estropeado',
+        precio_cents: 324,
+        comentarios: 'via Kilos Netos',
+        importe_cents: 492,
+        conversion_flag: 'converti pièce→kg', // 8.6 — désormais autorisé
+      })
+
+    expect(lineError).toBeNull()
   }, 30_000)
 
   // ===========================================================================
