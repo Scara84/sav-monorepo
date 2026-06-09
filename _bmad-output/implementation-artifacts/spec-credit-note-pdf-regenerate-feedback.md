@@ -70,6 +70,10 @@ baseline_commit: 'b4b029b635298936428169c23cff9b623b21bb3d'
 - Given un avoir en phase `failed`, when la régénération renvoie 500 avec un `failure_kind` donné, then le message mappé correspondant est affiché et le bouton reste cliquable.
 - Given un avoir en phase `failed`, when la régénération renvoie 409 `PDF_ALREADY_GENERATED`, then `refresh()` est appelé et le lien s'affiche (pas de message d'erreur).
 
+## Spec Change Log
+
+- **2026-06-09 — CN-PDF-D1 appliqué (enhancement post-livraison, demande user).** Déclencheur : revues adversariales (2/3 HIGH) + UX — un reload pendant une génération encore en cours affichait `failed` d'emblée. Amendé : `onMounted` arme désormais le poll (`maybeStartPdfPoll()` après le `refresh()` initial), en plus du déclenchement post-émission. État connu-mauvais évité : faux « échec » au reload pendant génération légitime. KEEP : token d'annulation `pollToken` + check post-`await` (anti-poll-fantôme au démontage) ; 409 idempotent comme filet de course succès-tardif ; messages `failure_kind` inchangés. Test ajouté : `CN-PDF-D1 : reload avoir pdf null → pending au mount → failed après timeout`. Tradeoff retenu : ~15 s de « en cours » sur un avoir réellement en échec avant le bouton.
+
 ## Design Notes
 
 Phase dérivée (pas d'état dupliqué) :
@@ -78,7 +82,7 @@ const creditNotePdfPhase = computed<'ready' | 'pending' | 'failed'>(() =>
   creditNote.value?.pdfWebUrl ? 'ready' : pdfPolling.value ? 'pending' : 'failed'
 )
 ```
-Décision : on poll **uniquement après émission** (intent §1). Au chargement d'une page sur un avoir déjà `null`, phase = `failed` d'emblée (le bouton est le recours ; la course « génération encore en cours » est couverte par le 409 idempotent → refresh → lien). Annulation par token entier incrémenté (`pollToken`) : tout `await` reprend en vérifiant `token === pollToken`, et `onUnmounted` incrémente pour invalider.
+Décision (révisée — CN-PDF-D1 appliqué 2026-06-09) : on arme le poll **après émission ET au chargement/reload** (`onMounted` appelle `maybeStartPdfPoll()` après le `refresh()` initial). Rouvrir la page d'un avoir dont le PDF est encore en génération montre donc « en cours… » + poll au lieu de `failed` d'emblée ; un avoir réellement en échec affiche ~15 s de « en cours » avant le bouton (tradeoff assumé, la course succès-tardif reste couverte par le 409 idempotent → refresh → lien). Annulation par token entier incrémenté (`pollToken`) : tout `await` reprend en vérifiant `token === pollToken`, et `onUnmounted` incrémente pour invalider.
 
 Lecture d'erreur (forme imbriquée vérifiée en source) :
 ```ts

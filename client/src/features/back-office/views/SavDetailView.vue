@@ -703,8 +703,14 @@ onUnmounted(() => {
   pdfPollToken++ // invalide tout poll en cours
 })
 
-onMounted(() => {
-  void refresh()
+onMounted(async () => {
+  await refresh()
+  // CN-PDF-D1 : armer le poll aussi au chargement/reload. Si on rouvre la page
+  // d'un avoir dont le PDF est encore en cours de génération (pdfWebUrl null),
+  // on montre « en cours… » + poll borné au lieu de basculer « failed » d'emblée.
+  // Un avoir réellement en échec affichera donc ~15 s de « en cours » avant le
+  // bouton — tradeoff assumé (le 409 idempotent couvre la course succès tardif).
+  maybeStartPdfPoll()
 })
 
 const STATUS_COLOR: Record<string, string> = {

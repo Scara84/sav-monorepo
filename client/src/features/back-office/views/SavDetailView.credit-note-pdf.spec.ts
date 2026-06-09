@@ -179,6 +179,21 @@ async function emit(w: Awaited<ReturnType<typeof mountDetail>>) {
   await flushPromises()
 }
 
+// CN-PDF-D1 : depuis le mount, un avoir avec pdfWebUrl null arme le poll borné
+// (phase « pending »). Pour exercer la régénération il faut donc d'abord laisser
+// le poll expirer (5 × 3 s) pour atteindre la phase « failed » (bouton visible).
+// Prérequis : la fetch mock doit déjà être installée par l'appelant.
+async function mountAtFailed() {
+  vi.useFakeTimers()
+  const w = await mountDetail()
+  await flushPromises()
+  for (let i = 0; i < 5; i++) {
+    await vi.advanceTimersByTimeAsync(POLL_INTERVAL)
+    await flushPromises()
+  }
+  return w
+}
+
 afterEach(() => {
   vi.useRealTimers()
   vi.restoreAllMocks()
@@ -259,6 +274,28 @@ describe('SavDetailView — feedback génération PDF avoir (poll + régénérat
     expect(w.find('[data-testid="credit-note-pdf-link"]').exists()).toBe(false)
   })
 
+  it('CN-PDF-D1 : reload avoir pdf null → poll armé au mount (pending), failed après timeout', async () => {
+    vi.useFakeTimers()
+    installFetch({
+      detail: () => buildDetail({ creditNote: creditNote({ pdfWebUrl: null }) }),
+    })
+
+    const w = await mountDetail()
+    await flushPromises()
+
+    // Poll armé dès le chargement → « en cours… », PAS « failed »/bouton d'emblée.
+    expect(w.find('[data-testid="credit-note-pdf-pending"]').exists()).toBe(true)
+    expect(w.find('[data-testid="credit-note-regenerate-btn"]').exists()).toBe(false)
+
+    // Après expiration du poll borné → bascule failed + bouton.
+    for (let i = 0; i < 5; i++) {
+      await vi.advanceTimersByTimeAsync(POLL_INTERVAL)
+      await flushPromises()
+    }
+    expect(w.find('[data-testid="credit-note-pdf-pending"]').exists()).toBe(false)
+    expect(w.find('[data-testid="credit-note-regenerate-btn"]').exists()).toBe(true)
+  })
+
   it('régénérer : clic → 200 → lien affiché, bouton disparaît', async () => {
     let pdfReady = false
     installFetch({
@@ -272,10 +309,7 @@ describe('SavDetailView — feedback génération PDF avoir (poll + régénérat
       },
     })
 
-    const w = await mountDetail()
-    await flushPromises()
-
-    // Avoir existant avec pdfWebUrl null, pas de poll en cours → phase failed.
+    const w = await mountAtFailed()
     expect(w.find('[data-testid="credit-note-regenerate-btn"]').exists()).toBe(true)
 
     await w.find('[data-testid="credit-note-regenerate-btn"]').trigger('click')
@@ -293,8 +327,7 @@ describe('SavDetailView — feedback génération PDF avoir (poll + régénérat
       onRegenerate: () => regen500('PDF_GENERATION_FAILED'),
     })
 
-    const w = await mountDetail()
-    await flushPromises()
+    const w = await mountAtFailed()
 
     await w.find('[data-testid="credit-note-regenerate-btn"]').trigger('click')
     await flushPromises()
@@ -313,8 +346,7 @@ describe('SavDetailView — feedback génération PDF avoir (poll + régénérat
       onRegenerate: () => regen500('PDF_UPLOAD_FAILED'),
     })
 
-    const w = await mountDetail()
-    await flushPromises()
+    const w = await mountAtFailed()
 
     await w.find('[data-testid="credit-note-regenerate-btn"]').trigger('click')
     await flushPromises()
@@ -328,8 +360,7 @@ describe('SavDetailView — feedback génération PDF avoir (poll + régénérat
       onRegenerate: () => regen500('PDF_RENDER_FAILED'),
     })
 
-    const w = await mountDetail()
-    await flushPromises()
+    const w = await mountAtFailed()
 
     await w.find('[data-testid="credit-note-regenerate-btn"]').trigger('click')
     await flushPromises()
@@ -355,8 +386,7 @@ describe('SavDetailView — feedback génération PDF avoir (poll + régénérat
       }),
     })
 
-    const w = await mountDetail()
-    await flushPromises()
+    const w = await mountAtFailed()
 
     await w.find('[data-testid="credit-note-regenerate-btn"]').trigger('click')
     await flushPromises()
@@ -381,8 +411,7 @@ describe('SavDetailView — feedback génération PDF avoir (poll + régénérat
     })
     ;(globalThis as unknown as { fetch: unknown }).fetch = fn
 
-    const w = await mountDetail()
-    await flushPromises()
+    const w = await mountAtFailed()
 
     await w.find('[data-testid="credit-note-regenerate-btn"]').trigger('click')
     await flushPromises()
@@ -399,8 +428,7 @@ describe('SavDetailView — feedback génération PDF avoir (poll + régénérat
       onRegenerate: () => regen500('PDF_UPDATE_FAILED'),
     })
 
-    const w = await mountDetail()
-    await flushPromises()
+    const w = await mountAtFailed()
 
     await w.find('[data-testid="credit-note-regenerate-btn"]').trigger('click')
     await flushPromises()
@@ -434,8 +462,7 @@ describe('SavDetailView — feedback génération PDF avoir (poll + régénérat
       },
     })
 
-    const w = await mountDetail()
-    await flushPromises()
+    const w = await mountAtFailed()
 
     await w.find('[data-testid="credit-note-regenerate-btn"]').trigger('click')
     await flushPromises()
