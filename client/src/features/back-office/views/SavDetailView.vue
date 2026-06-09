@@ -1962,7 +1962,7 @@ a:focus-visible {
 /* Min-widths colonnes en mode édition — évite la troncature des inputs. */
 .lines-table th:nth-child(4),
 .lines-table td:nth-child(4) {
-  min-width: 90px; /* Qté demandée */
+  min-width: 145px; /* Qté demandée + select unité (était 90px → troncature 1,5 / kg) */
 }
 .lines-table th:nth-child(5),
 .lines-table td:nth-child(5) {
