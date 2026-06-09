@@ -79,3 +79,53 @@ defineProps<{
     </div>
   </section>
 </template>
+
+<style scoped>
+/* Story 8.7 — aligne le style sur la table d'arbitrage de SupplierClaimView.
+   Les styles scoped du parent ne s'appliquent pas aux éléments internes d'un
+   composant enfant (seul le root .card hérite) → on réplique ici à l'identique
+   pour une cohérence visuelle stricte avec la table du dessus. */
+.card {
+  background: #fff;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  padding: 1.5rem;
+  margin-bottom: 1.5rem;
+}
+
+.client-demand-section {
+  overflow-x: auto;
+}
+
+.table-container {
+  overflow-x: auto;
+  margin-bottom: 0;
+}
+
+.arbitrage-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.arbitrage-table th {
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  padding: 0.5rem 0.75rem;
+  text-align: left;
+  font-weight: 600;
+  white-space: nowrap;
+}
+
+.arbitrage-table td {
+  border: 1px solid #e5e7eb;
+  padding: 0.375rem 0.5rem;
+  vertical-align: middle;
+}
+
+.section-hint {
+  font-size: 0.875rem;
+  color: #6b7280;
+  margin-bottom: 0.5rem;
+}
+</style>
