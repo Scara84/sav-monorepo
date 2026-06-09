@@ -419,8 +419,12 @@ function generateSupplierClaimCore(savId: number): ApiHandler {
       credit_note_id: resolvedCreditNoteId,    // number or null — test checks this
       supplier_code: 'sol-y-fruta',
       reference: payload.metadata.reference,
-      albaran: payload.metadata.albaran,
-      fecha_albaran: payload.metadata.fechaAlbaran,
+      // Albaran/date absents du fichier fournisseur (cellules N3/N4 vides, ex. fichier 505)
+      // → normaliser '' en null. Le RPC caste fecha_albaran en ::date et son garde
+      // ne teste que IS NULL (pas la chaîne vide) → '' provoquait `invalid input syntax
+      // for type date: ""`. Story 8.7 hotfix (bug 8.4 jamais exercé : UAT 8.4 avait un albaran).
+      albaran: payload.metadata.albaran.trim() || null,
+      fecha_albaran: payload.metadata.fechaAlbaran.trim() || null,
       total_importe_cents: String(totalImporteCents),
       line_count: String(processedLines.length),
       filename,

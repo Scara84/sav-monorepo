@@ -1244,3 +1244,48 @@ describe('GEN-19: régénération → filename _v2 dans Content-Disposition (AC 
     expect(disposition).toContain('_v2')
   })
 })
+
+// ===========================================================================
+// GEN-20 — Albaran/date vides (fichier 505) → null dans p_claim, PAS '' (hotfix)
+// Bug réel UAT 2026-06-09 : fichier sans albaran/date (N3/N4 vides) → metadata.{albaran,
+// fechaAlbaran}='' → RPC caste fecha_albaran::date → `invalid input syntax for type
+// date: ""` → 500 supplier_claim_persist_failed. Discriminant : sous l'ancien code
+// p_claim.fecha_albaran==='' (le test échoue) ; après fix === null.
+// ===========================================================================
+
+describe('GEN-20: albaran/date absents → p_claim normalisé en null (hotfix 2026-06-09)', () => {
+  it('GEN-20a: metadata.fechaAlbaran="" et albaran="" → RPC reçoit fecha_albaran=null et albaran=null', async () => {
+    let capturedClaim: { albaran: unknown; fecha_albaran: unknown } | null = null
+    const supabaseModule = await import('../../../../api/_lib/clients/supabase-admin')
+    const adminClient = supabaseModule.supabaseAdmin()
+    const rpcSpy = vi.spyOn(adminClient as { rpc: (fn: string, args: Record<string, unknown>) => unknown }, 'rpc').mockImplementation((fn: string, args: Record<string, unknown>) => {
+      if (fn === 'increment_rate_limit') {
+        return Promise.resolve({ data: [{ allowed: true, retry_after: 1 }], error: null })
+      }
+      if (fn === 'insert_supplier_claim_with_lines') {
+        capturedClaim = args['p_claim'] as { albaran: unknown; fecha_albaran: unknown }
+        return Promise.resolve({ data: 42, error: null })
+      }
+      return Promise.resolve({ data: null, error: null })
+    })
+
+    const req = mockReq({
+      method: 'POST',
+      headers: {},
+      query: { id: '1' },
+      body: makeValidPayload({ metadata: { reference: '505_25S25_30', albaran: '', fechaAlbaran: '' } }),
+      user: makeOperatorUser(10),
+    })
+    const res = mockRes()
+
+    await generateSupplierClaimHandler(1)(req, res)
+
+    expect(res.statusCode).toBe(200)
+    const claim = capturedClaim as { albaran: unknown; fecha_albaran: unknown } | null
+    // Discriminant : '' aurait fait crasher le ::date côté RPC réel. On exige null.
+    expect(claim?.fecha_albaran).toBeNull()
+    expect(claim?.albaran).toBeNull()
+
+    rpcSpy.mockRestore()
+  })
+})
