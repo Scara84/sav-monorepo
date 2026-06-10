@@ -311,3 +311,74 @@ Contexte : `SavDetailView.vue` poll borné post-émission + bouton « Régénér
 Revue 3-couches du fix « message de cap avec unité + mention conversion ». 38/38 tests verts, typecheck 0. Un finding non-bloquant (pas de loopback : pré-existant, non régressé, hors scope du spec frozen) :
 
 - **SC-CAPMSG-D1 — `'Unité non reconnue'` avec `kilosPiezas = 'Kilos'` → libellé « kg » sur un cap en unité fournisseur** : quand le moteur ne reconnaît pas l'unité SAV mais que `kilosPiezas = 'Kilos'`, le serveur pose `unidad = 'Kilos'` → `effectiveCapUnit = 'Kilos'`, `effectiveCap = qteFact` (en unité `unite`, pas en kg). `buildClampMessage` tombe alors dans la branche `capUnit === 'Kilos' → 'kg'` et affiche « kg » alors que la vraie unité du cap est `unite`. **Non régressé** : le code pré-fix affichait déjà « kg » dans ce cas. **Dégénéré** : ligne `blockingForGeneration = true` (non générable), combinaison de données rare (unité SAV non reconnue + catalogue Kilos). **Fix V2** : remplacer l'heuristique `conversionFlag === 'ATTENTION A CONVERTIR'` par une règle fondée sur la SOURCE du cap — « kg » seulement quand `cap` provient de `kilosNetos` (converti), sinon `unite` (cap = `qteFact` brut). Cela couvre aussi proprement `'Unité non reconnue'`. Touche la règle figée « Always » du spec → nécessite renégociation du frozen.
+
+## UAT process complet — colonne « Avoir » affichée en HT (2026-06-10)
+
+**Constat (UAT réel, SAV F-2026-39952)** : dans la table « Lignes du SAV » du
+back-office (SavDetailView), la colonne **Avoir** affiche le montant **HT**
+(pomelo : PU TTC 9,22 € → Avoir 8,74 € = 9,22/1,055 ; avocat : 12,59 × 0,425
+/ 1,055 = 5,07 €) alors que la colonne voisine est libellée **PU TTC**.
+
+**Demande user** : afficher l'avoir en **TTC** pour être aligné avec PU TTC
+(ou a minima libeller explicitement « Avoir HT » si le HT est voulu côté
+comptable). Vérifier l'impact d'affichage uniquement — ne PAS toucher au
+moteur de calcul ni au PDF d'avoir (montants comptables HT/TVA/TTC corrects
+par ailleurs, à confirmer au moment du fix).
+
+**Priorité** : UX/lisibilité, non bloquant pour le promote. À traiter après
+la campagne de tests en cours (emails redirigés EMAIL_REDIRECT_ALL_TO).
+
+## UAT process complet — PDF avoir : colonnes prix incohérentes + code pollué (2026-06-10)
+
+**Constats (UAT réel, avoir AV-2026-00003 / SAV-2026-00003)** sur le template
+PDF charte Fruitstock (Story 4.5) :
+
+1. **Colonne « Prix HT » affiche un prix TTC** : 9,22 € = PU TTC capturé
+   (pomelo). Le libellé dit HT, la valeur est TTC. En face, « Montant » est
+   bien HT (8,74 €) → ligne incohérente (9,22 × 100 % ≠ 8,74 affiché).
+   Demande user : aligner — soit tout TTC, soit libellés corrects HT/TTC.
+   Les totaux (Sous-total HT 13,81 / TVA 0,76 / Total TTC 14,57) sont justes.
+   Lien avec l'entrée « colonne Avoir HT » du back-office (même chantier
+   d'harmonisation affichage HT/TTC).
+
+2. **Colonne « Code » polluée par la désignation** : affiche
+   « 3010-2K POMELO STAR RUBY (CN) (C » au lieu de « 3010-2K ». Cause racine
+   AMONT (pas le PDF) : WebhookItemsList.vue:821-823 — fallback
+   `productCode = product_id || code || productName.slice(0, 32)` quand la
+   ligne Pennylane n'a pas de product_id. Touche aussi la colonne Code du
+   back-office. Piste : extraire le code du début du label (pattern
+   `^\d{4}(-\w+)?`) ou lookup catalogue par préfixe, plutôt que slice(0,32).
+
+3. **Colonne « Produit » tronquée par ellipsis** dans le PDF : demande user =
+   désignation complète (wrap multi-ligne plutôt que « … »).
+
+**Priorité** : 1 et 3 = affichage PDF (non bloquant, mais le PDF part au
+client en V1 → à corriger avant promote idéalement) ; 2 = qualité de données
+capture (pollue les snapshots persistés — plus c'est tôt corrigé, moins de
+SAV avec codes pollués en base).
+
+## UAT process complet — FEATURE : email client de fin de process avec bon SAV PDF (2026-06-10)
+
+**Constat (UAT réel bout-en-bout, SAV-2026-00003)** : une fois le process
+terminé (avoir émis + clôture), le client ne reçoit AUCUN email de
+confirmation avec le bon SAV en PDF. L'email `sav_closed` existant (Story
+6.6) est une notification nue (« SAV — clôturé », lien espace adhérent) ;
+le bon SAV PDF (Stories 4.4/4.5) n'est téléchargeable que depuis l'espace
+adhérent (Story 6.4), jamais poussé.
+
+**Demande user (candidate STORY V1, pas un polish)** : ajouter l'étape —
+email de confirmation de fin de SAV au client avec le bon SAV PDF.
+
+Points de cadrage pour la story (bmad-create-story) :
+- Déclencheur : émission de l'avoir ou transition `closed` ? (probablement
+  closed, cohérent avec l'outbox kind `sav_closed` existant)
+- PDF en pièce jointe vs lien signé de téléchargement : l'infra
+  `SmtpMailInput` (smtp.ts) ne supporte pas les attachments aujourd'hui —
+  à étendre (nodemailer le permet) OU réutiliser le lien magic-link 6.4.
+  Attention taille/spam si PJ ; le PDF est sur OneDrive (web_url présent).
+- Respecter notification_prefs (status_updates) + pattern outbox/retry 6.6
+  (pas d'envoi direct dans le handler de transition).
+- EMAIL_REDIRECT_ALL_TO couvrira automatiquement les tests.
+
+**Priorité** : à arbitrer — feature visible client, possiblement attendue
+pour le promote V1 (même famille que l'enchaînement post-avoir Epic 8).
