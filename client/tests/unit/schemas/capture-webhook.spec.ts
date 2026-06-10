@@ -297,3 +297,84 @@ describe('unitInvoiced — enum (OQ-2: tightened from z.string to z.enum)', () =
     expect(result.success).toBe(false)
   })
 })
+
+// ---------------------------------------------------------------------------
+// UAT 2026-06-10 — normalisation g→kg (transform)
+// Bug : le formulaire SPA envoie unit='g' (ex. 850 g d'avocats), le Zod
+// acceptait puis la contrainte DB sav_lines_unit_check (kg/piece/liter)
+// rejetait au RPC → 23514 → 500. Le schéma normalise désormais en kg à la
+// frontière — le payload persisté ne contient plus jamais 'g'.
+// ---------------------------------------------------------------------------
+
+describe('UAT g→kg — unit="g" normalisée par le schéma (transform)', () => {
+  it('unit="g" qtyRequested=850 → unit="kg" qtyRequested=0.85 [MUST FAIL pré-fix : unit restait "g"]', () => {
+    const result = captureWebhookSchema.safeParse({
+      ...basePayload,
+      items: [{ ...baseItem, unit: 'g', qtyRequested: 850 }],
+    })
+    expect(result.success).toBe(true)
+    if (!result.success) return
+    expect(result.data.items[0]!.unit).toBe('kg')
+    expect(result.data.items[0]!.qtyRequested).toBe(0.85)
+  })
+
+  it('unit="kg" reste intact (passthrough, qty inchangée)', () => {
+    const result = captureWebhookSchema.safeParse({
+      ...basePayload,
+      items: [{ ...baseItem, unit: 'kg', qtyRequested: 2.5 }],
+    })
+    expect(result.success).toBe(true)
+    if (!result.success) return
+    expect(result.data.items[0]!.unit).toBe('kg')
+    expect(result.data.items[0]!.qtyRequested).toBe(2.5)
+  })
+
+  it('unitInvoiced="g" → "kg", qtyInvoiced/1000 et unitPriceTtcCents ×1000 (€/g → €/kg, reste int)', () => {
+    const result = captureWebhookSchema.safeParse({
+      ...basePayload,
+      items: [
+        {
+          ...baseItem,
+          unit: 'g',
+          qtyRequested: 500,
+          unitInvoiced: 'g',
+          qtyInvoiced: 1000,
+          unitPriceTtcCents: 2,
+        },
+      ],
+    })
+    expect(result.success).toBe(true)
+    if (!result.success) return
+    const item = result.data.items[0]!
+    expect(item.unit).toBe('kg')
+    expect(item.qtyRequested).toBe(0.5)
+    expect(item.unitInvoiced).toBe('kg')
+    expect(item.qtyInvoiced).toBe(1)
+    expect(item.unitPriceTtcCents).toBe(2000)
+    expect(Number.isInteger(item.unitPriceTtcCents)).toBe(true)
+  })
+
+  it('unitInvoiced="piece" + unit="g" → seule la demande convertie, facturation intacte (cas UAT avocat)', () => {
+    const result = captureWebhookSchema.safeParse({
+      ...basePayload,
+      items: [
+        {
+          ...baseItem,
+          unit: 'g',
+          qtyRequested: 850,
+          unitInvoiced: 'piece',
+          qtyInvoiced: 1,
+          unitPriceTtcCents: 1259,
+        },
+      ],
+    })
+    expect(result.success).toBe(true)
+    if (!result.success) return
+    const item = result.data.items[0]!
+    expect(item.unit).toBe('kg')
+    expect(item.qtyRequested).toBe(0.85)
+    expect(item.unitInvoiced).toBe('piece')
+    expect(item.qtyInvoiced).toBe(1)
+    expect(item.unitPriceTtcCents).toBe(1259)
+  })
+})
