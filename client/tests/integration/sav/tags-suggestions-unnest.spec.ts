@@ -42,16 +42,20 @@ interface SavSeed {
   status?: string
 }
 
-async function insertTestSav(admin: SupabaseClient, seed: SavSeed): Promise<number> {
+async function insertTestSav(
+  admin: SupabaseClient,
+  memberId: number,
+  seed: SavSeed
+): Promise<number> {
   // We need minimal required fields for the sav table
-  // The exact columns depend on the migration — we use the minimum required set
+  // (NOT NULL sans default : member_id, reference)
   const { data, error } = await admin
     .from('sav')
     .insert({
+      member_id: memberId,
       reference: seed.reference,
       tags: seed.tags,
       status: seed.status ?? 'in_progress',
-      // Required fields — use defaults / nulls as appropriate
     })
     .select('id')
     .single<{ id: number }>()
@@ -68,41 +72,54 @@ async function deleteTestSav(admin: SupabaseClient, ids: number[]): Promise<void
 describe.skipIf(!HAS_DB)('tags-suggestions-unnest — integration real DB (Story 3.7b AC#13)', () => {
   let admin: SupabaseClient
   let seededIds: number[] = []
+  let memberId: number
 
-  beforeAll(() => {
+  beforeAll(async () => {
     admin = createClient(SUPABASE_URL!, SERVICE_ROLE!, {
       auth: { persistSession: false },
     })
+    // sav.member_id est NOT NULL — seed un member dédié pour les SAV de test.
+    const { data, error } = await admin
+      .from('members')
+      .insert({
+        email: `${TEST_PREFIX.toLowerCase()}@fruitstock.test`,
+        first_name: 'Tags',
+        last_name: 'Suggestions',
+      })
+      .select('id')
+      .single<{ id: number }>()
+    if (error) throw new Error(`seed member failed: ${error.message}`)
+    memberId = data.id
   })
 
   afterAll(async () => {
     // Cleanup seeded test rows
     await deleteTestSav(admin, seededIds)
+    await admin.from('members').delete().eq('id', memberId)
   })
 
   it('TSI-01: unnest+ILIKE q=rapp returns only matching tags', async () => {
     // Seed SAV rows with known tags
-    const idA = await insertTestSav(admin, {
+    const idA = await insertTestSav(admin, memberId, {
       reference: `${TEST_PREFIX}-A`,
       tags: ['urgent', `${TEST_PREFIX}-rapport-livraison`],
     })
-    const idB = await insertTestSav(admin, {
+    const idB = await insertTestSav(admin, memberId, {
       reference: `${TEST_PREFIX}-B`,
       tags: [`${TEST_PREFIX}-rappel-fournisseur`],
     })
-    const idC = await insertTestSav(admin, {
+    const idC = await insertTestSav(admin, memberId, {
       reference: `${TEST_PREFIX}-C`,
       tags: ['urgent', 'livraison'],
     })
     seededIds.push(idA, idB, idC)
 
-    // Run the actual SQL
-    const { data, error } = await admin
-      .rpc('exec_sql_unsafe', {
-        query: TAGS_SUGGESTIONS_SQL,
-        params: ['rapp', 100],
-      })
-      .catch(() => ({ data: null, error: { message: 'exec_sql_unsafe not available' } }))
+    // Run the actual SQL — PostgREST ne throw pas : l'absence du RPC arrive
+    // dans `error` (le builder n'expose pas .catch).
+    const { data, error } = await admin.rpc('exec_sql_unsafe', {
+      query: TAGS_SUGGESTIONS_SQL,
+      params: ['rapp', 100],
+    })
 
     // If rpc not available, use direct query pattern
     if (error) {
@@ -132,12 +149,12 @@ describe.skipIf(!HAS_DB)('tags-suggestions-unnest — integration real DB (Story
     const cancelledTag = `${TEST_PREFIX}-obsolete-cancelled`
     const activeTag = `${TEST_PREFIX}-actif-tag`
 
-    const idCancelled = await insertTestSav(admin, {
+    const idCancelled = await insertTestSav(admin, memberId, {
       reference: `${TEST_PREFIX}-CANCELLED`,
       tags: [cancelledTag],
       status: 'cancelled',
     })
-    const idActive = await insertTestSav(admin, {
+    const idActive = await insertTestSav(admin, memberId, {
       reference: `${TEST_PREFIX}-ACTIVE`,
       tags: [activeTag],
       status: 'in_progress',
@@ -178,19 +195,19 @@ describe.skipIf(!HAS_DB)('tags-suggestions-unnest — integration real DB (Story
     const prioritaireTag = `${TEST_PREFIX}-prioritaire`
     const autreTag = `${TEST_PREFIX}-autre-unique`
 
-    const id1 = await insertTestSav(admin, {
+    const id1 = await insertTestSav(admin, memberId, {
       reference: `${TEST_PREFIX}-USG-1`,
       tags: [prioritaireTag],
     })
-    const id2 = await insertTestSav(admin, {
+    const id2 = await insertTestSav(admin, memberId, {
       reference: `${TEST_PREFIX}-USG-2`,
       tags: [prioritaireTag],
     })
-    const id3 = await insertTestSav(admin, {
+    const id3 = await insertTestSav(admin, memberId, {
       reference: `${TEST_PREFIX}-USG-3`,
       tags: [prioritaireTag],
     })
-    const id4 = await insertTestSav(admin, {
+    const id4 = await insertTestSav(admin, memberId, {
       reference: `${TEST_PREFIX}-USG-4`,
       tags: [autreTag],
     })

@@ -31,6 +31,7 @@ const HAS_DB = Boolean(SUPABASE_URL && SERVICE_ROLE)
 describe.skipIf(!HAS_DB)('Story 7-6 AC #4 D-9 — anonymize-race (integration DB réelle)', () => {
   let admin: SupabaseClient
   let testMemberId: number
+  let actorOperatorId: number
 
   beforeAll(async () => {
     admin = createClient(SUPABASE_URL!, SERVICE_ROLE!, {
@@ -50,6 +51,16 @@ describe.skipIf(!HAS_DB)('Story 7-6 AC #4 D-9 — anonymize-race (integration DB
       .single()
     if (error) throw new Error(`seed member failed: ${error.message}`)
     testMemberId = (data as { id: number }).id
+
+    // FK audit_trail_actor_operator_id_fkey : l'actor doit exister dans
+    // operators — résolution dynamique (un id codé en dur casse sur DB fraîche).
+    const { data: op, error: opErr } = await admin
+      .from('operators')
+      .select('id')
+      .limit(1)
+      .single<{ id: number }>()
+    if (opErr || !op) throw new Error(`no operator available: ${opErr?.message}`)
+    actorOperatorId = op.id
   })
 
   it('AC #4 D-9 — 2 RPC concurrents → 1 succès + 1 ALREADY_ANONYMIZED', async () => {
@@ -57,11 +68,11 @@ describe.skipIf(!HAS_DB)('Story 7-6 AC #4 D-9 — anonymize-race (integration DB
     const [r1, r2] = await Promise.all([
       admin.rpc('admin_anonymize_member', {
         p_member_id: testMemberId,
-        p_actor_operator_id: 9,
+        p_actor_operator_id: actorOperatorId,
       }),
       admin.rpc('admin_anonymize_member', {
         p_member_id: testMemberId,
-        p_actor_operator_id: 9,
+        p_actor_operator_id: actorOperatorId,
       }),
     ])
 

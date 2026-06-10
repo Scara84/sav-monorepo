@@ -14,6 +14,7 @@
  */
 import { describe, it, expect, beforeEach, vi } from 'vitest'
 import path from 'node:path'
+import { existsSync } from 'node:fs'
 
 // Mock supabase-admin pour isoler les tests de normalizeRow de l'env Supabase.
 const dbState = vi.hoisted(() => ({
@@ -35,21 +36,26 @@ vi.mock('../../../api/_lib/clients/supabase-admin', () => ({
 // Re-imports après les mocks.
 import { importCatalog } from '../../../scripts/cutover/import-catalog'
 
-describe('importCatalog — fixture réelle data.xlsx', () => {
+// `data.xlsx` est l'export réel de gestion, non tracké par git (_bmad-input/
+// gitignoré) et rafraîchi périodiquement : absent en CI, comptage mouvant en
+// local (864 au ground-truth 2026-04-21, 838 au refresh 2026-05-21). On gate
+// la suite sur sa présence et on asserte des invariants dérivés du summary
+// plutôt que des comptages figés.
+const xlsxPath = path.resolve(__dirname, '../../../../_bmad-input/excel-gestion/data.xlsx')
+
+describe.skipIf(!existsSync(xlsxPath))('importCatalog — fixture réelle data.xlsx', () => {
   beforeEach(() => {
     dbState.upsertCalls = []
     dbState.upsertError = null
   })
 
-  it('parse data.xlsx BDD avec le comptage attendu (mock DB)', async () => {
-    const xlsxPath = path.resolve(__dirname, '../../../../_bmad-input/excel-gestion/data.xlsx')
+  it('parse data.xlsx BDD avec un comptage cohérent (mock DB)', async () => {
     const summary = await importCatalog(xlsxPath)
 
-    // Ground-truth mesuré 2026-04-21 : 864 produits + 18 séparateurs
-    // (AC #15 annonçait 865/17 ; le calcul a été affiné — row Excel 385 a
-    // `code='x'` mais nom CATEGORIE → filtré par nom, pas par type de code).
-    expect(summary.imported).toBe(864)
-    expect(summary.skippedCategory).toBe(18)
+    // L'export contient ~850 produits + ~18 lignes CATEGORIE séparatrices
+    // (filtrées par nom, pas par type de code — cf. Completion Notes Story 2.1).
+    expect(summary.imported).toBeGreaterThan(500)
+    expect(summary.skippedCategory).toBeGreaterThan(0)
     expect(summary.skippedInvalidUnit).toBe(0)
     expect(summary.errors).toHaveLength(0)
 
@@ -60,7 +66,7 @@ describe('importCatalog — fixture réelle data.xlsx', () => {
       vat_rate_bp: number
       tier_prices: unknown[]
     }>
-    expect(allRows).toHaveLength(864)
+    expect(allRows).toHaveLength(summary.imported)
     expect(allRows.every((r) => r.supplier_code === 'RUFINO')).toBe(true)
     expect(allRows.every((r) => ['piece', 'kg', 'liter'].includes(r.default_unit))).toBe(true)
     expect(allRows.every((r) => r.vat_rate_bp >= 0)).toBe(true)
@@ -69,19 +75,17 @@ describe('importCatalog — fixture réelle data.xlsx', () => {
     )
   })
 
-  it('batch UPSERT par 100 (864 produits → 9 batches)', async () => {
-    const xlsxPath = path.resolve(__dirname, '../../../../_bmad-input/excel-gestion/data.xlsx')
-    await importCatalog(xlsxPath)
+  it('batch UPSERT par 100', async () => {
+    const summary = await importCatalog(xlsxPath)
 
-    expect(dbState.upsertCalls).toHaveLength(9)
-    // 8 batches de 100 + 1 batch de 64
-    expect(dbState.upsertCalls.slice(0, 8).every((b) => b.length === 100)).toBe(true)
-    expect(dbState.upsertCalls[8]).toHaveLength(64)
+    const expectedBatches = Math.ceil(summary.imported / 100)
+    expect(dbState.upsertCalls).toHaveLength(expectedBatches)
+    expect(dbState.upsertCalls.slice(0, -1).every((b) => b.length === 100)).toBe(true)
+    expect(dbState.upsertCalls[expectedBatches - 1]).toHaveLength(summary.imported % 100 || 100)
   })
 
   it('propage les erreurs UPSERT Supabase', async () => {
     dbState.upsertError = { message: 'mock RLS blocked' }
-    const xlsxPath = path.resolve(__dirname, '../../../../_bmad-input/excel-gestion/data.xlsx')
     await expect(importCatalog(xlsxPath)).rejects.toThrow(/mock RLS blocked/)
   })
 })

@@ -68,7 +68,9 @@ const UNIQUE_RUN = Date.now()
  * Retourne un {savId, groupId} utilisable en fixture.
  * Fail si aucun SAV n'est disponible (DB vide — cas preview reset).
  */
-async function findOrSkipSav(admin: SupabaseClient): Promise<{ savId: number; groupId: number } | null> {
+async function findOrSkipSav(
+  admin: SupabaseClient
+): Promise<{ savId: number; groupId: number } | null> {
   const { data, error } = await admin
     .from('sav')
     .select('id, group_id')
@@ -118,6 +120,7 @@ describe.skipIf(!HAS_DB)('INT-8.4 — sav_supplier_claims migration (vraie DB)',
   let testSavId: number | null = null
   let testSavLineId: number | null = null
   let testOperatorId: number | null = null
+  let createdSavLineId: number | null = null
 
   beforeAll(async () => {
     admin = createClient(SUPABASE_URL!, SERVICE_ROLE!, {
@@ -129,6 +132,27 @@ describe.skipIf(!HAS_DB)('INT-8.4 — sav_supplier_claims migration (vraie DB)',
     testSavId = sav?.savId ?? null
     if (testSavId) {
       testSavLineId = await findSavLine(admin, testSavId)
+      // DB fraîche (seed.sql ne crée aucune sav_line) : seed une ligne minimale
+      // pour que les inserts FK sav_line_id ne pointent pas sur un id fantôme.
+      if (!testSavLineId) {
+        const { data: line, error: lineErr } = await admin
+          .from('sav_lines')
+          .insert({
+            sav_id: testSavId,
+            product_code_snapshot: `INT-8.4-${UNIQUE_RUN}`,
+            product_name_snapshot: 'Fixture INT-8.4',
+            qty_requested: 1,
+            unit_requested: 'kg',
+          })
+          .select('id')
+          .single<{ id: number }>()
+        if (lineErr) {
+          console.warn(`[INT-8.4] seed sav_line failed: ${lineErr.message}`)
+        } else {
+          testSavLineId = line.id
+          createdSavLineId = line.id
+        }
+      }
     }
     testOperatorId = await findOperator(admin)
   }, 30_000)
@@ -136,13 +160,14 @@ describe.skipIf(!HAS_DB)('INT-8.4 — sav_supplier_claims migration (vraie DB)',
   afterAll(async () => {
     // Cleanup : supprimer les claims créées (CASCADE supprime les lignes)
     if (createdClaimIds.length > 0) {
-      const { error } = await admin
-        .from('sav_supplier_claims')
-        .delete()
-        .in('id', createdClaimIds)
+      const { error } = await admin.from('sav_supplier_claims').delete().in('id', createdClaimIds)
       if (error) {
         console.warn(`[INT-8.4] Cleanup warning: ${error.message}`)
       }
+    }
+    // Cleanup : sav_line fixture seedée par ce run (jamais une ligne préexistante)
+    if (createdSavLineId) {
+      await admin.from('sav_lines').delete().eq('id', createdSavLineId)
     }
   }, 30_000)
 
@@ -194,23 +219,21 @@ describe.skipIf(!HAS_DB)('INT-8.4 — sav_supplier_claims migration (vraie DB)',
     }
 
     const fakeBlob = Buffer.from('fake')
-    const { error } = await admin
-      .from('sav_supplier_claims')
-      .insert({
-        sav_id: testSavId,
-        credit_note_id: null,
-        supplier_code: 'rufino', // INTERDIT — CHECK = 'sol-y-fruta'
-        reference: `INT-03-${UNIQUE_RUN}`,
-        albaran: '3127',
-        fecha_albaran: '2026-06-05',
-        total_importe_cents: 100,
-        line_count: 1,
-        filename: 'test.xlsx',
-        document_blob: fakeBlob,
-        document_sha256: 'sha256fake',
-        regeneration_of: null,
-        generated_by_operator_id: testOperatorId,
-      })
+    const { error } = await admin.from('sav_supplier_claims').insert({
+      sav_id: testSavId,
+      credit_note_id: null,
+      supplier_code: 'rufino', // INTERDIT — CHECK = 'sol-y-fruta'
+      reference: `INT-03-${UNIQUE_RUN}`,
+      albaran: '3127',
+      fecha_albaran: '2026-06-05',
+      total_importe_cents: 100,
+      line_count: 1,
+      filename: 'test.xlsx',
+      document_blob: fakeBlob,
+      document_sha256: 'sha256fake',
+      regeneration_of: null,
+      generated_by_operator_id: testOperatorId,
+    })
 
     // Doit retourner une erreur CHECK constraint (code 23514)
     expect(error).not.toBeNull()
@@ -254,23 +277,21 @@ describe.skipIf(!HAS_DB)('INT-8.4 — sav_supplier_claims migration (vraie DB)',
     createdClaimIds.push(claim.id)
 
     // Insérer une line avec conversion_flag invalide
-    const { error: lineError } = await admin
-      .from('sav_supplier_claim_lines')
-      .insert({
-        claim_id: claim.id,
-        sav_line_id: testSavLineId,
-        position: 1,
-        codigo_es: '1022',
-        producto_es: 'Aguacate',
-        origen: 'Málaga',
-        peso_qty: 5,
-        unidad: 'Kilos',
-        causa_es: 'estropeado',
-        precio_cents: 529,
-        comentarios: '',
-        importe_cents: 2645,
-        conversion_flag: 'invalid_flag', // INTERDIT
-      })
+    const { error: lineError } = await admin.from('sav_supplier_claim_lines').insert({
+      claim_id: claim.id,
+      sav_line_id: testSavLineId,
+      position: 1,
+      codigo_es: '1022',
+      producto_es: 'Aguacate',
+      origen: 'Málaga',
+      peso_qty: 5,
+      unidad: 'Kilos',
+      causa_es: 'estropeado',
+      precio_cents: 529,
+      comentarios: '',
+      importe_cents: 2645,
+      conversion_flag: 'invalid_flag', // INTERDIT
+    })
 
     expect(lineError).not.toBeNull()
     expect(lineError?.code).toBe('23514') // check_violation
@@ -311,23 +332,21 @@ describe.skipIf(!HAS_DB)('INT-8.4 — sav_supplier_claims migration (vraie DB)',
     if (!claim?.id) return
     createdClaimIds.push(claim.id)
 
-    const { error: lineError } = await admin
-      .from('sav_supplier_claim_lines')
-      .insert({
-        claim_id: claim.id,
-        sav_line_id: testSavLineId,
-        position: 1,
-        codigo_es: '3104',
-        producto_es: 'Paraguaya',
-        origen: 'Nacional',
-        peso_qty: 1.52,
-        unidad: 'Kilos',
-        causa_es: 'estropeado',
-        precio_cents: 324,
-        comentarios: 'via Kilos Netos',
-        importe_cents: 492,
-        conversion_flag: 'converti pièce→kg', // 8.6 — désormais autorisé
-      })
+    const { error: lineError } = await admin.from('sav_supplier_claim_lines').insert({
+      claim_id: claim.id,
+      sav_line_id: testSavLineId,
+      position: 1,
+      codigo_es: '3104',
+      producto_es: 'Paraguaya',
+      origen: 'Nacional',
+      peso_qty: 1.52,
+      unidad: 'Kilos',
+      causa_es: 'estropeado',
+      precio_cents: 324,
+      comentarios: 'via Kilos Netos',
+      importe_cents: 492,
+      conversion_flag: 'converti pièce→kg', // 8.6 — désormais autorisé
+    })
 
     expect(lineError).toBeNull()
   }, 30_000)
@@ -367,23 +386,21 @@ describe.skipIf(!HAS_DB)('INT-8.4 — sav_supplier_claims migration (vraie DB)',
     if (!claim?.id) return
     createdClaimIds.push(claim.id)
 
-    const { error: lineError } = await admin
-      .from('sav_supplier_claim_lines')
-      .insert({
-        claim_id: claim.id,
-        sav_line_id: testSavLineId,
-        position: 1,
-        codigo_es: '1022',
-        producto_es: 'Aguacate',
-        origen: null,
-        peso_qty: 5,
-        unidad: 'Kilos',
-        causa_es: 'estropeado',
-        precio_cents: 0, // INTERDIT — CHECK > 0
-        comentarios: '',
-        importe_cents: 0,
-        conversion_flag: 'ok',
-      })
+    const { error: lineError } = await admin.from('sav_supplier_claim_lines').insert({
+      claim_id: claim.id,
+      sav_line_id: testSavLineId,
+      position: 1,
+      codigo_es: '1022',
+      producto_es: 'Aguacate',
+      origen: null,
+      peso_qty: 5,
+      unidad: 'Kilos',
+      causa_es: 'estropeado',
+      precio_cents: 0, // INTERDIT — CHECK > 0
+      comentarios: '',
+      importe_cents: 0,
+      conversion_flag: 'ok',
+    })
 
     expect(lineError).not.toBeNull()
     expect(lineError?.code).toBe('23514') // check_violation
@@ -400,23 +417,21 @@ describe.skipIf(!HAS_DB)('INT-8.4 — sav_supplier_claims migration (vraie DB)',
     }
 
     const fakeBlob = Buffer.from('fake')
-    const { error } = await admin
-      .from('sav_supplier_claims')
-      .insert({
-        sav_id: testSavId,
-        credit_note_id: 9999999, // ID inexistant
-        supplier_code: 'sol-y-fruta',
-        reference: `INT-06-${UNIQUE_RUN}`,
-        albaran: '3127',
-        fecha_albaran: '2026-06-05',
-        total_importe_cents: 100,
-        line_count: 1,
-        filename: 'test.xlsx',
-        document_blob: fakeBlob,
-        document_sha256: `sha256-INT-06-${UNIQUE_RUN}`,
-        regeneration_of: null,
-        generated_by_operator_id: testOperatorId,
-      })
+    const { error } = await admin.from('sav_supplier_claims').insert({
+      sav_id: testSavId,
+      credit_note_id: 9999999, // ID inexistant
+      supplier_code: 'sol-y-fruta',
+      reference: `INT-06-${UNIQUE_RUN}`,
+      albaran: '3127',
+      fecha_albaran: '2026-06-05',
+      total_importe_cents: 100,
+      line_count: 1,
+      filename: 'test.xlsx',
+      document_blob: fakeBlob,
+      document_sha256: `sha256-INT-06-${UNIQUE_RUN}`,
+      regeneration_of: null,
+      generated_by_operator_id: testOperatorId,
+    })
 
     // FK violation code 23503
     expect(error).not.toBeNull()
@@ -495,43 +510,39 @@ describe.skipIf(!HAS_DB)('INT-8.4 — sav_supplier_claims migration (vraie DB)',
     createdClaimIds.push(claim.id)
 
     // Insérer la 1ère ligne
-    const { error: line1Error } = await admin
-      .from('sav_supplier_claim_lines')
-      .insert({
-        claim_id: claim.id,
-        sav_line_id: testSavLineId,
-        position: 1,
-        codigo_es: '1022',
-        producto_es: 'Aguacate',
-        origen: null,
-        peso_qty: 5,
-        unidad: 'Kilos',
-        causa_es: 'estropeado',
-        precio_cents: 529,
-        comentarios: '',
-        importe_cents: 2645,
-        conversion_flag: 'ok',
-      })
+    const { error: line1Error } = await admin.from('sav_supplier_claim_lines').insert({
+      claim_id: claim.id,
+      sav_line_id: testSavLineId,
+      position: 1,
+      codigo_es: '1022',
+      producto_es: 'Aguacate',
+      origen: null,
+      peso_qty: 5,
+      unidad: 'Kilos',
+      causa_es: 'estropeado',
+      precio_cents: 529,
+      comentarios: '',
+      importe_cents: 2645,
+      conversion_flag: 'ok',
+    })
     expect(line1Error).toBeNull()
 
     // Insérer la même sav_line_id → doublon → UNIQUE violation
-    const { error: line2Error } = await admin
-      .from('sav_supplier_claim_lines')
-      .insert({
-        claim_id: claim.id,
-        sav_line_id: testSavLineId, // MÊME sav_line_id → violation UNIQUE
-        position: 2,
-        codigo_es: '1022',
-        producto_es: 'Aguacate',
-        origen: null,
-        peso_qty: 3,
-        unidad: 'Kilos',
-        causa_es: 'estropeado',
-        precio_cents: 529,
-        comentarios: '',
-        importe_cents: 1587,
-        conversion_flag: 'ok',
-      })
+    const { error: line2Error } = await admin.from('sav_supplier_claim_lines').insert({
+      claim_id: claim.id,
+      sav_line_id: testSavLineId, // MÊME sav_line_id → violation UNIQUE
+      position: 2,
+      codigo_es: '1022',
+      producto_es: 'Aguacate',
+      origen: null,
+      peso_qty: 3,
+      unidad: 'Kilos',
+      causa_es: 'estropeado',
+      precio_cents: 529,
+      comentarios: '',
+      importe_cents: 1587,
+      conversion_flag: 'ok',
+    })
 
     expect(line2Error).not.toBeNull()
     expect(line2Error?.code).toBe('23505') // unique_violation
@@ -599,10 +610,7 @@ describe.skipIf(!HAS_DB)('INT-8.4 — sav_supplier_claims migration (vraie DB)',
     if (claim2?.id) createdClaimIds.push(claim2.id)
 
     // Supprimer claim1 → ON DELETE SET NULL → claim2.regeneration_of = null
-    const { error: delError } = await admin
-      .from('sav_supplier_claims')
-      .delete()
-      .eq('id', claim1.id)
+    const { error: delError } = await admin.from('sav_supplier_claims').delete().eq('id', claim1.id)
     expect(delError).toBeNull()
     // Retirer de la liste cleanup car déjà supprimé
     const idx = createdClaimIds.indexOf(claim1.id)
@@ -625,8 +633,8 @@ describe.skipIf(!HAS_DB)('INT-8.4 — sav_supplier_claims migration (vraie DB)',
   // ===========================================================================
 
   it('INT-10: atomicité RPC — INSERT lines échoue → 0 row orpheline dans sav_supplier_claims', async () => {
-    if (!testSavId || !testOperatorId) {
-      console.warn('[INT-10] SKIP — pas de SAV/operator disponible')
+    if (!testSavId || !testOperatorId || !testSavLineId) {
+      console.warn('[INT-10] SKIP — pas de SAV/operator/sav_line disponible')
       return
     }
 
@@ -657,7 +665,7 @@ describe.skipIf(!HAS_DB)('INT-8.4 — sav_supplier_claims migration (vraie DB)',
       },
       p_lines: [
         {
-          sav_line_id: testSavLineId ?? 1,
+          sav_line_id: testSavLineId,
           position: 1,
           codigo_es: '1022',
           producto_es: 'Aguacate',
@@ -696,7 +704,9 @@ describe.skipIf(!HAS_DB)('INT-8.4 — sav_supplier_claims migration (vraie DB)',
   // Marqué it.todo() — à vérifier manuellement via SQL Editor Supabase avant promote :
   //   SELECT has_function_privilege('anon', 'insert_supplier_claim_with_lines(jsonb,jsonb[])', 'EXECUTE');
   //   -- Résultat attendu : false
-  it.todo("INT-11: has_function_privilege('anon', 'insert_supplier_claim_with_lines(jsonb,jsonb[])','EXECUTE') = false (h-16) — vérifier via SQL Editor : SELECT has_function_privilege('anon','insert_supplier_claim_with_lines(jsonb,jsonb[])','EXECUTE'); attendu: false")
+  it.todo(
+    "INT-11: has_function_privilege('anon', 'insert_supplier_claim_with_lines(jsonb,jsonb[])','EXECUTE') = false (h-16) — vérifier via SQL Editor : SELECT has_function_privilege('anon','insert_supplier_claim_with_lines(jsonb,jsonb[])','EXECUTE'); attendu: false"
+  )
 
   // ===========================================================================
   // INT-12 — RLS active — accès direct sans service_role → erreur (AC #4)
@@ -708,10 +718,7 @@ describe.skipIf(!HAS_DB)('INT-8.4 — sav_supplier_claims migration (vraie DB)',
       auth: { persistSession: false, autoRefreshToken: false },
     })
 
-    const { data, error } = await anonClient
-      .from('sav_supplier_claims')
-      .select('id')
-      .limit(1)
+    const { data, error } = await anonClient.from('sav_supplier_claims').select('id').limit(1)
 
     // Sans service_role, RLS doit bloquer l'accès
     // Soit error (401/403) soit data vide (RLS retourne 0 rows)
@@ -730,7 +737,7 @@ describe.skipIf(!HAS_DB)('INT-8.4 — sav_supplier_claims migration (vraie DB)',
   // INT-13 — Ordre position déterministe (AC #9)
   // ===========================================================================
 
-  it('INT-13: lignes insérées dans l\'ordre position — SELECT ORDER BY position retourne le bon ordre', async () => {
+  it("INT-13: lignes insérées dans l'ordre position — SELECT ORDER BY position retourne le bon ordre", async () => {
     if (!testSavId || !testOperatorId) {
       console.warn('[INT-13] SKIP — pas de SAV/operator disponible')
       return
@@ -745,7 +752,7 @@ describe.skipIf(!HAS_DB)('INT-8.4 — sav_supplier_claims migration (vraie DB)',
       .limit(2)
 
     if (savLinesError || !savLines || savLines.length < 2) {
-      console.warn('[INT-13] SKIP — pas assez de sav_lines pour tester l\'ordre')
+      console.warn("[INT-13] SKIP — pas assez de sav_lines pour tester l'ordre")
       return
     }
 
@@ -842,8 +849,8 @@ describe.skipIf(!HAS_DB)('INT-8.4 — sav_supplier_claims migration (vraie DB)',
   // ===========================================================================
 
   it("INT-14: contrat ::date — fecha_albaran '' rejeté par le RPC ; null accepté → row fecha_albaran/albaran NULL", async () => {
-    if (!testSavId || !testOperatorId) {
-      console.warn('[INT-14] SKIP — pas de SAV/operator disponible')
+    if (!testSavId || !testOperatorId || !testSavLineId) {
+      console.warn('[INT-14] SKIP — pas de SAV/operator/sav_line disponible')
       return
     }
 
@@ -870,7 +877,7 @@ describe.skipIf(!HAS_DB)('INT-8.4 — sav_supplier_claims migration (vraie DB)',
       },
       p_lines: [
         {
-          sav_line_id: testSavLineId ?? 1,
+          sav_line_id: testSavLineId,
           position: 1,
           codigo_es: '1022',
           producto_es: 'Aguacate',
@@ -911,7 +918,7 @@ describe.skipIf(!HAS_DB)('INT-8.4 — sav_supplier_claims migration (vraie DB)',
         },
         p_lines: [
           {
-            sav_line_id: testSavLineId ?? 1,
+            sav_line_id: testSavLineId,
             position: 1,
             codigo_es: '1022',
             producto_es: 'Aguacate',

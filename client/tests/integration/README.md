@@ -28,6 +28,15 @@ fix for that gap.
    npx supabase db reset
    ```
 5. Local credentials are printed by `supabase start` (URL + service_role key)
+6. Configure the RGPD anonymize salt GUC (required by `admin_anonymize_member`
+   RPC — Story 7-6 D-10 fail-fast; the anonymize integration tests fail with
+   `RGPD_SALT_NOT_CONFIGURED` without it). **Re-run after every `db reset`** —
+   the reset recreates the database, wiping ALTER DATABASE settings:
+   ```sh
+   psql "postgresql://supabase_admin:postgres@127.0.0.1:54322/postgres" \
+     -c "ALTER DATABASE postgres SET app.rgpd_anonymize_salt = 'local-integration-test-salt';"
+   ```
+   (`supabase_admin` is required — the `postgres` role lacks the privilege.)
 
 **Option B — Preview / remote DB**
 

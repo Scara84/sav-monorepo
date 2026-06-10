@@ -12,7 +12,8 @@ import { createClient, type SupabaseClient } from '@supabase/supabase-js'
  *   (c) D-11.3a — `email_outbox` status='pending' DELETE
  *   (d) D-11.3b — `email_outbox` status IN ('sent','failed') UPDATE
  *                  recipient_email='anon+<hash8>@fruitstock.invalid'
- *   (e) D-11.4 — `members.notification_prefs` reset `'{}'::jsonb`
+ *   (e) D-11.4 — `members.notification_prefs` reset canonique false/false
+ *                  (HARDEN-10 — `'{}'::jsonb` violerait notification_prefs_schema_chk)
  *
  * **Conservation comptable NFR-D10** : chaque cas asserte aussi que
  *   `sav`, `sav_lines`, `credit_notes`, `sav_comments`, `sav_files`,
@@ -97,7 +98,11 @@ async function seedMember(admin: SupabaseClient, suffix: string): Promise<number
       email: `purge-${suffix}-${ts}@fruitstock.test`,
       first_name: 'Purge',
       last_name: 'Test',
-      notification_prefs: { weekly_recap: true } as unknown as Record<string, unknown>,
+      // Story 6.1 `notification_prefs_schema_chk` : les 2 clés booléennes sont obligatoires.
+      notification_prefs: { status_updates: true, weekly_recap: true } as unknown as Record<
+        string,
+        unknown
+      >,
       anonymized_at: null,
     })
     .select('id')
@@ -110,11 +115,21 @@ describe.skipIf(!HAS_DB)(
   'Story 7-6 AC #3 + #6 D-11 — anonymize purge cross-tables (integration DB réelle)',
   () => {
     let admin: SupabaseClient
+    let actorOperatorId: number
 
-    beforeAll(() => {
+    beforeAll(async () => {
       admin = createClient(SUPABASE_URL!, SERVICE_ROLE!, {
         auth: { persistSession: false, autoRefreshToken: false },
       })
+      // FK audit_trail_actor_operator_id_fkey : l'actor doit exister dans
+      // operators — résolution dynamique (un id codé en dur casse sur DB fraîche).
+      const { data: op, error } = await admin
+        .from('operators')
+        .select('id')
+        .limit(1)
+        .single<{ id: number }>()
+      if (error || !op) throw new Error(`no operator available: ${error?.message}`)
+      actorOperatorId = op.id
     })
 
     it('(a) D-11.1 — magic_link_tokens DELETE après anonymize ; comptable inchangé', async () => {
@@ -131,7 +146,7 @@ describe.skipIf(!HAS_DB)(
 
       const { error: rpcErr } = await admin.rpc('admin_anonymize_member', {
         p_member_id: memberId,
-        p_actor_operator_id: 9,
+        p_actor_operator_id: actorOperatorId,
       })
       expect(rpcErr).toBeNull()
 
@@ -161,7 +176,7 @@ describe.skipIf(!HAS_DB)(
 
       const { error: rpcErr } = await admin.rpc('admin_anonymize_member', {
         p_member_id: memberId,
-        p_actor_operator_id: 9,
+        p_actor_operator_id: actorOperatorId,
       })
       expect(rpcErr).toBeNull()
 
@@ -181,12 +196,14 @@ describe.skipIf(!HAS_DB)(
         {
           recipient_member_id: memberId,
           recipient_email: 'real.member@example.com',
+          kind: 'sav_validated',
           subject: 'pending-1',
           status: 'pending',
         },
         {
           recipient_member_id: memberId,
           recipient_email: 'real.member@example.com',
+          kind: 'sav_closed',
           subject: 'pending-2',
           status: 'pending',
         },
@@ -197,7 +214,7 @@ describe.skipIf(!HAS_DB)(
 
       const { error: rpcErr } = await admin.rpc('admin_anonymize_member', {
         p_member_id: memberId,
-        p_actor_operator_id: 9,
+        p_actor_operator_id: actorOperatorId,
       })
       expect(rpcErr).toBeNull()
 
@@ -218,12 +235,14 @@ describe.skipIf(!HAS_DB)(
         {
           recipient_member_id: memberId,
           recipient_email: 'real.member@example.com',
+          kind: 'sav_validated',
           subject: 'sent-1',
           status: 'sent',
         },
         {
           recipient_member_id: memberId,
           recipient_email: 'real.member@example.com',
+          kind: 'sav_closed',
           subject: 'failed-1',
           status: 'failed',
         },
@@ -234,7 +253,7 @@ describe.skipIf(!HAS_DB)(
 
       const { error: rpcErr } = await admin.rpc('admin_anonymize_member', {
         p_member_id: memberId,
-        p_actor_operator_id: 9,
+        p_actor_operator_id: actorOperatorId,
       })
       expect(rpcErr).toBeNull()
 
@@ -257,9 +276,9 @@ describe.skipIf(!HAS_DB)(
       expect(after).toEqual(before)
     })
 
-    it("(e) D-11.4 — members.notification_prefs reset '{}'::jsonb ; comptable inchangé", async () => {
+    it('(e) D-11.4 — members.notification_prefs reset canonique false/false (HARDEN-10) ; comptable inchangé', async () => {
       const memberId = await seedMember(admin, 'notif-prefs')
-      // Vérifie pré-condition : notification_prefs={weekly_recap:true} au seed.
+      // Vérifie pré-condition : notification_prefs opt-in au seed.
       const { data: before } = await admin
         .from('members')
         .select('notification_prefs')
@@ -268,6 +287,7 @@ describe.skipIf(!HAS_DB)(
       expect(
         (before as { notification_prefs: Record<string, unknown> }).notification_prefs
       ).toEqual({
+        status_updates: true,
         weekly_recap: true,
       })
 
@@ -275,7 +295,7 @@ describe.skipIf(!HAS_DB)(
 
       const { error: rpcErr } = await admin.rpc('admin_anonymize_member', {
         p_member_id: memberId,
-        p_actor_operator_id: 9,
+        p_actor_operator_id: actorOperatorId,
       })
       expect(rpcErr).toBeNull()
 
@@ -284,8 +304,10 @@ describe.skipIf(!HAS_DB)(
         .select('notification_prefs')
         .eq('id', memberId)
         .single()
+      // HARDEN-10 : `'{}'::jsonb` violerait notification_prefs_schema_chk —
+      // le RPC resette au canonique false/false (plus d'emails possibles).
       expect((after as { notification_prefs: Record<string, unknown> }).notification_prefs).toEqual(
-        {}
+        { status_updates: false, weekly_recap: false }
       )
 
       const afterSnap = await snapshotComptable(admin, memberId)
