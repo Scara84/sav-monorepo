@@ -152,6 +152,60 @@ describe('SM-05 replyTo propagé sur compte sav', () => {
   })
 })
 
+describe('SM-07 EMAIL_REDIRECT_ALL_TO — mode test, redirect global des destinataires', () => {
+  it('var définie → to remplacé, sujet préfixé [TEST→destinataire-réel]', async () => {
+    vi.stubEnv('EMAIL_REDIRECT_ALL_TO', 'anthony.scaramuzza@fruitstock.eu')
+    await sendMail({
+      to: 'member@example.com',
+      subject: 'Votre avoir SAV',
+      html: '<p>x</p>',
+      account: 'sav',
+    })
+    const mail = mocks.sendMailCalls[0]!
+    expect(mail.to).toBe('anthony.scaramuzza@fruitstock.eu')
+    expect(mail.subject).toBe('[TEST→member@example.com] Votre avoir SAV')
+    // Le reste du mail est inchangé (from du compte, html).
+    expect(mail.from).toBe('SAV Fruitstock <sav@fruitstock.eu>')
+  })
+
+  it('var définie → s’applique aussi au compte noreply (magic-links)', async () => {
+    vi.stubEnv('EMAIL_REDIRECT_ALL_TO', 'anthony.scaramuzza@fruitstock.eu')
+    await sendMail({ to: 'adherent@gmail.com', subject: 'Magic link', html: '<p>x</p>' })
+    expect(mocks.sendMailCalls[0]!.to).toBe('anthony.scaramuzza@fruitstock.eu')
+    expect(mocks.sendMailCalls[0]!.subject).toBe('[TEST→adherent@gmail.com] Magic link')
+  })
+
+  it('var absente → comportement normal inchangé (to et subject intacts)', async () => {
+    await sendMail({ to: 'member@example.com', subject: 'Votre avoir SAV', html: '<p>x</p>' })
+    const mail = mocks.sendMailCalls[0]!
+    expect(mail.to).toBe('member@example.com')
+    expect(mail.subject).toBe('Votre avoir SAV')
+  })
+
+  it('var vide/whitespace → comportement normal (pas de redirect sur valeur vide)', async () => {
+    vi.stubEnv('EMAIL_REDIRECT_ALL_TO', '   ')
+    await sendMail({ to: 'member@example.com', subject: 'S', html: '<p>x</p>' })
+    expect(mocks.sendMailCalls[0]!.to).toBe('member@example.com')
+    expect(mocks.sendMailCalls[0]!.subject).toBe('S')
+  })
+
+  it('redirect actif → log warn smtp.test_redirect_active avec destinataire réel', async () => {
+    vi.stubEnv('EMAIL_REDIRECT_ALL_TO', 'anthony.scaramuzza@fruitstock.eu')
+    const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+    try {
+      await sendMail({ to: 'member@example.com', subject: 'S', html: '<p>x</p>' })
+      const warnLine = errSpy.mock.calls
+        .map((args) => String(args[0]))
+        .find((line) => line.includes('smtp.test_redirect_active'))
+      expect(warnLine).toBeDefined()
+      expect(warnLine).toContain('member@example.com')
+      expect(warnLine).toContain('anthony.scaramuzza@fruitstock.eu')
+    } finally {
+      errSpy.mockRestore()
+    }
+  })
+})
+
 describe('SM-06 smtpTransporter exposé pour les call-sites avancés', () => {
   it('smtpTransporter("sav") retourne le bon transporter cached', () => {
     const t = smtpTransporter('sav')

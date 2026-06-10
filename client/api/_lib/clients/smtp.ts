@@ -1,4 +1,5 @@
 import { createTransport, type Transporter } from 'nodemailer'
+import { logger } from '../logger'
 
 /**
  * Comptes SMTP supportés (Story 5.7 AC #4a).
@@ -102,15 +103,35 @@ export function __resetSmtpTransporterForTests(): void {
   cachedTransporters.sav = null
 }
 
+/**
+ * Mode test (période UAT avec vraies factures) : si `EMAIL_REDIRECT_ALL_TO`
+ * est définie, TOUS les envois sortants sont redirigés vers cette adresse au
+ * lieu du destinataire réel — point d'interception unique, les 4 call-sites
+ * (magic-links, outbox, capture) passent par `sendMail`. Le sujet est préfixé
+ * `[TEST→destinataire-réel]` pour garder la traçabilité, et chaque redirect
+ * est loggé en warn (détection d'un flag oublié hors période de test).
+ * Réversible en supprimant la variable d'env — aucun changement de code.
+ */
+function resolveRecipient(originalTo: string, subject: string): { to: string; subject: string } {
+  const redirectTo = (process.env['EMAIL_REDIRECT_ALL_TO'] ?? '').trim()
+  if (!redirectTo) return { to: originalTo, subject }
+  logger.warn('smtp.test_redirect_active', {
+    originalRecipient: originalTo,
+    redirectedTo: redirectTo,
+  })
+  return { to: redirectTo, subject: `[TEST→${originalTo}] ${subject}` }
+}
+
 export async function sendMail(input: SmtpMailInput): Promise<SmtpSendResult> {
   const account: SmtpAccount = input.account ?? 'noreply'
   const fromKey = FROM_ENV[account]
   const from = process.env[fromKey]
   if (!from) throw new Error(`${fromKey} manquant`)
+  const { to, subject } = resolveRecipient(input.to, input.subject)
   const mail: Parameters<Transporter['sendMail']>[0] = {
     from,
-    to: input.to,
-    subject: input.subject,
+    to,
+    subject,
     html: input.html,
   }
   if (input.text !== undefined) mail.text = input.text
