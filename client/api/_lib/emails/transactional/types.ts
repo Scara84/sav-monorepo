@@ -29,6 +29,24 @@ export interface TransitionEmailData {
   dossierUrl?: string | null
   /** Construit côté runner à partir de APP_BASE_URL + /monespace/preferences. */
   unsubscribeUrl?: string | null
+  /**
+   * Story V1.10 AC#2 + AC#8 — flag injecté par le runner retry-emails quand un
+   * avoir EXISTE pour ce SAV mais la résolution de la PJ a échoué (download
+   * Graph KO, pdf_web_url NULL, > 10 MB, sav_id absent côté row legacy). Le
+   * template `sav-closed` bascule alors sur le libellé « disponible dans votre
+   * espace » avec lien dossierUrl, au lieu de la mention « pièce jointe ».
+   * Sans ce flag (ou `false`) → chemin nominal PJ.
+   * Spécifique à `sav_closed` ; ignoré par les autres kinds.
+   */
+  pdfFallback?: boolean
+  /**
+   * Story V1.10 CR FIX 3 — flag injecté par le runner retry-emails quand
+   * AUCUN avoir n'existe pour ce SAV (cas SAV clôturé sans remboursement).
+   * Le template `sav-closed` s'abstient alors de toute mention « bon SAV »
+   * (anti-mensonge utilisateur — comportement 6.6 d'avant V1.10).
+   * Spécifique à `sav_closed` ; ignoré par les autres kinds.
+   */
+  noCreditNote?: boolean
 }
 
 /**

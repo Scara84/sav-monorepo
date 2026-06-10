@@ -22,6 +22,7 @@ interface CapturedSendMail {
   html?: string
   text?: string
   replyTo?: string
+  attachments?: Array<{ filename: string; content: Buffer }>
 }
 
 const mocks = vi.hoisted(() => ({
@@ -203,6 +204,65 @@ describe('SM-07 EMAIL_REDIRECT_ALL_TO — mode test, redirect global des destina
     } finally {
       errSpy.mockRestore()
     }
+  })
+})
+
+describe('SM-08 (V1.10 AC#3) attachments passthrough nodemailer', () => {
+  it('attachments fourni → propagé tel quel à nodemailer.sendMail', async () => {
+    const pdf = Buffer.from('%PDF-1.4 fake-bytes')
+    await sendMail({
+      to: 'member@example.com',
+      subject: 'SAV clôturé',
+      html: '<p>x</p>',
+      account: 'sav',
+      attachments: [{ filename: 'AV-2026-00003 Dupont J.pdf', content: pdf }],
+    })
+    const mail = mocks.sendMailCalls[0]!
+    expect(mail.attachments).toBeDefined()
+    expect(mail.attachments).toHaveLength(1)
+    expect(mail.attachments![0]!.filename).toBe('AV-2026-00003 Dupont J.pdf')
+    expect(mail.attachments![0]!.content).toBe(pdf)
+  })
+
+  it('attachments absent → mail.attachments undefined (rétrocompat stricte SM-01..SM-07)', async () => {
+    await sendMail({
+      to: 'member@example.com',
+      subject: 'Magic link',
+      html: '<p>x</p>',
+    })
+    const mail = mocks.sendMailCalls[0]!
+    expect(mail.attachments).toBeUndefined()
+  })
+
+  it('attachments=[] (vide) → propagé tel quel (pas de tampering)', async () => {
+    await sendMail({
+      to: 'a@x',
+      subject: 's',
+      html: '<p>x</p>',
+      account: 'sav',
+      attachments: [],
+    })
+    const mail = mocks.sendMailCalls[0]!
+    // Soit undefined (filtré) soit [] : la spec dit "passé tel quel" → on
+    // exige [] présent — pas de filtrage silencieux qui masquerait une intent.
+    expect(mail.attachments).toEqual([])
+  })
+
+  it('AC#7 EMAIL_REDIRECT_ALL_TO actif → attachments toujours propagées (PJ survit au redirect)', async () => {
+    vi.stubEnv('EMAIL_REDIRECT_ALL_TO', 'anthony.scaramuzza@fruitstock.eu')
+    const pdf = Buffer.from('%PDF-bytes')
+    await sendMail({
+      to: 'member@example.com',
+      subject: 'SAV clôturé',
+      html: '<p>x</p>',
+      account: 'sav',
+      attachments: [{ filename: 'AV-2026-00003.pdf', content: pdf }],
+    })
+    const mail = mocks.sendMailCalls[0]!
+    expect(mail.to).toBe('anthony.scaramuzza@fruitstock.eu')
+    expect(mail.subject).toBe('[TEST→member@example.com] SAV clôturé')
+    expect(mail.attachments).toHaveLength(1)
+    expect(mail.attachments![0]!.filename).toBe('AV-2026-00003.pdf')
   })
 })
 

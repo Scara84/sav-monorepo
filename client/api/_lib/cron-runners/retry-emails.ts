@@ -1,10 +1,11 @@
 import pLimit from 'p-limit'
 import { supabaseAdmin } from '../_typed-shim'
-import { sendMail, type SmtpAccount } from '../clients/smtp'
+import { sendMail, type SmtpAccount, type SmtpMailAttachment } from '../clients/smtp'
 import { logger } from '../logger'
 import { renderEmailTemplate } from '../emails/transactional/render'
 import type { EmailTemplateData } from '../emails/transactional/render'
 import { MEMBER_KINDS } from '../emails/transactional/kinds'
+import { resolveSavClosedAttachment } from '../emails/sav-closed-attachment'
 
 /**
  * Story 6.6 — Cron runner retry-emails.
@@ -66,6 +67,10 @@ interface OutboxRow {
 const BATCH_LIMIT = 100
 const CONCURRENCY = 5
 const SEND_TIMEOUT_MS = 10_000
+// CR FIX 4 (LOW-1) Story V1.10 : borne le resolver PJ bon SAV (Graph token +
+// fetch). Le module pur a déjà AbortSignal.timeout(8s) sur fetch mais pas sur
+// getAccessToken — ce timeout couvre l'ensemble (token MSAL + Graph + DB).
+const ATTACHMENT_RESOLVE_TIMEOUT_MS = 12_000
 const MAX_ATTEMPTS = 5
 const BACKOFF_CAP_MS = 24 * 3600 * 1000 // 24h cap
 
@@ -351,6 +356,58 @@ export async function runRetryEmails({
             }
           }
 
+          // ── 3a-bis. Story V1.10 (AC#1/AC#2/AC#6/NFR-REL) — résolution PJ
+          // « bon SAV » uniquement pour `kind='sav_closed'` ET sav_id présent.
+          // L'opt-out a déjà été géré au-dessus (perf : pas de coût Graph pour
+          // un envoi qui n'aura pas lieu). Le module pur NE throw jamais —
+          // belt-and-braces try/catch ici defense-in-depth (NFR-REL : un bug
+          // resolver ne doit pas casser l'envoi nominal).
+          //
+          // CR FIX 3 : 3 cas selon `kind` du retour :
+          //   - 'attachment'    → PJ jointe au mail.
+          //   - 'unavailable'   → pdfFallback=true (lien espace adhérent).
+          //   - 'no_credit_note'→ template INCHANGÉ (pas de mention bon SAV) —
+          //                       comportement 6.6 d'avant la story.
+          // sav_id absent OU throw inattendu : on bascule sur 'unavailable'
+          // (fallback conservateur : éviter de masquer un éventuel avoir).
+          let savClosedAttachment: SmtpMailAttachment | null = null
+          let savClosedHasCreditNote = false // true si avoir existe (PJ OU lien)
+          if (row.kind === 'sav_closed') {
+            if (row.sav_id !== null && row.sav_id !== undefined) {
+              try {
+                // CR FIX 4 (LOW-1) : borne le resolver Graph + DB pour ne pas
+                // dépasser le budget cron 60s sur un Graph qui hang. Le module
+                // pur a déjà un AbortSignal.timeout(8s) sur fetch mais le token
+                // n'est pas borné → ceinture+bretelle.
+                const resolved = await withTimeout(
+                  resolveSavClosedAttachment(row.sav_id, { requestId }),
+                  ATTACHMENT_RESOLVE_TIMEOUT_MS,
+                  'sav_closed_attachment_resolve'
+                )
+                if (resolved.kind === 'attachment') {
+                  savClosedAttachment = { filename: resolved.filename, content: resolved.content }
+                  savClosedHasCreditNote = true
+                } else if (resolved.kind === 'unavailable') {
+                  savClosedHasCreditNote = true
+                }
+                // 'no_credit_note' → savClosedHasCreditNote reste false.
+              } catch (resolverErr) {
+                logger.warn('cron.retry-emails.attachment_resolver_unexpected', {
+                  requestId,
+                  outboxId: row.id,
+                  savId: row.sav_id,
+                  message: resolverErr instanceof Error ? resolverErr.message : String(resolverErr),
+                })
+                // Throw inattendu OU timeout → fallback conservateur 'unavailable'.
+                savClosedHasCreditNote = true
+              }
+            } else {
+              // sav_id absent (legacy row 6.6 pré-migration) → fallback lien
+              // conservateur, on ne peut PAS prouver qu'il n'y a pas d'avoir.
+              savClosedHasCreditNote = true
+            }
+          }
+
           // ── 3b. Render template.
           const isOperatorKind =
             row.kind === 'sav_received_operator' ||
@@ -361,6 +418,22 @@ export async function runRetryEmails({
           // Pour sav_comment_added, injecter recipientKind selon membre vs opérateur.
           if (row.kind === 'sav_comment_added') {
             baseData['recipientKind'] = row.recipient_operator_id !== null ? 'operator' : 'member'
+          }
+          // Story V1.10 AC#2/AC#8 — pour `sav_closed` :
+          //   - PJ résolue (savClosedAttachment !== null) → template nominal
+          //     mention « pièce jointe ». Pas de flag à poser.
+          //   - Avoir existe MAIS PJ non résolue (`savClosedHasCreditNote=true`
+          //     + attachment null) → `pdfFallback=true` → mention « disponible
+          //     dans votre espace » + lien dossierUrl.
+          //   - CR FIX 3 : AUCUN avoir n'existe (`savClosedHasCreditNote=false`)
+          //     → `noCreditNote=true` → template SANS mention bon SAV (SAV
+          //     clôturé sans remboursement, comportement 6.6 d'avant V1.10).
+          if (row.kind === 'sav_closed') {
+            if (savClosedAttachment === null && savClosedHasCreditNote) {
+              baseData['pdfFallback'] = true
+            } else if (!savClosedHasCreditNote) {
+              baseData['noCreditNote'] = true
+            }
           }
           const data = enrichTemplateData(baseData, row.sav_id, isOperatorKind, appBase)
           const rendered = renderEmailTemplate(row.kind, data)
@@ -384,12 +457,18 @@ export async function runRetryEmails({
 
           // ── 3c. Envoi SMTP avec timeout 10s (DS Q3 Promise.race).
           const account: SmtpAccount = row.account === 'noreply' ? 'noreply' : 'sav'
+          // Story V1.10 AC#1 — propage la PJ au sendMail (passthrough nodemailer
+          // via smtp.ts AC#3). Hors `sav_closed` ou sans PJ résolue : ne pose
+          // pas le champ (rétrocompat stricte SM-01..SM-07).
           const sendPromise = sendMail({
             to: row.recipient_email,
             subject: rendered.subject,
             html: rendered.html,
             text: rendered.text,
             account,
+            ...(savClosedAttachment !== null
+              ? { attachments: [savClosedAttachment] }
+              : {}),
           })
           const info = await withTimeout(sendPromise, SEND_TIMEOUT_MS, 'smtp_send')
 

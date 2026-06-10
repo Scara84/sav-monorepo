@@ -1,6 +1,6 @@
 # Story V1.10 : Email client de clôture SAV avec bon SAV (avoir) PDF
 
-Status: ready-for-dev
+Status: review (Tasks 1-4 ✅ — reste Task 5 UAT preview)
 
 <!-- Source : UAT bout-en-bout 2026-06-10 (SAV-2026-00003, AV-2026-00003) —
      deferred-work.md « FEATURE : email client de fin de process avec bon SAV PDF ».
@@ -47,19 +47,21 @@ so that **j'ai une trace comptable directe sans devoir me connecter à l'espace 
 
 ## Tasks / Subtasks
 
-- [ ] Task 1 (AC#3) : étendre `SmtpMailInput` + `sendMail` avec `attachments`
+- [x] Task 1 (AC#3) : étendre `SmtpMailInput` + `sendMail` avec `attachments`
       optionnel (mapping direct nodemailer), tests unitaires smtp.spec.ts
       (rétrocompat sans attachments + 1 PJ Buffer).
-- [ ] Task 2 (AC#4, AC#6) : module pur `resolveSavClosedAttachment(savId)` dans
+- [x] Task 2 (AC#4, AC#6) : module pur `resolveSavClosedAttachment(savId)` dans
       `api/_lib/emails/` — SELECT credit_notes (pdf dispo, plus récent), download
-      Graph bytes, retourne `{ filename, content } | null`. Logger warn structuré
-      si échec (jamais throw vers le runner).
-- [ ] Task 3 (AC#1, AC#2, AC#5) : intégrer dans `retry-emails.ts` — uniquement
-      pour `kind === 'sav_closed'` ; PJ si résolue, sinon enrichir template_data
-      avec `pdfFallback: true` ; template `sav-closed.ts` : paragraphe bon SAV
-      (PJ jointe vs lien espace adhérent).
-- [ ] Task 4 (AC#8) : tests ATDD avant implémentation (pattern projet) ; rejouer
-      suite 6.6 complète + typecheck.
+      Graph bytes, retourne un résultat discriminé
+      `attachment | unavailable | no_credit_note` (DN-1 option b, CR). Logger
+      warn structuré si échec (jamais throw vers le runner).
+- [x] Task 3 (AC#1, AC#2, AC#5) : intégrer dans `retry-emails.ts` — uniquement
+      pour `kind === 'sav_closed'` ; PJ si résolue, sinon `pdfFallback: true`
+      (lien espace) ; `no_credit_note` → template SANS paragraphe bon SAV ;
+      template `sav-closed.ts` : branche noCreditNote > pdfFallback > nominal.
+- [x] Task 4 (AC#8) : tests ATDD avant implémentation (pattern projet) ; rejouer
+      suite 6.6 complète + typecheck. (72/72 V1.10, full suite 2880 PASS, CR
+      re-review PASS, trace gate PASS 13/13 AC)
 - [ ] Task 5 : UAT réel preview (clôturer un SAV de test, vérifier réception
       sur EMAIL_REDIRECT_ALL_TO avec PJ).
 

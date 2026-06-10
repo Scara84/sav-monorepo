@@ -44,6 +44,7 @@ interface State {
     html: string
     text?: string
     account?: string
+    attachments?: Array<{ filename: string; content: Buffer }>
   }>
   sendMailFailIndices: Set<number>
   /** Index → ms hang (pour timeout test). */
@@ -55,6 +56,25 @@ interface State {
   claimRpcEnabled: boolean
   /** Pour P0-2 verify path : valeur smtp_message_id retournée par SELECT verif. */
   verifySmtpMessageId: string | null
+  // ── V1.10 ─────────────────────────────────────────────────────────────
+  /**
+   * Comportement du mock `resolveSavClosedAttachment(savId)` — post CR FIX 3,
+   * retourne un résultat DISCRIMINÉ :
+   *   - `{ kind: 'no_credit_note' }` par défaut (aucun avoir pour ce SAV →
+   *     template SANS mention bon SAV).
+   *   - `{ kind: 'unavailable' }` → avoir existe mais PJ KO → pdfFallback=true.
+   *   - `{ kind: 'attachment', filename, content }` → la PJ doit être
+   *     propagée à sendMail (AC#1).
+   *   - `'throw'` → simule un bug inattendu (le runner ne doit JAMAIS échouer
+   *     pour ce motif — AC#5 NFR-REL).
+   */
+  attachmentResolver:
+    | { kind: 'no_credit_note' }
+    | { kind: 'unavailable' }
+    | { kind: 'attachment'; filename: string; content: Buffer }
+    | 'throw'
+  /** Liste des sav_id reçus par resolveSavClosedAttachment (vérifie call-site). */
+  attachmentResolverCalls: Array<number>
 }
 
 const state = vi.hoisted(
@@ -70,6 +90,8 @@ const state = vi.hoisted(
       markSentError: null,
       claimRpcEnabled: false,
       verifySmtpMessageId: null,
+      attachmentResolver: { kind: 'no_credit_note' },
+      attachmentResolverCalls: [],
     }) as State
 )
 
@@ -217,6 +239,7 @@ vi.mock('../../../../api/_lib/clients/smtp', () => ({
     html: string
     text?: string
     account?: string
+    attachments?: Array<{ filename: string; content: Buffer }>
   }) => {
     const idx = state.sendMailCalls.length
     state.sendMailCalls.push({
@@ -225,6 +248,7 @@ vi.mock('../../../../api/_lib/clients/smtp', () => ({
       html: input.html,
       ...(input.text !== undefined ? { text: input.text } : {}),
       ...(input.account !== undefined ? { account: input.account } : {}),
+      ...(input.attachments !== undefined ? { attachments: input.attachments } : {}),
     })
     if (state.sendMailHangIndices.has(idx)) {
       const ms = state.sendMailHangIndices.get(idx) as number
@@ -236,6 +260,20 @@ vi.mock('../../../../api/_lib/clients/smtp', () => ({
     return { messageId: `<msg-${idx}@x>`, accepted: [input.to], rejected: [] }
   },
   __resetSmtpTransporterForTests: () => undefined,
+}))
+
+// V1.10 — mock du module `resolveSavClosedAttachment` (à implémenter par dev).
+// Le runner doit l'importer pour les rows `kind === 'sav_closed'` uniquement.
+// Si le runner ne l'importe pas encore (RED phase), ce mock est simplement
+// inerte — les tests AC#1/2/5 failent comme attendu jusqu'à l'implémentation.
+vi.mock('../../../../api/_lib/emails/sav-closed-attachment', () => ({
+  resolveSavClosedAttachment: async (savId: number) => {
+    state.attachmentResolverCalls.push(savId)
+    if (state.attachmentResolver === 'throw') {
+      throw new Error('UNEXPECTED|attachment resolver bug')
+    }
+    return state.attachmentResolver
+  },
 }))
 
 import { runRetryEmails, __testables } from '../../../../api/_lib/cron-runners/retry-emails'
@@ -277,6 +315,8 @@ function resetState(): void {
   state.markSentError = null
   state.claimRpcEnabled = false
   state.verifySmtpMessageId = null
+  state.attachmentResolver = { kind: 'no_credit_note' }
+  state.attachmentResolverCalls = []
 }
 
 describe('runRetryEmails (Story 6.6)', () => {
@@ -686,5 +726,188 @@ describe('runRetryEmails (Story 6.6)', () => {
     // claim_outbox_batch a été appelé une fois, mais retour error → fallback.
     const claimCall = state.rpcCalls.find((c) => c.fn === 'claim_outbox_batch')
     expect(claimCall).toBeDefined()
+  })
+
+  // ════════════════════════════════════════════════════════════════════════
+  // V1.10 — Email clôture SAV avec bon SAV (avoir) PDF en pièce jointe.
+  //         AC#1 (PJ jointe), AC#2 (fallback lien), AC#5 (opt-out inchangé),
+  //         AC#6 (résolution par le module pur — vérifié ici via call-site),
+  //         NFR-REL (échec PJ ne fait jamais échouer l'envoi).
+  // ════════════════════════════════════════════════════════════════════════
+
+  function makeSavClosedRow(overrides: Partial<OutboxRow> = {}): OutboxRow {
+    return makeRow({
+      id: 1,
+      kind: 'sav_closed',
+      subject: 'SAV SAV-2026-00003 — clôturé',
+      template_data: {
+        savReference: 'SAV-2026-00003',
+        savId: 3,
+        memberFirstName: 'Jean',
+        memberLastName: 'Dupont',
+        newStatus: 'closed',
+        previousStatus: 'validated',
+        totalAmountCents: 4567,
+      },
+      sav_id: 3,
+      ...overrides,
+    })
+  }
+
+  it('V1.10 AC#1 sav_closed + PJ résolue (kind="attachment") → sendMail reçoit attachments=[PDF]', async () => {
+    state.outboxRows = [makeSavClosedRow()]
+    state.membersById.set(100, { id: 100, notification_prefs: { status_updates: true } })
+    const pdfBytes = Buffer.from('%PDF-1.4 fake-credit-note-bytes')
+    state.attachmentResolver = {
+      kind: 'attachment',
+      filename: 'AV-2026-00003 Dupont J.pdf',
+      content: pdfBytes,
+    }
+    const r = await runRetryEmails({ requestId: 'req-1' })
+    expect(r.sent).toBe(1)
+    expect(r.failed).toBe(0)
+    // Le module pur doit être appelé avec le sav_id de la row.
+    expect(state.attachmentResolverCalls).toContain(3)
+    // La PJ doit être propagée à sendMail.
+    const mail = state.sendMailCalls[0]!
+    expect(mail.attachments).toBeDefined()
+    expect(mail.attachments).toHaveLength(1)
+    expect(mail.attachments![0]!.filename).toBe('AV-2026-00003 Dupont J.pdf')
+    expect(mail.attachments![0]!.content).toBe(pdfBytes)
+  })
+
+  it('V1.10 AC#2 sav_closed + kind="unavailable" (avoir existe, PJ KO) → envoi + pdfFallback=true', async () => {
+    state.outboxRows = [makeSavClosedRow()]
+    state.membersById.set(100, { id: 100, notification_prefs: { status_updates: true } })
+    state.attachmentResolver = { kind: 'unavailable' }
+    const r = await runRetryEmails({ requestId: 'req-1' })
+    // L'envoi doit réussir — la PJ KO ne bloque pas (NFR-REL).
+    expect(r.sent).toBe(1)
+    expect(r.failed).toBe(0)
+    // Aucune PJ.
+    const mail = state.sendMailCalls[0]!
+    expect(mail.attachments === undefined || mail.attachments.length === 0).toBe(true)
+    // Le template doit avoir reçu pdfFallback=true → reflété dans le html
+    // (vérification indirecte ; le test template dédié couvre la mention).
+    // Mention « espace » attendue dans le html quand on est en fallback.
+    expect(mail.html.toLowerCase()).toContain('disponible dans votre espace')
+  })
+
+  // ── CR FIX 3 — discrimination no_credit_note ─────────────────────────────
+  it('V1.10 CR FIX 3 : sav_closed + kind="no_credit_note" → envoi SANS mention bon SAV (pas de paragraphe espace)', async () => {
+    state.outboxRows = [makeSavClosedRow()]
+    state.membersById.set(100, { id: 100, notification_prefs: { status_updates: true } })
+    state.attachmentResolver = { kind: 'no_credit_note' }
+    const r = await runRetryEmails({ requestId: 'req-1' })
+    expect(r.sent).toBe(1)
+    expect(r.failed).toBe(0)
+    // Aucune PJ.
+    const mail = state.sendMailCalls[0]!
+    expect(mail.attachments === undefined || mail.attachments.length === 0).toBe(true)
+    // Le template ne doit PAS mentionner « bon SAV » du tout dans ce mode
+    // (pas de paragraphe espace ni pièce jointe — comportement 6.6 d'avant V1.10).
+    expect(mail.html.toLowerCase()).not.toContain('disponible dans votre espace')
+    expect(mail.html.toLowerCase()).not.toContain('bon sav')
+    expect(mail.html.toLowerCase()).not.toMatch(/pi[èe]ce jointe|ci-joint/i)
+    // Le SAV doit quand même être clôturé : sanity.
+    expect(mail.html.toLowerCase()).toContain('clôturé')
+  })
+
+  it('V1.10 AC#1 (kinds non sav_closed) — sav_in_progress NE déclenche PAS le resolver attachment', async () => {
+    state.outboxRows = [makeRow({ id: 1, kind: 'sav_in_progress', sav_id: 7 })]
+    state.membersById.set(100, { id: 100, notification_prefs: { status_updates: true } })
+    // Même si on configure le resolver, il ne doit pas être appelé.
+    state.attachmentResolver = {
+      kind: 'attachment',
+      filename: 'AV-X.pdf',
+      content: Buffer.from('%PDF'),
+    }
+    const r = await runRetryEmails({ requestId: 'req-1' })
+    expect(r.sent).toBe(1)
+    expect(state.attachmentResolverCalls).not.toContain(7)
+    // Aucune PJ propagée pour ce kind.
+    const mail = state.sendMailCalls[0]!
+    expect(mail.attachments === undefined || mail.attachments.length === 0).toBe(true)
+  })
+
+  it('V1.10 AC#5 sav_closed + member opt-out (status_updates=false) → cancelled, AUCUN call resolver, AUCUN sendMail', async () => {
+    state.outboxRows = [makeSavClosedRow()]
+    state.membersById.set(100, { id: 100, notification_prefs: { status_updates: false } })
+    state.attachmentResolver = {
+      kind: 'attachment',
+      filename: 'AV-2026-00003 Dupont J.pdf',
+      content: Buffer.from('%PDF'),
+    }
+    const r = await runRetryEmails({ requestId: 'req-1' })
+    expect(r.skipped_optout).toBe(1)
+    expect(r.sent).toBe(0)
+    expect(state.sendMailCalls).toHaveLength(0)
+    // Le resolver ne doit PAS être appelé (perf + symmetry : pas de coût
+    // Graph download pour un mail qui ne sera pas envoyé).
+    expect(state.attachmentResolverCalls).not.toContain(3)
+    const update = state.outboxUpdates.find((u) => u.id === 1)
+    expect(update!.patch['status']).toBe('cancelled')
+    expect(update!.patch['last_error']).toBe('member_opt_out')
+  })
+
+  it('V1.10 NFR-REL : resolver attachment THROW inattendu → fallback silencieux, envoi nominal sans PJ', async () => {
+    state.outboxRows = [makeSavClosedRow()]
+    state.membersById.set(100, { id: 100, notification_prefs: { status_updates: true } })
+    state.attachmentResolver = 'throw'
+    const r = await runRetryEmails({ requestId: 'req-1' })
+    // L'échec resolver ne doit JAMAIS compter comme échec d'envoi.
+    expect(r.sent).toBe(1)
+    expect(r.failed).toBe(0)
+    const mail = state.sendMailCalls[0]!
+    expect(mail.attachments === undefined || mail.attachments.length === 0).toBe(true)
+    // Le template doit basculer en mode fallback (mention espace) — fallback
+    // conservateur quand le resolver throw (CR FIX 3 : on ne peut pas prouver
+    // qu'il n'y a pas d'avoir).
+    expect(mail.html.toLowerCase()).toContain('disponible dans votre espace')
+  })
+
+  it('V1.10 AC#1 + Story 6.4 : sav_closed avec sav_id NULL → resolver non appelé, fallback lien', async () => {
+    // Cas dégénéré : row legacy sans sav_id (avant Story 6.6 migration). CR
+    // FIX 3 : fallback conservateur (mention espace, pas no_credit_note) car
+    // on ne peut pas prouver qu'il n'y a pas d'avoir.
+    state.outboxRows = [makeSavClosedRow({ sav_id: null })]
+    state.membersById.set(100, { id: 100, notification_prefs: { status_updates: true } })
+    state.attachmentResolver = {
+      kind: 'attachment',
+      filename: 'AV-2026-00003 Dupont J.pdf',
+      content: Buffer.from('%PDF'),
+    }
+    const r = await runRetryEmails({ requestId: 'req-1' })
+    expect(r.sent).toBe(1)
+    expect(state.attachmentResolverCalls).toHaveLength(0)
+    const mail = state.sendMailCalls[0]!
+    expect(mail.attachments === undefined || mail.attachments.length === 0).toBe(true)
+    expect(mail.html.toLowerCase()).toContain('disponible dans votre espace')
+  })
+
+  it('V1.10 AC#7 + AC#1 : EMAIL_REDIRECT_ALL_TO actif + PJ → PJ survit au redirect (passthrough sendMail)', async () => {
+    // NB : la logique redirect est dans sendMail (smtp.ts) — pas dans le
+    // runner. Ici on vérifie juste que retry-emails passe les attachments
+    // SANS les filtrer ni les muter quand le redirect est actif. Le test
+    // SM-08 (smtp.spec.ts) couvre la survie effective côté nodemailer.
+    process.env['EMAIL_REDIRECT_ALL_TO'] = 'anthony.scaramuzza@fruitstock.eu'
+    state.outboxRows = [makeSavClosedRow()]
+    state.membersById.set(100, { id: 100, notification_prefs: { status_updates: true } })
+    const pdfBytes = Buffer.from('%PDF-redirect-test')
+    state.attachmentResolver = {
+      kind: 'attachment',
+      filename: 'AV-2026-00003 Dupont J.pdf',
+      content: pdfBytes,
+    }
+    try {
+      const r = await runRetryEmails({ requestId: 'req-1' })
+      expect(r.sent).toBe(1)
+      const mail = state.sendMailCalls[0]!
+      expect(mail.attachments).toBeDefined()
+      expect(mail.attachments).toHaveLength(1)
+      expect(mail.attachments![0]!.content).toBe(pdfBytes)
+    } finally {
+      delete process.env['EMAIL_REDIRECT_ALL_TO']
+    }
   })
 })

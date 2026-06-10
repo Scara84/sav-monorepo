@@ -19,6 +19,11 @@ const cachedTransporters: Record<SmtpAccount, Transporter | null> = {
   sav: null,
 }
 
+export interface SmtpMailAttachment {
+  filename: string
+  content: Buffer
+}
+
 export interface SmtpMailInput {
   to: string
   subject: string
@@ -30,6 +35,13 @@ export interface SmtpMailInput {
    * Story 1.5/5.8 — les call-sites magic-link n'ont pas besoin de migration).
    */
   account?: SmtpAccount
+  /**
+   * Story V1.10 AC#3 — pièces jointes (bon SAV PDF). Passé tel quel à
+   * nodemailer (`{ filename, content }`). Si la clé est absente, aucun champ
+   * `attachments` n'est posé sur le mail (rétrocompat stricte tous call-sites
+   * pré-V1.10).
+   */
+  attachments?: SmtpMailAttachment[]
 }
 
 export interface SmtpSendResult {
@@ -136,6 +148,10 @@ export async function sendMail(input: SmtpMailInput): Promise<SmtpSendResult> {
   }
   if (input.text !== undefined) mail.text = input.text
   if (input.replyTo !== undefined) mail.replyTo = input.replyTo
+  // Story V1.10 AC#3 — passthrough strict (pas de filtrage `[]`, pas de
+  // tampering). Le champ n'est posé que si présent dans l'input → rétrocompat
+  // SM-01..SM-07 préservée (mail.attachments reste undefined sans opt-in).
+  if (input.attachments !== undefined) mail.attachments = input.attachments
   const info = await smtpTransporter(account).sendMail(mail)
   return {
     messageId: info.messageId,
