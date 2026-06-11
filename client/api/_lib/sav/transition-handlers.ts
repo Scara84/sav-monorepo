@@ -7,6 +7,7 @@ import { logger } from '../logger'
 import { supabaseAdmin } from '../clients/supabase-admin'
 import { SAV_STATUSES, getAllowedTransitions, type SavStatus } from '../business/sav-status-machine'
 import { waitUntilOrVoid } from '../pdf/wait-until'
+import { runRetryEmails } from '../cron-runners/retry-emails'
 import type { ApiHandler, ApiRequest, ApiResponse } from '../types'
 
 /**
@@ -118,7 +119,6 @@ function statusCore(savId: number): ApiHandler {
       if (row.email_outbox_id !== null && row.email_outbox_id !== undefined) {
         const safeTriggerPromise = (async () => {
           try {
-            const { runRetryEmails } = await import('../cron-runners/retry-emails')
             await runRetryEmails({ requestId, savId })
           } catch (err) {
             logger.warn('sav.status.trigger_immediate_failed', {

@@ -15,6 +15,7 @@ import {
   type SavCaptureItem,
 } from '../_lib/emails/sav-capture-templates'
 import { waitUntilOrVoid } from '../_lib/pdf/wait-until'
+import { runRetryEmails } from '../_lib/cron-runners/retry-emails'
 import type { ApiHandler, ApiRequest } from '../_lib/types'
 
 /**
@@ -244,7 +245,6 @@ const coreHandler: ApiHandler = async (req, res) => {
     const alertsThenFlush = (async () => {
       await enqueueNewSavAlerts(row.sav_id, requestId)
       try {
-        const { runRetryEmails } = await import('../_lib/cron-runners/retry-emails')
         await runRetryEmails({ requestId, savId: row.sav_id })
       } catch (err) {
         logger.warn('webhook.capture.trigger_immediate_failed', {

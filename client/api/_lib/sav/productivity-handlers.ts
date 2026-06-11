@@ -8,6 +8,7 @@ import { logger } from '../logger'
 import { supabaseAdmin } from '../clients/supabase-admin'
 import { enqueueOperatorCommentOutbox } from './outbox-helpers'
 import { waitUntilOrVoid } from '../pdf/wait-until'
+import { runRetryEmails } from '../cron-runners/retry-emails'
 import type { ApiHandler, ApiRequest, ApiResponse } from '../types'
 
 /**
@@ -284,7 +285,6 @@ function commentsCore(savId: number): ApiHandler {
       if (enqueued) {
         const safeTriggerPromise = (async () => {
           try {
-            const { runRetryEmails } = await import('../cron-runners/retry-emails')
             await runRetryEmails({ requestId, savId })
           } catch (err) {
             logger.warn('sav.comment.trigger_immediate_failed', {

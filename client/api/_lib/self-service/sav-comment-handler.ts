@@ -8,6 +8,7 @@ import { supabaseAdmin } from '../clients/supabase-admin'
 import { formatErrors } from '../middleware/with-validation'
 import { requireActiveManager } from '../auth/manager-check'
 import { waitUntilOrVoid } from '../pdf/wait-until'
+import { runRetryEmails } from '../cron-runners/retry-emails'
 import type { ApiHandler, ApiRequest } from '../types'
 
 /**
@@ -376,7 +377,6 @@ const coreHandler: ApiHandler = async (req, res) => {
     if (outboxInsertSucceeded) {
       const safeTriggerPromise = (async () => {
         try {
-          const { runRetryEmails } = await import('../cron-runners/retry-emails')
           await runRetryEmails({ requestId, savId })
         } catch (err) {
           logger.warn('self-service.sav-comment.trigger_immediate_failed', {
