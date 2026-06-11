@@ -1,6 +1,6 @@
 # Story V1.14 : Qualité product_code (suite V1.12) — codes-poids décimaux (`3745-3.5K`) + suffixes longs + backfill des SAV historiques
 
-Status: review (Steps 2-5 pipeline complets — UAT preview Task 5 pending avant done)
+Status: done (UAT preview PASS 2026-06-11 — backfill 8 lignes exécuté + capture live SAV-2026-00006 `3745-3,5K`→`3745-3.5K`)
 
 <!-- Source : découvert en UAT V1.13 (2026-06-11, Antho). En vérifiant le PDF
      avoir de SAV-2026-00004, la colonne « Code » affichait
@@ -150,20 +150,20 @@ so that **la colonne « Code » du PDF avoir envoyé à l'adhérent et du back-o
 
 ## Tasks / Subtasks
 
-- [ ] Task 1 (AC#2) : **audit `_bmad-input/excel-gestion/data.xlsx`** (856
+- [x] Task 1 (AC#2) : **audit `_bmad-input/excel-gestion/data.xlsx`** (856
       codes) — recenser les shapes de suffixes réels, dériver le pattern élargi,
       documenter couverture (match propre vs fallback résiduel). **Pré-requis**
       avant d'écrire la regex.
-- [ ] Task 2 (AC#1, AC#2, AC#3) : élargir `extractProductCode.js` (regex +
+- [x] Task 2 (AC#1, AC#2, AC#3) : élargir `extractProductCode.js` (regex +
       normalisation `,`→`.` du séparateur décimal) sans casser les 16 cas V1.12.
       Étendre les tests helper.
-- [ ] Task 3 (AC#4) : aligner le mirror serveur `capture-webhook.ts`
+- [x] Task 3 (AC#4) : aligner le mirror serveur `capture-webhook.ts`
       (`CATALOGUE_CODE_RE_SERVER` + normalisation + guard `startsWith` adapté),
       étendre la sentinelle parité en **table comportementale partagée**.
-- [ ] Task 4 (AC#5) : mécanisme de backfill (script TS réutilisant le helper),
+- [x] Task 4 (AC#5) : mécanisme de backfill (script TS réutilisant le helper),
       borné + idempotent + log par ligne. Dry-run d'abord, puis exécution sur
       preview.
-- [ ] Task 5 (AC#6) : full suite + audit:schema + typecheck ; UAT preview :
+- [x] Task 5 (AC#6) : full suite + audit:schema + typecheck ; UAT preview :
       (a) re-capturer / simuler un item `3745-3,5K` → vérifier code propre
       `3745-3.5K` ; (b) lancer le backfill → vérifier les 8 lignes corrigées en
       DB + colonne « Code » back-office d'un SAV concerné (ex. /admin/sav/6).
