@@ -1,6 +1,6 @@
 # Story V1.12 : Qualité du product_code capturé — extraire le vrai code au lieu de slice(0,32)
 
-Status: review
+Status: done
 
 <!-- Source : UAT bout-en-bout 2026-06-10 (SAV-2026-00003) — deferred-work.md
      « PDF avoir : colonne Code polluée ». Cause AMONT (capture SPA), pas le
@@ -49,7 +49,7 @@ so that **je peux rapprocher les lignes SAV du catalogue et des documents fourni
       pattern posé par le fix g→kg du 2026-06-10, commit 0dddd58) ; tests
       schema.
 - [x] Task 3 (AC#6) : rejouer suites capture + typecheck.
-- [ ] Task 4 : UAT réel preview — capturer un SAV avec une facture dont les
+- [x] Task 4 : UAT réel preview — capturer un SAV avec une facture dont les
       lignes n'ont pas de product_id, vérifier colonne Code back-office.
 
 ## Dev Notes
@@ -104,7 +104,7 @@ Opus 4.7 (1M context) — bmad-dev-story skill, yolo mode.
 - **Task 1 (AC#1, AC#2) — DONE** : helper pur `client/src/features/sav/lib/extractProductCode.js` créé (regex catalogue `^([0-9]{3,5}(?:-[A-Z0-9]{1,6})?)\s` + fallback `slice(0,32)` + entrées non-string → `''`). Branché dans `WebhookItemsList.vue` ligne ~823 — priorité INCHANGÉE `product_id` > `code` > `extractProductCode(label)` > (slice intégré au fallback du helper).
 - **Task 2 (AC#3) — DONE** : mirror serveur dans `normalizeCaptureItemUnit` (`client/api/_lib/schemas/capture-webhook.ts`). Constante regex `CATALOGUE_CODE_RE_SERVER` volontairement dupliquée (pas d'import du module SPA — autonomie route Vercel) ; anti-drift assuré par les tests parallèles (CR 8.7).
 - **Task 3 (AC#6) — DONE** : 77 tests capture + 25 schémas + 16 helper + 53 buildCaptureItemPrices = 171 GREEN ; typecheck PASS.
-- **Task 4 — TODO** : UAT preview manuel (capture d'un SAV sans product_id, vérification colonne Code back-office) — hors scope dev, à exécuter par le user après deploy preview.
+- **Task 4 — DONE (UAT 2026-06-11, deploy 5786f0b)** : UAT réel preview via MCP chrome-devtools. Capture self-service F-2026-39952 (toutes lignes `product: null` côté Pennylane), réclamation ligne POMELO → SAV-2026-00005 créé. **Verdict DB** : `product_code_snapshot = '3010-2K'` (vs `'3010-2K POMELO STAR RUBY (CN) (C'` sur les SAV 5/6 pré-fix — divergence = preuve du fix). **Verdict UI** : colonne Code back-office `/admin/sav/7` affiche `3010-2K`, colonne Produit garde la désignation complète (AC#2), console 0 erreur. Chaîne complète SPA → webhook → transform Zod → RPC exercée en conditions réelles.
 
 #### Résolution DN-1 (CR fix-pass — guard `startsWith` côté serveur)
 
