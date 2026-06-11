@@ -12,6 +12,22 @@ import { z } from 'zod'
  * toujours 'g' à la frontière et le NORMALISE en kg via transform : qty/1000,
  * et si l'unité facturée est 'g', prix unitaire ×1000 (€/g → €/kg, reste int).
  * Le type de sortie ne contient plus jamais 'g'.
+ *
+ * Story V1.12 — Qualité du product_code capturé (défense en profondeur, AC#3) :
+ * la SPA legacy faisait `productName.slice(0,32)` quand Pennylane ne fournissait
+ * ni `product_id` ni `code` (SAV-2026-00003 → colonne Code PDF avoir polluée).
+ * Le serveur re-extrait le code catalogue (mirror du helper SPA
+ * `client/src/features/sav/lib/extractProductCode.js`) sur le même transform
+ * que la normalisation unité — frontière unique, anti-drift CR 8.7.
+ *
+ * Heuristique de re-extraction (résolution OQ-1 par tests locked) :
+ *   1. Appliquer le pattern catalogue sur `productName` (label complet).
+ *   2. Si match → si `productCode` startsWith le code extrait, réécrire
+ *      `productCode` avec la capture. Idempotent quand productCode est
+ *      déjà propre (`3010-2K` startsWith `3010-2K`).
+ *   3. Si pas de match (label sans code) ou si productCode ne commence pas
+ *      par le code extrait → NE RIEN TOUCHER (préserve les vrais
+ *      product_id/slug Pennylane indépendants du label).
  */
 
 type UnitCanonical = 'kg' | 'piece' | 'liter'
@@ -34,6 +50,16 @@ export type CaptureItemNormalized = Omit<CaptureItemInput, 'unit' | 'unitInvoice
   unitInvoiced?: UnitCanonical | undefined
 }
 
+// Story V1.12 AC#3 — pattern catalogue Fruitstock, mirror du helper SPA
+// `client/src/features/sav/lib/extractProductCode.js`. Volontairement dupliqué
+// (et non importé) pour garder le serveur autonome — pas de dépendance Vite/SFC
+// dans une route Vercel. Anti-drift assuré par les tests parallèles AC#4.
+//
+// EXPORTED for parity sentinel (CR 8.7 pattern) — a dedicated test asserts
+// `CATALOGUE_CODE_RE_SERVER.source === CATALOGUE_CODE_RE.source` (SPA helper)
+// and identical flags, so any divergence trips RED at test time.
+export const CATALOGUE_CODE_RE_SERVER = /^([0-9]{3,5}(?:-[A-Z0-9]{1,6})?)\s/
+
 export function normalizeCaptureItemUnit(it: CaptureItemInput): CaptureItemNormalized {
   const out = { ...it } as CaptureItemNormalized
   if (it.unit === 'g') {
@@ -45,6 +71,17 @@ export function normalizeCaptureItemUnit(it: CaptureItemInput): CaptureItemNorma
     if (it.qtyInvoiced !== undefined) out.qtyInvoiced = it.qtyInvoiced / 1000
     // Prix par gramme → prix par kg (cents ×1000 : reste entier).
     if (it.unitPriceTtcCents !== undefined) out.unitPriceTtcCents = it.unitPriceTtcCents * 1000
+  }
+  // Story V1.12 AC#3 — re-extraction défensive du productCode.
+  // On regarde le label complet (productName) : s'il commence par un code
+  // catalogue ET que productCode startsWith ce code → on réécrit productCode
+  // avec la capture propre. Idempotent ; sans impact si productCode est un
+  // vrai product_id Pennylane sans relation lexicale avec le label.
+  if (typeof it.productName === 'string' && typeof it.productCode === 'string') {
+    const match = it.productName.match(CATALOGUE_CODE_RE_SERVER)
+    if (match && it.productCode.startsWith(match[1]!)) {
+      out.productCode = match[1]!
+    }
   }
   return out
 }

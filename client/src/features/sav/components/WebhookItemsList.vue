@@ -505,6 +505,7 @@ import { useApiClient } from '../composables/useApiClient.js'
 import { useExcelGenerator } from '../composables/useExcelGenerator.js'
 import { buildSavHtmlTable } from '../lib/buildSavHtmlTable.js'
 import { buildCaptureItemPrices } from '../lib/buildCaptureItemPrices.js'
+import { extractProductCode } from '../lib/extractProductCode.js'
 
 export default {
   name: 'WebhookItemsList',
@@ -818,9 +819,13 @@ export default {
         const captureItems = filledForms.map(({ form, index }) => {
           const factureItem = props.items[index] || {}
           const productName = factureItem.label || factureItem.product_name || 'Article inconnu'
+          // Story V1.12 AC#1 — priorité INCHANGÉE :
+          //   product_id (Pennylane) > code (Pennylane) > extractProductCode(label) > slice(0,32) (fallback)
+          // L'helper applique le pattern catalogue Fruitstock ^([0-9]{3,5}(?:-[A-Z0-9]{1,6})?)\s
+          // et garantit un fallback slice(0,32) non-vide quand aucun code n'est détecté.
           const productCode = factureItem.product_id
             ? String(factureItem.product_id)
-            : factureItem.code || productName.slice(0, 32)
+            : factureItem.code || extractProductCode(productName)
           const item = {
             productCode,
             productName,
