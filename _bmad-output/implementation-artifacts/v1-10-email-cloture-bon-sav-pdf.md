@@ -1,6 +1,6 @@
 # Story V1.10 : Email client de clôture SAV avec bon SAV (avoir) PDF
 
-Status: review (Tasks 1-4 ✅ — reste Task 5 UAT preview)
+Status: done
 
 <!-- Source : UAT bout-en-bout 2026-06-10 (SAV-2026-00003, AV-2026-00003) —
      deferred-work.md « FEATURE : email client de fin de process avec bon SAV PDF ».
@@ -62,8 +62,13 @@ so that **j'ai une trace comptable directe sans devoir me connecter à l'espace 
 - [x] Task 4 (AC#8) : tests ATDD avant implémentation (pattern projet) ; rejouer
       suite 6.6 complète + typecheck. (72/72 V1.10, full suite 2880 PASS, CR
       re-review PASS, trace gate PASS 13/13 AC)
-- [ ] Task 5 : UAT réel preview (clôturer un SAV de test, vérifier réception
-      sur EMAIL_REDIRECT_ALL_TO avec PJ).
+- [x] Task 5 : UAT réel preview 2026-06-10 ✅ — SAV-2026-00002 (id=3) clôturé via
+      back-office (validated → closed 15:47), outbox id=11 sav_closed sent 15:58
+      (cron dispatcher déclenché manuellement, CRON_SECRET scope Preview ≠
+      Development), PJ « AV-2026-00002 SCARAMUZZA S..pdf » reçue sur
+      EMAIL_REDIRECT_ALL_TO et vérifiée visuellement (bon avoir, 18,95 € TTC,
+      2 lignes conformes). Échec résiduel outbox id=3 = unknown_kind pré-existant
+      (mai), hors scope.
 
 ## Dev Notes
 
