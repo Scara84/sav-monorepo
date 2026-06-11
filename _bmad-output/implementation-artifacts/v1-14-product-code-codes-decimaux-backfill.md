@@ -1,6 +1,6 @@
 # Story V1.14 : Qualité product_code (suite V1.12) — codes-poids décimaux (`3745-3.5K`) + suffixes longs + backfill des SAV historiques
 
-Status: ready-for-dev
+Status: review (Steps 2-5 pipeline complets — UAT preview Task 5 pending avant done)
 
 <!-- Source : découvert en UAT V1.13 (2026-06-11, Antho). En vérifiant le PDF
      avoir de SAV-2026-00004, la colonne « Code » affichait
@@ -273,5 +273,39 @@ so that **la colonne « Code » du PDF avoir envoyé à l'adhérent et du back-o
 ### Debug Log References
 
 ### Completion Notes List
+
+- **CR fix-round (M-1 / M-2 / M-3) — 2026-06-11** : 3 findings traités sans
+  ré-ouvrir les décisions arbitrées.
+  - **M-1 (boundedness hole, backfill)** : ajout d'une garde explicite
+    `if (!candidate) continue` en tête de `runBackfillProductCode`
+    (`client/scripts/backfill-product-code-snapshot.ts`). Bloque le cas
+    `product_name_snapshot=''` qui faisait passer tous les guards en aval
+    (`'' !== code pollué`, `'' === ''`, pas de whitespace dans `''`) et aurait
+    écrit `product_code_snapshot = ''` silencieusement. Fixture ad-hoc ajoutée
+    en RED dans `backfill-product-code-snapshot.test.ts` (id=600), confirmée
+    RED avant fix, GREEN après.
+  - **M-2 (audit numbers, doc only)** : doc-comments alignés sur le recount
+    réel — `856 raw / 18 junk 1–2-digit exclus par design AC#3 / 838 codes
+    catalogue réels / 833/838 = 99.4 %` + liste exhaustive des 5 shapes
+    résiduels (`5006-SA.-1K`, `5006-SA.-5K`, `6600-4x400GR`,
+    `3635 - 3383-2K`, `3635 - 3383-5K`). Mis à jour dans
+    `client/src/features/sav/lib/extractProductCode.js` (header + commentaire
+    de structure regex) et
+    `client/src/features/sav/lib/__tests__/extractProductCode.v1-14.test.js`
+    (header + commentaire shapes résiduelles). La lecture littérale AC#2
+    « ≥ 98 % de 856 » est explicitement documentée comme inatteignable par
+    design (verrou V1.12 AC#3 `[0-9]{3,5}`), résolue par exclusion documentée.
+  - **M-3 (whitespace guard mutation-survival)** : fixture ad-hoc ajoutée
+    (id=700, label `POMME GOLDEN VRAC EN CAGETTE BIO XYZ` — slice(0,32)
+    contient 5 espaces, char 32 = espace donc `label.startsWith(candidate + ' ')`
+    passe). La garde `/\s/.test(candidate)` est désormais la seule à séparer
+    le UPDATE pollué du no-op. Test confirmé RED en commentant temporairement
+    la garde, GREEN après restauration (mutation-survivable).
+  - **Suite cible** : 6 fichiers / 148 tests GREEN
+    (`extractProductCode.test.js` 16, `extractProductCode.v1-14.test.js` 27,
+    `capture-webhook.product-code.spec.ts` 16,
+    `capture-webhook.product-code.v1-14.spec.ts` 19,
+    `product-code-parity.shared.spec.ts` 51,
+    `backfill-product-code-snapshot.test.ts` 19). `npm run typecheck` 0 erreur.
 
 ### File List

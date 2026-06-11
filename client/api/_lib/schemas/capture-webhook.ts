@@ -50,15 +50,30 @@ export type CaptureItemNormalized = Omit<CaptureItemInput, 'unit' | 'unitInvoice
   unitInvoiced?: UnitCanonical | undefined
 }
 
-// Story V1.12 AC#3 — pattern catalogue Fruitstock, mirror du helper SPA
-// `client/src/features/sav/lib/extractProductCode.js`. Volontairement dupliqué
-// (et non importé) pour garder le serveur autonome — pas de dépendance Vite/SFC
-// dans une route Vercel. Anti-drift assuré par les tests parallèles AC#4.
+// Story V1.12 AC#3 + V1.14 AC#1/AC#2/AC#4 — pattern catalogue Fruitstock,
+// mirror du helper SPA `client/src/features/sav/lib/extractProductCode.js`.
+// Volontairement dupliqué (et non importé) pour garder le serveur autonome —
+// pas de dépendance Vite/SFC dans une route Vercel. Anti-drift assuré par les
+// tests parallèles (.source / .flags + table comportementale partagée V1.14 AC#4).
 //
-// EXPORTED for parity sentinel (CR 8.7 pattern) — a dedicated test asserts
+// V1.14 — pattern élargi (audit data.xlsx 839 codes, 99.3% couverture) :
+//   - décimaux `.` ET `,` (`3745-3.5K`, `3745-3,5K`, `6594-1.5L`) → 10 codes
+//   - suffixes longs (`4X500GR`, `12X500GR`) → 191 codes
+//   - multi-dash (`1100-1312-500GR`, `1614-1205-4X500GR`) → 11 codes
+//
+// EXPORTED for parity sentinel — un test dédié asserte
 // `CATALOGUE_CODE_RE_SERVER.source === CATALOGUE_CODE_RE.source` (SPA helper)
-// and identical flags, so any divergence trips RED at test time.
-export const CATALOGUE_CODE_RE_SERVER = /^([0-9]{3,5}(?:-[A-Z0-9]{1,6})?)\s/
+// + flags identiques + table comportementale partagée (V1.14 AC#4).
+export const CATALOGUE_CODE_RE_SERVER = /^([0-9]{3,5}(?:-[A-Z0-9]+(?:[.,][A-Z0-9]+)?)*)\s/
+
+/**
+ * Story V1.14 D-1 — normalisation séparateur décimal canonique = point.
+ * `,` → `.` appliqué uniquement à la VALEUR RETOURNÉE (capture group),
+ * jamais au label/productName source (V1.12 AC#2 préservé).
+ */
+function normalizeDecimalSeparator(captured: string): string {
+  return captured.replace(/,/g, '.')
+}
 
 export function normalizeCaptureItemUnit(it: CaptureItemInput): CaptureItemNormalized {
   const out = { ...it } as CaptureItemNormalized
@@ -72,15 +87,34 @@ export function normalizeCaptureItemUnit(it: CaptureItemInput): CaptureItemNorma
     // Prix par gramme → prix par kg (cents ×1000 : reste entier).
     if (it.unitPriceTtcCents !== undefined) out.unitPriceTtcCents = it.unitPriceTtcCents * 1000
   }
-  // Story V1.12 AC#3 — re-extraction défensive du productCode.
+  // Story V1.12 AC#3 + V1.14 AC#4 — re-extraction défensive du productCode.
   // On regarde le label complet (productName) : s'il commence par un code
-  // catalogue ET que productCode startsWith ce code → on réécrit productCode
-  // avec la capture propre. Idempotent ; sans impact si productCode est un
-  // vrai product_id Pennylane sans relation lexicale avec le label.
+  // catalogue ET que productCode startsWith la capture BRUTE (pré-normalisation,
+  // V1.14 D-2 — « le piège central ») → on réécrit productCode avec la capture
+  // normalisée (`,` → `.`). Idempotent ; sans impact si productCode est un vrai
+  // product_id Pennylane sans relation lexicale avec le label.
+  //
+  // Pourquoi le guard sur la capture BRUTE et non normalisée (D-2 RECOMMANDÉ) :
+  //   productName = '3745-3,5K AUBERGINE …' (virgule)
+  //   productCode = '3745-3,5K AUBERGINE (CN) (C' (= legacy slice 32, virgule)
+  //   capture brute match[1] = '3745-3,5K' (virgule) → productCode.startsWith OK
+  //   capture normalisée    = '3745-3.5K' (point)  → productCode.startsWith KO
+  // Donc on guarde sur la capture brute (forme du label) puis on normalise la
+  // valeur écrite. cf. Dev Notes story V1.14.
   if (typeof it.productName === 'string' && typeof it.productCode === 'string') {
     const match = it.productName.match(CATALOGUE_CODE_RE_SERVER)
-    if (match && it.productCode.startsWith(match[1]!)) {
-      out.productCode = match[1]!
+    if (match) {
+      const rawCapture = match[1]!
+      const normalized = normalizeDecimalSeparator(rawCapture)
+      // Guard idempotence : productCode déjà au format normalisé (point) doit
+      // aussi passer (cas re-jeu serveur). On compare donc productCode au
+      // raw OU au normalized.
+      if (
+        it.productCode.startsWith(rawCapture) ||
+        it.productCode.startsWith(normalized)
+      ) {
+        out.productCode = normalized
+      }
     }
   }
   return out

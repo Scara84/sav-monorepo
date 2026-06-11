@@ -327,10 +327,12 @@ describe('M3 — parity sentinel : CATALOGUE_CODE_RE_SERVER === CATALOGUE_CODE_R
     expect(CATALOGUE_CODE_RE_SERVER.flags).toBe(CATALOGUE_CODE_RE.flags)
   })
 
-  it('forme attendue figée par AC#1 (sentinel littéral)', () => {
-    // Si AC#1 évolue (V2 widening), CE test devra être mis à jour explicitement
-    // ET les deux constantes en parallèle — c'est le gating point.
-    const expected = '^([0-9]{3,5}(?:-[A-Z0-9]{1,6})?)\\s'
+  it('forme attendue figée par V1.14 AC#1+AC#2 (sentinel littéral)', () => {
+    // V1.14 — gating point évolué : les 2 constantes doivent porter le pattern
+    // élargi (décimaux `.`/`,`, suffixes longs, multi-dash). Si AC évolue
+    // encore (V2 widening), CE test devra être mis à jour explicitement.
+    // V1.12 frozen form était `^([0-9]{3,5}(?:-[A-Z0-9]{1,6})?)\\s` — remplacé.
+    const expected = '^([0-9]{3,5}(?:-[A-Z0-9]+(?:[.,][A-Z0-9]+)?)*)\\s'
     expect(CATALOGUE_CODE_RE.source).toBe(expected)
     expect(CATALOGUE_CODE_RE_SERVER.source).toBe(expected)
   })
