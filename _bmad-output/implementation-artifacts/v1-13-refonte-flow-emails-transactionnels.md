@@ -1,6 +1,6 @@
 # Story V1.13 : Refonte du flow d'envoi des emails transactionnels (envoi immédiat post-action + mail de validation avec bon SAV PDF + gate de validation)
 
-Status: review — pipeline BMAD complet 2026-06-11 (ATDD + dev + CR NEEDS-FIX→fix→re-CR PASS + trace PASS) ; reste Task 7 UAT preview avant done
+Status: done — pipeline BMAD complet + UAT preview PASS 2026-06-11 (2 fixes post-UAT : import dynamique→statique `d728c2a`, montant email HT→TTC `c23d15c`)
 
 <!-- Source : décision PO (Antho) 2026-06-10, REDÉFINIE 2026-06-11 pendant une
      conversation produit. Cette story REMPLACE l'ancienne v1-13 « bouton
@@ -283,13 +283,16 @@ so that **je suis informé en temps réel sans la latence jusqu'à 24 h du cron 
       `waitUntilOrVoid` + specs handlers.
 - [x] Task 6 (AC#8) : gate UI Valider + mapping `CREDIT_NOTE_PDF_REQUIRED`
       (`mapRpcError` + toast) + spec SPA.
-- [ ] Task 7 (AC#11, AC#12) : ✅ fait : `vercel.json` maxDuration (sav 30, draft 15) +
-      full suite (2979 PASS, 1 fail dpia pré-existant) + audit:schema 0 drift +
-      typecheck 0 erreur. ⏳ RESTE : UAT preview : émettre avoir en
-      in_progress → PDF généré → Valider (avant PDF : bouton disabled) →
-      email `sav_validated` reçu IMMÉDIATEMENT sur `EMAIL_REDIRECT_ALL_TO`
-      avec PJ bon SAV → clôturer → AUCUN email → commentaire opérateur
-      visibility=all → email immédiat.
+- [x] Task 7 (AC#11, AC#12) : `vercel.json` maxDuration (sav 30, draft 15) +
+      full suite (2985 PASS, 1 fail dpia pré-existant) + audit:schema 0 drift +
+      typecheck 0 erreur. **UAT preview PASS 2026-06-11** (SAV-2026-00004) :
+      validation → email `sav_validated` envoyé IMMÉDIATEMENT (claim→sent ~4s)
+      avec PJ bon SAV PDF (confirmé visuellement PO) + montant TTC 21,81 €
+      cohérent avec le PDF (fix BUG-UAT-2) ; commentaire opérateur visibility=all
+      → email immédiat (AC#7, ~2s) ; clôture → AUCUN email (silencieuse, AC#6).
+      2 fixes post-pipeline découverts en UAT : BUG-UAT-1 import dynamique non
+      bundlé Vercel (`d728c2a`) + BUG-UAT-2 montant HT→TTC (`c23d15c`).
+      cf. Completion Notes.
 
 ## Dev Notes
 
@@ -488,6 +491,36 @@ Orchestrateur Fable 5.
 ### Debug Log References
 
 ### Completion Notes List
+
+- **UAT preview 2026-06-11 (Task 7) — déroulé réel + 2 fixes post-pipeline** :
+  migrations appliquées sur preview (viwgyrqpyryagzgvnfoi) AVANT le code, 2 tests
+  SQL security rejoués GREEN end-to-end. UAT browser sur SAV-2026-00004 (id=6).
+  - **BUG-UAT-1 (bloquant, fixé `d728c2a`)** : la validation enqueue bien la row
+    `sav_validated` mais le trigger immédiat ne flushait pas (row pending,
+    claimed_at null). Log runtime `trigger_immediate_failed` + « Cannot find
+    module » : l'`await import('../cron-runners/retry-emails')` (DEC-2,
+    contournement mock Vitest) N'EST PAS tracé par nft dans les lambdas
+    api/sav, api/self-service/draft, api/webhooks/capture. Le CR avait dismissé
+    ce risque (pari tracing nft) — invalidé en prod. Fix : **import statique**
+    aux 4 callsites (le mock `vi.mock` intercepte les 2 styles, 25 tests GREEN).
+    Re-test live post-fix : row `sav_validated` (PJ) + `sav_comment_from_operator`
+    envoyées en quelques secondes (claim→sent ~2-4s). `cron.retry-emails.completed`
+    OK, plus aucun `trigger_immediate_failed`.
+  - **BUG-UAT-2 (montant, fixé `c23d15c`)** : l'email `sav_validated` affichait
+    `sav.total_amount_cents` (HT, 20,67 €) ≠ bon SAV PDF en PJ (TTC, 21,81 €).
+    Décision PO = afficher le TTC. Fix : helper `resolveCreditNoteTtcCents` +
+    override `totalAmountCents` au rendu sav_validated (null → conserve le
+    montant). 6 tests ajoutés.
+  - **Finding (non-bug)** : lien « voir mon dossier » → page de demande = artefact
+    de test (UAT fait en session opérateur ; le guard `/monespace/**` redirige
+    vers `/` si `user.type!=='member'`). La route `/monespace/sav/:id` est
+    correcte pour un adhérent connecté en magic-link. RAS.
+  - **Confirmation visuelle PO** : les 2 emails reçus sur l'inbox de redirection
+    (`EMAIL_REDIRECT_ALL_TO`), bon SAV PDF bien en pièce jointe.
+  - **Clôture silencieuse vérifiée** : clôture SAV-2026-00004 → 0 nouvelle row
+    outbox (AC#6).
+  - **Note ops nft** : tout `PATTERN-IMMEDIATE-OUTBOX-FLUSH` doit utiliser un
+    import STATIQUE du runner (jamais `await import()` — non bundlé par Vercel).
 
 - **CR MEDIUM-1 V1.13 — DEPLOY WINDOW (ops critique)** : les 2 migrations
   V1.13 DOIVENT être appliquées **AVANT** de promouvoir le code applicatif
