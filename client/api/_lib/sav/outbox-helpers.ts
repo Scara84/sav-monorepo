@@ -30,6 +30,13 @@ export interface EnqueueCommentOutboxParams {
   savReference: string
   memberEmail: string
   memberMemberId: number
+  /**
+   * Story V1.13 CR HIGH-2 — prénom membre pour le greeting du template
+   * `renderSavCommentAdded` (mappé depuis `sav_comment_from_operator`).
+   * Optionnel : si absent (legacy caller), le template tombe sur `'Bonjour ,'`
+   * — dégradé mais non-bloquant.
+   */
+  memberFirstName?: string
   commentBody: string
   operatorDisplayName: string
   requestId: string
@@ -48,6 +55,7 @@ export async function enqueueOperatorCommentOutbox(
     savReference,
     memberEmail,
     memberMemberId,
+    memberFirstName,
     commentBody,
     operatorDisplayName,
     requestId,
@@ -67,6 +75,10 @@ export async function enqueueOperatorCommentOutbox(
         savId,
         savReference,
         commentExcerpt,
+        // Story V1.13 CR HIGH-2 — propage `memberFirstName` pour le template
+        // membre (renderSavCommentAdded). Le caller (productivity-handlers)
+        // ajoute la 1ère cellule à la sélection `member:members(email, first_name)`.
+        memberFirstName: memberFirstName ?? '',
         operatorDisplayName,
         memberEmail,
       },

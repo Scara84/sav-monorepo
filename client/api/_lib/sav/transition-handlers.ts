@@ -6,6 +6,7 @@ import { sendError } from '../errors'
 import { logger } from '../logger'
 import { supabaseAdmin } from '../clients/supabase-admin'
 import { SAV_STATUSES, getAllowedTransitions, type SavStatus } from '../business/sav-status-machine'
+import { waitUntilOrVoid } from '../pdf/wait-until'
 import type { ApiHandler, ApiRequest, ApiResponse } from '../types'
 
 /**
@@ -107,6 +108,32 @@ function statusCore(savId: number): ApiHandler {
           emailOutboxId: row.email_outbox_id,
         },
       })
+
+      // Story V1.13 AC#3 (a) — trigger immédiat post-réponse si la RPC a
+      // enqueué une row (email_outbox_id non null). Pattern PATTERN-IMMEDIATE-
+      // OUTBOX-FLUSH : `waitUntilOrVoid` garde la lambda vivante côté Vercel.
+      // En env test, on await la promise (déterminisme — cf. capture.ts
+      // pattern Story 4.5). Un échec du trigger ne change PAS le code HTTP
+      // (200 déjà flushé) — le cron filet de sécurité rattrape.
+      if (row.email_outbox_id !== null && row.email_outbox_id !== undefined) {
+        const safeTriggerPromise = (async () => {
+          try {
+            const { runRetryEmails } = await import('../cron-runners/retry-emails')
+            await runRetryEmails({ requestId, savId })
+          } catch (err) {
+            logger.warn('sav.status.trigger_immediate_failed', {
+              requestId,
+              savId,
+              error: err instanceof Error ? err.message : String(err),
+            })
+          }
+        })()
+        if (process.env['NODE_ENV'] === 'test') {
+          await safeTriggerPromise
+        } else {
+          waitUntilOrVoid(safeTriggerPromise)
+        }
+      }
     } catch (err) {
       logger.error('sav.status.exception', {
         requestId,
@@ -151,6 +178,15 @@ function mapRpcError(
       from,
       to,
       allowed: getAllowedTransitions(from),
+    })
+    return
+  }
+  if (code === 'CREDIT_NOTE_PDF_REQUIRED') {
+    // Story V1.13 AC#8 — race UI : si le bouton a été cliqué avant que le
+    // poll PDF n'arrive, le serveur tranche en dernier ressort. Toast PO D-5.
+    logger.warn('sav.status.credit_note_pdf_required', { requestId, savId })
+    sendError(res, 'BUSINESS_RULE', "Générez d'abord le bon SAV (émettez l'avoir).", requestId, {
+      code: 'CREDIT_NOTE_PDF_REQUIRED',
     })
     return
   }

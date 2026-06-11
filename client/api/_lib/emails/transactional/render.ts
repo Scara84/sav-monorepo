@@ -48,6 +48,31 @@ export function renderEmailTemplate(
       return renderSavReceivedOperator(data as OperatorAlertEmailData)
     case 'sav_comment_added':
       return renderSavCommentAdded(data as CommentAddedEmailData)
+    case 'sav_comment_from_operator': {
+      // Story V1.13 AC#7 — fix bug latent : enqueue d'`outbox-helpers.ts`
+      // n'avait pas de case de render → unknown_kind → failed définitif. Le
+      // destinataire est le membre — on map sur `renderSavCommentAdded` avec
+      // recipientKind='member'.
+      //
+      // CR HIGH-2 V1.13 — MAPPING explicite (le spread n'est pas suffisant) :
+      //   - Le producer (outbox-helpers.ts L66-72) pose `commentExcerpt`
+      //     mais le template consomme `commentBody`. Sans mapping le mail
+      //     partait avec un body vide.
+      //   - Le producer pose maintenant `memberFirstName` (lookup ajouté côté
+      //     producer — cf. enqueueOperatorCommentOutbox) ; on conserve un
+      //     fallback `''` pour les rows legacy / pré-fix qui ne l'ont pas
+      //     (le template gère `?? ''` proprement).
+      //   - `operatorDisplayName` n'est pas consommé par le template membre
+      //     (le greeting met seulement le prénom membre) — on l'ignore.
+      const opData = data as Record<string, unknown>
+      const memberData: CommentAddedEmailData = {
+        ...(opData as CommentAddedEmailData),
+        commentBody: (opData['commentExcerpt'] as string | undefined) ?? '',
+        memberFirstName: (opData['memberFirstName'] as string | undefined) ?? '',
+        recipientKind: 'member',
+      }
+      return renderSavCommentAdded(memberData)
+    }
     case 'weekly_recap':
       return renderWeeklyRecap(data as WeeklyRecapEmailData)
     default:
@@ -62,5 +87,6 @@ export const TRANSACTIONAL_KINDS: ReadonlyArray<TransactionalKind> = [
   'sav_cancelled',
   'sav_received_operator',
   'sav_comment_added',
+  'sav_comment_from_operator',
   'weekly_recap',
 ]

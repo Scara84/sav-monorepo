@@ -1,6 +1,14 @@
 /**
- * Story V1.10 AC#4 + AC#6 — Résolution de la pièce jointe « bon SAV » (PDF
- * avoir) pour le template `sav_closed`.
+ * Story V1.13 AC#5 — Résolution de la pièce jointe « bon SAV » (PDF avoir)
+ * pour le template `sav_validated` (rebranchement depuis `sav_closed` V1.10).
+ *
+ * Renommé de `sav-closed-attachment.ts` (V1.10) :
+ *   - export `resolveSavClosedAttachment` → `resolveCreditNoteAttachment`
+ *   - clés log `email.sav_closed.attachment.*` → `email.credit_note.attachment.*`
+ * Contrat et signature INCHANGÉS — c'est uniquement un renommage généralisé
+ * pour refléter que la PJ est consommée par `sav_validated` désormais.
+ *
+ * Contexte V1.10 historique préservé :
  *
  * Contrat :
  *   - Lit `credit_notes` du `sav_id` donné, filtre PDF disponible
@@ -122,14 +130,14 @@ function logFields(
  * `no_credit_note` car on ne peut PAS prouver qu'il n'existe pas d'avoir —
  * conservateur : on bascule sur fallback lien plutôt que masquer.
  */
-export async function resolveSavClosedAttachment(
+export async function resolveCreditNoteAttachment(
   savId: number,
   opts?: { requestId?: string }
 ): Promise<AttachmentResolution> {
   const requestId = opts?.requestId
   try {
     if (!Number.isInteger(savId) || savId <= 0) {
-      logger.warn('email.sav_closed.attachment.invalid_sav_id', logFields(requestId, { savId }))
+      logger.warn('email.credit_note.attachment.invalid_sav_id', logFields(requestId, { savId }))
       return { kind: 'unavailable' }
     }
 
@@ -160,7 +168,7 @@ export async function resolveSavClosedAttachment(
     }
     if (error) {
       logger.warn(
-        'email.sav_closed.attachment.select_failed',
+        'email.credit_note.attachment.select_failed',
         logFields(requestId, { savId, message: error.message })
       )
       // SELECT KO → état ambigu, fallback conservateur (lien plutôt que
@@ -172,7 +180,7 @@ export async function resolveSavClosedAttachment(
       // Aucun avoir pour ce SAV → SAV clôturé sans remboursement (cas légitime
       // 6.6 d'avant V1.10). Template doit s'abstenir de toute mention bon SAV.
       logger.info(
-        'email.sav_closed.attachment.no_credit_note',
+        'email.credit_note.attachment.no_credit_note',
         logFields(requestId, { savId })
       )
       return { kind: 'no_credit_note' }
@@ -182,7 +190,7 @@ export async function resolveSavClosedAttachment(
       // Avoir existe mais PDF pas encore généré (async post-émission, retry
       // 3× cf. generate-credit-note-pdf.ts) → fallback lien.
       logger.info(
-        'email.sav_closed.attachment.pdf_web_url_null',
+        'email.credit_note.attachment.pdf_web_url_null',
         logFields(requestId, { savId, creditNoteId: cn.id })
       )
       return { kind: 'unavailable' }
@@ -195,7 +203,7 @@ export async function resolveSavClosedAttachment(
       // Avoir EXISTE → fallback lien plutôt que `no_credit_note` (l'adhérent
       // doit pouvoir le retrouver dans son espace).
       logger.warn(
-        'email.sav_closed.attachment.member_missing',
+        'email.credit_note.attachment.member_missing',
         logFields(requestId, { savId, creditNoteId: cn.id })
       )
       return { kind: 'unavailable' }
@@ -222,7 +230,7 @@ export async function resolveSavClosedAttachment(
   } catch (err) {
     // Defense-in-depth NFR-REL — un bug inattendu ne doit jamais propager.
     logger.error(
-      'email.sav_closed.attachment.unexpected_error',
+      'email.credit_note.attachment.unexpected_error',
       logFields(requestId, { savId, message: sanitizeForLog(err) })
     )
     return { kind: 'unavailable' }
@@ -239,7 +247,7 @@ async function downloadPdfBytes(
     token = await graph.getAccessToken()
   } catch (err) {
     logger.warn(
-      'email.sav_closed.attachment.token_error',
+      'email.credit_note.attachment.token_error',
       logFields(ctx.requestId, {
         savId: ctx.savId,
         creditNoteId: ctx.creditNoteId,
@@ -259,7 +267,7 @@ async function downloadPdfBytes(
     })
   } catch (err) {
     logger.warn(
-      'email.sav_closed.attachment.fetch_error',
+      'email.credit_note.attachment.fetch_error',
       logFields(ctx.requestId, {
         savId: ctx.savId,
         creditNoteId: ctx.creditNoteId,
@@ -280,7 +288,7 @@ async function downloadPdfBytes(
       })
     } catch (err) {
       logger.warn(
-        'email.sav_closed.attachment.token_refresh_error',
+        'email.credit_note.attachment.token_refresh_error',
         logFields(ctx.requestId, {
           savId: ctx.savId,
           creditNoteId: ctx.creditNoteId,
@@ -293,7 +301,7 @@ async function downloadPdfBytes(
 
   if (!response.ok) {
     logger.warn(
-      'email.sav_closed.attachment.graph_non_ok',
+      'email.credit_note.attachment.graph_non_ok',
       logFields(ctx.requestId, {
         savId: ctx.savId,
         creditNoteId: ctx.creditNoteId,
@@ -309,7 +317,7 @@ async function downloadPdfBytes(
     const cl = parseInt(contentLengthHeader, 10)
     if (Number.isFinite(cl) && cl > ATTACHMENT_MAX_BYTES) {
       logger.warn(
-        'email.sav_closed.attachment.too_large_header',
+        'email.credit_note.attachment.too_large_header',
         logFields(ctx.requestId, {
           savId: ctx.savId,
           creditNoteId: ctx.creditNoteId,
@@ -323,7 +331,7 @@ async function downloadPdfBytes(
   // ── Read body en Buffer + cap runtime AC#4 (defense-in-depth) ────────────
   if (!response.body) {
     logger.warn(
-      'email.sav_closed.attachment.empty_body',
+      'email.credit_note.attachment.empty_body',
       logFields(ctx.requestId, {
         savId: ctx.savId,
         creditNoteId: ctx.creditNoteId,
@@ -345,7 +353,7 @@ async function downloadPdfBytes(
           if (total > ATTACHMENT_MAX_BYTES) {
             await reader.cancel()
             logger.warn(
-              'email.sav_closed.attachment.too_large_runtime',
+              'email.credit_note.attachment.too_large_runtime',
               logFields(ctx.requestId, {
                 savId: ctx.savId,
                 creditNoteId: ctx.creditNoteId,
@@ -363,7 +371,7 @@ async function downloadPdfBytes(
     return Buffer.concat(chunks)
   } catch (err) {
     logger.warn(
-      'email.sav_closed.attachment.stream_error',
+      'email.credit_note.attachment.stream_error',
       logFields(ctx.requestId, {
         savId: ctx.savId,
         creditNoteId: ctx.creditNoteId,

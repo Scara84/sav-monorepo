@@ -393,8 +393,24 @@ const canValidate = computed<boolean>(() => {
 const showValidateButton = computed<boolean>(() => sav.value?.status === 'in_progress')
 const validating = ref(false)
 
+// Story V1.13 AC#8 (D-1=a, D-5) — gate « Valider » :
+// PDF avoir requis (creditNote.pdfWebUrl présent) + creditNote non dégradé.
+// Priorité du title : lignes en erreur > bon SAV manquant > nominal.
+const hasCreditNotePdf = computed<boolean>(() => Boolean(creditNote.value?.pdfWebUrl))
+const validateGateAllowsPdf = computed<boolean>(
+  () => hasCreditNotePdf.value && !creditNoteDegraded.value
+)
+const validateDisabled = computed<boolean>(
+  () => !canValidate.value || !validateGateAllowsPdf.value || validating.value
+)
+const validateTitle = computed<string>(() => {
+  if (!canValidate.value) return 'Corrige les lignes en erreur avant de valider'
+  if (!validateGateAllowsPdf.value) return "Générez d'abord le bon SAV"
+  return 'Valider le SAV'
+})
+
 async function validateSav(): Promise<void> {
-  if (!canValidate.value || !sav.value) return
+  if (!canValidate.value || !validateGateAllowsPdf.value || !sav.value) return
   await transitionStatus('validated', { onLinesBlocked: () => scrollToFirstBlockingAfterRefresh() })
 }
 
@@ -451,6 +467,13 @@ async function transitionStatus(target: SavStatus, opts: TransitionOptions = {})
         await refresh()
         toastMessage.value = 'Des lignes sont encore en erreur — valider impossible.'
         opts.onLinesBlocked?.()
+        return false
+      }
+      if (code === 'CREDIT_NOTE_PDF_REQUIRED') {
+        // Story V1.13 AC#8 (e) — race UI : l'opérateur a cliqué avant que le
+        // poll PDF n'arrive, le serveur tranche. Libellé PO D-5.
+        await refresh()
+        toastMessage.value = "Générez d'abord le bon SAV (émettez l'avoir)."
         return false
       }
       if (code === 'INVALID_TRANSITION') {
@@ -1128,10 +1151,8 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
               v-if="showValidateButton"
               type="button"
               class="workflow-btn workflow-btn--primary validate-btn"
-              :disabled="!canValidate || validating"
-              :title="
-                !canValidate ? 'Corrige les lignes en erreur avant de valider' : 'Valider le SAV'
-              "
+              :disabled="validateDisabled"
+              :title="validateTitle"
               data-testid="sav-validate-btn"
               @click="validateSav"
             >

@@ -1,6 +1,6 @@
 # Story V1.13 : Refonte du flow d'envoi des emails transactionnels (envoi immédiat post-action + mail de validation avec bon SAV PDF + gate de validation)
 
-Status: ready-for-dev
+Status: review — pipeline BMAD complet 2026-06-11 (ATDD + dev + CR NEEDS-FIX→fix→re-CR PASS + trace PASS) ; reste Task 7 UAT preview avant done
 
 <!-- Source : décision PO (Antho) 2026-06-10, REDÉFINIE 2026-06-11 pendant une
      conversation produit. Cette story REMPLACE l'ancienne v1-13 « bouton
@@ -264,27 +264,28 @@ so that **je suis informé en temps réel sans la latence jusqu'à 24 h du cron 
       moindre code (D-2/D-3/D-4 ont une reco par défaut, D-1 est bloquant).
       ✅ Tranché 2026-06-11 : D-1=a (gate absolu), D-2=a (fix ici), D-3=a
       (conserver), D-4=a (bump 15s), D-5 « Générez d'abord le bon SAV ».
-- [ ] Task 1 (AC#1) : migration
+- [x] Task 1 (AC#1) : migration
       `20260611120000_v1_13_claim_outbox_batch_sav_scope.sql` — DROP+CREATE,
       bypass next_attempt_at scopé, grants h-16, COMMENT, ROLLBACK + test SQL.
-- [ ] Task 2 (AC#2, AC#9, AC#10) : `retry-emails.ts` — param `savId`,
+- [x] Task 2 (AC#2, AC#9, AC#10) : `retry-emails.ts` — param `savId`,
       `p_sav_id` à la RPC, garde anti-fallback scopé. Étendre
       `retry-emails.spec.ts`.
-- [ ] Task 3 (AC#4) : migration
+- [x] Task 3 (AC#4) : migration
       `20260611120100_v1_13_transition_emails_validated_gate.sql` — RPC v2
       (enqueue validated/cancelled only + guard PDF) + cleanup legacy rows +
       test SQL.
-- [ ] Task 4 (AC#5, AC#6, AC#7) : rename module PJ → `credit-note-attachment.ts`
+- [x] Task 4 (AC#5, AC#6, AC#7) : rename module PJ → `credit-note-attachment.ts`
       (+ spec), rebranchement runner sur `sav_validated`, réécriture template
       `sav-validated.ts` (+ snapshots), migration des tests V1.10
       sav_closed→sav_validated, mapping render `sav_comment_from_operator`.
-- [ ] Task 5 (AC#3) : wiring trigger immédiat aux 4 callsites
+- [x] Task 5 (AC#3) : wiring trigger immédiat aux 4 callsites
       (transition / commentaire op / commentaire membre / capture) via
       `waitUntilOrVoid` + specs handlers.
-- [ ] Task 6 (AC#8) : gate UI Valider + mapping `CREDIT_NOTE_PDF_REQUIRED`
+- [x] Task 6 (AC#8) : gate UI Valider + mapping `CREDIT_NOTE_PDF_REQUIRED`
       (`mapRpcError` + toast) + spec SPA.
-- [ ] Task 7 (AC#11, AC#12) : `vercel.json` maxDuration (sav 30, draft 15) ;
-      full suite + audit:schema + typecheck ; UAT preview : émettre avoir en
+- [ ] Task 7 (AC#11, AC#12) : ✅ fait : `vercel.json` maxDuration (sav 30, draft 15) +
+      full suite (2979 PASS, 1 fail dpia pré-existant) + audit:schema 0 drift +
+      typecheck 0 erreur. ⏳ RESTE : UAT preview : émettre avoir en
       in_progress → PDF généré → Valider (avant PDF : bouton disabled) →
       email `sav_validated` reçu IMMÉDIATEMENT sur `EMAIL_REDIRECT_ALL_TO`
       avec PJ bon SAV → clôturer → AUCUN email → commentaire opérateur
@@ -378,7 +379,14 @@ so that **je suis informé en temps réel sans la latence jusqu'à 24 h du cron 
   transactionnel doit suivre ce chemin (jamais de sendMail direct handler).
 - PATTERN-RPC-SIGNATURE-EXTEND : DROP+CREATE avec param DEFAULT NULL
   rétrocompatible + re-grants h-16 dans la même transaction (repris de
-  l'ancienne v1-13, posé ici pour de vrai).
+  l'ancienne v1-13, posé ici pour de vrai). **CR HIGH-1 V1.13** : Supabase
+  re-grant EXECUTE explicite à `anon, authenticated` à chaque CREATE FUNCTION
+  via ALTER DEFAULT PRIVILEGES — `REVOKE FROM PUBLIC` ne suffit PAS. Le
+  pattern impose donc, après le CREATE :
+    `REVOKE EXECUTE ON FUNCTION ... FROM anon, authenticated;`
+    `GRANT EXECUTE ON FUNCTION ... TO service_role;`
+  (cf. migration 20260522120000 L48). Vérifiable
+  `has_function_privilege('anon', oid, 'EXECUTE') = false`.
 - PATTERN-TRANSITION-PRECONDITION-GATE : précondition métier vérifiée UI
   (disabled+message) ET RPC (RAISE code dédié → 422 BUSINESS_RULE mappé) —
   réutilisable pour de futurs gates de transition.
@@ -472,8 +480,102 @@ so that **je suis informé en temps réel sans la latence jusqu'à 24 h du cron 
 
 ### Agent Model Used
 
+Pipeline BMAD YOLO-garde-fou 2026-06-11 : ATDD Opus 4.7 (`pipeline-standard`),
+Dev Opus 4.7 (`pipeline-standard`), CR + re-CR Fable 5 (`pipeline-reviewer`),
+fix round Opus 4.7 (`pipeline-standard`), Trace Haiku 4.5 (`pipeline-fast`).
+Orchestrateur Fable 5.
+
 ### Debug Log References
 
 ### Completion Notes List
 
+- **CR MEDIUM-1 V1.13 — DEPLOY WINDOW (ops critique)** : les 2 migrations
+  V1.13 DOIVENT être appliquées **AVANT** de promouvoir le code applicatif
+  (Vercel). Combinaisons :
+  - ancien code + nouvelles RPCs = SAFE (la RPC `claim_outbox_batch` 2-args
+    résout via DEFAULT NULL ; la RPC `transition_sav_status` n'enqueue plus
+    in_progress/closed → 0 mail trompeur ; cleanup legacy déjà passé).
+  - nouveau code + ancienne RPC `transition_sav_status` v1 = **CASSÉ** :
+    le code applicatif n'envoie plus le mail `sav_closed` (rebranchement PJ
+    sur `sav_validated`), MAIS l'ancienne RPC continue d'enqueue un
+    `sav_closed` à chaque clôture → le cron filet de sécurité enverra un
+    mail nominal mentionnant « pièce jointe » sans la logique PJ
+    (rebranchée). Résultat : email mensonger pour l'adhérent.
+  - nouveau code + nouvelle RPC `claim_outbox_batch` mais ancienne
+    `transition_sav_status` = idem CASSÉ pour la même raison.
+  Procédure : `supabase db push` → vérifier `transition_sav_status` v2 + RPC
+  scopée actives via SQL Editor → puis Promote Vercel. En cas de rollback
+  code : appliquer le ROLLBACK manuel des 2 migrations dans l'ordre inverse
+  (cf. sections ROLLBACK en bas de chaque fichier .sql).
+
+- **CR HIGH-1 V1.13 — REVOKE EXECUTE explicite** : migration 1 (claim)
+  étendue d'un `REVOKE EXECUTE ... FROM anon, authenticated` (PATTERN-H16-A
+  durci). Justification : Supabase pose ALTER DEFAULT PRIVILEGES qui re-grant
+  EXECUTE explicite à ces rôles à chaque CREATE FUNCTION ; REVOKE FROM PUBLIC
+  ne purge PAS les grants explicites. Pattern documenté dans la section
+  Patterns + ROLLBACK migration mis à jour.
+
+- **CR HIGH-2 V1.13 — Mapping `sav_comment_from_operator`** : `render.ts` mappe
+  désormais `commentBody := commentExcerpt` et `memberFirstName := memberFirstName ?? ''`
+  (le spread shape→template laissait `commentBody` undefined). **DÉCISION** :
+  enrichir le producer `enqueueOperatorCommentOutbox` pour propager
+  `memberFirstName` (jointure `member:members(email, first_name)` ajoutée à
+  la sélection SAV existante côté `productivity-handlers.ts`) → UX
+  « Bonjour Marie, » au lieu de « Bonjour , ». Coût : 1 colonne en plus dans
+  un SELECT déjà fait. Justifié par l'UX dégradée sinon.
+
+- **CR HIGH-3 V1.13 — Test AC#7 assertion-liaison** : ajout d'un cas dans
+  `retry-emails.v1-13.spec.ts` qui pose la SHAPE RÉELLE producer
+  (`commentExcerpt`, pas `commentBody`) puis asserte
+  `mail.html.toContain('bien reçu votre dossier')` et
+  `mail.html.toContain('Bonjour Marie')` — ces 2 assertions auraient fail
+  avec le mapping cassé HIGH-2 (faux-vert masqué par le spread).
+
+- **CR HIGH-4 V1.13 — Fixtures credit_notes** : `number_formatted` retiré
+  (GENERATED ALWAYS), `member_id`/`total_ht_cents`/`vat_cents` ajoutés (NOT
+  NULL). Sans ce fix, les blocs B.4 + C + D + E du test
+  `v1_13_transition_emails_validated_gate.test.sql` ne s'exécutaient pas
+  (premier INSERT crashait → ROLLBACK silencieux).
+
+- **CR HIGH-5 V1.13 — Dedup collision Bloc E** : `E-fresh` passe à
+  `kind='sav_cancelled'` pour éviter la collision avec
+  `idx_email_outbox_dedup_pending_no_operator` (UNIQUE partiel sur
+  `(sav_id, kind) WHERE status='pending' AND recipient_operator_id IS NULL`).
+  Le sens du test (watermark stale 5 min) est conservé.
+
 ### File List
+
+**Migrations (nouvelles)** :
+- `client/supabase/migrations/20260611120000_v1_13_claim_outbox_batch_sav_scope.sql`
+- `client/supabase/migrations/20260611120100_v1_13_transition_emails_validated_gate.sql`
+
+**Code prod (modifiés)** :
+- `client/api/_lib/cron-runners/retry-emails.ts`
+- `client/api/_lib/emails/sav-closed-attachment.ts` → RENOMMÉ `client/api/_lib/emails/credit-note-attachment.ts`
+- `client/api/_lib/emails/transactional/sav-validated.ts`
+- `client/api/_lib/emails/transactional/render.ts`
+- `client/api/_lib/emails/transactional/kinds.ts`
+- `client/api/_lib/emails/transactional/types.ts`
+- `client/api/_lib/sav/outbox-helpers.ts`
+- `client/api/_lib/sav/transition-handlers.ts`
+- `client/api/_lib/sav/productivity-handlers.ts`
+- `client/api/_lib/self-service/sav-comment-handler.ts`
+- `client/api/webhooks/capture.ts`
+- `client/src/features/back-office/views/SavDetailView.vue`
+- `client/vercel.json`
+
+**Tests (nouveaux)** :
+- `client/supabase/tests/security/v1_13_claim_outbox_batch_sav_scope.test.sql`
+- `client/supabase/tests/security/v1_13_transition_emails_validated_gate.test.sql`
+- `client/tests/unit/api/cron/retry-emails.v1-13.spec.ts`
+- `client/tests/unit/api/sav/status.v1-13.spec.ts`
+- `client/tests/unit/api/sav/comments-handler.outbox.v1-13.spec.ts`
+- `client/tests/unit/api/self-service/sav-comment-handler.v1-13.spec.ts`
+- `client/tests/unit/api/webhooks/capture.v1-13.spec.ts`
+- `client/tests/unit/api/emails/sav-validated-template.v1-13.spec.ts`
+- `client/src/features/back-office/views/SavDetailView.validate-gate.spec.ts`
+
+**Tests (modifiés/renommés)** :
+- `client/tests/unit/api/_lib/emails/sav-closed-attachment.spec.ts` → RENOMMÉ `client/tests/unit/api/_lib/emails/credit-note-attachment.spec.ts`
+- `client/tests/unit/api/cron/retry-emails.spec.ts` (migration sections PJ V1.10 sav_closed→sav_validated)
+- `client/src/features/back-office/views/SavDetailView.edit.spec.ts` (TC-07 fixture pdfWebUrl)

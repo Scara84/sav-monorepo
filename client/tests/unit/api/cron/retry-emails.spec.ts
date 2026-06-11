@@ -262,12 +262,10 @@ vi.mock('../../../../api/_lib/clients/smtp', () => ({
   __resetSmtpTransporterForTests: () => undefined,
 }))
 
-// V1.10 — mock du module `resolveSavClosedAttachment` (à implémenter par dev).
-// Le runner doit l'importer pour les rows `kind === 'sav_closed'` uniquement.
-// Si le runner ne l'importe pas encore (RED phase), ce mock est simplement
-// inerte — les tests AC#1/2/5 failent comme attendu jusqu'à l'implémentation.
-vi.mock('../../../../api/_lib/emails/sav-closed-attachment', () => ({
-  resolveSavClosedAttachment: async (savId: number) => {
+// V1.13 AC#5 — module renommé `credit-note-attachment.ts` avec export
+// `resolveCreditNoteAttachment`. Branché sur `kind === 'sav_validated'`.
+vi.mock('../../../../api/_lib/emails/credit-note-attachment', () => ({
+  resolveCreditNoteAttachment: async (savId: number) => {
     state.attachmentResolverCalls.push(savId)
     if (state.attachmentResolver === 'throw') {
       throw new Error('UNEXPECTED|attachment resolver bug')
@@ -735,18 +733,19 @@ describe('runRetryEmails (Story 6.6)', () => {
   //         NFR-REL (échec PJ ne fait jamais échouer l'envoi).
   // ════════════════════════════════════════════════════════════════════════
 
-  function makeSavClosedRow(overrides: Partial<OutboxRow> = {}): OutboxRow {
+  // V1.13 AC#5 — branche PJ rebranchée de sav_closed → sav_validated.
+  function makeSavValidatedRow(overrides: Partial<OutboxRow> = {}): OutboxRow {
     return makeRow({
       id: 1,
-      kind: 'sav_closed',
-      subject: 'SAV SAV-2026-00003 — clôturé',
+      kind: 'sav_validated',
+      subject: 'SAV SAV-2026-00003 — validé',
       template_data: {
         savReference: 'SAV-2026-00003',
         savId: 3,
         memberFirstName: 'Jean',
         memberLastName: 'Dupont',
-        newStatus: 'closed',
-        previousStatus: 'validated',
+        newStatus: 'validated',
+        previousStatus: 'in_progress',
         totalAmountCents: 4567,
       },
       sav_id: 3,
@@ -754,8 +753,8 @@ describe('runRetryEmails (Story 6.6)', () => {
     })
   }
 
-  it('V1.10 AC#1 sav_closed + PJ résolue (kind="attachment") → sendMail reçoit attachments=[PDF]', async () => {
-    state.outboxRows = [makeSavClosedRow()]
+  it('V1.10 AC#1 sav_validated + PJ résolue (V1.13 AC#5) (kind="attachment") → sendMail reçoit attachments=[PDF]', async () => {
+    state.outboxRows = [makeSavValidatedRow()]
     state.membersById.set(100, { id: 100, notification_prefs: { status_updates: true } })
     const pdfBytes = Buffer.from('%PDF-1.4 fake-credit-note-bytes')
     state.attachmentResolver = {
@@ -776,8 +775,8 @@ describe('runRetryEmails (Story 6.6)', () => {
     expect(mail.attachments![0]!.content).toBe(pdfBytes)
   })
 
-  it('V1.10 AC#2 sav_closed + kind="unavailable" (avoir existe, PJ KO) → envoi + pdfFallback=true', async () => {
-    state.outboxRows = [makeSavClosedRow()]
+  it('V1.10 AC#2 sav_validated + kind="unavailable" (avoir existe, PJ KO) → envoi + pdfFallback=true', async () => {
+    state.outboxRows = [makeSavValidatedRow()]
     state.membersById.set(100, { id: 100, notification_prefs: { status_updates: true } })
     state.attachmentResolver = { kind: 'unavailable' }
     const r = await runRetryEmails({ requestId: 'req-1' })
@@ -794,8 +793,8 @@ describe('runRetryEmails (Story 6.6)', () => {
   })
 
   // ── CR FIX 3 — discrimination no_credit_note ─────────────────────────────
-  it('V1.10 CR FIX 3 : sav_closed + kind="no_credit_note" → envoi SANS mention bon SAV (pas de paragraphe espace)', async () => {
-    state.outboxRows = [makeSavClosedRow()]
+  it('V1.10 CR FIX 3 : sav_validated + kind="no_credit_note" → envoi SANS mention bon SAV (pas de paragraphe espace)', async () => {
+    state.outboxRows = [makeSavValidatedRow()]
     state.membersById.set(100, { id: 100, notification_prefs: { status_updates: true } })
     state.attachmentResolver = { kind: 'no_credit_note' }
     const r = await runRetryEmails({ requestId: 'req-1' })
@@ -809,8 +808,8 @@ describe('runRetryEmails (Story 6.6)', () => {
     expect(mail.html.toLowerCase()).not.toContain('disponible dans votre espace')
     expect(mail.html.toLowerCase()).not.toContain('bon sav')
     expect(mail.html.toLowerCase()).not.toMatch(/pi[èe]ce jointe|ci-joint/i)
-    // Le SAV doit quand même être clôturé : sanity.
-    expect(mail.html.toLowerCase()).toContain('clôturé')
+    // Le SAV doit quand même être validé : sanity (V1.13 rebranchement).
+    expect(mail.html.toLowerCase()).toContain('valid')
   })
 
   it('V1.10 AC#1 (kinds non sav_closed) — sav_in_progress NE déclenche PAS le resolver attachment', async () => {
@@ -830,8 +829,8 @@ describe('runRetryEmails (Story 6.6)', () => {
     expect(mail.attachments === undefined || mail.attachments.length === 0).toBe(true)
   })
 
-  it('V1.10 AC#5 sav_closed + member opt-out (status_updates=false) → cancelled, AUCUN call resolver, AUCUN sendMail', async () => {
-    state.outboxRows = [makeSavClosedRow()]
+  it('V1.10 AC#5 sav_validated + member opt-out (status_updates=false) → cancelled, AUCUN call resolver, AUCUN sendMail', async () => {
+    state.outboxRows = [makeSavValidatedRow()]
     state.membersById.set(100, { id: 100, notification_prefs: { status_updates: false } })
     state.attachmentResolver = {
       kind: 'attachment',
@@ -851,7 +850,7 @@ describe('runRetryEmails (Story 6.6)', () => {
   })
 
   it('V1.10 NFR-REL : resolver attachment THROW inattendu → fallback silencieux, envoi nominal sans PJ', async () => {
-    state.outboxRows = [makeSavClosedRow()]
+    state.outboxRows = [makeSavValidatedRow()]
     state.membersById.set(100, { id: 100, notification_prefs: { status_updates: true } })
     state.attachmentResolver = 'throw'
     const r = await runRetryEmails({ requestId: 'req-1' })
@@ -866,11 +865,11 @@ describe('runRetryEmails (Story 6.6)', () => {
     expect(mail.html.toLowerCase()).toContain('disponible dans votre espace')
   })
 
-  it('V1.10 AC#1 + Story 6.4 : sav_closed avec sav_id NULL → resolver non appelé, fallback lien', async () => {
+  it('V1.10 AC#1 + Story 6.4 : sav_validated avec sav_id NULL → resolver non appelé, fallback lien', async () => {
     // Cas dégénéré : row legacy sans sav_id (avant Story 6.6 migration). CR
     // FIX 3 : fallback conservateur (mention espace, pas no_credit_note) car
     // on ne peut pas prouver qu'il n'y a pas d'avoir.
-    state.outboxRows = [makeSavClosedRow({ sav_id: null })]
+    state.outboxRows = [makeSavValidatedRow({ sav_id: null })]
     state.membersById.set(100, { id: 100, notification_prefs: { status_updates: true } })
     state.attachmentResolver = {
       kind: 'attachment',
@@ -891,7 +890,7 @@ describe('runRetryEmails (Story 6.6)', () => {
     // SANS les filtrer ni les muter quand le redirect est actif. Le test
     // SM-08 (smtp.spec.ts) couvre la survie effective côté nodemailer.
     process.env['EMAIL_REDIRECT_ALL_TO'] = 'anthony.scaramuzza@fruitstock.eu'
-    state.outboxRows = [makeSavClosedRow()]
+    state.outboxRows = [makeSavValidatedRow()]
     state.membersById.set(100, { id: 100, notification_prefs: { status_updates: true } })
     const pdfBytes = Buffer.from('%PDF-redirect-test')
     state.attachmentResolver = {

@@ -236,6 +236,24 @@ const coreHandler: ApiHandler = async (req, res) => {
     // Story 6.6 AC #2 : en parallèle, enqueue les alertes opérateur outbox
     // (kind=sav_received_operator) via RPC `enqueue_new_sav_alerts` —
     // pattern fire-and-forget (RPC throw n'altère pas le 201).
+    // Story V1.13 AC#3 (d) — chaîne `runRetryEmails({ savId })` APRÈS
+    // `enqueueNewSavAlerts` pour flusher immédiatement le broadcast
+    // `sav_received_operator` (cron filet de sécurité quand même).
+    // L'accusé client (sendCaptureEmails — Story 5.7 sendMail direct) reste
+    // INCHANGÉ : pas dans l'outbox.
+    const alertsThenFlush = (async () => {
+      await enqueueNewSavAlerts(row.sav_id, requestId)
+      try {
+        const { runRetryEmails } = await import('../_lib/cron-runners/retry-emails')
+        await runRetryEmails({ requestId, savId: row.sav_id })
+      } catch (err) {
+        logger.warn('webhook.capture.trigger_immediate_failed', {
+          requestId,
+          savId: row.sav_id,
+          error: err instanceof Error ? err.message : String(err),
+        })
+      }
+    })()
     const sideEffectPromise = Promise.allSettled([
       sendCaptureEmails({
         payload,
@@ -243,7 +261,7 @@ const coreHandler: ApiHandler = async (req, res) => {
         savReference: row.reference,
         requestId,
       }),
-      enqueueNewSavAlerts(row.sav_id, requestId),
+      alertsThenFlush,
     ])
     if (process.env['NODE_ENV'] === 'test') {
       await sideEffectPromise

@@ -294,9 +294,21 @@ describe('SavDetailView — édition inline lignes (Story 3.6b)', () => {
   })
 
   it('TC-07 : bouton Valider enabled si toutes lignes ok + status in_progress → clic → PATCH /status', async () => {
-    const ctrl = makeFetchController(
-      buildPayload({ lines: [line({ id: 100 }), line({ id: 101 })] })
-    )
+    // V1.13 AC#8 — le gate exige aussi creditNote.pdfWebUrl présent.
+    const payload = buildPayload({ lines: [line({ id: 100 }), line({ id: 101 })] }) as {
+      data: { creditNote?: unknown }
+    }
+    payload.data.creditNote = {
+      id: 9,
+      number: 1,
+      numberFormatted: 'AV-2026-00001',
+      bonType: 'AVOIR',
+      totalTtcCents: 0,
+      pdfWebUrl: 'https://onedrive.example/AV-2026-00001.pdf',
+      issuedAt: '2026-03-02T10:00:00.000Z',
+      issuedByOperatorId: 42,
+    }
+    const ctrl = makeFetchController(payload)
     ctrl.onceFor((url, m) => m === 'PATCH' && url.includes('/api/sav/1/status'), {
       status: 200,
       body: { data: { savId: 1, status: 'validated', version: 2 } },

@@ -24,6 +24,8 @@ export const MEMBER_KINDS: ReadonlySet<string> = new Set([
   'sav_cancelled',
   'sav_received',
   'sav_comment_added',
+  // V1.13 AC#7 — kind enqueue par outbox-helpers (commentaire op→membre).
+  'sav_comment_from_operator',
   'weekly_recap',
 ])
 

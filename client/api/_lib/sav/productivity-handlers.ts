@@ -7,6 +7,7 @@ import { sendError } from '../errors'
 import { logger } from '../logger'
 import { supabaseAdmin } from '../clients/supabase-admin'
 import { enqueueOperatorCommentOutbox } from './outbox-helpers'
+import { waitUntilOrVoid } from '../pdf/wait-until'
 import type { ApiHandler, ApiRequest, ApiResponse } from '../types'
 
 /**
@@ -146,9 +147,9 @@ interface SavRowForComment {
   reference: string
   status: string
   member_id: number
-  // Production (Supabase embedded join) : member: { email: string | null }
-  // Test mock (flat compat) : member_email: string | null
-  member?: { email: string | null } | null
+  // Production (Supabase embedded join) : member: { email, first_name }
+  // Test mock (flat compat) : member_email / member_first_name (flat)
+  member?: { email: string | null; first_name?: string | null } | null
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   [key: string]: any
 }
@@ -173,7 +174,7 @@ function commentsCore(savId: number): ApiHandler {
       try {
         const result = await admin
           .from('sav')
-          .select('id, reference, status, member_id, member:members(email)')
+          .select('id, reference, status, member_id, member:members(email, first_name)')
           .eq('id', savId)
           .maybeSingle<SavRowForComment>()
         if (result.error) {
@@ -234,6 +235,9 @@ function commentsCore(savId: number): ApiHandler {
 
       // AC #6.6 — Enqueue outbox op→member si visibility='all' (best-effort).
       // Si visibility='internal' → AUCUN enqueue (strict, test OB-02).
+      // Story V1.13 AC#3 (b) — déclenche le trigger immédiat ssi l'enqueue
+      // n'a pas été skippée (visibility=all + member.email présent).
+      let enqueued = false
       if (body.visibility === 'all') {
         // Production: savRow.member.email (embedded join); Test mock: savRow.member_email (flat compat)
         const memberEmail =
@@ -244,15 +248,25 @@ function commentsCore(savId: number): ApiHandler {
           // member.email IS NULL → log + skip (commentaire inséré normalement)
           console.warn(`[outbox] op→member skip: member.email missing savId=${savId}`)
         } else {
+          // Story V1.13 CR HIGH-2 — propagation `memberFirstName` pour le
+          // template membre (renderSavCommentAdded). Lit la jointure embed
+          // production `member:members(email, first_name)` OU le flat-mock
+          // `member_first_name` (test backward-compat).
+          const memberFirstName =
+            savRow?.member?.first_name ??
+            (savRow as SavRowForComment & { member_first_name?: string | null })?.member_first_name ??
+            ''
           await enqueueOperatorCommentOutbox({
             savId,
             savReference: savRow?.reference ?? '',
             memberEmail,
             memberMemberId: savRow?.member_id ?? 0,
+            memberFirstName,
             commentBody: body.body,
             operatorDisplayName: String(user.sub),
             requestId,
           })
+          enqueued = true
         }
       }
 
@@ -265,6 +279,27 @@ function commentsCore(savId: number): ApiHandler {
           authorOperator: { id: user.sub },
         },
       })
+
+      // Story V1.13 AC#3 (b) — trigger immédiat post-réponse si on a enqueué.
+      if (enqueued) {
+        const safeTriggerPromise = (async () => {
+          try {
+            const { runRetryEmails } = await import('../cron-runners/retry-emails')
+            await runRetryEmails({ requestId, savId })
+          } catch (err) {
+            logger.warn('sav.comment.trigger_immediate_failed', {
+              requestId,
+              savId,
+              error: err instanceof Error ? err.message : String(err),
+            })
+          }
+        })()
+        if (process.env['NODE_ENV'] === 'test') {
+          await safeTriggerPromise
+        } else {
+          waitUntilOrVoid(safeTriggerPromise)
+        }
+      }
     } catch (err) {
       logger.error('sav.comment.exception', {
         requestId,

@@ -2,7 +2,7 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 
 /**
  * Story V1.10 AC#4 + AC#6 — tests Vitest du module pur
- * `resolveSavClosedAttachment(savId)`.
+ * `resolveCreditNoteAttachment(savId)`.
  *
  * Contrat (Dev Notes Task 2 + CR FIX 1/2/3) :
  *   - Lit `credit_notes` du sav_id donné (schéma réel : pas de colonne
@@ -197,7 +197,7 @@ function resetState(): void {
 
 // Le module est chargé via import dynamique pour permettre aux tests
 // d'avoir vi.mock() actif au load. Schéma de signature post-CR FIX 3 :
-//   resolveSavClosedAttachment(savId, opts?) → Promise<
+//   resolveCreditNoteAttachment(savId, opts?) → Promise<
 //     | { kind: 'attachment'; filename: string; content: Buffer }
 //     | { kind: 'unavailable' }
 //     | { kind: 'no_credit_note' }
@@ -208,20 +208,20 @@ type Resolution =
   | { kind: 'no_credit_note' }
 
 async function loadModule(): Promise<{
-  resolveSavClosedAttachment: (
+  resolveCreditNoteAttachment: (
     savId: number,
     opts?: { requestId?: string }
   ) => Promise<Resolution>
 }> {
-  return (await import('../../../../../api/_lib/emails/sav-closed-attachment')) as unknown as {
-    resolveSavClosedAttachment: (
+  return (await import('../../../../../api/_lib/emails/credit-note-attachment')) as unknown as {
+    resolveCreditNoteAttachment: (
       savId: number,
       opts?: { requestId?: string }
     ) => Promise<Resolution>
   }
 }
 
-describe('resolveSavClosedAttachment (V1.10 AC#4 + AC#6)', () => {
+describe('resolveCreditNoteAttachment (V1.10 AC#4 + AC#6)', () => {
   beforeEach(() => {
     resetState()
     stubFetchOk()
@@ -248,8 +248,8 @@ describe('resolveSavClosedAttachment (V1.10 AC#4 + AC#6)', () => {
         },
       },
     ]
-    const { resolveSavClosedAttachment } = await loadModule()
-    const result = await resolveSavClosedAttachment(12, { requestId: 'req-1' })
+    const { resolveCreditNoteAttachment } = await loadModule()
+    const result = await resolveCreditNoteAttachment(12, { requestId: 'req-1' })
     expect(result.kind).toBe('attachment')
     if (result.kind !== 'attachment') return
     expect(result.filename).toMatch(/^AV-2026-00003.*\.pdf$/)
@@ -290,8 +290,8 @@ describe('resolveSavClosedAttachment (V1.10 AC#4 + AC#6)', () => {
         sav: { id: 12, member: { first_name: 'Jean', last_name: 'Dupont' } },
       },
     ]
-    const { resolveSavClosedAttachment } = await loadModule()
-    const result = await resolveSavClosedAttachment(12)
+    const { resolveCreditNoteAttachment } = await loadModule()
+    const result = await resolveCreditNoteAttachment(12)
     expect(result.kind).toBe('attachment')
     if (result.kind !== 'attachment') return
     expect(result.filename).toBe('AV-2026-00004 Dupont J..pdf')
@@ -300,8 +300,8 @@ describe('resolveSavClosedAttachment (V1.10 AC#4 + AC#6)', () => {
   // ── CR FIX 3 — discrimination no_credit_note vs unavailable ────────────
   it('CR FIX 3 : aucun credit_note pour ce sav → kind="no_credit_note" (pas de mention bon SAV)', async () => {
     state.creditNotes = []
-    const { resolveSavClosedAttachment } = await loadModule()
-    const result = await resolveSavClosedAttachment(999)
+    const { resolveCreditNoteAttachment } = await loadModule()
+    const result = await resolveCreditNoteAttachment(999)
     expect(result.kind).toBe('no_credit_note')
   })
 
@@ -317,8 +317,8 @@ describe('resolveSavClosedAttachment (V1.10 AC#4 + AC#6)', () => {
         sav: { id: 12, member: { first_name: 'Jean', last_name: 'Dupont' } },
       },
     ]
-    const { resolveSavClosedAttachment } = await loadModule()
-    const result = await resolveSavClosedAttachment(12)
+    const { resolveCreditNoteAttachment } = await loadModule()
+    const result = await resolveCreditNoteAttachment(12)
     expect(result.kind).toBe('unavailable')
   })
 
@@ -337,8 +337,8 @@ describe('resolveSavClosedAttachment (V1.10 AC#4 + AC#6)', () => {
     ]
     // 11 MB en header → doit fallback unavailable sans télécharger.
     state.fetchContentLength = String(11 * 1024 * 1024)
-    const { resolveSavClosedAttachment } = await loadModule()
-    const result = await resolveSavClosedAttachment(12)
+    const { resolveCreditNoteAttachment } = await loadModule()
+    const result = await resolveCreditNoteAttachment(12)
     expect(result.kind).toBe('unavailable')
   })
 
@@ -359,8 +359,8 @@ describe('resolveSavClosedAttachment (V1.10 AC#4 + AC#6)', () => {
     // header. Si on supprime le check runtime du module prod, ce test ROUGE.
     state.fetchBytes = Buffer.alloc(11 * 1024 * 1024, 0)
     state.fetchContentLength = OMIT_CONTENT_LENGTH
-    const { resolveSavClosedAttachment } = await loadModule()
-    const result = await resolveSavClosedAttachment(12)
+    const { resolveCreditNoteAttachment } = await loadModule()
+    const result = await resolveCreditNoteAttachment(12)
     expect(result.kind).toBe('unavailable')
   })
 
@@ -378,9 +378,9 @@ describe('resolveSavClosedAttachment (V1.10 AC#4 + AC#6)', () => {
       },
     ]
     state.fetchThrows = new Error('ECONNRESET socket abort')
-    const { resolveSavClosedAttachment } = await loadModule()
+    const { resolveCreditNoteAttachment } = await loadModule()
     // Assertion-clé : pas de rejet de la promesse.
-    const result = await resolveSavClosedAttachment(12)
+    const result = await resolveCreditNoteAttachment(12)
     expect(result.kind).toBe('unavailable')
   })
 
@@ -397,15 +397,15 @@ describe('resolveSavClosedAttachment (V1.10 AC#4 + AC#6)', () => {
       },
     ]
     state.fetchStatus = 404
-    const { resolveSavClosedAttachment } = await loadModule()
-    const result = await resolveSavClosedAttachment(12)
+    const { resolveCreditNoteAttachment } = await loadModule()
+    const result = await resolveCreditNoteAttachment(12)
     expect(result.kind).toBe('unavailable')
   })
 
   it('NFR-REL SELECT credit_notes Postgrest error → kind="unavailable", jamais throw', async () => {
     state.selectError = { message: 'connection terminated unexpectedly' }
-    const { resolveSavClosedAttachment } = await loadModule()
-    const result = await resolveSavClosedAttachment(12)
+    const { resolveCreditNoteAttachment } = await loadModule()
+    const result = await resolveCreditNoteAttachment(12)
     expect(result.kind).toBe('unavailable')
   })
 
@@ -421,11 +421,11 @@ describe('resolveSavClosedAttachment (V1.10 AC#4 + AC#6)', () => {
         sav: { id: 12, member: null },
       },
     ]
-    const { resolveSavClosedAttachment } = await loadModule()
+    const { resolveCreditNoteAttachment } = await loadModule()
     let threw = false
     let result: Resolution | null = null
     try {
-      result = await resolveSavClosedAttachment(12)
+      result = await resolveCreditNoteAttachment(12)
     } catch {
       threw = true
     }

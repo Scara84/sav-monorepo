@@ -11,8 +11,8 @@
     "api/auth/operator/verify.ts": { "maxDuration": 5 },
     "api/cron/dispatcher.ts": { "maxDuration": 60 },
     "api/webhooks/capture.ts": { "maxDuration": 30 },
-    "api/self-service/draft.ts": { "maxDuration": 10 },
-    "api/sav.ts": { "maxDuration": 10 },
+    "api/self-service/draft.ts": { "maxDuration": 15 },
+    "api/sav.ts": { "maxDuration": 30 },
     "api/credit-notes.ts": { "maxDuration": 10 },
     "api/pilotage.ts": { "maxDuration": 30 },
     "api/invoices.ts": { "maxDuration": 10 }

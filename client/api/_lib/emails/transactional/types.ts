@@ -86,4 +86,6 @@ export type TransactionalKind =
   | 'sav_cancelled'
   | 'sav_received_operator'
   | 'sav_comment_added'
+  // V1.13 AC#7 — mappé sur renderSavCommentAdded(recipientKind='member').
+  | 'sav_comment_from_operator'
   | 'weekly_recap'

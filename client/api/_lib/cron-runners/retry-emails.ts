@@ -5,7 +5,7 @@ import { logger } from '../logger'
 import { renderEmailTemplate } from '../emails/transactional/render'
 import type { EmailTemplateData } from '../emails/transactional/render'
 import { MEMBER_KINDS } from '../emails/transactional/kinds'
-import { resolveSavClosedAttachment } from '../emails/sav-closed-attachment'
+import { resolveCreditNoteAttachment } from '../emails/credit-note-attachment'
 
 /**
  * Story 6.6 — Cron runner retry-emails.
@@ -190,13 +190,24 @@ function enrichTemplateData(
 
 export async function runRetryEmails({
   requestId,
+  savId,
 }: {
   requestId: string
+  /**
+   * Story V1.13 AC#2 — quand fourni, le runner ne traite QUE les rows de ce
+   * SAV (claim RPC `claim_outbox_batch(p_limit, p_sav_id)`). Utilisé par les
+   * handlers post-action (transitions, commentaires, capture) pour flusher
+   * immédiatement via `waitUntilOrVoid(runRetryEmails({ requestId, savId }))`.
+   * Le cron quotidien continue d'appeler `runRetryEmails({ requestId })` sans
+   * `savId` (claim global, comportement strictement inchangé).
+   */
+  savId?: number
 }): Promise<RetryEmailsResult> {
   const startedAt = Date.now()
   const admin = supabaseAdmin()
   const appBase = appBaseUrl()
   const nowIso = new Date().toISOString()
+  const isScoped = typeof savId === 'number' && Number.isInteger(savId) && savId > 0
 
   // 1. Batch claim — HARDENING P0-7 (CR Story 6.6).
   //
@@ -205,18 +216,44 @@ export async function runRetryEmails({
   // Le filtre `mark_outbox_sent` n'évite que le double UPDATE, pas le double
   // SMTP send.
   //
-  // Maintenant : RPC SECURITY DEFINER `claim_outbox_batch(p_limit)` qui
-  // utilise FOR UPDATE SKIP LOCKED + claimed_at watermark (5 min stale
-  // recovery si un worker meurt post-claim sans résoudre la ligne).
-  // Fallback (cas où la RPC n'est pas encore déployée) : SELECT direct
-  // legacy — préserve la compat lors du déploiement de la migration.
+  // Maintenant : RPC SECURITY DEFINER `claim_outbox_batch(p_limit, p_sav_id)`
+  // (V1.13 AC#1) qui utilise FOR UPDATE SKIP LOCKED + claimed_at watermark
+  // (5 min stale recovery si un worker meurt post-claim sans résoudre la ligne).
+  //
+  // Story V1.13 AC#2 : si `savId` est fourni, on passe `p_sav_id` à la RPC
+  // (scoped flush post-action immédiat, IGNORE `next_attempt_at`). Aucun
+  // fallback SELECT direct sur le chemin scopé : si la RPC échoue, on retourne
+  // `scanned=0` et le cron filet de sécurité rattrapera la row.
   let rowsRaw: unknown[] | null = null
   let selectErr: { message: string } | null = null
-  const claimRpc = await admin.rpc('claim_outbox_batch', { p_limit: BATCH_LIMIT })
+  const claimRpc = await admin.rpc(
+    'claim_outbox_batch',
+    isScoped
+      ? { p_limit: BATCH_LIMIT, p_sav_id: savId }
+      : { p_limit: BATCH_LIMIT }
+  )
   if (claimRpc.error) {
-    // Fallback compat (migration pas encore appliquée en preview/dev) — log
-    // warn et bascule sur SELECT direct. Cette branche disparaîtra une fois
-    // la migration en prod stable.
+    if (isScoped) {
+      // Story V1.13 AC#2c — pas de fallback SELECT direct en mode scopé : le
+      // claim P0-7 reste la SEULE défense anti double-SMTP-send, on n'introduit
+      // pas de chemin parallèle. L'email reste pending → cron rattrape.
+      logger.error('cron.retry-emails.scoped_claim_failed', {
+        requestId,
+        savId,
+        message: claimRpc.error.message,
+      })
+      const result: RetryEmailsResult = {
+        scanned: 0,
+        sent: 0,
+        failed: 0,
+        skipped_optout: 0,
+        durationMs: Date.now() - startedAt,
+      }
+      return result
+    }
+    // Fallback compat NON-SCOPÉ (cas où la RPC n'est pas encore déployée en
+    // preview/dev) — log warn et bascule sur SELECT direct. Branche réservée
+    // au chemin cron, jamais activée par le chemin scopé.
     logger.warn('cron.retry-emails.claim_rpc_fallback', {
       requestId,
       message: claimRpc.error.message,
@@ -356,41 +393,42 @@ export async function runRetryEmails({
             }
           }
 
-          // ── 3a-bis. Story V1.10 (AC#1/AC#2/AC#6/NFR-REL) — résolution PJ
-          // « bon SAV » uniquement pour `kind='sav_closed'` ET sav_id présent.
+          // ── 3a-bis. Story V1.13 AC#5 (rebranchement V1.10) — résolution PJ
+          // « bon SAV » uniquement pour `kind='sav_validated'` ET sav_id présent.
           // L'opt-out a déjà été géré au-dessus (perf : pas de coût Graph pour
           // un envoi qui n'aura pas lieu). Le module pur NE throw jamais —
           // belt-and-braces try/catch ici defense-in-depth (NFR-REL : un bug
           // resolver ne doit pas casser l'envoi nominal).
           //
-          // CR FIX 3 : 3 cas selon `kind` du retour :
+          // 3 cas selon `kind` du retour :
           //   - 'attachment'    → PJ jointe au mail.
           //   - 'unavailable'   → pdfFallback=true (lien espace adhérent).
-          //   - 'no_credit_note'→ template INCHANGÉ (pas de mention bon SAV) —
-          //                       comportement 6.6 d'avant la story.
+          //   - 'no_credit_note'→ noCreditNote=true (défensif — impossible par
+          //                       construction du gate AC#4, mais legacy/races).
           // sav_id absent OU throw inattendu : on bascule sur 'unavailable'
           // (fallback conservateur : éviter de masquer un éventuel avoir).
-          let savClosedAttachment: SmtpMailAttachment | null = null
-          let savClosedHasCreditNote = false // true si avoir existe (PJ OU lien)
-          if (row.kind === 'sav_closed') {
+          //
+          // Note V1.13 AC#6 : `kind='sav_closed'` n'enclenche PLUS la branche
+          // PJ. La case render `sav_closed` est conservée pour les rows
+          // legacy mid-flight (déploiement) — pas de PJ, comportement 6.6.
+          let creditNoteAttachment: SmtpMailAttachment | null = null
+          let creditNoteHasNote = false // true si avoir existe (PJ OU lien)
+          if (row.kind === 'sav_validated') {
             if (row.sav_id !== null && row.sav_id !== undefined) {
               try {
-                // CR FIX 4 (LOW-1) : borne le resolver Graph + DB pour ne pas
-                // dépasser le budget cron 60s sur un Graph qui hang. Le module
-                // pur a déjà un AbortSignal.timeout(8s) sur fetch mais le token
-                // n'est pas borné → ceinture+bretelle.
+                // Borne le resolver Graph + DB (Story V1.10 CR FIX 4 / LOW-1).
                 const resolved = await withTimeout(
-                  resolveSavClosedAttachment(row.sav_id, { requestId }),
+                  resolveCreditNoteAttachment(row.sav_id, { requestId }),
                   ATTACHMENT_RESOLVE_TIMEOUT_MS,
-                  'sav_closed_attachment_resolve'
+                  'credit_note_attachment_resolve'
                 )
                 if (resolved.kind === 'attachment') {
-                  savClosedAttachment = { filename: resolved.filename, content: resolved.content }
-                  savClosedHasCreditNote = true
+                  creditNoteAttachment = { filename: resolved.filename, content: resolved.content }
+                  creditNoteHasNote = true
                 } else if (resolved.kind === 'unavailable') {
-                  savClosedHasCreditNote = true
+                  creditNoteHasNote = true
                 }
-                // 'no_credit_note' → savClosedHasCreditNote reste false.
+                // 'no_credit_note' → creditNoteHasNote reste false.
               } catch (resolverErr) {
                 logger.warn('cron.retry-emails.attachment_resolver_unexpected', {
                   requestId,
@@ -399,12 +437,11 @@ export async function runRetryEmails({
                   message: resolverErr instanceof Error ? resolverErr.message : String(resolverErr),
                 })
                 // Throw inattendu OU timeout → fallback conservateur 'unavailable'.
-                savClosedHasCreditNote = true
+                creditNoteHasNote = true
               }
             } else {
-              // sav_id absent (legacy row 6.6 pré-migration) → fallback lien
-              // conservateur, on ne peut PAS prouver qu'il n'y a pas d'avoir.
-              savClosedHasCreditNote = true
+              // sav_id absent (cas dégénéré) → fallback lien conservateur.
+              creditNoteHasNote = true
             }
           }
 
@@ -419,19 +456,19 @@ export async function runRetryEmails({
           if (row.kind === 'sav_comment_added') {
             baseData['recipientKind'] = row.recipient_operator_id !== null ? 'operator' : 'member'
           }
-          // Story V1.10 AC#2/AC#8 — pour `sav_closed` :
-          //   - PJ résolue (savClosedAttachment !== null) → template nominal
+          // Story V1.13 AC#5 — pour `sav_validated` (rebranchement V1.10) :
+          //   - PJ résolue (creditNoteAttachment !== null) → template nominal
           //     mention « pièce jointe ». Pas de flag à poser.
-          //   - Avoir existe MAIS PJ non résolue (`savClosedHasCreditNote=true`
+          //   - Avoir existe MAIS PJ non résolue (`creditNoteHasNote=true`
           //     + attachment null) → `pdfFallback=true` → mention « disponible
           //     dans votre espace » + lien dossierUrl.
-          //   - CR FIX 3 : AUCUN avoir n'existe (`savClosedHasCreditNote=false`)
-          //     → `noCreditNote=true` → template SANS mention bon SAV (SAV
-          //     clôturé sans remboursement, comportement 6.6 d'avant V1.10).
-          if (row.kind === 'sav_closed') {
-            if (savClosedAttachment === null && savClosedHasCreditNote) {
+          //   - AUCUN avoir n'existe (`creditNoteHasNote=false`) → noCreditNote
+          //     =true → template SANS mention bon SAV (défensif — impossible
+          //     par construction du gate AC#4, mais legacy rows / races).
+          if (row.kind === 'sav_validated') {
+            if (creditNoteAttachment === null && creditNoteHasNote) {
               baseData['pdfFallback'] = true
-            } else if (!savClosedHasCreditNote) {
+            } else if (!creditNoteHasNote) {
               baseData['noCreditNote'] = true
             }
           }
@@ -457,17 +494,17 @@ export async function runRetryEmails({
 
           // ── 3c. Envoi SMTP avec timeout 10s (DS Q3 Promise.race).
           const account: SmtpAccount = row.account === 'noreply' ? 'noreply' : 'sav'
-          // Story V1.10 AC#1 — propage la PJ au sendMail (passthrough nodemailer
-          // via smtp.ts AC#3). Hors `sav_closed` ou sans PJ résolue : ne pose
-          // pas le champ (rétrocompat stricte SM-01..SM-07).
+          // Story V1.13 AC#5 — propage la PJ au sendMail (passthrough nodemailer
+          // via smtp.ts AC#3). Hors `sav_validated` ou sans PJ résolue : ne
+          // pose pas le champ (rétrocompat stricte SM-01..SM-07).
           const sendPromise = sendMail({
             to: row.recipient_email,
             subject: rendered.subject,
             html: rendered.html,
             text: rendered.text,
             account,
-            ...(savClosedAttachment !== null
-              ? { attachments: [savClosedAttachment] }
+            ...(creditNoteAttachment !== null
+              ? { attachments: [creditNoteAttachment] }
               : {}),
           })
           const info = await withTimeout(sendPromise, SEND_TIMEOUT_MS, 'smtp_send')

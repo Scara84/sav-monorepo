@@ -7,6 +7,7 @@ import { logger } from '../logger'
 import { supabaseAdmin } from '../clients/supabase-admin'
 import { formatErrors } from '../middleware/with-validation'
 import { requireActiveManager } from '../auth/manager-check'
+import { waitUntilOrVoid } from '../pdf/wait-until'
 import type { ApiHandler, ApiRequest } from '../types'
 
 /**
@@ -204,6 +205,8 @@ const coreHandler: ApiHandler = async (req, res) => {
     //   (recipient_member_id = sav.member_id, recipient_email = members.email).
     //   Skip si l'auteur est le propriétaire (pas d'auto-notify).
     const excerpt = body.length > 200 ? `${body.slice(0, 197)}...` : body
+    // Story V1.13 AC#3 (c) — trigger immédiat ssi au moins un INSERT outbox OK.
+    let outboxInsertSucceeded = false
     try {
       // 5a) Enqueue opérateur (cf. Story 6.3 inchangé).
       let operatorEmail: string | null = null
@@ -265,6 +268,8 @@ const coreHandler: ApiHandler = async (req, res) => {
             target: 'operator',
             errorCode: (outboxResult.error as { code?: string }).code ?? 'unknown',
           })
+        } else {
+          outboxInsertSucceeded = true
         }
       }
 
@@ -334,6 +339,8 @@ const coreHandler: ApiHandler = async (req, res) => {
               target: 'member_owner',
               errorCode: (ownerOutboxResult.error as { code?: string }).code ?? 'unknown',
             })
+          } else {
+            outboxInsertSucceeded = true
           }
         }
       }
@@ -364,6 +371,27 @@ const coreHandler: ApiHandler = async (req, res) => {
         authorLabel: 'Vous',
       },
     })
+
+    // Story V1.13 AC#3 (c) — trigger immédiat post-réponse si on a enqueué.
+    if (outboxInsertSucceeded) {
+      const safeTriggerPromise = (async () => {
+        try {
+          const { runRetryEmails } = await import('../cron-runners/retry-emails')
+          await runRetryEmails({ requestId, savId })
+        } catch (err) {
+          logger.warn('self-service.sav-comment.trigger_immediate_failed', {
+            requestId,
+            savId,
+            error: err instanceof Error ? err.message : String(err),
+          })
+        }
+      })()
+      if (process.env['NODE_ENV'] === 'test') {
+        await safeTriggerPromise
+      } else {
+        waitUntilOrVoid(safeTriggerPromise)
+      }
+    }
   } catch (err) {
     logger.error('self-service.sav-comment.exception', {
       requestId,
