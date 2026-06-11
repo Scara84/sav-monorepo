@@ -769,6 +769,35 @@ function formatEur(cents: number | null | undefined): string {
   return (cents / 100).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })
 }
 
+/**
+ * V1.11 AC#5 — Helper TTC d'affichage pour la cellule « Avoir TTC ».
+ *
+ * MIRROR (documenté) du helper backend `creditTtcCents` de
+ * `client/api/_lib/pdf/CreditNotePdf.ts` — même formule (round half-up
+ * de HT × (1 + bp/10000)), même contrat null-safe.
+ *
+ * Dette V2 (CR 8.7 / dette `projectSavLineToClientDemand`) : factoriser
+ * dans un module partagé `client/src/shared/credit/creditTtc.ts` (ou
+ * équivalent) le jour où ce helper est réutilisé ailleurs (ex : exports
+ * UI Epic 5 ou autre vue). Tant que c'est le seul call-site front, on
+ * garde un mirror local pour éviter un import cross-package
+ * client/api ↔ client/src qui complique le bundling.
+ *
+ * Anti-W16 : pure, AUCUNE somme sur ces TTC pour reconstituer un total.
+ * Les totaux moteur (cf. `useSavLinePreview`) restent issus du helper
+ * `computeCreditNoteTotals` (engine TS).
+ */
+function creditTtcCentsLine(l: {
+  creditAmountCents: number | null
+  vatRateBpSnapshot: number | null
+}): number | null {
+  if (l.creditAmountCents === null || l.vatRateBpSnapshot === null) return null
+  // CR M1 — formule entière exacte (cf. `creditTtcCents` côté PDF) :
+  // `ht * (10000 + bp) / 10000` évite la perte de précision flottante
+  // qui décalait certains boundaries half-up d'1 ct (ex. ht=1900, bp=550).
+  return Math.round((l.creditAmountCents * (10000 + l.vatRateBpSnapshot)) / 10000)
+}
+
 // Story 4.8 — Calcul marge totale HT estimée (AC #5)
 // Agrège unitMarginHtCents * qty sur les lignes ayant les 2 prix renseignés
 const totalMarginHtCents = computed<number | null>(() => {
@@ -1254,7 +1283,10 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
               <th scope="col">PU achat HT</th>
               <th scope="col">Marge unit. HT</th>
               <th scope="col">Coef.</th>
-              <th scope="col">Avoir</th>
+              <!-- V1.11 AC#5 — Avoir affiché en TTC (cohérent PDF avoir).
+                   Helper `creditTtcCentsLine` (mirror du helper PDF, dette
+                   tracée CR 8.7 : factorisation V2 si réutilisé ailleurs). -->
+              <th scope="col">Avoir TTC</th>
               <th scope="col">Validation</th>
               <th scope="col">Actions</th>
             </tr>
@@ -1466,8 +1498,11 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
                   }}
                 </span>
               </td>
-              <!-- Avoir (colonne 10) -->
-              <td>{{ formatEur(l.creditAmountCents) }}</td>
+              <!-- Avoir TTC (colonne 10) V1.11 AC#5
+                   Affiche TTC = round(HT × (1 + bp/10000)) half-up.
+                   `—` si creditAmountCents ou vatRateBpSnapshot null
+                   (pattern ghost line aligné avec PDF AC#2). -->
+              <td>{{ formatEur(creditTtcCentsLine(l)) }}</td>
               <!-- Validation (colonne 11) -->
               <td>
                 <span

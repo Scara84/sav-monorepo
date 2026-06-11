@@ -84,6 +84,12 @@ export interface CreditNotePdfLine {
   credit_coefficient: number
   credit_coefficient_label: string | null
   credit_amount_cents: number | null
+  /**
+   * V1.11 — Taux de TVA (basis points, ex 550 = 5,5 %) figé à l'émission
+   * du SAV (snapshot ligne). Source de vérité pour le calcul TTC d'affichage
+   * (cf. helper `creditTtcCents`). `null` → cellule rendue `—` (ghost line).
+   */
+  vat_rate_bp_snapshot: number | null
   validation_message: string | null
 }
 
@@ -274,9 +280,42 @@ const UNIT_LABEL: Record<Unit, string> = {
   liter: 'L',
 }
 
-function truncateName(raw: string, max = 40): string {
-  if (raw.length <= max) return raw
-  return `${raw.slice(0, max - 1).trimEnd()}…`
+// V1.11 — `truncateName(raw, 40)` retiré : react-pdf <Text> wrappe nativement
+// dans la colonne flex (cf. AC#4). Le helper a disparu avec son seul
+// call-site dans `renderTable`.
+
+/**
+ * V1.11 — Helper pur d'affichage : convertit un montant HT ligne en TTC
+ * pour le PDF avoir et la table SAV.
+ *
+ * Contrat (cf. AC#2, AC#6, dette CR 8.7 mirror documenté côté front) :
+ *  - `credit_amount_cents` reste HT par contrat (totaux comptables, exports
+ *    Pennylane, Epic 5) — JAMAIS muté ici.
+ *  - Arrondi half-up au centime (cohérent avec `formatEurFromCents` qui
+ *    s'appuie sur `Intl.NumberFormat fr-FR`).
+ *  - `credit_amount_cents` ou `vat_rate_bp_snapshot` null → `null` (la
+ *    cellule UI affichera `—`, pattern ghost line).
+ *  - `vat_rate_bp_snapshot === 0` → TTC = HT (TVA neutre, pas null).
+ *
+ * Anti-W16 : pure et lue uniquement à l'affichage. JAMAIS sommée pour
+ * recomposer les totaux (les totaux moteur restent strictement issus du
+ * payload, cf. AC#3).
+ */
+export function creditTtcCents(line: {
+  credit_amount_cents: number | null
+  vat_rate_bp_snapshot: number | null
+}): number | null {
+  const ht = line.credit_amount_cents
+  const bp = line.vat_rate_bp_snapshot
+  if (ht === null || bp === null) return null
+  // half-up : Math.floor(x + 0.5) ; Math.round() en JS arrondit déjà
+  // .5 vers +∞ pour les positifs (banker's rounding non utilisé ici).
+  // CR M1 — formule entière exacte : `ht * (10000 + bp) / 10000` évite la
+  // perte de précision flottante de `ht * (1 + bp/10000)` (ex. ht=1900,
+  // bp=550 → 2004.4999... au lieu de 2004.5 exact, Math.round renvoyait
+  // 2004 au lieu de 2005). Le moteur totaux utilise déjà l'arithmétique
+  // entière — on s'aligne pour éliminer un écart d'1 ct évitable.
+  return Math.round((ht * (10000 + bp)) / 10000)
 }
 
 function formatQty(q: number): string {
@@ -450,9 +489,14 @@ function renderTable(
     h(Text, { style: styles.colQtyReq }, 'Qté dem.'),
     h(Text, { style: styles.colUnit }, 'Unité'),
     h(Text, { style: styles.colQtyInv }, 'Qté fact.'),
-    h(Text, { style: styles.colPriceHt }, 'Prix HT'),
+    // V1.11 AC#1 — la valeur affichée est `unit_price_ttc_cents` (déjà TTC) ;
+    // c'est le libellé qui mentait jusqu'ici (« Prix HT »). Re-libellé sans
+    // toucher au champ ni à la valeur.
+    h(Text, { style: styles.colPriceHt }, 'PU TTC'),
     h(Text, { style: styles.colCoef }, 'Coef'),
-    h(Text, { style: styles.colAmount }, 'Montant')
+    // V1.11 AC#2 — la colonne montant passe en TTC (helper `creditTtcCents`).
+    // Les TOTAUX restent ceux du moteur (AC#3) — pas une somme des TTC affichés.
+    h(Text, { style: styles.colAmount }, 'Montant TTC')
   )
 
   const body = lines.map((l, idx) => {
@@ -468,7 +512,11 @@ function renderTable(
       },
       h(Text, { style: styles.colLineNo }, String(l.line_number)),
       h(Text, { style: styles.colCode }, l.product_code_snapshot),
-      h(Text, { style: styles.colName }, truncateName(l.product_name_snapshot)),
+      // V1.11 AC#4 — retrait `truncateName(…, 40)` : react-pdf <Text> wrappe
+      // nativement à l'intérieur de la colonne (largeur `colName` flex 1).
+      // La pagination est gérée par la page <Page wrap> + `wrap: false` sur
+      // chaque <View tableRow> (les rows hautes restent atomiques).
+      h(Text, { style: styles.colName }, l.product_name_snapshot),
       h(Text, { style: styles.colQtyReq }, formatQty(l.qty_requested)),
       h(Text, { style: styles.colUnit }, UNIT_LABEL[l.unit_requested] ?? ''),
       h(
@@ -486,10 +534,16 @@ function renderTable(
         { style: styles.colCoef },
         formatCoef(l.credit_coefficient, l.credit_coefficient_label)
       ),
+      // V1.11 AC#2 — Montant TTC = helper pur (null-safe sur HT et bp).
+      // Cellule `—` si HT ou bp null (pattern ghost line aligné avec
+      // `unit_price_ttc_cents === null` ci-dessus).
       h(
         Text,
         { style: styles.colAmount },
-        l.credit_amount_cents === null ? '—' : formatEurFromCents(l.credit_amount_cents)
+        (() => {
+          const ttc = creditTtcCents(l)
+          return ttc === null ? '—' : formatEurFromCents(ttc)
+        })()
       )
     )
   })

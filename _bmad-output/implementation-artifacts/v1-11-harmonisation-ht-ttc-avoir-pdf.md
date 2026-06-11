@@ -1,6 +1,6 @@
 # Story V1.11 : Harmonisation affichage HT/TTC (table lignes SAV + PDF avoir) et désignation complète
 
-Status: ready-for-dev
+Status: review
 
 <!-- Source : UAT bout-en-bout 2026-06-10 (SAV-2026-00003, AV-2026-00003) —
      deferred-work.md « colonne Avoir HT » + « PDF avoir : colonnes prix
@@ -45,15 +45,15 @@ so that **je peux contrôler un avoir d'un coup d'œil sans recalculer mentaleme
 
 ## Tasks / Subtasks
 
-- [ ] Task 1 (AC#1, AC#2, AC#3) : CreditNotePdf.ts — libellés + helper pur
+- [x] Task 1 (AC#1, AC#2, AC#3) : CreditNotePdf.ts — libellés + helper pur
       `creditTtcCents(line)` (arrondi half-up cohérent avec formatEurPdf) ;
       NE PAS toucher au bloc totaux.
-- [ ] Task 2 (AC#4) : retrait truncateName sur product_name_snapshot, test
+- [x] Task 2 (AC#4) : retrait truncateName sur product_name_snapshot, test
       pagination avec nom 120 chars × 25 lignes.
-- [ ] Task 3 (AC#5) : SavDetailView colonne Avoir TTC (helper partagé
+- [x] Task 3 (AC#5) : SavDetailView colonne Avoir TTC (helper partagé
       front/back si possible — sinon mirror documenté, cf. dette
       projectSavLineToClientDemand CR 8.7).
-- [ ] Task 4 (AC#7) : ATDD d'abord ; rejouer tests PDF 4.5 + SavDetailView +
+- [x] Task 4 (AC#7) : ATDD d'abord ; rejouer tests PDF 4.5 + SavDetailView +
       iso-fact Epic 5 + typecheck.
 - [ ] Task 5 : UAT réel preview — réémettre un avoir de test, vérifier PDF.
 
@@ -91,8 +91,65 @@ so that **je peux contrôler un avoir d'un coup d'œil sans recalculer mentaleme
 
 ### Agent Model Used
 
+Opus 4.7 (dev) + Fable 5 (adversarial code review, Step 4).
+
 ### Debug Log References
+
+- Step 4 adversarial CR : 2 MEDIUM (M1 rounding flottant ↔ entier ; M2 NaN
+  leak undefined→Number) + 1 hygiene (L4 story file).
+- Fix-loop appliqué intégralement (cf. Completion Notes ci-dessous).
 
 ### Completion Notes List
 
+- **Décision UI (AC#5)** — colonne « Avoir TTC » affichée seule sans tooltip
+  HT/sous-texte. Choix retenu pour cohérence visuelle avec la table « Lignes
+  du SAV » existante et éviter une dette UX (tooltip Tailwind à introduire).
+  HT reste consultable via la cellule moteur (preview / totaux).
+- **Dette V2 — mirror helper `creditTtcCentsLine`** (SavDetailView.vue) ↔
+  `creditTtcCents` (CreditNotePdf.ts) : duplication assumée pour éviter un
+  import cross-package client/api ↔ client/src qui complique le bundling.
+  À factoriser dans `client/src/shared/credit/creditTtc.ts` le jour où un
+  3e call-site apparaît (pattern identique à la dette
+  `projectSavLineToClientDemand` CR 8.7).
+- **CR M1 — formule entière exacte** : remplacement de
+  `Math.round(ht * (1 + bp/10000))` par
+  `Math.round((ht * (10000 + bp)) / 10000)` aux 2 sites (CreditNotePdf.ts
+  + SavDetailView.vue). Discriminant boundary ht=1900 bp=550 :
+  formule flottante → 2004 (2004.4999...) ; formule entière → 2005 (true
+  half-up). Aligne le helper d'affichage sur l'arithmétique entière déjà
+  utilisée par le moteur totaux. Tests boundary ajoutés dans
+  `CreditNotePdf.v1-11.test.ts` et `SavDetailView.avoir-ttc.spec.ts`.
+- **CR M2 — NaN guard mapping** : `generate-credit-note-pdf.ts:510-511`
+  passe de `!== null` à `!= null` pour intercepter aussi `undefined`
+  (`Number(undefined) = NaN` se propageait jusqu'au rendu PDF en
+  `NaN €`). Fixture test G01 enrichie de `vat_rate_bp_snapshot: 550` et
+  assertion « rendered cell » ajoutée (build `buildCreditNotePdf` direct
+  via stub `@react-pdf/renderer`, replay du mapping omettant le champ,
+  vérification cellule = `—` et absence de `NaN`).
+- **AC#3 préservé** — totaux Sous-total HT / TVA / Total TTC restent
+  strictement issus du payload moteur (`computeCreditNoteTotals`).
+  Aucune somme des TTC affichés ; pas de double-arrondi (W16 respecté).
+
 ### File List
+
+Production (modifiés) :
+
+- `client/api/_lib/pdf/CreditNotePdf.ts` — libellés `PU TTC` /
+  `Montant TTC`, helper pur `creditTtcCents`, retrait `truncateName(…, 40)`.
+- `client/api/_lib/pdf/generate-credit-note-pdf.ts` — mapping
+  `vat_rate_bp_snapshot` (snapshot ligne) + guard `!= null` (CR M2).
+- `client/src/features/back-office/views/SavDetailView.vue` — colonne
+  « Avoir TTC », helper `creditTtcCentsLine` (mirror documenté).
+
+Tests (créés) :
+
+- `client/tests/unit/api/_lib/pdf/CreditNotePdf.v1-11.test.ts` —
+  AC#1/#2/#3/#4/#6 + boundary CR M1 (ht=1900 bp=550 → 2005).
+- `client/src/features/back-office/views/SavDetailView.avoir-ttc.spec.ts` —
+  AC#5 + boundary CR M1 (HT=1900 + 5,5 % → 20,05 €).
+
+Tests (touchés) :
+
+- `client/tests/unit/api/_lib/pdf/generate-credit-note-pdf.test.ts` —
+  fixture G01 (ajout `vat_rate_bp_snapshot: 550`) + test CR M2
+  (assertion rendered Montant TTC cell).

@@ -99,6 +99,8 @@ function baseLine(overrides: Partial<CreditNotePdfLine> = {}): CreditNotePdfLine
     credit_coefficient: 1,
     credit_coefficient_label: 'TOTAL 100%',
     credit_amount_cents: 1000,
+    // V1.11 — snapshot TVA ligne (5,5 % par défaut, aligné settings).
+    vat_rate_bp_snapshot: 550,
     validation_message: null,
     ...overrides,
   }
@@ -255,16 +257,17 @@ describe('CreditNotePdf (Story 4.5 AC #9)', () => {
     expect(text).not.toContain('Groupe :')
   })
 
-  it('T12 long product_name_snapshot tronqué avec …', () => {
+  it('T12 long product_name_snapshot rendu en entier (V1.11 AC#4 — wrap natif <Text>)', () => {
+    // V1.11 — `truncateName(…, 40)` retiré ; react-pdf <Text> wrappe nativement
+    // dans la colonne `colName` (flex 1). La désignation reste intégrale.
     const longName = 'Pommes Golden bio — plateau 5 kg caisse bois FSC label rouge 2024'
     const text = renderText(
       baseProps({
         lines: [baseLine({ product_name_snapshot: longName })],
       })
     )
-    // Tronqué à 40 chars max + …
-    expect(text).toMatch(/…/)
-    expect(text).not.toContain(longName)
+    expect(text).toContain(longName)
+    expect(text).not.toMatch(/…/)
   })
 
   it('T13 mention légale footer visible', () => {

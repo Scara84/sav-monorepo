@@ -232,6 +232,9 @@ interface SavLineRow {
   credit_coefficient: number | string
   credit_coefficient_label: string | null
   credit_amount_cents: number | null
+  // V1.11 — snapshot taux TVA (bp) figé à l'émission ligne ; alimente le
+  // calcul TTC d'affichage (CreditNotePdf `creditTtcCents`).
+  vat_rate_bp_snapshot: number | null
   validation_message: string | null
 }
 
@@ -306,7 +309,7 @@ export async function generateCreditNotePdfAsync(args: GenerateCreditNotePdfArgs
         'line_number, position, product_code_snapshot, product_name_snapshot, ' +
           'qty_requested, unit_requested, qty_invoiced, unit_invoiced, ' +
           'unit_price_ttc_cents, credit_coefficient, credit_coefficient_label, ' +
-          'credit_amount_cents, validation_message'
+          'credit_amount_cents, vat_rate_bp_snapshot, validation_message'
       )
       .eq('sav_id', sav_id)
       .order('line_number', { ascending: true }),
@@ -501,6 +504,13 @@ export async function generateCreditNotePdfAsync(args: GenerateCreditNotePdfArgs
         : l.credit_coefficient,
     credit_coefficient_label: l.credit_coefficient_label,
     credit_amount_cents: l.credit_amount_cents !== null ? Number(l.credit_amount_cents) : null,
+    // V1.11 — snapshot TVA bp ligne ; null possible (lignes héritées /
+    // lignes pré-snapshot). Le PDF affiche `—` dans la colonne Montant TTC
+    // dans ce cas (ghost line — cf. AC#2 / CreditNotePdf).
+    // CR M2 — guard `!= null` (et non `!== null`) pour intercepter aussi
+    // `undefined` (sinon `Number(undefined) = NaN` → cellule rendue `NaN €`).
+    vat_rate_bp_snapshot:
+      l.vat_rate_bp_snapshot != null ? Number(l.vat_rate_bp_snapshot) : null,
     validation_message: l.validation_message,
   }))
 

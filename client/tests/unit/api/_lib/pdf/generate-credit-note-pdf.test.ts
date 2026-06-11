@@ -164,6 +164,16 @@ import {
   __getReactPdfCacheForTests,
   __resetReactPdfCacheForTests,
 } from '../../../../../api/_lib/pdf/generate-credit-note-pdf'
+// CR M2 — replay du mapping `linesRaw → CreditNotePdfLine` directement,
+// stub `@react-pdf/renderer` identique à `CreditNotePdf.test.ts`, pour
+// affirmer la cellule Montant TTC rendue (anti-NaN-leak).
+import {
+  buildCreditNotePdf,
+  type CreditNotePdfLine,
+  type CreditNotePdfProps,
+} from '../../../../../api/_lib/pdf/CreditNotePdf'
+import * as React from 'react'
+import type * as ReactPDFType from '@react-pdf/renderer'
 
 // Helpers fixtures -------------------------------------------------------
 function seedHappyPath(): void {
@@ -214,6 +224,11 @@ function seedHappyPath(): void {
       credit_coefficient_label: 'TOTAL',
       credit_amount_cents: 1000,
       validation_message: null,
+      // CR M2 — sans ce champ, le mapping `vat_rate_bp_snapshot` voyait
+      // `undefined` (et non `null`) → `Number(undefined) = NaN` → cellule
+      // Montant TTC rendue `NaN €` silencieusement. Le mapping a été durci
+      // avec `!= null`, et la fixture est désormais explicite (TVA 5,5 %).
+      vat_rate_bp_snapshot: 550,
     },
   ]
   db.settings = [
@@ -572,6 +587,126 @@ describe('generateCreditNotePdfAsync (Story 4.5 AC #10)', () => {
     expect(attempts).toBe(3)
     expect(refreshCalls).toBe(2)
     expect(db.capturedUpdate).toBeNull()
+  })
+
+  it('CR M2 — mapping rangée vat_rate_bp_snapshot=undefined → cellule Montant TTC rendue `—` (pas `NaN €`)', async () => {
+    // CR M2 — Avant le fix, une ligne `linesRaw` sans champ
+    // `vat_rate_bp_snapshot` (ex. lignes héritées pré-snapshot) passait par
+    // `Number(undefined) = NaN` → cellule rendue `NaN €` dans le PDF.
+    // Le guard est passé à `!= null` (intercepte null ET undefined) → la
+    // cellule rend `—` (ghost line pattern AC#2 V1.11).
+    //
+    // Ce test reproduit le mapping de `generateCreditNotePdfAsync` (lignes
+    // 492-513) sur une rangée DB qui omet le champ, et confirme :
+    //   1) `vat_rate_bp_snapshot` mappe à `null` (pas `NaN`)
+    //   2) le PDF rendu via `buildCreditNotePdf` affiche `—` (pas `NaN`)
+    const rawRow: Record<string, unknown> = {
+      line_number: 1,
+      position: 0,
+      product_code_snapshot: 'POM-BIO',
+      product_name_snapshot: 'Pommes Golden bio',
+      qty_requested: 2,
+      unit_requested: 'kg',
+      qty_invoiced: 2,
+      unit_invoiced: 'kg',
+      unit_price_ttc_cents: 500,
+      credit_coefficient: 1,
+      credit_coefficient_label: 'TOTAL',
+      credit_amount_cents: 1000,
+      validation_message: null,
+      // vat_rate_bp_snapshot OMIS volontairement → undefined
+    }
+
+    // Replay EXACT du mapping `generate-credit-note-pdf.ts:510-511` post-fix.
+    const mappedVatBp =
+      (rawRow.vat_rate_bp_snapshot as number | null | undefined) != null
+        ? Number(rawRow.vat_rate_bp_snapshot)
+        : null
+    expect(mappedVatBp).toBeNull()
+    expect(Number.isNaN(mappedVatBp as unknown as number)).toBe(false)
+
+    // Render direct du PDF via le stub `@react-pdf/renderer` — assertion
+    // « rendered cell » telle que demandée par le CR M2.
+    function makeStub(name: string): (props: { children?: React.ReactNode }) => React.ReactElement {
+      return ({ children }) => React.createElement(name, {}, children)
+    }
+    const reactPdfModuleMock = {
+      Document: makeStub('Document'),
+      Page: makeStub('Page'),
+      Text: makeStub('Text'),
+      View: makeStub('View'),
+      StyleSheet: { create: <T extends Record<string, unknown>>(s: T): T => s },
+    } as unknown as typeof ReactPDFType
+
+    function collectText(node: unknown): string[] {
+      if (node === null || node === undefined || typeof node === 'boolean') return []
+      if (typeof node === 'string') return [node]
+      if (typeof node === 'number') return [String(node)]
+      if (Array.isArray(node)) return node.flatMap(collectText)
+      const el = node as { props?: { children?: unknown } }
+      const children = el.props?.children
+      if (children === undefined) return []
+      return collectText(children)
+    }
+
+    const line: CreditNotePdfLine = {
+      line_number: 1,
+      product_code_snapshot: 'POM-BIO',
+      product_name_snapshot: 'Pommes Golden bio',
+      qty_requested: 2,
+      unit_requested: 'kg',
+      qty_invoiced: 2,
+      unit_invoiced: 'kg',
+      unit_price_ttc_cents: 500,
+      credit_coefficient: 1,
+      credit_coefficient_label: 'TOTAL',
+      credit_amount_cents: 1000,
+      validation_message: null,
+      vat_rate_bp_snapshot: mappedVatBp, // ← null grâce au guard `!= null`
+    }
+    const props: CreditNotePdfProps = {
+      creditNote: {
+        id: 42,
+        number: 42,
+        number_formatted: 'AV-2026-00042',
+        bon_type: 'AVOIR',
+        total_ht_cents: 1000,
+        discount_cents: 0,
+        vat_cents: 55,
+        total_ttc_cents: 1055,
+        issued_at: '2026-04-27T10:00:00.000Z',
+      },
+      sav: { reference: 'SAV-2026-00012', invoice_ref: 'INV-1234', invoice_fdp_cents: 250 },
+      member: {
+        first_name: 'Jean',
+        last_name: 'Dupont',
+        email: 'j@d.test',
+        phone: null,
+        address_line1: null,
+        address_line2: null,
+        postal_code: null,
+        city: null,
+      },
+      group: { name: 'Lyon Croix-Rousse' },
+      lines: [line],
+      company: {
+        legal_name: 'Fruitstock SAS',
+        siret: '12345678901234',
+        tva_intra: 'FR12345678901',
+        address_line1: '1 rue du Verger',
+        postal_code: '69000',
+        city: 'Lyon',
+        phone: '+33 4 00 00 00 00',
+        email: 'sav@fruitstock.test',
+        legal_mentions_short: 'TVA acquittée',
+      },
+      is_group_manager: false,
+    }
+    const text = collectText(buildCreditNotePdf(reactPdfModuleMock, props)).join(' ')
+    // Sentinel anti-NaN : la cellule Montant TTC affiche `—` (ghost line),
+    // jamais `NaN`.
+    expect(text).not.toMatch(/NaN/)
+    expect(text).toContain('—')
   })
 
   it('HARDEN-5 — __deps.renderToBuffer injected → getReactPdf() is NOT called (lazy import bypassed)', async () => {
