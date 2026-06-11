@@ -1,6 +1,6 @@
 # Story V1.11 : Harmonisation affichage HT/TTC (table lignes SAV + PDF avoir) et désignation complète
 
-Status: review
+Status: done
 
 <!-- Source : UAT bout-en-bout 2026-06-10 (SAV-2026-00003, AV-2026-00003) —
      deferred-work.md « colonne Avoir HT » + « PDF avoir : colonnes prix
@@ -55,7 +55,16 @@ so that **je peux contrôler un avoir d'un coup d'œil sans recalculer mentaleme
       projectSavLineToClientDemand CR 8.7).
 - [x] Task 4 (AC#7) : ATDD d'abord ; rejouer tests PDF 4.5 + SavDetailView +
       iso-fact Epic 5 + typecheck.
-- [ ] Task 5 : UAT réel preview — réémettre un avoir de test, vérifier PDF.
+- [x] Task 5 : UAT réel preview — réémettre un avoir de test, vérifier PDF.
+      ✅ 2026-06-11 (MCP chrome-devtools, deploy ef772bf) : SAV-2026-00004
+      (duplicata SAV-2026-00003) → arbitrage 2 lignes → avoir AV-2026-00004
+      émis. Back-office : colonne « Avoir TTC » 9,22 € / 12,59 € (≠ HT moteur
+      8,74/11,93 — discriminant réel), « — » sur lignes sans crédit. PDF :
+      en-têtes « PU TTC » / « Montant TTC », montants lignes TTC, totaux
+      moteur intacts (HT 20,67 / TVA 1,14 / TTC 21,81), désignations 56 chars
+      wrappées multi-lignes sans ellipse, hauteur de ligne variable OK.
+      Console 0 erreur. Résiduel non exercé en réel : pagination multi-page
+      > 20 lignes (couvert par le smoke unit 25×120 chars uniquement).
 
 ## Dev Notes
 
