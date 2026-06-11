@@ -67,6 +67,9 @@ interface State {
     | { kind: 'attachment'; filename: string; content: Buffer }
     | 'throw'
   attachmentResolverCalls: Array<number>
+  /** TTC avoir renvoyé par resolveCreditNoteTtcCents (fix UAT V1.13). */
+  creditNoteTtcCents: number | null
+  creditNoteTtcCalls: Array<number>
 }
 
 const state = vi.hoisted(
@@ -81,6 +84,8 @@ const state = vi.hoisted(
       scopedRpcFiltering: true,
       attachmentResolver: { kind: 'no_credit_note' },
       attachmentResolverCalls: [],
+      creditNoteTtcCents: null,
+      creditNoteTtcCalls: [],
     }) as State
 )
 
@@ -215,6 +220,10 @@ vi.mock('../../../../api/_lib/emails/credit-note-attachment', () => ({
     }
     return state.attachmentResolver
   },
+  resolveCreditNoteTtcCents: async (savId: number) => {
+    state.creditNoteTtcCalls.push(savId)
+    return state.creditNoteTtcCents
+  },
 }))
 
 import { runRetryEmails } from '../../../../api/_lib/cron-runners/retry-emails'
@@ -256,6 +265,8 @@ function resetState(): void {
   state.scopedRpcFiltering = true
   state.attachmentResolver = { kind: 'no_credit_note' }
   state.attachmentResolverCalls = []
+  state.creditNoteTtcCents = null
+  state.creditNoteTtcCalls = []
 }
 
 describe('runRetryEmails — V1.13 scopable + PJ rebranchée sav_validated', () => {
@@ -332,6 +343,41 @@ describe('runRetryEmails — V1.13 scopable + PJ rebranchée sav_validated', () 
     expect(mail.attachments).toBeDefined()
     expect(mail.attachments).toHaveLength(1)
     expect(mail.attachments![0]!.content).toBe(pdf)
+  })
+
+  // ── Fix UAT 2026-06-11 : « Montant validé » en TTC (= bon SAV PDF) ──────
+  it('fix UAT : kind=sav_validated → « Montant validé » affiche le TTC avoir, pas le HT template_data', async () => {
+    // template_data.totalAmountCents = 4567 (HT) ; l'avoir TTC = 5678.
+    state.outboxRows = [makeRow({ id: 1, kind: 'sav_validated', sav_id: 12 })]
+    state.membersById.set(100, { id: 100, notification_prefs: { status_updates: true } })
+    state.attachmentResolver = {
+      kind: 'attachment',
+      filename: 'AV-2026-V113.pdf',
+      content: Buffer.from('%PDF'),
+    }
+    state.creditNoteTtcCents = 5678
+
+    const r = await runRetryEmails({ requestId: 'req-ttc', savId: 12 })
+
+    expect(r.sent).toBe(1)
+    expect(state.creditNoteTtcCalls).toContain(12)
+    const mail = state.sendMailCalls[0]!
+    // 5678 → « 56,78 € » (TTC) ; 4567 (HT) NE doit PAS apparaître.
+    expect(mail.html).toContain('56,78')
+    expect(mail.html).not.toContain('45,67')
+  })
+
+  it('fix UAT : resolveCreditNoteTtcCents=null → conserve le montant template_data (pas de crash)', async () => {
+    state.outboxRows = [makeRow({ id: 1, kind: 'sav_validated', sav_id: 12 })]
+    state.membersById.set(100, { id: 100, notification_prefs: { status_updates: true } })
+    state.attachmentResolver = { kind: 'no_credit_note' }
+    state.creditNoteTtcCents = null
+
+    const r = await runRetryEmails({ requestId: 'req-ttc-null', savId: 12 })
+    expect(r.sent).toBe(1)
+    const mail = state.sendMailCalls[0]!
+    // HT du template_data conservé (4567 → 45,67 €).
+    expect(mail.html).toContain('45,67')
   })
 
   it('AC#5 (e) kind=sav_validated + resolver=unavailable → mail html mentionne « disponible dans votre espace »', async () => {

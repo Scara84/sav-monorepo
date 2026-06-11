@@ -237,6 +237,51 @@ export async function resolveCreditNoteAttachment(
   }
 }
 
+/**
+ * Story V1.13 (fix UAT 2026-06-11) — montant TTC de l'avoir le plus récent du
+ * SAV, pour harmoniser le « Montant validé » de l'email `sav_validated` avec le
+ * bon SAV PDF (qui affiche le TTC). Avant ce fix, l'email affichait
+ * `sav.total_amount_cents` (le HT) → incohérence visible désormais que la PJ PDF
+ * accompagne le mail (TTC). Cohérent avec l'harmonisation HT→TTC V1.11.
+ *
+ * Contrat NFR-REL : NE THROW JAMAIS. Retourne `null` si pas d'avoir, savId
+ * invalide, ou erreur SELECT → le caller conserve alors le montant existant.
+ */
+export async function resolveCreditNoteTtcCents(
+  savId: number,
+  opts?: { requestId?: string }
+): Promise<number | null> {
+  const requestId = opts?.requestId
+  try {
+    if (!Number.isInteger(savId) || savId <= 0) return null
+    const admin = supabaseAdmin()
+    const { data, error } = (await admin
+      .from('credit_notes')
+      .select('total_ttc_cents')
+      .eq('sav_id', savId)
+      .order('issued_at', { ascending: false })
+      .limit(1)) as unknown as {
+      data: { total_ttc_cents: number | null }[] | null
+      error: { message: string } | null
+    }
+    if (error) {
+      logger.warn(
+        'email.credit_note.ttc.select_failed',
+        logFields(requestId, { savId, message: error.message })
+      )
+      return null
+    }
+    const ttc = (data ?? [])[0]?.total_ttc_cents
+    return typeof ttc === 'number' ? ttc : null
+  } catch (err) {
+    logger.error(
+      'email.credit_note.ttc.unexpected_error',
+      logFields(requestId, { savId, message: sanitizeForLog(err) })
+    )
+    return null
+  }
+}
+
 async function downloadPdfBytes(
   webUrl: string,
   ctx: { requestId?: string; savId: number; creditNoteId: number }

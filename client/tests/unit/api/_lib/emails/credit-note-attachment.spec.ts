@@ -39,6 +39,8 @@ interface CreditNoteFixture {
   pdf_web_url: string | null
   issued_at: string
   sav_id: number
+  /** Fix UAT V1.13 — montant TTC consommé par resolveCreditNoteTtcCents. */
+  total_ttc_cents?: number | null
   /** Données projetées via embed sav→members (filename via buildPdfFilename). */
   sav?: {
     id: number
@@ -432,5 +434,54 @@ describe('resolveCreditNoteAttachment (V1.10 AC#4 + AC#6)', () => {
     expect(threw).toBe(false)
     // Avoir existe → fallback lien (kind='unavailable'), pas no_credit_note.
     expect(result?.kind).toBe('unavailable')
+  })
+})
+
+describe('resolveCreditNoteTtcCents (fix UAT V1.13 — montant email en TTC)', () => {
+  beforeEach(() => {
+    resetState()
+    stubFetchOk()
+  })
+
+  async function loadTtc(): Promise<{
+    resolveCreditNoteTtcCents: (savId: number, opts?: { requestId?: string }) => Promise<number | null>
+  }> {
+    return (await import('../../../../../api/_lib/emails/credit-note-attachment')) as {
+      resolveCreditNoteTtcCents: (savId: number, opts?: { requestId?: string }) => Promise<number | null>
+    }
+  }
+
+  it('avoir présent → retourne total_ttc_cents', async () => {
+    state.creditNotes = [
+      {
+        id: 1,
+        number: 4,
+        number_formatted: 'AV-2026-00004',
+        pdf_web_url: 'https://x/AV-2026-00004.pdf',
+        issued_at: '2026-06-11T10:00:00Z',
+        sav_id: 6,
+        total_ttc_cents: 2181,
+      },
+    ]
+    const { resolveCreditNoteTtcCents } = await loadTtc()
+    expect(await resolveCreditNoteTtcCents(6)).toBe(2181)
+  })
+
+  it('aucun avoir → null (le caller conserve le montant template_data)', async () => {
+    state.creditNotes = []
+    const { resolveCreditNoteTtcCents } = await loadTtc()
+    expect(await resolveCreditNoteTtcCents(6)).toBeNull()
+  })
+
+  it('savId invalide → null sans requête', async () => {
+    const { resolveCreditNoteTtcCents } = await loadTtc()
+    expect(await resolveCreditNoteTtcCents(0)).toBeNull()
+    expect(await resolveCreditNoteTtcCents(-3)).toBeNull()
+  })
+
+  it('SELECT en erreur → null (NE THROW JAMAIS)', async () => {
+    state.selectError = { message: 'boom' }
+    const { resolveCreditNoteTtcCents } = await loadTtc()
+    expect(await resolveCreditNoteTtcCents(6)).toBeNull()
   })
 })

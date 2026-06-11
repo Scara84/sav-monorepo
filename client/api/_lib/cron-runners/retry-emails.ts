@@ -5,7 +5,7 @@ import { logger } from '../logger'
 import { renderEmailTemplate } from '../emails/transactional/render'
 import type { EmailTemplateData } from '../emails/transactional/render'
 import { MEMBER_KINDS } from '../emails/transactional/kinds'
-import { resolveCreditNoteAttachment } from '../emails/credit-note-attachment'
+import { resolveCreditNoteAttachment, resolveCreditNoteTtcCents } from '../emails/credit-note-attachment'
 
 /**
  * Story 6.6 — Cron runner retry-emails.
@@ -413,8 +413,13 @@ export async function runRetryEmails({
           // legacy mid-flight (déploiement) — pas de PJ, comportement 6.6.
           let creditNoteAttachment: SmtpMailAttachment | null = null
           let creditNoteHasNote = false // true si avoir existe (PJ OU lien)
+          // Story V1.13 (fix UAT) — montant TTC de l'avoir pour harmoniser le
+          // « Montant validé » de l'email avec le bon SAV PDF (qui affiche le
+          // TTC). null si pas d'avoir → on conserve le montant template_data.
+          let creditNoteTtcCents: number | null = null
           if (row.kind === 'sav_validated') {
             if (row.sav_id !== null && row.sav_id !== undefined) {
+              creditNoteTtcCents = await resolveCreditNoteTtcCents(row.sav_id, { requestId })
               try {
                 // Borne le resolver Graph + DB (Story V1.10 CR FIX 4 / LOW-1).
                 const resolved = await withTimeout(
@@ -470,6 +475,13 @@ export async function runRetryEmails({
               baseData['pdfFallback'] = true
             } else if (!creditNoteHasNote) {
               baseData['noCreditNote'] = true
+            }
+            // Story V1.13 (fix UAT) — override « Montant validé » en TTC (= bon
+            // SAV PDF). Si pas d'avoir (noCreditNote), creditNoteTtcCents reste
+            // null → on garde le montant template_data (cas quasi-impossible
+            // par construction du gate AC#4).
+            if (creditNoteTtcCents !== null) {
+              baseData['totalAmountCents'] = creditNoteTtcCents
             }
           }
           const data = enrichTemplateData(baseData, row.sav_id, isOperatorKind, appBase)

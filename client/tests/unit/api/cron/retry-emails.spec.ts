@@ -272,6 +272,9 @@ vi.mock('../../../../api/_lib/emails/credit-note-attachment', () => ({
     }
     return state.attachmentResolver
   },
+  // Fix UAT V1.13 — le runner appelle ce helper pour sav_validated. null =
+  // pas de surcharge du montant (comportement template_data conservé).
+  resolveCreditNoteTtcCents: async () => null,
 }))
 
 import { runRetryEmails, __testables } from '../../../../api/_lib/cron-runners/retry-emails'
