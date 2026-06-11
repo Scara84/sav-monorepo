@@ -6,12 +6,12 @@
  * Pattern mirrors `tests/integration/admin/rgpd-export-signature-roundtrip.spec.ts`
  * which uses the same spawnSync approach for `scripts/verify-rgpd-export.mjs`.
  *
- * 5 cases per AC #5(a):
- *   Case 1 — DPIA signed valide: section ## Signature + Date ISO + Responsable + Signature → exit 0
+ * 4 cases (champ **Signature** retiré — décision PO 2026-06-11, validation
+ * attestée par Date + Responsable + commit git) :
+ *   Case 1 — DPIA validé : section ## Signature + Date ISO + Responsable → exit 0 (SANS ligne **Signature**)
  *   Case 2 — Section ## Signature absente → exit 1 + MISSING_SIGNATURE_SECTION
  *   Case 3 — Date présente mais format invalide (15/05/2026) → exit 1 + INVALID_DATE_FORMAT
  *   Case 4 — Responsable vide → exit 1 + EMPTY_RESPONSABLE
- *   Case 5 — Signature vide → exit 1 + EMPTY_SIGNATURE
  */
 
 import { describe, it, expect, beforeAll, afterAll } from 'vitest'
@@ -69,7 +69,6 @@ Supabase, Vercel, Microsoft 365, Pennylane, Infomaniak.
 
 **Date** : 2026-05-15
 **Responsable** : Antho Scaravella, Tech-Lead / DPO Fruitstock
-**Signature** : Approuvé v1 release
 `
 
 const DPIA_NO_SIGNATURE_SECTION = `# DPIA — Application SAV Fruitstock V1
@@ -146,7 +145,6 @@ Supabase.
 
 **Date** : 15/05/2026
 **Responsable** : Antho Scaravella, Tech-Lead / DPO Fruitstock
-**Signature** : Approuvé v1 release
 `
 
 const DPIA_EMPTY_RESPONSABLE = `# DPIA — Application SAV Fruitstock V1
@@ -188,49 +186,6 @@ Supabase.
 
 **Date** : 2026-05-15
 **Responsable** :
-**Signature** : Approuvé v1 release
-`
-
-const DPIA_EMPTY_SIGNATURE = `# DPIA — Application SAV Fruitstock V1
-
-## Objet du traitement
-
-Application SAV Fruitstock V1.
-
-## Responsable du traitement
-
-Fruitstock SAS.
-
-## Données collectées
-
-PII.
-
-## Finalités
-
-Traitement.
-
-## Durée de conservation
-
-10 ans.
-
-## Mesures de sécurité
-
-RLS.
-
-## Droits adhérents
-
-Portabilité.
-
-## Sous-traitants
-
-Supabase.
-
----
-## Signature
-
-**Date** : 2026-05-15
-**Responsable** : Antho Scaravella, Tech-Lead / DPO Fruitstock
-**Signature** :
 `
 
 // ---------------------------------------------------------------------------
@@ -321,19 +276,5 @@ describe('verify-dpia-signed.mjs — exit codes and messages', () => {
     expect(result.status).toBe(1)
     const output = result.stdout + result.stderr
     expect(output).toContain('EMPTY_RESPONSABLE')
-  })
-
-  it('Case 5 — Signature line empty: exit 1 + EMPTY_SIGNATURE', () => {
-    if (!existsSync(VERIFY_SCRIPT)) {
-      expect(existsSync(VERIFY_SCRIPT)).toBe(true)
-      return
-    }
-    const dpiaPath = writeDpia('empty-sig.md', DPIA_EMPTY_SIGNATURE)
-    const result = spawnSync('node', [VERIFY_SCRIPT, dpiaPath], {
-      encoding: 'utf8',
-    })
-    expect(result.status).toBe(1)
-    const output = result.stdout + result.stderr
-    expect(output).toContain('EMPTY_SIGNATURE')
   })
 })

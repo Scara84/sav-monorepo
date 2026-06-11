@@ -8,14 +8,17 @@
  * Par défaut vérifie : docs/dpia/v1.md (relatif au répertoire d'exécution)
  *
  * Exit codes :
- *   0 → DPIA OK — signature valide (section présente, date ISO 8601, responsable + signature non vides)
+ *   0 → DPIA OK — validation valide (section présente, date ISO 8601, responsable non vide)
  *   1 → Erreur de validation (voir message)
  *
  * Messages d'erreur :
  *   MISSING_SIGNATURE_SECTION — section ## Signature absente
  *   INVALID_DATE_FORMAT       — champ **Date** présent mais format non ISO 8601 (YYYY-MM-DD)
  *   EMPTY_RESPONSABLE         — champ **Responsable** vide ou placeholder
- *   EMPTY_SIGNATURE           — champ **Signature** vide ou placeholder
+ *
+ * Décision PO pré-promote (2026-06-11) : le champ **Signature** manuscrit est
+ * retiré — la validation est attestée par Date + Responsable + commit git sous
+ * le compte du responsable (document interne d'accountability, art. 24 RGPD).
  *
  * Pattern : cohérent avec scripts/verify-rgpd-export.mjs (Story 7-6)
  */
@@ -98,20 +101,8 @@ if (!responsableValue || responsableValue === '' || responsableValue.startsWith(
 }
 
 // ---------------------------------------------------------------------------
-// Vérifier **Signature** non vide
+// OK — champ **Signature** non vérifié (retiré, décision PO 2026-06-11 :
+// validation attestée par Date + Responsable + commit git)
 // ---------------------------------------------------------------------------
-const signatureMatch = signatureSection.match(/\*\*Signature\*\*[ \t]*:[ \t]*(.*)/)
-if (!signatureMatch) {
-  fail('EMPTY_SIGNATURE', 'Champ **Signature** absent de la section ## Signature')
-}
-
-const signatureValue = (signatureMatch[1] ?? '').trim()
-if (!signatureValue || signatureValue === '' || signatureValue.startsWith('[')) {
-  fail('EMPTY_SIGNATURE', `Champ **Signature** vide ou non rempli : "${signatureValue}"`)
-}
-
-// ---------------------------------------------------------------------------
-// OK
-// ---------------------------------------------------------------------------
-console.log(`DPIA OK — signature valide (date: ${dateValue}, responsable: ${responsableValue})`)
+console.log(`DPIA OK — validation valide (date: ${dateValue}, responsable: ${responsableValue})`)
 process.exit(0)

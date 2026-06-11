@@ -6,7 +6,9 @@
  *
  * 3 cases (structural — does not substitute for the CI gate verify-dpia-signed.mjs):
  *   Case 1 — docs/dpia/v1.md exists and has exactly 8 required H2 sections (D-4)
- *   Case 2 — ## Signature section present with **Date** / **Responsable** / **Signature** lines
+ *   Case 2 — ## Signature section present with **Date** / **Responsable** lines
+ *            (champ **Signature** retiré — décision PO 2026-06-11, validation
+ *            attestée par Date + Responsable + commit git)
  *   Case 3 — DPIA references all 8 required sub-processors (Supabase/Vercel/…)
  */
 
@@ -81,12 +83,6 @@ describe('docs/dpia/v1.md — ## Signature fields', () => {
     if (!existsSync(DPIA_PATH)) return
     const src = readFileSync(DPIA_PATH, 'utf8')
     expect(src).toMatch(/\*\*Responsable\*\*\s*:\s*\S+/)
-  })
-
-  it('RED — **Signature** line is present and non-empty', () => {
-    if (!existsSync(DPIA_PATH)) return
-    const src = readFileSync(DPIA_PATH, 'utf8')
-    expect(src).toMatch(/\*\*Signature\*\*\s*:\s*\S+/)
   })
 })
 
