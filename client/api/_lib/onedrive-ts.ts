@@ -138,3 +138,54 @@ export async function uploadCreditNotePdf(
   }
   return { itemId: response.id, webUrl: response.webUrl }
 }
+
+// ==============================================================
+// spec credit-note-force-regenerate-pdf — DELETE PDF d'avoir
+// ==============================================================
+//
+// Suppression d'un item OneDrive existant (best-effort côté appelant : la
+// RPC `force_regenerate_credit_note` retourne l'ancien `pdf_onedrive_item_id`
+// qu'on supprime AVANT de relancer `generateCreditNotePdfAsync`. Si la
+// suppression échoue (item déjà absent, permission, 5xx Graph), l'appelant
+// log un warn et continue — le nouvel upload reprendra avec un suffixe
+// ` (1)` (conflictBehavior=rename) plutôt que d'écraser, et l'orphelin sera
+// tracé dans l'audit `credit_note_force_regenerated`).
+//
+// Throw si Graph répond 4xx/5xx. 404 (item déjà supprimé) est considéré
+// non-fatal par l'appelant (best-effort).
+
+interface GraphClientLikeDelete {
+  api: (path: string) => {
+    delete: () => Promise<unknown>
+  }
+}
+
+/**
+ * Supprime un item OneDrive par son `itemId` (DELETE Graph
+ * `/drives/{driveId}/items/{itemId}`). Best-effort côté appelant.
+ *
+ * Throw si Graph API renvoie 4xx/5xx. L'appelant est responsable du
+ * try/catch + log warn pour ne pas bloquer la régénération.
+ */
+export async function deleteCreditNotePdfItem(
+  itemId: string,
+  options: { graphClient?: unknown; driveId?: string } = {}
+): Promise<void> {
+  const injected = options.graphClient
+  let client: GraphClientLikeDelete
+  if (injected !== undefined) {
+    client = injected as GraphClientLikeDelete
+  } else {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const graph = require('./graph.js') as { getGraphClient: () => GraphClientLikeDelete }
+    client = graph.getGraphClient()
+  }
+
+  const driveId = options.driveId ?? process.env['MICROSOFT_DRIVE_ID'] ?? ''
+  if (driveId === '') {
+    throw new Error("Variable d'environnement MICROSOFT_DRIVE_ID manquante")
+  }
+
+  const url = `${GRAPH_BASE}/${driveId}/items/${encodeURIComponent(itemId)}`
+  await client.api(url).delete()
+}

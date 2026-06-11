@@ -4,12 +4,11 @@ import { ensureRequestId } from '../request-id'
 import { sendError } from '../errors'
 import { logger } from '../logger'
 import { supabaseAdmin } from '../clients/supabase-admin'
-import { computeCreditNoteTotals, type CreditNoteTotals } from '../business/vatRemise'
 import {
-  resolveDefaultVatRateBp,
+  computeCreditNoteTotalsFromSavLines,
+  unwrapBpSettingsRows,
   resolveGroupManagerDiscountBp,
-  type SettingRow,
-} from '../business/settingsResolver'
+} from './compute-totals-from-sav-lines'
 import { generateCreditNotePdfAsync } from '../pdf/generate-credit-note-pdf'
 import { waitUntilOrVoid } from '../pdf/wait-until'
 import type { ApiHandler, ApiRequest, ApiResponse } from '../types'
@@ -345,18 +344,7 @@ function emitCore(savId: number): ApiHandler {
         valid_from: string
         valid_to: string | null
       }>
-      const settingsRows: SettingRow[] = rawSettingsRows.map((r) => ({
-        key: r.key,
-        value:
-          r.value !== null &&
-          typeof r.value === 'object' &&
-          'bp' in (r.value as Record<string, unknown>)
-            ? (r.value as { bp: unknown }).bp
-            : r.value,
-        valid_from: r.valid_from,
-        valid_to: r.valid_to,
-      }))
-      const defaultVatRateBp = resolveDefaultVatRateBp(settingsRows)
+      const settingsRows = unwrapBpSettingsRows(rawSettingsRows)
       const resolvedDiscountBp = resolveGroupManagerDiscountBp(settingsRows)
 
       // Résolution responsable : identique Story 4.3 AC #3.
@@ -389,61 +377,51 @@ function emitCore(savId: number): ApiHandler {
         member.group_id === sav.group_id
       const groupManagerDiscountBp = isGroupManager ? resolvedDiscountBp : null
 
-      // credit_amount_cents NULL sur une ligne 'ok' = anomalie (trigger 4.2
-      // doit écrire la valeur, sinon validation_status != 'ok'). On rejette
-      // en 500 plutôt que passer 0 ou NaN à la RPC.
-      if (lines.some((l) => l.credit_amount_cents === null)) {
-        logger.error('credit_note.emit.null_credit_on_ok_line', {
-          requestId,
-          savId,
-          lineIds: lines.filter((l) => l.credit_amount_cents === null).map((l) => l.id),
-        })
+      // Délégation au helper partagé (spec credit-note-force-regenerate-pdf) :
+      // gates null-credit + missing-vat-rate + compute. Résultat discriminé →
+      // mêmes familles d'erreurs (500 CREDIT_NOTE_ISSUE_FAILED) et mêmes logs.
+      // Note : `no_lines` et `blocking_lines` sont déjà gérés en amont par le
+      // handler (gates AC #4) — on n'attend ici que les anomalies ligne ok
+      // sans crédit / sans TVA, ou un échec de calcul.
+      const computeResult = computeCreditNoteTotalsFromSavLines({
+        lines,
+        settingsRows,
+        groupManagerDiscountBp,
+        requestId,
+        savId,
+      })
+      if (computeResult.kind === 'null_credit_on_ok_line') {
         sendError(res, 'SERVER_ERROR', 'Ligne ok sans montant calculé', requestId, {
           code: 'CREDIT_NOTE_ISSUE_FAILED',
         })
         return
       }
-      // Même logique pour le fallback TVA : si une ligne n'a pas son snapshot
-      // et qu'on n'a aucun défaut settings, on ne peut pas sommer → 500.
-      const linesHtCents = lines.map((l) => l.credit_amount_cents as number)
-      const lineVatRatesBp: number[] = []
-      for (const l of lines) {
-        if (l.vat_rate_bp_snapshot !== null) {
-          lineVatRatesBp.push(l.vat_rate_bp_snapshot)
-          continue
-        }
-        if (defaultVatRateBp === null) {
-          logger.error('credit_note.emit.missing_vat_rate', {
-            requestId,
-            savId,
-            lineId: l.id,
-          })
-          sendError(res, 'SERVER_ERROR', 'Taux TVA introuvable', requestId, {
-            code: 'CREDIT_NOTE_ISSUE_FAILED',
-          })
-          return
-        }
-        lineVatRatesBp.push(defaultVatRateBp)
+      if (computeResult.kind === 'missing_vat_rate') {
+        sendError(res, 'SERVER_ERROR', 'Taux TVA introuvable', requestId, {
+          code: 'CREDIT_NOTE_ISSUE_FAILED',
+        })
+        return
       }
-
-      let totals: CreditNoteTotals
-      try {
-        totals = computeCreditNoteTotals({
-          linesHtCents,
-          lineVatRatesBp,
-          groupManagerDiscountBp,
-        })
-      } catch (err) {
-        logger.error('credit_note.emit.compute_failed', {
-          requestId,
-          savId,
-          error: err instanceof Error ? err.message : String(err),
-        })
+      if (computeResult.kind === 'compute_failed') {
         sendError(res, 'SERVER_ERROR', 'Calcul totaux échoué', requestId, {
           code: 'CREDIT_NOTE_ISSUE_FAILED',
         })
         return
       }
+      // Branches `no_lines` / `blocking_lines` ne devraient jamais survenir ici
+      // (déjà filtrées au-dessus) — defense-in-depth si l'ordre des gardes évolue.
+      if (computeResult.kind !== 'ok') {
+        logger.error('credit_note.emit.unexpected_compute_kind', {
+          requestId,
+          savId,
+          kind: (computeResult as { kind: string }).kind,
+        })
+        sendError(res, 'SERVER_ERROR', 'État de calcul inattendu', requestId, {
+          code: 'CREDIT_NOTE_ISSUE_FAILED',
+        })
+        return
+      }
+      const totals = computeResult.totals
 
       // ---- AC #6 : appel RPC `issue_credit_number` ----------------------
       const { data: rpcData, error: rpcError } = await admin.rpc('issue_credit_number', {

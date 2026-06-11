@@ -382,3 +382,11 @@ Points de cadrage pour la story (bmad-create-story) :
 
 **Priorité** : à arbitrer — feature visible client, possiblement attendue
 pour le promote V1 (même famille que l'enchaînement post-avoir Epic 8).
+
+## 2026-06-11 — spec-credit-note-force-regenerate-pdf (CR itération 3)
+
+- **Budget lambda 10s (vercel.json maxDuration) sur le chemin force** : RPC + DELETE Graph + render react-pdf + upload avec retries (1s+2s+4s) peut dépasser 10s en worst case → lambda tuée post-commit RPC (état DB sain, UI refresh au catch, mais UX dégradée). Décider un bump maxDuration au promote. (EH v3 M-3)
+- **Bucket rate-limit partagé force/recovery (1/min/avoir)** : après un force échoué en génération, le bouton recovery est 429 pendant ~60 s. Friction assumée V1 ; séparer les buckets ou exempter le recovery en V2. (BH v3 #11)
+- **Tests vraie-DB non écrits : concurrence deux forces simultanés + sabotage INSERT audit (rollback)** : corrects par construction (FOR UPDATE ; plpgsql sans bloc EXCEPTION → RAISE = rollback complet). Commentaires trompeurs corrigés dans regenerate.spec.ts (CR P6c). À couvrir si l'invariant devient critique. (Auditor v3 DEF-1/DEF-2)
+- **TOCTOU résiduel fingerprint** : une ligne NON-ok INSÉRÉE entre le fetch handler et la RPC passe le fingerprint (qui ne compare que les lignes ok) alors que le PDF la rendra. Même exposition que l'émission existante. Fingerprint toutes-lignes en V2. (EH v3 L-3)
+- **Hygiène tests integration force-regenerate** : teardown ne purge pas les lignes audit_trail générées par les triggers cascade (sav/sav_lines/members/operators). (EH v3 L-5)

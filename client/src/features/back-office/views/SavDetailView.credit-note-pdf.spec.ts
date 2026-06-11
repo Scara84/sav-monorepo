@@ -473,3 +473,280 @@ describe('SavDetailView — feedback génération PDF avoir (poll + régénérat
     expect(w.find('[data-testid="credit-note-pdf-failed-msg"]').exists()).toBe(false)
   })
 })
+
+// ============================================================================
+// spec credit-note-force-regenerate-pdf — bouton « Régénérer le PDF » en phase
+// `ready` (force=true).
+// Style identique : fetch recorder + `vi.stubGlobal('confirm', …)`.
+// ============================================================================
+
+// Helper : monter directement en phase `ready` (pdfWebUrl déjà servi).
+async function mountAtReady(installArgs: {
+  onRegenerate?: () => { status: number; body: unknown }
+  onRegenerateReject?: () => Promise<never>
+}): Promise<{
+  w: Awaited<ReturnType<typeof mountDetail>>
+  calls: { url: string; method: string; body: string | null }[]
+}> {
+  const calls: { url: string; method: string; body: string | null }[] = []
+  const fn = vi.fn((url: string, init?: RequestInit) => {
+    const method = (init?.method ?? 'GET').toUpperCase()
+    const body = typeof init?.body === 'string' ? (init.body as string) : null
+    calls.push({ url, method, body })
+    if (url.includes('/api/auth/me')) {
+      return okJson(200, { user: { sub: 42, type: 'operator' } })
+    }
+    if (method === 'POST' && /\/regenerate-pdf$/.test(url)) {
+      if (installArgs.onRegenerateReject) {
+        return installArgs.onRegenerateReject()
+      }
+      const r = installArgs.onRegenerate
+        ? installArgs.onRegenerate()
+        : { status: 200, body: { data: { pdf_web_url: PDF_URL, credit_note_number_formatted: 'AV-2026-00042' } } }
+      return okJson(r.status, r.body)
+    }
+    if (method === 'GET' && /\/api\/sav\/1$/.test(url)) {
+      return okJson(200, buildDetail({ creditNote: creditNote({ pdfWebUrl: PDF_URL }) }))
+    }
+    return okJson(500, { error: { message: `unexpected ${method} ${url}` } })
+  })
+  ;(globalThis as unknown as { fetch: unknown }).fetch = fn
+  const w = await mountDetail()
+  await flushPromises()
+  return { w, calls }
+}
+
+describe('SavDetailView — bouton force-regenerate (phase ready)', () => {
+  it('F1 — bouton `credit-note-force-regenerate-btn` visible en phase ready', async () => {
+    const { w } = await mountAtReady({})
+    // Lien PDF + bouton force tous deux présents en phase ready.
+    expect(w.find('[data-testid="credit-note-pdf-link"]').exists()).toBe(true)
+    expect(w.find('[data-testid="credit-note-force-regenerate-btn"]').exists()).toBe(true)
+  })
+
+  it('F2 — confirm annulée → AUCUN POST regenerate-pdf', async () => {
+    vi.stubGlobal('confirm', vi.fn(() => false))
+    const { w, calls } = await mountAtReady({})
+
+    await w.find('[data-testid="credit-note-force-regenerate-btn"]').trigger('click')
+    await flushPromises()
+
+    const postCount = calls.filter(
+      (c) => c.method === 'POST' && /\/regenerate-pdf$/.test(c.url)
+    ).length
+    expect(postCount).toBe(0)
+  })
+
+  it('F3 — confirm OK → POST body exact `{"force":true}` + content-type application/json + refresh après 200', async () => {
+    vi.stubGlobal('confirm', vi.fn(() => true))
+    const { w, calls } = await mountAtReady({
+      onRegenerate: () => ({
+        status: 200,
+        body: {
+          data: {
+            pdf_web_url: PDF_URL,
+            credit_note_number_formatted: 'AV-2026-00042',
+            totals: {
+              total_ht_cents: 1000,
+              discount_cents: 0,
+              vat_cents: 55,
+              total_ttc_cents: 1055,
+            },
+          },
+        },
+      }),
+    })
+
+    const savGetsBefore = calls.filter(
+      (c) => c.method === 'GET' && /\/api\/sav\/1$/.test(c.url)
+    ).length
+
+    await w.find('[data-testid="credit-note-force-regenerate-btn"]').trigger('click')
+    await flushPromises()
+
+    const postCalls = calls.filter(
+      (c) => c.method === 'POST' && /\/regenerate-pdf$/.test(c.url)
+    )
+    expect(postCalls.length).toBe(1)
+    expect(postCalls[0]!.body).toBe(JSON.stringify({ force: true }))
+    // Refresh post-200 : nouveau GET /api/sav/1.
+    const savGetsAfter = calls.filter(
+      (c) => c.method === 'GET' && /\/api\/sav\/1$/.test(c.url)
+    ).length
+    expect(savGetsAfter).toBeGreaterThan(savGetsBefore)
+  })
+
+  it('F3b — content-type application/json vérifié dans les headers du POST force', async () => {
+    // Headers ne sont pas capturés par le recorder existant. On reconstruit
+    // un fetch dédié qui capture init pour vérifier le header.
+    vi.stubGlobal('confirm', vi.fn(() => true))
+    const captured: Array<{ url: string; init: RequestInit | undefined }> = []
+    const fn = vi.fn((url: string, init?: RequestInit) => {
+      captured.push({ url, init })
+      if (url.includes('/api/auth/me')) {
+        return okJson(200, { user: { sub: 42, type: 'operator' } })
+      }
+      if (
+        init?.method === 'POST' &&
+        /\/regenerate-pdf$/.test(url)
+      ) {
+        return okJson(200, { data: { pdf_web_url: PDF_URL, credit_note_number_formatted: 'AV-2026-00042' } })
+      }
+      if ((init?.method ?? 'GET') === 'GET' && /\/api\/sav\/1$/.test(url)) {
+        return okJson(200, buildDetail({ creditNote: creditNote({ pdfWebUrl: PDF_URL }) }))
+      }
+      return okJson(500, { error: { message: 'unexpected' } })
+    })
+    ;(globalThis as unknown as { fetch: unknown }).fetch = fn
+
+    const w = await mountDetail()
+    await flushPromises()
+
+    await w.find('[data-testid="credit-note-force-regenerate-btn"]').trigger('click')
+    await flushPromises()
+
+    const postCall = captured.find(
+      (c) => c.init?.method === 'POST' && /\/regenerate-pdf$/.test(c.url)
+    )
+    expect(postCall).toBeDefined()
+    const headers = postCall!.init!.headers as Record<string, string>
+    expect(headers['content-type']).toBe('application/json')
+  })
+
+  it('F4 — 422 → message serveur affiché, PAS de refresh', async () => {
+    vi.stubGlobal('confirm', vi.fn(() => true))
+    const { w, calls } = await mountAtReady({
+      onRegenerate: () => ({
+        status: 422,
+        body: {
+          error: {
+            code: 'BUSINESS_RULE',
+            message: "Pour modifier l'avoir, repassez le SAV en cours.",
+            requestId: 'req-test',
+            details: { code: 'SAV_STATUS_FROZEN' },
+          },
+        },
+      }),
+    })
+
+    const savGetsBefore = calls.filter(
+      (c) => c.method === 'GET' && /\/api\/sav\/1$/.test(c.url)
+    ).length
+
+    await w.find('[data-testid="credit-note-force-regenerate-btn"]').trigger('click')
+    await flushPromises()
+
+    // Message serveur visible : phase reste `ready` (pdfWebUrl pas touché).
+    const errEl = w.find('[data-testid="credit-note-force-regenerate-error"]')
+    expect(errEl.exists()).toBe(true)
+    expect(errEl.text()).toContain('repassez le SAV en cours')
+
+    // PAS de refresh (422 = vue stable).
+    const savGetsAfter = calls.filter(
+      (c) => c.method === 'GET' && /\/api\/sav\/1$/.test(c.url)
+    ).length
+    expect(savGetsAfter).toBe(savGetsBefore)
+  })
+
+  it('F5 — 409 CREDIT_NOTE_STATE_CHANGED → message « lignes ont changé » + refresh', async () => {
+    vi.stubGlobal('confirm', vi.fn(() => true))
+    const { w, calls } = await mountAtReady({
+      onRegenerate: () => ({
+        status: 409,
+        body: {
+          error: {
+            code: 'CONFLICT',
+            message: 'Les lignes ont changé.',
+            requestId: 'req-test',
+            details: { code: 'CREDIT_NOTE_STATE_CHANGED' },
+          },
+        },
+      }),
+    })
+
+    const savGetsBefore = calls.filter(
+      (c) => c.method === 'GET' && /\/api\/sav\/1$/.test(c.url)
+    ).length
+
+    await w.find('[data-testid="credit-note-force-regenerate-btn"]').trigger('click')
+    await flushPromises()
+
+    // Le refresh récupère le détail (pdfWebUrl toujours présent dans le mock)
+    // → on reste en phase `ready` et le message d'erreur force s'affiche.
+    const errEl = w.find('[data-testid="credit-note-force-regenerate-error"]')
+    expect(errEl.exists()).toBe(true)
+    expect(errEl.text()).toContain('lignes ont changé')
+
+    // Refresh appelé post-409.
+    const savGetsAfter = calls.filter(
+      (c) => c.method === 'GET' && /\/api\/sav\/1$/.test(c.url)
+    ).length
+    expect(savGetsAfter).toBeGreaterThan(savGetsBefore)
+  })
+
+  it('F6 — 500 → refresh appelé + état final sans lien mort + message visible', async () => {
+    vi.stubGlobal('confirm', vi.fn(() => true))
+    // Après le 500, le détail rafraîchi rend pdfWebUrl=null (l'état réel
+    // post-RPC : totaux mutés, PDF effacé). L'UI doit basculer en phase
+    // `failed` SANS lien mort et garder le message d'erreur affiché.
+    let regenerated = false
+    const calls: { url: string; method: string; body: string | null }[] = []
+    const fn = vi.fn((url: string, init?: RequestInit) => {
+      const method = (init?.method ?? 'GET').toUpperCase()
+      const body = typeof init?.body === 'string' ? (init.body as string) : null
+      calls.push({ url, method, body })
+      if (url.includes('/api/auth/me')) {
+        return okJson(200, { user: { sub: 42, type: 'operator' } })
+      }
+      if (method === 'POST' && /\/regenerate-pdf$/.test(url)) {
+        regenerated = true
+        return okJson(500, {
+          error: {
+            code: 'SERVER_ERROR',
+            message: 'Régénération PDF échouée',
+            requestId: 'req-test',
+            details: { code: 'PDF_REGENERATE_FAILED', failure_kind: 'PDF_UPLOAD_FAILED' },
+          },
+        })
+      }
+      if (method === 'GET' && /\/api\/sav\/1$/.test(url)) {
+        // Avant force : pdfWebUrl set. Après force (500) : pdfWebUrl null
+        // (RPC déjà commitée, PDF nullifié).
+        return okJson(
+          200,
+          buildDetail({ creditNote: creditNote({ pdfWebUrl: regenerated ? null : PDF_URL }) })
+        )
+      }
+      return okJson(500, { error: { message: 'unexpected' } })
+    })
+    ;(globalThis as unknown as { fetch: unknown }).fetch = fn
+
+    const w = await mountDetail()
+    await flushPromises()
+
+    const savGetsBefore = calls.filter(
+      (c) => c.method === 'GET' && /\/api\/sav\/1$/.test(c.url)
+    ).length
+
+    await w.find('[data-testid="credit-note-force-regenerate-btn"]').trigger('click')
+    await flushPromises()
+
+    // Refresh appelé.
+    const savGetsAfter = calls.filter(
+      (c) => c.method === 'GET' && /\/api\/sav\/1$/.test(c.url)
+    ).length
+    expect(savGetsAfter).toBeGreaterThan(savGetsBefore)
+
+    // Pas de lien mort : le pdfWebUrl est désormais null côté détail → l'UI
+    // bascule en phase `failed`, le lien disparaît.
+    expect(w.find('[data-testid="credit-note-pdf-link"]').exists()).toBe(false)
+    expect(w.find('[data-testid="credit-note-pdf-failed"]').exists()).toBe(true)
+
+    // Message visible (cf. P4b) : la zone failed-msg affiche le contenu de
+    // `regenerateError` (fallback PDF_FAILED_DEFAULT_MSG si null). Ici
+    // regenerateError vaut le mapping OneDrive.
+    const msg = w.find('[data-testid="credit-note-pdf-failed-msg"]')
+    expect(msg.exists()).toBe(true)
+    expect(msg.text()).toContain('OneDrive')
+  })
+})

@@ -687,24 +687,68 @@ function maybeStartPdfPoll(): void {
   }
 }
 
-async function regeneratePdf(): Promise<void> {
+// spec credit-note-force-regenerate-pdf : `regeneratePdf` accepte un flag `force`.
+//   - { force: false } (défaut) : chemin AC #8 (relance d'une génération initiale
+//     échouée). Sans force → contrat 409 PDF_ALREADY_GENERATED strictement inchangé.
+//   - { force: true } : appelle l'endpoint force (recalcul totaux + RPC + delete
+//     OneDrive + re-génération). Refresh après 200 ET après tout échec ≠ 422 ;
+//     422 → message serveur sans refresh ; 409 CREDIT_NOTE_STATE_CHANGED →
+//     message « lignes ont changé, rechargez » + refresh.
+async function regeneratePdf(opts: { force?: boolean } = {}): Promise<void> {
   const cn = creditNote.value
   if (!cn || regenerating.value) return
+  const force = opts.force === true
   regenerating.value = true
   regenerateError.value = null
   try {
     const res = await fetch(
       `/api/credit-notes/${encodeURIComponent(cn.numberFormatted)}/regenerate-pdf`,
-      { method: 'POST', credentials: 'include' }
+      force
+        ? {
+            method: 'POST',
+            credentials: 'include',
+            headers: { 'content-type': 'application/json' },
+            body: JSON.stringify({ force: true }),
+          }
+        : { method: 'POST', credentials: 'include' }
     )
     if (res.ok) {
       await refresh() // pdfWebUrl désormais renseigné → phase `ready` → lien
       return
     }
     const body = (await res.json().catch(() => null)) as {
-      error?: { details?: { code?: string; failure_kind?: string } }
+      error?: { message?: string; details?: { code?: string; failure_kind?: string } }
     } | null
     const details = body?.error?.details
+
+    if (force) {
+      // Mode force : mapping spécifique.
+      if (res.status === 429) {
+        regenerateError.value = PDF_RATE_LIMITED_MSG
+        await refresh()
+        return
+      }
+      if (res.status === 409 && details?.code === 'CREDIT_NOTE_STATE_CHANGED') {
+        regenerateError.value = 'Les lignes ont changé, rechargez la page.'
+        await refresh()
+        return
+      }
+      if (res.status === 422) {
+        // 422 → message serveur SANS refresh (l'opérateur garde la vue stable
+        // pour comprendre la cause — typiquement SAV figé ou ligne bloquante).
+        regenerateError.value =
+          body?.error?.message ?? 'Régénération impossible.'
+        return
+      }
+      // Tout autre échec ≠ 422 → refresh (pas de lien mort) + message mappé.
+      const kindForce = details?.failure_kind
+      regenerateError.value =
+        (kindForce && PDF_FAILURE_MESSAGES[kindForce]) || PDF_FAILURE_FALLBACK
+      await refresh()
+      return
+    }
+
+    // Mode legacy (sans force) : contrat AC #8 inchangé.
     if (res.status === 409 && details?.code === 'PDF_ALREADY_GENERATED') {
       await refresh() // course bénigne : le PDF a fini entre-temps
       return
@@ -717,9 +761,35 @@ async function regeneratePdf(): Promise<void> {
     regenerateError.value = (kind && PDF_FAILURE_MESSAGES[kind]) || PDF_FAILURE_FALLBACK
   } catch {
     regenerateError.value = PDF_FAILURE_FALLBACK
+    // CR P4a : sur échec réseau/timeout du chemin force, un timeout lambda
+    // peut survenir APRÈS commit de la RPC (totaux déjà mutés, pdf_web_url
+    // remis à NULL). Sans refresh, l'UI resterait en phase `ready` avec un
+    // lien mort vers l'ancien PDF. On rafraîchit pour récupérer l'état réel
+    // (qui basculera typiquement en phase `failed`).
+    if (force) {
+      try {
+        await refresh()
+      } catch {
+        // refresh peut aussi échouer si le réseau est cassé — on garde le
+        // message d'erreur déjà posé.
+      }
+    }
   } finally {
     regenerating.value = false
   }
+}
+
+// spec credit-note-force-regenerate-pdf — confirmation utilisateur avant
+// déclenchement du recalcul + écrasement du PDF.
+async function forceRegeneratePdf(): Promise<void> {
+  if (
+    !confirmFn(
+      'Régénérer le PDF : recalcule les montants de l’avoir et remplace le PDF. Continuer ?'
+    )
+  ) {
+    return
+  }
+  await regeneratePdf({ force: true })
 }
 
 onUnmounted(() => {
@@ -1698,16 +1768,36 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
              / failed). En `failed` (génération async échouée ou timeout du poll)
              on offre le bouton « Régénérer le PDF » plutôt qu'un « en cours »
              figé à l'infini. -->
-        <a
-          v-if="creditNotePdfPhase === 'ready'"
-          class="credit-note-pdf-link"
-          :href="`/api/credit-notes/${creditNote.numberFormatted}/pdf`"
-          target="_blank"
-          rel="noopener noreferrer"
-          data-testid="credit-note-pdf-link"
-        >
-          Télécharger le PDF
-        </a>
+        <template v-if="creditNotePdfPhase === 'ready'">
+          <a
+            class="credit-note-pdf-link"
+            :href="`/api/credit-notes/${creditNote.numberFormatted}/pdf`"
+            target="_blank"
+            rel="noopener noreferrer"
+            data-testid="credit-note-pdf-link"
+          >
+            Télécharger le PDF
+          </a>
+          <!-- spec credit-note-force-regenerate-pdf : bouton secondaire phase
+               ready pour forcer la régénération (recalcul totaux + écrasement
+               PDF). Confirmation obligatoire (`confirmFn`). -->
+          <button
+            type="button"
+            class="credit-note-force-regenerate-btn"
+            :disabled="regenerating"
+            data-testid="credit-note-force-regenerate-btn"
+            @click="forceRegeneratePdf"
+          >
+            {{ regenerating ? 'Régénération…' : 'Régénérer le PDF' }}
+          </button>
+          <p
+            v-if="regenerateError"
+            class="credit-note-force-regenerate-error"
+            data-testid="credit-note-force-regenerate-error"
+          >
+            {{ regenerateError }}
+          </p>
+        </template>
         <span
           v-else-if="creditNotePdfPhase === 'pending'"
           class="credit-note-pdf-link credit-note-pdf-link--disabled"
@@ -1725,7 +1815,7 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
             class="credit-note-regenerate-btn"
             :disabled="regenerating"
             data-testid="credit-note-regenerate-btn"
-            @click="regeneratePdf"
+            @click="() => regeneratePdf()"
           >
             {{ regenerating ? 'Régénération…' : 'Régénérer le PDF' }}
           </button>
