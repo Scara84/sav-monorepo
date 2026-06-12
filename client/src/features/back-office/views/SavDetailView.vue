@@ -2629,6 +2629,32 @@ a:focus-visible {
 .credit-note-regenerate-btn:not(:disabled):hover {
   background: #f3f4f6;
 }
+/* spec credit-note-force-regenerate-pdf : bouton force phase ready,
+   même famille visuelle que le lien PDF / bouton recovery */
+.credit-note-force-regenerate-btn {
+  display: inline-block;
+  margin-top: 0.5rem;
+  margin-left: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  background: #fff;
+  border: 1px solid #d1d5db;
+  border-radius: 4px;
+  color: #1f2937;
+  font-weight: 600;
+  cursor: pointer;
+}
+.credit-note-force-regenerate-btn:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+.credit-note-force-regenerate-btn:not(:disabled):hover {
+  background: #f3f4f6;
+}
+.credit-note-force-regenerate-error {
+  margin: 0.5rem 0 0;
+  color: #b91c1c;
+  font-size: 0.875rem;
+}
 /* Modale émission avoir */
 .modal-backdrop {
   position: fixed;
