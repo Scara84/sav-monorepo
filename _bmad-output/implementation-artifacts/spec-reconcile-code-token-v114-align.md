@@ -77,7 +77,7 @@ baseline_commit: '872bee4265db01536928621612277c2b3903cdff'
 **Commands:**
 - `cd client && npx vue-tsc --noEmit` -- expected: 0 nouvelle erreur.
 - `cd client && npx vitest run tests/unit/api/sav/ tests/unit/api/webhooks/ src/features/sav/` -- expected: reconcile + capture + parité tous verts (adapter les chemins exacts aux suites trouvées).
-- UAT preview : re-import du data.xlsx sur SAV-2026-00007 → ligne appariée.
+- UAT preview : re-import du data.xlsx sur SAV-2026-00007 → ligne appariée. **PASS 2026-06-12 (PO Antho, deploy 905f960)** — `1028-8X750GR` appariée dans la grille d'arbitrage.
 
 ## Suggested Review Order
 
