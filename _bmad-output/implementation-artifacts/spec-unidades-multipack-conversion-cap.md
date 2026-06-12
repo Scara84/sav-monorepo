@@ -84,7 +84,7 @@ baseline_commit: '45b319f8cc2d'
 - `cd client && npx vitest run tests/unit/api/sav/ src/features/back-office/composables/useSupplierClaimArbitration.spec.ts` -- expected: tous verts.
 - `cd client && npx supabase db reset && npm run test:integration -- <suite concernée>` -- expected: cas CHECK vert (LOCAL uniquement).
 - `cd client && npm run audit:schema` -- expected: no drift.
-- UAT preview (post-merge + migration appliquée) : ligne datte → 2,4 / 20,14 €.
+- UAT preview (post-merge + migration appliquée) : ligne datte → 2,4 / 20,14 €. **PASS 2026-06-12 (PO Antho, deploy 99d6464, migration appliquée par PO via SQL Editor, CHECK 5 valeurs vérifié)**.
 
 ## Suggested Review Order
 
