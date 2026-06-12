@@ -80,7 +80,7 @@ export interface SavLineInput {
   cause: string | null
 }
 
-export type ConversionFlag = 'ok' | 'ATTENTION A CONVERTIR' | 'Unité non reconnue' | 'converti pièce→kg'
+export type ConversionFlag = 'ok' | 'ATTENTION A CONVERTIR' | 'Unité non reconnue' | 'converti pièce→kg' | 'converti pièce→unidades'
 
 export interface ConvertUnitInput {
   unit: string | null
@@ -99,7 +99,8 @@ export interface ConvertUnitOutput {
   unidad: string
   conversionFlag: ConversionFlag
   /** Story 8.6 — chaîne de traçabilité COMENTARIOS pour la cellule 4 résolue.
-   *  Non-null uniquement quand conversionFlag='converti pièce→kg'. */
+   *  Non-null uniquement quand conversionFlag='converti pièce→kg' (8.6)
+   *  ou 'converti pièce→unidades' (multi-pack 2026-06-12, cellule 3). */
   conversionComment?: string | null
 }
 
@@ -299,8 +300,30 @@ export function convertUnit(input: ConvertUnitInput): ConvertUnitOutput {
     return { envase: qty, unidad: 'Kilos', conversionFlag: 'ok' }
   }
 
-  // Cellule 3 : piece + Unidades → passthrough
+  // Cellule 3 : piece + Unidades → résoudre via kilosNetos/qteFact (Story Unidades multi-pack)
+  // Symétrique 8.6 : si kilosNetos>0 ET qteFact>0 ET facteur ≠ 1
+  //   → envase = qty × facteur, flag='converti pièce→unidades' + COMENTARIOS traçable
+  // Si facteur = 1 (pièce=unidad, cas courant) → passthrough flag='ok' SANS COMENTARIOS (zéro bruit)
+  // Si kilosNetos absent/0 → passthrough flag='ok' SANS blocage (décision PO 2026-06-12 — inverse de Q2 Kilos)
   if (normalizedUnit === 'piece' && kp === 'Unidades') {
+    const kilosNetos = input.kilosNetos ?? null
+    const qteFact = input.qteFact ?? null
+    if (kilosNetos !== null && kilosNetos > 0 && qteFact !== null && qteFact > 0) {
+      const facteur = kilosNetos / qteFact
+      // CR 2026-06-12 : comparaison à epsilon (pas stricte) — une valeur cached
+      // xlsx (7.999999999999999) produirait un facteur ≈1 et un flag « converti »
+      // parasite sur une ligne pièce=unidad (leçon xlsx cached-value).
+      if (Math.abs(facteur - 1) > 1e-9) {
+        // Cellule 3 résolue (multi-pack) : envase = qty × (kilosNetos / qteFact)
+        const envase = qty * facteur
+        const kilosNetosFormatted = new Intl.NumberFormat('fr-FR', { maximumFractionDigits: 3 }).format(kilosNetos)
+        const conversionComment = `converti pièce→unidades via Kilos Netos (${kilosNetosFormatted} unités)`
+        return { envase, unidad: 'Unidades', conversionFlag: 'converti pièce→unidades', conversionComment }
+      }
+      // Facteur 1 (pièce=unidad) → passthrough zéro bruit
+      return { envase: qty, unidad: 'Unidades', conversionFlag: 'ok' }
+    }
+    // Décision PO 2026-06-12 : kilosNetos absent/0 sur ligne Unidades → passthrough 'ok' NON bloquant
     return { envase: qty, unidad: 'Unidades', conversionFlag: 'ok' }
   }
 
@@ -558,18 +581,16 @@ export function reconcile(input: ReconcileInput): ReconcileResult {
         // AND the exposed effectiveCap field. This ensures server↔client can never diverge.
         //
         // Rule (unified — same as the client effectiveCap rule from HIGH-1 CR fix):
-        //   unidad='Kilos' AND kilosNetos > 0 → capMax = kilosNetos (kg bound)
-        //   otherwise                          → capMax = qteFact   (pieces bound)
+        //   (unidad ∈ {Kilos, Unidades}) AND kilosNetos > 0 → capMax = kilosNetos (fournisseur bound)
+        //   otherwise                                        → capMax = qteFact   (pieces bound)
         //
-        // Covers ALL Kilos lines (cellule-1 g→kg, cellule-2 kg+Kilos, cellule-4 converted),
-        // not just cellule-4. For Unidades lines (pièces), capMax = qteFact (unchanged).
-        // Previously only cellule-4 used kilosNetos; cellule-2 used qteFact on the server
-        // while effectiveCap exposed kilosNetos to the client → divergence for qty in
-        // [qteFact, kilosNetos]. Proof: qteFact=4, kilosNetos=8.1, precio=3.24, qty=6
-        // → server 12.96€ (cap on qteFact=4 → qty=4) vs client 19.44€ (cap on kilosNetos=8.1 → qty=6).
+        // Covers ALL Kilos lines (cellule-1 g→kg, cellule-2 kg+Kilos, cellule-4 converted)
+        // AND Unidades lines (cellule-3 multi-pack converted, cellule-5 g/kg+Unidades),
+        // ensuring multi-pack scenarios (UAT 2026-06-12, datte 1028-8X750GR) cap on the
+        // total number of unidades (kilosNetos) rather than on cartons (qteFact).
         const kilosNetosForCap = fgRow.kilosNetos
         const capMax: number | null =
-          (unitConversion.unidad === 'Kilos' && kilosNetosForCap != null && kilosNetosForCap > 0)
+          ((unitConversion.unidad === 'Kilos' || unitConversion.unidad === 'Unidades') && kilosNetosForCap != null && kilosNetosForCap > 0)
             ? kilosNetosForCap
             : qteFact
 
@@ -595,7 +616,7 @@ export function reconcile(input: ReconcileInput): ReconcileResult {
       // We recompute using the same unified rule so effectiveCap is always set correctly.
       const kilosNetosForEffectiveCap = fgRow.kilosNetos
       const effectiveCap: number | null =
-        (unitConversion.unidad === 'Kilos' && kilosNetosForEffectiveCap != null && kilosNetosForEffectiveCap > 0)
+        ((unitConversion.unidad === 'Kilos' || unitConversion.unidad === 'Unidades') && kilosNetosForEffectiveCap != null && kilosNetosForEffectiveCap > 0)
           ? kilosNetosForEffectiveCap
           : fgRow.qteFact
       const effectiveCapUnit: string | null = unitConversion.unidad || null

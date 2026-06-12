@@ -394,3 +394,9 @@ pour le promote V1 (même famille que l'enchaînement post-avoir Epic 8).
 ## 2026-06-12 — spec-reconcile-code-token-v114-align (CR)
 
 - **Collision de variantes décimales dans un même fichier fournisseur** : si un data.xlsx contenait à la fois `3745-3,5K` ET `3745-3.5K` en FACTURE_GROUPE, les deux fusionnent sur la clé normalisée → première row gagnante (warning `multiple-matches`), et une seule entrée `unusedSupplierLines` (verbatim de la 1re occurrence). Improbable (un fichier garde une convention unique) ; si ça arrive, ajouter un warning dédié « collision décimale ». (BH/EH/Auditor CR 2026-06-12)
+
+## 2026-06-12 — spec-unidades-multipack-conversion-cap (CR)
+
+- **COMENTARIOS pré-rempli dupliqué** : le composable préfixe `flag + ' ' + conversionComment` or le comment commence déjà par le flag → « converti pièce→kg converti pièce→kg via… » (pattern hérité 8.6, reproduit par le nouveau flag). Cosmétique, visible dans l'input opérateur et le doc. (EH/Auditor LOW)
+- **Garde de plausibilité Kilos Netos** : la conversion multi-pack fait confiance à la sémantique « Kilos Netos = quantité de facturation » (PO 2026-06-12, vérifiée sur le fichier réel). Durcissement V2 possible : vérifier par ligne l'invariant `Importe_fichier ≈ kilosNetos × precio` avant d'auto-convertir, sinon ATTENTION A CONVERTIR. (BH HIGH-décision, accepté PO)
+- **Pas de re-cap serveur au generate** (DN-6=iii LOCKED, pré-existant) : l'élévation du cap client qteFact→kilosNetos ne change pas la classe de risque, tracé pour mémoire.

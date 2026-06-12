@@ -273,7 +273,11 @@ export function buildBlockingReasons(state: ArbitrageState): string[] {
 // effectiveCap = qteFact (en PIÈCES) mais effectiveCapUnit = 'Kilos' → afficher
 // « X kg » serait FAUX (la valeur est en pièces). L'unité correcte du cap dépend
 // donc de l'état de conversion :
-//   - conflit 'ATTENTION A CONVERTIR' → cap = qteFact en unité fournisseur → line.unite
+//   - conflit 'ATTENTION A CONVERTIR' + capUnit='Kilos' (cellule 4 dégénérée,
+//     kilosNetos absent) → cap = qteFact en unité fournisseur → line.unite
+//   - conflit + capUnit='Unidades' (cellule 5) → depuis le cap unifié multi-pack,
+//     la borne est kilosNetos en Unidades → label « Unidades » (CR 2026-06-12 :
+//     l'ancien label line.unite affichait « 8 kg » pour 8 pots)
 //   - sinon, capUnit === 'Kilos' (converti/passthrough) → cap en kg → « kg »
 //   - sinon (pièces/Unidades) → line.unite si présent, sinon pas de suffixe (fallback)
 // Pure (exporté pour tests). Ne touche AUCUN calcul (clampQty/IMPORTE inchangés).
@@ -287,11 +291,19 @@ export function buildClampMessage(
   const isConversionConflict = line?.conversionFlag === 'ATTENTION A CONVERTIR'
   const unite = line?.unite ?? null
 
+  const isConvertedToUnidades = line?.conversionFlag === 'converti pièce→unidades'
+
   let unitLabel: string | null
   if (isConversionConflict) {
-    unitLabel = unite
+    // CR 2026-06-12 (cellule 5) : avec le cap unifié, capUnit='Unidades' ⇒ la
+    // borne est en unidades fournisseur, pas en line.unite (kg/Pièce).
+    unitLabel = capUnit === 'Unidades' ? 'Unidades' : unite
   } else if (capUnit === 'Kilos') {
     unitLabel = 'kg'
+  } else if (isConvertedToUnidades && capUnit === 'Unidades') {
+    // Multi-pack converti (cellule 3) : la valeur est en pots (Unidades),
+    // pas en cartons (unite). Afficher littéralement « Unidades ».
+    unitLabel = 'Unidades'
   } else {
     unitLabel = unite
   }

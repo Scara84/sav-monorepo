@@ -19,6 +19,7 @@
  *   INT-03 (AC #4 ii)  : CHECK constraint supplier_code='sol-y-fruta' — valeur interdite rejetée
  *   INT-04  (AC #4 iii) : CHECK constraint conversion_flag — valeur interdite rejetée
  *   INT-04b (hotfix 8.7) : conversion_flag 'converti pièce→kg' (8.6) accepté (migration 20260609000000)
+ *   INT-04c (multi-pack 2026-06-12) : conversion_flag 'converti pièce→unidades' accepté (migration 20260612100000)
  *   INT-05 (AC #4 iii) : CHECK constraint price_cents > 0 (rejet si 0)
  *   INT-06 (AC #4 iv)  : FK credit_note_id → credit_notes(id) rejette id inexistant (non-null)
  *   INT-07 (AC #4 iv)  : FK credit_note_id NULL accepté (DN-2=B LOCKED)
@@ -121,15 +122,61 @@ describe.skipIf(!HAS_DB)('INT-8.4 — sav_supplier_claims migration (vraie DB)',
   let testSavLineId: number | null = null
   let testOperatorId: number | null = null
   let createdSavLineId: number | null = null
+  let createdSavId: number | null = null
+  let createdMemberId: number | null = null
 
   beforeAll(async () => {
     admin = createClient(SUPABASE_URL!, SERVICE_ROLE!, {
       auth: { persistSession: false, autoRefreshToken: false },
     })
 
-    // Trouver les fixtures DB
+    // Trouver les fixtures DB ; si aucune (DB locale fraîche post-`supabase db reset`),
+    // seeder un minimum viable member→sav→sav_line pour que les CHECK INT-04/INT-04b/INT-04c
+    // exercent vraiment la contrainte (sans seed, return silencieux = faux-vert).
     const sav = await findOrSkipSav(admin)
     testSavId = sav?.savId ?? null
+    // CR 2026-06-12 : le seed n'écrit QUE sur une DB locale (127.0.0.1/localhost).
+    // Sans cette garde, un run par erreur avec une env preview/prod VIDE
+    // écrirait des fixtures int-8.4-* dans une DB partagée.
+    const IS_LOCAL_DB = /127\.0\.0\.1|localhost/.test(SUPABASE_URL ?? '')
+    if (!testSavId && !IS_LOCAL_DB) {
+      console.warn('[INT-8.4] DB distante sans fixtures — seed refusé (garde localhost), tests CHECK skippés')
+    }
+    if (!testSavId && IS_LOCAL_DB) {
+      const { data: member, error: memberErr } = await admin
+        .from('members')
+        .insert({
+          email: `int-8.4-${UNIQUE_RUN}@local.test`,
+          last_name: 'INT-FIXTURE',
+        })
+        .select('id')
+        .single<{ id: number }>()
+      if (memberErr || !member?.id) {
+        console.warn(`[INT-8.4] seed member failed: ${memberErr?.message}`)
+      } else {
+        createdMemberId = member.id
+        const { data: savRow, error: savErr } = await admin
+          .from('sav')
+          .insert({
+            member_id: member.id,
+            reference: `SAV-INT-${UNIQUE_RUN}`,
+          })
+          .select('id')
+          .single<{ id: number }>()
+        if (savErr || !savRow?.id) {
+          console.warn(`[INT-8.4] seed sav failed: ${savErr?.message}`)
+        } else {
+          testSavId = savRow.id
+          createdSavId = savRow.id
+        }
+      }
+      // CR 2026-06-12 : en LOCAL, un seed qui échoue doit faire ÉCHOUER la suite
+      // (avant : console.warn + return silencieux dans chaque test = faux-vert —
+      // la contrainte CHECK n'était jamais exercée sans que rien ne le signale).
+      if (!testSavId) {
+        throw new Error('[INT-8.4] seed local échoué — les tests CHECK ne peuvent pas s\'exécuter (voir warns ci-dessus)')
+      }
+    }
     if (testSavId) {
       testSavLineId = await findSavLine(admin, testSavId)
       // DB fraîche (seed.sql ne crée aucune sav_line) : seed une ligne minimale
@@ -168,6 +215,13 @@ describe.skipIf(!HAS_DB)('INT-8.4 — sav_supplier_claims migration (vraie DB)',
     // Cleanup : sav_line fixture seedée par ce run (jamais une ligne préexistante)
     if (createdSavLineId) {
       await admin.from('sav_lines').delete().eq('id', createdSavLineId)
+    }
+    // Cleanup : sav + member seedés par ce run (DB locale fraîche uniquement)
+    if (createdSavId) {
+      await admin.from('sav').delete().eq('id', createdSavId)
+    }
+    if (createdMemberId) {
+      await admin.from('members').delete().eq('id', createdMemberId)
     }
   }, 30_000)
 
@@ -346,6 +400,60 @@ describe.skipIf(!HAS_DB)('INT-8.4 — sav_supplier_claims migration (vraie DB)',
       comentarios: 'via Kilos Netos',
       importe_cents: 492,
       conversion_flag: 'converti pièce→kg', // 8.6 — désormais autorisé
+    })
+
+    expect(lineError).toBeNull()
+  }, 30_000)
+
+  // INT-04c — conversion_flag 'converti pièce→unidades' ACCEPTÉ (multi-pack 2026-06-12,
+  // migration 20260612100000). Discriminant : sous l'ancienne contrainte 8.7 (4 valeurs),
+  // l'INSERT échouait avec 23514 → la persistance d'une réclamation multi-pack convertie
+  // pièce→unidades était impossible. Après fix : INSERT accepté.
+  it("INT-04c: CHECK constraint conversion_flag — 'converti pièce→unidades' (multi-pack) accepté", async () => {
+    if (!testSavId || !testOperatorId || !testSavLineId) {
+      console.warn('[INT-04c] SKIP — pas de SAV/operator/sav_line disponible')
+      return
+    }
+
+    const fakeBlob = Buffer.from('fake')
+    const { data: claim, error: claimError } = await admin
+      .from('sav_supplier_claims')
+      .insert({
+        sav_id: testSavId,
+        credit_note_id: null,
+        supplier_code: 'sol-y-fruta',
+        reference: `INT-04c-${UNIQUE_RUN}`,
+        albaran: '3128',
+        fecha_albaran: '2026-06-12',
+        total_importe_cents: 2014,
+        line_count: 1,
+        filename: 'test.xlsx',
+        document_blob: fakeBlob,
+        document_sha256: `sha256-INT-04c-${UNIQUE_RUN}`,
+        regeneration_of: null,
+        generated_by_operator_id: testOperatorId,
+      })
+      .select('id')
+      .single<{ id: number }>()
+
+    expect(claimError).toBeNull()
+    if (!claim?.id) return
+    createdClaimIds.push(claim.id)
+
+    const { error: lineError } = await admin.from('sav_supplier_claim_lines').insert({
+      claim_id: claim.id,
+      sav_line_id: testSavLineId,
+      position: 1,
+      codigo_es: '1028',
+      producto_es: 'Datil Medjoul caja 8x750gr',
+      origen: 'Túnez',
+      peso_qty: 2.4,
+      unidad: 'Unidades',
+      causa_es: 'faltante',
+      precio_cents: 839,
+      comentarios: 'converti pièce→unidades via Kilos Netos (8 unités)',
+      importe_cents: 2014,
+      conversion_flag: 'converti pièce→unidades', // 5e valeur — désormais autorisé
     })
 
     expect(lineError).toBeNull()
