@@ -390,3 +390,7 @@ pour le promote V1 (même famille que l'enchaînement post-avoir Epic 8).
 - **Tests vraie-DB non écrits : concurrence deux forces simultanés + sabotage INSERT audit (rollback)** : corrects par construction (FOR UPDATE ; plpgsql sans bloc EXCEPTION → RAISE = rollback complet). Commentaires trompeurs corrigés dans regenerate.spec.ts (CR P6c). À couvrir si l'invariant devient critique. (Auditor v3 DEF-1/DEF-2)
 - **TOCTOU résiduel fingerprint** : une ligne NON-ok INSÉRÉE entre le fetch handler et la RPC passe le fingerprint (qui ne compare que les lignes ok) alors que le PDF la rendra. Même exposition que l'émission existante. Fingerprint toutes-lignes en V2. (EH v3 L-3)
 - **Hygiène tests integration force-regenerate** : teardown ne purge pas les lignes audit_trail générées par les triggers cascade (sav/sav_lines/members/operators). (EH v3 L-5)
+
+## 2026-06-12 — spec-reconcile-code-token-v114-align (CR)
+
+- **Collision de variantes décimales dans un même fichier fournisseur** : si un data.xlsx contenait à la fois `3745-3,5K` ET `3745-3.5K` en FACTURE_GROUPE, les deux fusionnent sur la clé normalisée → première row gagnante (warning `multiple-matches`), et une seule entrée `unusedSupplierLines` (verbatim de la 1re occurrence). Improbable (un fichier garde une convention unique) ; si ça arrive, ajouter un warning dédié « collision décimale ». (BH/EH/Auditor CR 2026-06-12)

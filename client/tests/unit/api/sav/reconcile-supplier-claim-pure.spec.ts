@@ -38,6 +38,7 @@ import {
   applyCap,
   computeImporte,
   reconcile,
+  RECONCILE_CODE_TOKEN_RE,
 } from '../../../../api/_lib/sav/reconcile-supplier-claim'
 import type {
   ConvertUnitInput,
@@ -841,11 +842,15 @@ describe('PURE-11: extractCodeToken — M-1 boundary anchor (CR fix M-1 / DN-CR1
     expect(extractCodeToken('1022extra')).toBeNull()
   })
 
-  it('PURE-11b: "1022-5KK" → null (double trailing letter — no boundary after "1022-5K")', () => {
-    // L-3: Before boundary fix, "1022-5KK" silently truncated to "1022-5K".
-    // After fix: the second "K" prevents boundary match → null (rejected).
-    // Reject is preferred over silent truncation (AC #3 DN-4=A strict).
-    expect(extractCodeToken('1022-5KK')).toBeNull()
+  it('PURE-11b: "1022-5KK" → "1022-5KK" (V1.14 — segment `-[A-Z0-9]+` accepte plusieurs lettres)', () => {
+    // spec-reconcile-code-token-v114-align (2026-06-12) : alignement V1.14 sur
+    // le motif catalogue Fruitstock partagé. L'ancienne regex pré-V1.14
+    // n'autorisait qu'UNE seule lettre optionnelle (`[A-Za-z]?`) après le
+    // suffixe numérique → `1022-5KK` rejeté. La V1.14 (`[A-Z0-9]+`) accepte
+    // les suffixes multi-pack (`8X750GR`, `4X500GR`) ET, par effet de bord,
+    // les doubles lettres. La boundary anti-`1022extra` reste verrouillée
+    // par le fait que `extra` (minuscules) ne matche pas `[A-Z0-9]+`.
+    expect(extractCodeToken('1022-5KK')).toBe('1022-5KK')
   })
 
   it('PURE-11c: "1022-5K AUBERGINE BIO" → "1022-5K" (whitespace boundary still works)', () => {
@@ -1004,5 +1009,221 @@ describe('PURE-14: reconcile — M-2 exception surfaced as warning (CR fix M-2)'
 
     // AC #8: processing CONTINUES for other lines → good line is matched
     expect(result!.claimLines.some((l) => l.savLineId === 'uuid-good')).toBe(true)
+  })
+})
+
+// ===========================================================================
+// spec-reconcile-code-token-v114-align (2026-06-12) — alignement V1.14 motif
+// catalogue + normalisation décimale des CLÉS de jointure.
+// Matrice I/O figée par la spec (UAT SAV-2026-00007 `1028-8X750GR`).
+// ===========================================================================
+
+describe('PURE-15: extractCodeToken — V1.14 alignment (spec-reconcile-code-token-v114-align)', () => {
+  it('PURE-15a: "1028-8X750GR" (multi-pack) → "1028-8X750GR" (fix UAT 2026-06-12)', () => {
+    // Ancienne regex (`-\d+(?:,\d+)?[A-Za-z]?`) ne reconnaissait pas `8X750GR`
+    // → token null → ligne marquée non-appariée malgré présence dans le fichier.
+    expect(extractCodeToken('1028-8X750GR')).toBe('1028-8X750GR')
+  })
+
+  it('PURE-15b: "1028-8X750GR Datte Sukkary 750g" (snapshot pollué multi-pack) → "1028-8X750GR"', () => {
+    expect(extractCodeToken('1028-8X750GR Datte Sukkary 750g')).toBe('1028-8X750GR')
+  })
+
+  it('PURE-15c: "1455-4X500GR" (multi-pack court) → "1455-4X500GR"', () => {
+    expect(extractCodeToken('1455-4X500GR')).toBe('1455-4X500GR')
+  })
+
+  it('PURE-15d: "3745-3.5K" (décimal point — canonique DB) → "3745-3.5K"', () => {
+    expect(extractCodeToken('3745-3.5K')).toBe('3745-3.5K')
+  })
+
+  it('PURE-15e: "6594-1.5L" (décimal litre) → "6594-1.5L"', () => {
+    expect(extractCodeToken('6594-1.5L')).toBe('6594-1.5L')
+  })
+
+  it('PURE-15f: "1100-1312-500GR" (multi-dash) → "1100-1312-500GR"', () => {
+    expect(extractCodeToken('1100-1312-500GR')).toBe('1100-1312-500GR')
+  })
+
+  it('PURE-15g: "6600-4x400GR" (lowercase pack) → null (limitation V1.14 documentée — case-sensitive)', () => {
+    // `x` minuscule ne matche pas `[A-Z0-9]+` → segment échoue → null.
+    // 5 codes catalogue touchés, descopés V1.14 (AC #3 case-sensitive conservé).
+    expect(extractCodeToken('6600-4x400GR')).toBeNull()
+  })
+
+  it('PURE-15h: "1022extra" (fusionné) → null (non-régression boundary M-1)', () => {
+    expect(extractCodeToken('1022extra')).toBeNull()
+  })
+
+  it('PURE-15i: "1022-5K" / "1022" (non-régression formats historiques)', () => {
+    expect(extractCodeToken('1022-5K')).toBe('1022-5K')
+    expect(extractCodeToken('1022')).toBe('1022')
+  })
+})
+
+describe('PURE-16: reconcile — jointure normalisée décimal (spec-reconcile-code-token-v114-align)', () => {
+  const buildInput = (opts: {
+    snapshotCode: string
+    fgCodeFr: string
+  }): ReconcileInput => ({
+    savId: 'uuid-sav',
+    savLines: [{
+      id: 'uuid-1',
+      productCodeSnapshot: opts.snapshotCode,
+      productNameSnapshot: 'Test',
+      qtyArbitrated: 2,
+      qtyInvoiced: null,
+      unitArbitrated: 'kg',
+      cause: null,
+    }],
+    parsed: {
+      metadata: { reference: 'REF', albaran: 1, fechaAlbaran: null, warnings: [] },
+      factureGroupe: {
+        rows: [{
+          codeFr: opts.fgCodeFr, designationFr: null, prixVenteClientHt: null,
+          unite: 'kg', qteCmd: 2, qteFact: 5, codigoEs: opts.fgCodeFr, descripcionEs: 'Producto',
+          kilosPiezas: 'Kilos', kilosNetos: null, precio: 3.5, importe: null, cmd: null,
+        }],
+        skippedRows: 0, warnings: [],
+      },
+      bdd: { rows: [], skippedRows: 0, warnings: [] },
+      fileMeta: { filename: 'test.xlsx', sizeBytes: 100, sheetsDetected: [], parser: 'test' },
+    },
+    motifMap: new Map(),
+  })
+
+  it('PURE-16a: snapshot "1028-8X750GR" + FG "1028-8X750GR" → match (fix UAT 2026-06-12)', () => {
+    const result = reconcile(buildInput({ snapshotCode: '1028-8X750GR', fgCodeFr: '1028-8X750GR' }))
+    expect(result.claimLines).toHaveLength(1)
+    expect(result.unmatchedSavLines).toHaveLength(0)
+    expect(result.claimLines[0]!.codeFr).toBe('1028-8X750GR')
+  })
+
+  it('PURE-16b: snapshot "3745-3.5K" (point) + FG "3745-3,5K" (virgule) → match (clés normalisées)', () => {
+    const result = reconcile(buildInput({ snapshotCode: '3745-3.5K', fgCodeFr: '3745-3,5K' }))
+    expect(result.claimLines).toHaveLength(1)
+    expect(result.unmatchedSavLines).toHaveLength(0)
+    // codeFr retourné = VERBATIM fgRow.codeFr (virgule conservée pour l'affichage)
+    expect(result.claimLines[0]!.codeFr).toBe('3745-3,5K')
+  })
+
+  it('PURE-16c: snapshot "3745-3,5K" (virgule) + FG "3745-3.5K" (point) → match (sens inverse)', () => {
+    const result = reconcile(buildInput({ snapshotCode: '3745-3,5K', fgCodeFr: '3745-3.5K' }))
+    expect(result.claimLines).toHaveLength(1)
+    expect(result.unmatchedSavLines).toHaveLength(0)
+    expect(result.claimLines[0]!.codeFr).toBe('3745-3.5K')
+  })
+
+  it('PURE-16d: snapshot "1022-5K" + FG "1022-5K" → match (non-régression)', () => {
+    const result = reconcile(buildInput({ snapshotCode: '1022-5K', fgCodeFr: '1022-5K' }))
+    expect(result.claimLines).toHaveLength(1)
+    expect(result.unmatchedSavLines).toHaveLength(0)
+  })
+
+  it('PURE-16e: snapshot "1022extra" → token null → unmatched (non-régression boundary)', () => {
+    const result = reconcile(buildInput({ snapshotCode: '1022extra', fgCodeFr: '1022' }))
+    expect(result.claimLines).toHaveLength(0)
+    expect(result.unmatchedSavLines).toHaveLength(1)
+    expect(result.unmatchedSavLines[0]!.tokenExtracted).toBeNull()
+    // FG "1022" non consommé → présent en unused
+    expect(result.unusedSupplierLines.some((u) => u.codeFr === '1022')).toBe(true)
+  })
+
+  it('PURE-16f: snapshot pollué "1028-8X750GR Datte" + FG "1028-8X750GR" → match', () => {
+    const result = reconcile(buildInput({ snapshotCode: '1028-8X750GR Datte Sukkary', fgCodeFr: '1028-8X750GR' }))
+    expect(result.claimLines).toHaveLength(1)
+    expect(result.unmatchedSavLines).toHaveLength(0)
+  })
+
+  it('PURE-16g: snapshot "6600-4x400GR" lowercase → token null → unmatched (limitation V1.14)', () => {
+    const result = reconcile(buildInput({ snapshotCode: '6600-4x400GR', fgCodeFr: '6600-4x400GR' }))
+    expect(result.claimLines).toHaveLength(0)
+    expect(result.unmatchedSavLines).toHaveLength(1)
+    expect(result.unmatchedSavLines[0]!.tokenExtracted).toBeNull()
+  })
+
+  it('PURE-16h: token valide mais codeFr absent du fichier → unmatched avec tokenExtracted renseigné', () => {
+    const result = reconcile(buildInput({ snapshotCode: '9999-5K', fgCodeFr: '1022-5K' }))
+    expect(result.claimLines).toHaveLength(0)
+    expect(result.unmatchedSavLines).toHaveLength(1)
+    expect(result.unmatchedSavLines[0]!.tokenExtracted).toBe('9999-5K')
+  })
+
+  it('PURE-16i: unusedSupplierLines préserve codeFr VERBATIM (virgule non normalisée)', () => {
+    // FG `3745-3,5K` non consommé (token snapshot ≠) → l'unused doit garder la virgule.
+    const result = reconcile(buildInput({ snapshotCode: '1022-5K', fgCodeFr: '3745-3,5K' }))
+    expect(result.unusedSupplierLines).toHaveLength(1)
+    expect(result.unusedSupplierLines[0]!.codeFr).toBe('3745-3,5K')
+  })
+
+  it('PURE-16j: jointure BDD normalisée — snapshot "3745-3.5K" + feuille BDD "3745-3,5K" → producto/origen BDD (CR MED-1)', () => {
+    // Avant le patch CR : FG matchait (clés normalisées) mais bddIndex restait
+    // verbatim → warning bdd-no-match trompeur, productoEs dégradé en
+    // descripcionEs FG et origen null. Le lookup BDD doit être symétrique.
+    const input = buildInput({ snapshotCode: '3745-3.5K', fgCodeFr: '3745-3,5K' })
+    input.parsed.bdd = {
+      rows: [{ code: '3745-3,5K', designationEs: 'BERENJENA ASIATICA BIO', origen: 'ES' }],
+      skippedRows: 0,
+      warnings: [],
+    }
+    const result = reconcile(input)
+    expect(result.claimLines).toHaveLength(1)
+    expect(result.claimLines[0]!.productoEs).toBe('BERENJENA ASIATICA BIO')
+    expect(result.claimLines[0]!.origen).toBe('ES')
+    expect(result.meta.warnings.some((w) => w.type === 'bdd-no-match')).toBe(false)
+  })
+})
+
+// ===========================================================================
+// Sentinelle de parité — la regex `extractCodeToken` doit être DÉRIVÉE du
+// motif cœur partagé V1.14 (anti-drift : pas une 4e regex indépendante).
+// ===========================================================================
+
+describe('PURE-17: extractCodeToken — sentinelle de parité avec motif cœur V1.14', () => {
+  it('PURE-17a: extractCodeToken accepte "1028-8X750GR" (preuve dérivation V1.14)', () => {
+    // Si la regex restait pré-V1.14 (`-\d+(?:,\d+)?[A-Za-z]?`), ce token serait null.
+    // Sa réussite garantit que le motif a évolué vers la couverture catalogue V1.14.
+    expect(extractCodeToken('1028-8X750GR')).toBe('1028-8X750GR')
+  })
+
+  it('PURE-17b: le motif cœur exporté par capture-webhook se retrouve dans les deux regex reconstruites', async () => {
+    // Import dynamique du motif cœur côté capture pour assertion croisée.
+    const { CATALOGUE_CODE_CORE_SOURCE, CATALOGUE_CODE_RE_SERVER } = await import(
+      '../../../../api/_lib/schemas/capture-webhook'
+    )
+    // La regex serveur capture (frontière `\s`) contient le motif cœur.
+    expect(CATALOGUE_CODE_RE_SERVER.source).toBe('^(' + CATALOGUE_CODE_CORE_SOURCE + ')\\s')
+    // La regex reconcile (frontière `(?=\s|$)`) reconstruite à partir du même motif
+    // doit produire un `.source` strictement déterministe.
+    const expectedReconcileSource = '^(' + CATALOGUE_CODE_CORE_SOURCE + ')(?=\\s|$)'
+    // CR : assertion STRUCTURELLE sur la regex de PROD (pas une copie locale) —
+    // remplacer RECONCILE_CODE_TOKEN_RE par une 4e regex copiée-collée fait
+    // échouer ce test même si elle est comportementalement équivalente aujourd'hui.
+    expect(RECONCILE_CODE_TOKEN_RE.source).toBe(expectedReconcileSource)
+    expect(RECONCILE_CODE_TOKEN_RE.flags).toBe('')
+    expect(new RegExp(expectedReconcileSource).test('1028-8X750GR')).toBe(true)
+    expect(new RegExp(expectedReconcileSource).test('1022extra')).toBe(false)
+  })
+
+  it('PURE-17d: rétrécissements de domaine assumés vs ancienne regex (verrouillage documenté)', () => {
+    // L'ancienne regex (`^\d+...`) acceptait ces formes ; le motif catalogue
+    // V1.14 (`[0-9]{3,5}`, suffixes `[A-Z0-9]+` uppercase) les rejette.
+    // Assumé : V1.12 AC#3 = codes catalogue 3-5 chiffres by design ; les codes
+    // junk 1-2 chiffres (18 recensés data.xlsx) et 6+ chiffres sont exclus,
+    // et les suffixes minuscules suivent la limitation V1.14 (PURE-15g).
+    expect(extractCodeToken('12-5K')).toBeNull() // 2 chiffres
+    expect(extractCodeToken('123456')).toBeNull() // 6 chiffres
+    expect(extractCodeToken('1022-5k')).toBeNull() // suffixe lettre minuscule
+  })
+
+  it('PURE-17e: "3745-3,5K" (virgule — contrat docstring) → token verbatim virgule', () => {
+    expect(extractCodeToken('3745-3,5K')).toBe('3745-3,5K')
+  })
+
+  it('PURE-17c: parité SPA ↔ serveur reste verrouillée (CATALOGUE_CODE_RE_SERVER === CATALOGUE_CODE_RE)', async () => {
+    const { CATALOGUE_CODE_RE } = await import('../../../../src/features/sav/lib/extractProductCode.js')
+    const { CATALOGUE_CODE_RE_SERVER } = await import('../../../../api/_lib/schemas/capture-webhook')
+    expect(CATALOGUE_CODE_RE_SERVER.source).toBe(CATALOGUE_CODE_RE.source)
+    expect(CATALOGUE_CODE_RE_SERVER.flags).toBe(CATALOGUE_CODE_RE.flags)
   })
 })

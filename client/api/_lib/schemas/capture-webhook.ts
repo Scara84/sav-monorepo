@@ -64,7 +64,14 @@ export type CaptureItemNormalized = Omit<CaptureItemInput, 'unit' | 'unitInvoice
 // EXPORTED for parity sentinel — un test dédié asserte
 // `CATALOGUE_CODE_RE_SERVER.source === CATALOGUE_CODE_RE.source` (SPA helper)
 // + flags identiques + table comportementale partagée (V1.14 AC#4).
-export const CATALOGUE_CODE_RE_SERVER = /^([0-9]{3,5}(?:-[A-Z0-9]+(?:[.,][A-Z0-9]+)?)*)\s/
+//
+// spec-reconcile-code-token-v114-align (2026-06-12) — la chaîne du motif cœur
+// est exportée séparément pour réutilisation par `extractCodeToken` du reconcile
+// (frontière `(?=\s|$)` au lieu de `\s`). La reconstruction via `new RegExp`
+// produit un `.source` strictement identique (vérifié) : la sentinelle de parité
+// SPA↔serveur reste verte sans modification.
+export const CATALOGUE_CODE_CORE_SOURCE = '[0-9]{3,5}(?:-[A-Z0-9]+(?:[.,][A-Z0-9]+)?)*'
+export const CATALOGUE_CODE_RE_SERVER = new RegExp('^(' + CATALOGUE_CODE_CORE_SOURCE + ')\\s')
 
 /**
  * Story V1.14 D-1 — normalisation séparateur décimal canonique = point.

@@ -19,6 +19,26 @@
 
 import type { FactureGroupeRow, BddRow } from './supplier-file-parser'
 export type { ParseWarning } from './supplier-file-parser'
+import { CATALOGUE_CODE_CORE_SOURCE } from '../schemas/capture-webhook'
+
+// spec-reconcile-code-token-v114-align (2026-06-12) — regex reconcile dérivée
+// du motif cœur partagé V1.14 (capture-webhook + extractProductCode SPA).
+// Frontière `(?=\s|$)` au lieu de `\s` car le snapshot SAV peut être un code
+// seul (sans libellé concaténé). Anti-drift verrouillé par sentinelle dédiée.
+// EXPORTED pour la sentinelle de parité structurelle (PURE-17) : le test
+// assert `.source` directement — une 4e regex copiée-collée ferait échouer.
+export const RECONCILE_CODE_TOKEN_RE = new RegExp('^(' + CATALOGUE_CODE_CORE_SOURCE + ')(?=\\s|$)')
+
+/**
+ * spec-reconcile-code-token-v114-align — normalisation décimale des CLÉS de
+ * jointure uniquement : `,` → `.`. Appliquée au token extrait + clés `fgIndex`
+ * + clés `bddIndex` (CR : symétrie FG↔BDD) + entrées `consumedFgCodes`.
+ * `fgRow.codeFr` reste VERBATIM dans toutes les
+ * structures retournées (claimLines, unusedSupplierLines, payloads).
+ */
+function normalizeJoinKey(code: string): string {
+  return code.replace(/,/g, '.')
+}
 
 // ---------------------------------------------------------------------------
 // Types exportés (OQ-4 : réutilise ParseWarning depuis supplier-file-parser)
@@ -187,7 +207,10 @@ export interface ReconcileInput {
  *   "1022-5K" → "1022-5K" (end-of-string boundary ✓)
  *   "1022" → "1022" (end-of-string boundary ✓)
  *   "1022extra" → null (rejected — no boundary after "1022") ✓
- *   "1022-5KK" → null (rejected — no boundary after "1022-5K" due to extra "K") ✓
+ *   "1022-5KK" → "1022-5KK" (V1.14 — segment `-[A-Z0-9]+` autorise plusieurs lettres ;
+ *               aligné sur catalogue Fruitstock — cf. spec-reconcile-code-token-v114-align)
+ *   "1028-8X750GR" → "1028-8X750GR" (V1.14 — multi-pack, fix UAT 2026-06-12)
+ *   "3745-3.5K" / "3745-3,5K" → idem (V1.14 — décimal `.` ET `,`)
  *
  * @param snapshot  Valeur de `product_code_snapshot` (peut être null/vide)
  * @returns  Token extrait ou null si pas de match numérique avec boundary
@@ -199,7 +222,13 @@ export function extractCodeToken(snapshot: string | null | undefined): string | 
 
   // M-1 FIX: Lookahead (?=\s|$) enforces whitespace-or-end boundary after token.
   // Prevents silent truncation of tokens like "1022extra" → "1022".
-  const match = trimmed.match(/^(\d+(?:-\d+(?:,\d+)?[A-Za-z]?)?)(?=\s|$)/)
+  //
+  // spec-reconcile-code-token-v114-align (2026-06-12) — regex DÉRIVÉE du motif
+  // cœur partagé V1.14 (`CATALOGUE_CODE_CORE_SOURCE`) au lieu d'une 4e regex
+  // indépendante. Couvre les multi-packs (`1028-8X750GR`), décimaux (`.`/`,`),
+  // multi-dash (`1100-1312-500GR`). Sentinelle de parité dédiée verrouille la
+  // dérivation (cf. PURE-17 dans reconcile-supplier-claim-pure.spec.ts).
+  const match = trimmed.match(RECONCILE_CODE_TOKEN_RE)
   if (!match || !match[1]) return null
 
   const token = match[1]
@@ -342,21 +371,32 @@ export function reconcile(input: ReconcileInput): ReconcileResult {
 
   // --- Indexer FACTURE_GROUPE par codeFr en O(1) (AC #10 performance) ---
   // Map<codeFr, [firstRow, count]> pour détecter multiple-matches
+  //
+  // spec-reconcile-code-token-v114-align (2026-06-12) — les CLÉS de l'index
+  // sont normalisées (`,`→`.`) pour permettre la jointure croisée snapshot↔file
+  // quelle que soit la convention décimale. `fgRow.codeFr` reste VERBATIM dans
+  // la valeur (claimLines.codeFr / unusedSupplierLines.codeFr inchangés).
   const fgIndex = new Map<string, { row: FactureGroupeRow; count: number }>()
   for (const fgRow of factureGroupe.rows) {
-    const existing = fgIndex.get(fgRow.codeFr)
+    const key = normalizeJoinKey(fgRow.codeFr)
+    const existing = fgIndex.get(key)
     if (existing) {
       existing.count++
     } else {
-      fgIndex.set(fgRow.codeFr, { row: fgRow, count: 1 })
+      fgIndex.set(key, { row: fgRow, count: 1 })
     }
   }
 
   // --- Indexer BDD par code en O(1) (DN-2 : BDD prioritaire) ---
+  // CR spec-reconcile-code-token-v114-align : clés normalisées (`,`→`.`) comme
+  // fgIndex — sinon un snapshot point canonique (DB post-V1.14) vs une feuille
+  // BDD en virgule matchait FG mais ratait BDD (origen null + producto dégradé
+  // + warning bdd-no-match trompeur). Valeurs BddRow verbatim inchangées.
   const bddIndex = new Map<string, BddRow>()
   for (const bddRow of bdd.rows) {
-    if (!bddIndex.has(bddRow.code)) {
-      bddIndex.set(bddRow.code, bddRow)
+    const bddKey = normalizeJoinKey(bddRow.code)
+    if (!bddIndex.has(bddKey)) {
+      bddIndex.set(bddKey, bddRow)
     }
   }
 
@@ -384,7 +424,10 @@ export function reconcile(input: ReconcileInput): ReconcileResult {
       }
 
       // AC #3 — jointure exacte sur codeFr (case-sensitive, espace-insensitive via trim 8.1)
-      const fgEntry = fgIndex.get(tokenExtracted)
+      // spec-reconcile-code-token-v114-align : normalisation `,`→`.` côté clé
+      // de lookup (l'index a déjà été normalisé à la construction).
+      const joinKey = normalizeJoinKey(tokenExtracted)
+      const fgEntry = fgIndex.get(joinKey)
 
       if (!fgEntry) {
         // Aucun match → unmatched
@@ -398,7 +441,9 @@ export function reconcile(input: ReconcileInput): ReconcileResult {
       }
 
       const fgRow = fgEntry.row
-      consumedFgCodes.add(tokenExtracted)
+      // spec-reconcile-code-token-v114-align : marqueur consommé = clé normalisée
+      // (cohérence avec l'index ; le check `unused` ci-dessous compare la même clé).
+      consumedFgCodes.add(joinKey)
 
       // AC #3 — multiple-matches : warning si count > 1
       if (fgEntry.count > 1) {
@@ -410,7 +455,7 @@ export function reconcile(input: ReconcileInput): ReconcileResult {
       }
 
       // AC #4 — BDD lookup (DN-2 : BDD prioritaire)
-      const bddRow = bddIndex.get(tokenExtracted) ?? null
+      const bddRow = bddIndex.get(joinKey) ?? null
       if (!bddRow) {
         warnings.push({
           savLineId: savLine.id,
@@ -610,12 +655,17 @@ export function reconcile(input: ReconcileInput): ReconcileResult {
   }
 
   // --- Lignes FG non consommées → unusedSupplierLines (AC #3) ---
+  // spec-reconcile-code-token-v114-align : check + dédoublonnage sur la CLÉ
+  // normalisée pour cohérence avec consumedFgCodes (qui stocke des clés
+  // normalisées). La VALEUR retournée (`codeFr`) reste VERBATIM `fgRow.codeFr`.
   const unusedSupplierLines: UnusedSupplierLine[] = []
+  const seenUnusedKeys = new Set<string>()
   for (const fgRow of factureGroupe.rows) {
-    if (!consumedFgCodes.has(fgRow.codeFr)) {
+    const key = normalizeJoinKey(fgRow.codeFr)
+    if (!consumedFgCodes.has(key)) {
       // Dédupliquer (plusieurs rows même codeFr → une seule entrée unused)
-      const alreadyListed = unusedSupplierLines.some((u) => u.codeFr === fgRow.codeFr)
-      if (!alreadyListed) {
+      if (!seenUnusedKeys.has(key)) {
+        seenUnusedKeys.add(key)
         unusedSupplierLines.push({
           codeFr: fgRow.codeFr,
           codigoEs: fgRow.codigoEs,
