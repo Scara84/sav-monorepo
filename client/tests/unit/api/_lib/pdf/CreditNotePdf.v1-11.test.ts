@@ -153,9 +153,9 @@ function renderText(props: CreditNotePdfProps): string {
 // AC#1 — Header colonne prix
 // =============================================================================
 describe('V1.11 AC#1 — Header colonne prix facturé', () => {
-  it('le header de colonne affiche `Prix facturé` (et non les anciens libellés)', () => {
+  it('le header de colonne affiche `Prix facturé TTC` (et non les anciens libellés)', () => {
     const text = renderText(baseProps())
-    expect(text).toContain('Prix facturé')
+    expect(text).toContain('Prix facturé TTC')
     expect(text).not.toContain('PU TTC')
     expect(text).not.toContain('Prix HT')
   })

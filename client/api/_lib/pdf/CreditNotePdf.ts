@@ -500,7 +500,7 @@ function renderTable(
     h(Text, { style: styles.colCode }, 'Code'),
     h(Text, { style: styles.colName }, 'Produit'),
     h(Text, { style: styles.colQtyRefunded }, 'Qté remboursée'),
-    h(Text, { style: styles.colPriceHt }, 'Prix facturé'),
+    h(Text, { style: styles.colPriceHt }, 'Prix facturé TTC'),
     h(Text, { style: styles.colCoef }, 'Coef'),
     // V1.11 AC#2 — la colonne montant passe en TTC (helper `creditTtcCents`).
     // Les TOTAUX restent ceux du moteur (AC#3) — pas une somme des TTC affichés.

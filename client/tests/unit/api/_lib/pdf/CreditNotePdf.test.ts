@@ -318,7 +318,7 @@ describe('CreditNotePdf (Story 4.5 AC #9)', () => {
     )
 
     expect(text).toContain('Qté remboursée')
-    expect(text).toContain('Prix facturé')
+    expect(text).toContain('Prix facturé TTC')
     expect(text).toContain('10 kg')
     expect(text).not.toContain('20,1')
     expect(text).not.toContain('Qté dem.')
