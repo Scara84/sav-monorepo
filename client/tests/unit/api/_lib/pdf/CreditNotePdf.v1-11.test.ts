@@ -38,8 +38,7 @@ import type * as ReactPDFType from '@react-pdf/renderer'
 // -------------------------------------------------------
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 function makePdfComponentStub(name: string): (props: any) => React.ReactElement {
-  return ({ children }: { children?: React.ReactNode }) =>
-    React.createElement(name, {}, children)
+  return ({ children }: { children?: React.ReactNode }) => React.createElement(name, {}, children)
 }
 
 const reactPdfModuleMock = {
@@ -93,7 +92,10 @@ function baseLine(overrides: Partial<CreditNotePdfLine> = {}): CreditNotePdfLine
     unit_requested: 'kg',
     qty_invoiced: 2,
     unit_invoiced: 'kg',
+    qty_arbitrated: 2,
+    unit_arbitrated: 'kg',
     unit_price_ttc_cents: 500,
+    unit_price_ttc_arbitrated_cents: null,
     credit_coefficient: 1,
     credit_coefficient_label: 'TOTAL 100%',
     credit_amount_cents: 1000, // HT
@@ -148,12 +150,13 @@ function renderText(props: CreditNotePdfProps): string {
 }
 
 // =============================================================================
-// AC#1 — Header colonne re-libellé `PU TTC`
+// AC#1 — Header colonne prix
 // =============================================================================
-describe('V1.11 AC#1 — Header colonne PU TTC', () => {
-  it('le header de colonne affiche `PU TTC` (et non `Prix HT`)', () => {
+describe('V1.11 AC#1 — Header colonne prix facturé', () => {
+  it('le header de colonne affiche `Prix facturé` (et non les anciens libellés)', () => {
     const text = renderText(baseProps())
-    expect(text).toContain('PU TTC')
+    expect(text).toContain('Prix facturé')
+    expect(text).not.toContain('PU TTC')
     expect(text).not.toContain('Prix HT')
   })
 })
@@ -265,7 +268,7 @@ describe('V1.11 AC#4 — Désignation produit complète', () => {
     expect(text).not.toMatch(/…/)
   })
 
-  it('pagination smoke — 25 lignes × nom 120 chars : l\'arbre React PDF se construit sans throw', () => {
+  it("pagination smoke — 25 lignes × nom 120 chars : l'arbre React PDF se construit sans throw", () => {
     const longName =
       'Pommes Golden bio Label Rouge — plateau bois FSC 5 kg origine France récolte 2024 lot 12345 ref POM-BIO-XL-2024-PLT'
     const lines: CreditNotePdfLine[] = Array.from({ length: 25 }, (_, i) =>

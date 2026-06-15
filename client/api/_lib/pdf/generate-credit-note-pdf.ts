@@ -228,7 +228,10 @@ interface SavLineRow {
   unit_requested: 'kg' | 'piece' | 'liter'
   qty_invoiced: number | null
   unit_invoiced: 'kg' | 'piece' | 'liter' | null
+  qty_arbitrated: number | null
+  unit_arbitrated: 'kg' | 'piece' | 'liter' | null
   unit_price_ttc_cents: number | null
+  unit_price_ttc_arbitrated_cents: number | null
   credit_coefficient: number | string
   credit_coefficient_label: string | null
   credit_amount_cents: number | null
@@ -308,7 +311,8 @@ export async function generateCreditNotePdfAsync(args: GenerateCreditNotePdfArgs
       .select(
         'line_number, position, product_code_snapshot, product_name_snapshot, ' +
           'qty_requested, unit_requested, qty_invoiced, unit_invoiced, ' +
-          'unit_price_ttc_cents, credit_coefficient, credit_coefficient_label, ' +
+          'qty_arbitrated, unit_arbitrated, unit_price_ttc_cents, ' +
+          'unit_price_ttc_arbitrated_cents, credit_coefficient, credit_coefficient_label, ' +
           'credit_amount_cents, vat_rate_bp_snapshot, validation_message'
       )
       .eq('sav_id', sav_id)
@@ -497,7 +501,11 @@ export async function generateCreditNotePdfAsync(args: GenerateCreditNotePdfArgs
     unit_requested: l.unit_requested,
     qty_invoiced: l.qty_invoiced !== null ? Number(l.qty_invoiced) : null,
     unit_invoiced: l.unit_invoiced,
+    qty_arbitrated: l.qty_arbitrated !== null ? Number(l.qty_arbitrated) : null,
+    unit_arbitrated: l.unit_arbitrated,
     unit_price_ttc_cents: l.unit_price_ttc_cents !== null ? Number(l.unit_price_ttc_cents) : null,
+    unit_price_ttc_arbitrated_cents:
+      l.unit_price_ttc_arbitrated_cents !== null ? Number(l.unit_price_ttc_arbitrated_cents) : null,
     credit_coefficient:
       typeof l.credit_coefficient === 'string'
         ? Number(l.credit_coefficient)
@@ -509,8 +517,7 @@ export async function generateCreditNotePdfAsync(args: GenerateCreditNotePdfArgs
     // dans ce cas (ghost line — cf. AC#2 / CreditNotePdf).
     // CR M2 — guard `!= null` (et non `!== null`) pour intercepter aussi
     // `undefined` (sinon `Number(undefined) = NaN` → cellule rendue `NaN €`).
-    vat_rate_bp_snapshot:
-      l.vat_rate_bp_snapshot != null ? Number(l.vat_rate_bp_snapshot) : null,
+    vat_rate_bp_snapshot: l.vat_rate_bp_snapshot != null ? Number(l.vat_rate_bp_snapshot) : null,
     validation_message: l.validation_message,
   }))
 

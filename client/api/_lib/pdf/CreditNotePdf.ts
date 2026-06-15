@@ -80,7 +80,10 @@ export interface CreditNotePdfLine {
   unit_requested: Unit
   qty_invoiced: number | null
   unit_invoiced: Unit | null
+  qty_arbitrated: number | null
+  unit_arbitrated: Unit | null
   unit_price_ttc_cents: number | null
+  unit_price_ttc_arbitrated_cents: number | null
   credit_coefficient: number
   credit_coefficient_label: string | null
   credit_amount_cents: number | null
@@ -215,10 +218,8 @@ function buildStyles(StyleSheet: typeof ReactPDFType.StyleSheet): PDFStyleSheet 
     colLineNo: { width: 18, textAlign: 'center' },
     colCode: { width: 50 },
     colName: { flex: 1 },
-    colQtyReq: { width: 40, textAlign: 'right' },
-    colUnit: { width: 28, textAlign: 'center' },
-    colQtyInv: { width: 40, textAlign: 'right' },
-    colPriceHt: { width: 55, textAlign: 'right' },
+    colQtyRefunded: { width: 68, textAlign: 'right' },
+    colPriceHt: { width: 65, textAlign: 'right' },
     colCoef: { width: 38, textAlign: 'right' },
     colAmount: { width: 60, textAlign: 'right' },
     // Totaux
@@ -328,10 +329,22 @@ function formatQty(q: number): string {
   return s
 }
 
+function formatQtyWithUnit(qty: number | null, unit: Unit | null): string {
+  if (qty === null) return '—'
+  const unitLabel = unit === null ? '' : UNIT_LABEL[unit]
+  return unitLabel === undefined || unitLabel.length === 0
+    ? formatQty(qty)
+    : `${formatQty(qty)} ${unitLabel}`
+}
+
 function formatCoef(coef: number, label: string | null): string {
   if (label !== null && label.length > 0) return label
   const pct = Math.round(coef * 100)
   return `${pct} %`
+}
+
+function effectiveUnitPriceTtcCents(line: CreditNotePdfLine): number | null {
+  return line.unit_price_ttc_arbitrated_cents ?? line.unit_price_ttc_cents
 }
 
 // Titre "BON SAV" pour les paiements espèces (VIREMENT/PAYPAL), "AVOIR"
@@ -486,13 +499,8 @@ function renderTable(
     h(Text, { style: styles.colLineNo }, 'N°'),
     h(Text, { style: styles.colCode }, 'Code'),
     h(Text, { style: styles.colName }, 'Produit'),
-    h(Text, { style: styles.colQtyReq }, 'Qté dem.'),
-    h(Text, { style: styles.colUnit }, 'Unité'),
-    h(Text, { style: styles.colQtyInv }, 'Qté fact.'),
-    // V1.11 AC#1 — la valeur affichée est `unit_price_ttc_cents` (déjà TTC) ;
-    // c'est le libellé qui mentait jusqu'ici (« Prix HT »). Re-libellé sans
-    // toucher au champ ni à la valeur.
-    h(Text, { style: styles.colPriceHt }, 'PU TTC'),
+    h(Text, { style: styles.colQtyRefunded }, 'Qté remboursée'),
+    h(Text, { style: styles.colPriceHt }, 'Prix facturé'),
     h(Text, { style: styles.colCoef }, 'Coef'),
     // V1.11 AC#2 — la colonne montant passe en TTC (helper `creditTtcCents`).
     // Les TOTAUX restent ceux du moteur (AC#3) — pas une somme des TTC affichés.
@@ -517,17 +525,17 @@ function renderTable(
       // La pagination est gérée par la page <Page wrap> + `wrap: false` sur
       // chaque <View tableRow> (les rows hautes restent atomiques).
       h(Text, { style: styles.colName }, l.product_name_snapshot),
-      h(Text, { style: styles.colQtyReq }, formatQty(l.qty_requested)),
-      h(Text, { style: styles.colUnit }, UNIT_LABEL[l.unit_requested] ?? ''),
       h(
         Text,
-        { style: styles.colQtyInv },
-        l.qty_invoiced === null ? '—' : formatQty(l.qty_invoiced)
+        { style: styles.colQtyRefunded },
+        formatQtyWithUnit(l.qty_arbitrated, l.unit_arbitrated)
       ),
       h(
         Text,
         { style: styles.colPriceHt },
-        l.unit_price_ttc_cents === null ? '—' : formatEurFromCents(l.unit_price_ttc_cents)
+        effectiveUnitPriceTtcCents(l) === null
+          ? '—'
+          : formatEurFromCents(effectiveUnitPriceTtcCents(l) as number)
       ),
       h(
         Text,

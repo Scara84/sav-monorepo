@@ -95,7 +95,10 @@ function baseLine(overrides: Partial<CreditNotePdfLine> = {}): CreditNotePdfLine
     unit_requested: 'kg',
     qty_invoiced: 2,
     unit_invoiced: 'kg',
+    qty_arbitrated: 2,
+    unit_arbitrated: 'kg',
     unit_price_ttc_cents: 500,
+    unit_price_ttc_arbitrated_cents: null,
     credit_coefficient: 1,
     credit_coefficient_label: 'TOTAL 100%',
     credit_amount_cents: 1000,
@@ -289,5 +292,36 @@ describe('CreditNotePdf (Story 4.5 AC #9)', () => {
     expect(text).toContain('CODE-3')
     expect(text).toContain('CODE-4')
     expect(text).toContain('CODE-5')
+  })
+
+  it('T15 PDF avoir — affiche uniquement la quantité remboursée arbitrée, pas la quantité demandée', () => {
+    const text = renderText(
+      baseProps({
+        lines: [
+          baseLine({
+            product_code_snapshot: 'TOM-001',
+            product_name_snapshot: 'Tomates rondes',
+            qty_requested: 20.1,
+            unit_requested: 'kg',
+            qty_invoiced: 20.1,
+            unit_invoiced: 'kg',
+            qty_arbitrated: 10,
+            unit_arbitrated: 'kg',
+            unit_price_ttc_cents: 250,
+            credit_coefficient: 1,
+            credit_coefficient_label: 'TOTAL 100%',
+            credit_amount_cents: 2370,
+            vat_rate_bp_snapshot: 550,
+          }),
+        ],
+      })
+    )
+
+    expect(text).toContain('Qté remboursée')
+    expect(text).toContain('Prix facturé')
+    expect(text).toContain('10 kg')
+    expect(text).not.toContain('20,1')
+    expect(text).not.toContain('Qté dem.')
+    expect(text).not.toContain('Qté fact.')
   })
 })
