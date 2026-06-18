@@ -226,6 +226,10 @@ vi.mock('../../../../api/_lib/emails/credit-note-attachment', () => ({
   },
 }))
 
+vi.mock('../../../../api/_lib/clients/wallet-credit', () => ({
+  creditSavWalletAfterEmail: async () => undefined,
+}))
+
 import { runRetryEmails } from '../../../../api/_lib/cron-runners/retry-emails'
 
 function makeRow(overrides: Partial<OutboxRow> = {}): OutboxRow {

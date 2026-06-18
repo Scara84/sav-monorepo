@@ -75,6 +75,12 @@ interface State {
     | 'throw'
   /** Liste des sav_id reçus par resolveSavClosedAttachment (vérifie call-site). */
   attachmentResolverCalls: Array<number>
+  walletCreditCalls: Array<{
+    requestId: string
+    outboxId: number
+    savId: number | null
+    smtpMessageId: string
+  }>
 }
 
 const state = vi.hoisted(
@@ -92,6 +98,7 @@ const state = vi.hoisted(
       verifySmtpMessageId: null,
       attachmentResolver: { kind: 'no_credit_note' },
       attachmentResolverCalls: [],
+      walletCreditCalls: [],
     }) as State
 )
 
@@ -277,6 +284,17 @@ vi.mock('../../../../api/_lib/emails/credit-note-attachment', () => ({
   resolveCreditNoteTtcCents: async () => null,
 }))
 
+vi.mock('../../../../api/_lib/clients/wallet-credit', () => ({
+  creditSavWalletAfterEmail: async (input: {
+    requestId: string
+    outboxId: number
+    savId: number | null
+    smtpMessageId: string
+  }) => {
+    state.walletCreditCalls.push(input)
+  },
+}))
+
 import { runRetryEmails, __testables } from '../../../../api/_lib/cron-runners/retry-emails'
 
 function makeRow(overrides: Partial<OutboxRow> = {}): OutboxRow {
@@ -318,6 +336,7 @@ function resetState(): void {
   state.verifySmtpMessageId = null
   state.attachmentResolver = { kind: 'no_credit_note' }
   state.attachmentResolverCalls = []
+  state.walletCreditCalls = []
 }
 
 describe('runRetryEmails (Story 6.6)', () => {
@@ -776,6 +795,46 @@ describe('runRetryEmails (Story 6.6)', () => {
     expect(mail.attachments).toHaveLength(1)
     expect(mail.attachments![0]!.filename).toBe('AV-2026-00003 Dupont J.pdf')
     expect(mail.attachments![0]!.content).toBe(pdfBytes)
+  })
+
+  it('wallet credit : sav_validated envoyé → crédit wallet déclenché après SMTP sent', async () => {
+    state.outboxRows = [makeSavValidatedRow({ id: 44, sav_id: 3 })]
+    state.membersById.set(100, { id: 100, notification_prefs: { status_updates: true } })
+    state.attachmentResolver = {
+      kind: 'attachment',
+      filename: 'AV-2026-00003 Dupont J.pdf',
+      content: Buffer.from('%PDF-wallet-credit'),
+    }
+
+    const r = await runRetryEmails({ requestId: 'req-wallet' })
+
+    expect(r.sent).toBe(1)
+    expect(state.walletCreditCalls).toEqual([
+      {
+        requestId: 'req-wallet',
+        outboxId: 44,
+        savId: 3,
+        smtpMessageId: '<msg-0@x>',
+      },
+    ])
+    const markSentIndex = state.rpcCalls.findIndex((c) => c.fn === 'mark_outbox_sent')
+    expect(markSentIndex).toBeGreaterThanOrEqual(0)
+  })
+
+  it('wallet credit : sav_validated SMTP KO → aucun crédit wallet', async () => {
+    state.outboxRows = [makeSavValidatedRow({ id: 45, sav_id: 3 })]
+    state.membersById.set(100, { id: 100, notification_prefs: { status_updates: true } })
+    state.attachmentResolver = {
+      kind: 'attachment',
+      filename: 'AV-2026-00003 Dupont J.pdf',
+      content: Buffer.from('%PDF-wallet-credit'),
+    }
+    state.sendMailFailIndices.add(0)
+
+    const r = await runRetryEmails({ requestId: 'req-wallet-fail' })
+
+    expect(r.failed).toBe(1)
+    expect(state.walletCreditCalls).toHaveLength(0)
   })
 
   it('V1.10 AC#2 sav_validated + kind="unavailable" (avoir existe, PJ KO) → envoi + pdfFallback=true', async () => {

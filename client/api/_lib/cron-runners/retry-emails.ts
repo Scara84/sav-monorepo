@@ -6,6 +6,7 @@ import { renderEmailTemplate } from '../emails/transactional/render'
 import type { EmailTemplateData } from '../emails/transactional/render'
 import { MEMBER_KINDS } from '../emails/transactional/kinds'
 import { resolveCreditNoteAttachment, resolveCreditNoteTtcCents } from '../emails/credit-note-attachment'
+import { creditSavWalletAfterEmail } from '../clients/wallet-credit'
 
 /**
  * Story 6.6 — Cron runner retry-emails.
@@ -111,6 +112,20 @@ export function computeBackoffMs(attemptsAfter: number): number {
   // attemptsAfter = nombre d'attempts APRÈS l'échec courant.
   const ms = Math.pow(2, attemptsAfter) * 60_000
   return Math.min(ms, BACKOFF_CAP_MS)
+}
+
+async function creditWalletIfSavValidatedEmailSent(ctx: {
+  requestId: string
+  row: OutboxRow
+  messageId: string
+}): Promise<void> {
+  if (ctx.row.kind !== 'sav_validated') return
+  await creditSavWalletAfterEmail({
+    requestId: ctx.requestId,
+    outboxId: ctx.row.id,
+    savId: ctx.row.sav_id,
+    smtpMessageId: ctx.messageId,
+  })
 }
 
 /**
@@ -545,6 +560,11 @@ export async function runRetryEmails({
               .eq('id', row.id)
               .single<{ smtp_message_id: string | null; status: string }>()
             if (verify?.smtp_message_id) {
+              await creditWalletIfSavValidatedEmailSent({
+                requestId,
+                row,
+                messageId: info.messageId,
+              })
               sent += 1
               logger.error('cron.retry-emails.mark_sent_failed_but_verified', {
                 requestId,
@@ -580,6 +600,11 @@ export async function runRetryEmails({
                 hint: 'concurrent worker already marked',
               })
             }
+            await creditWalletIfSavValidatedEmailSent({
+              requestId,
+              row,
+              messageId: info.messageId,
+            })
             sent += 1
             logger.info('cron.retry-emails.sent', {
               requestId,
