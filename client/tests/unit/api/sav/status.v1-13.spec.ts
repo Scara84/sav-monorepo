@@ -36,6 +36,7 @@ const rpcMock = vi.hoisted(() => ({
 const runner = vi.hoisted(() => ({
   calls: [] as Array<{ requestId: string; savId: number | undefined }>,
   throws: false as boolean,
+  walletWarnings: [] as Array<{ code: string; message: string; outboxId: number; savId: number | null }>,
 }))
 
 vi.mock('../../../../api/_lib/clients/supabase-admin', () => ({
@@ -103,11 +104,19 @@ beforeEach(() => {
   rpcMock.capturedArgs = null
   runner.calls = []
   runner.throws = false
+  runner.walletWarnings = []
   // V1.13 dev : (re)pose l'impl après mockReset entre tests.
   runRetryEmailsMock.mockImplementation(async (opts: { requestId: string; savId?: number }) => {
     runner.calls.push({ requestId: opts.requestId, savId: opts.savId })
     if (runner.throws) throw new Error('SMTP catastrophic')
-    return { scanned: 0, sent: 0, failed: 0, skipped_optout: 0, durationMs: 1 }
+    return {
+      scanned: 0,
+      sent: 0,
+      failed: 0,
+      skipped_optout: 0,
+      walletWarnings: runner.walletWarnings,
+      durationMs: 1,
+    }
   })
 })
 
@@ -169,6 +178,36 @@ describe('PATCH /api/sav/:id/status — V1.13 AC#3 + AC#8 (server)', () => {
 
     // Trigger échoue → cron rattrapera. La réponse reste 200.
     expect(res.statusCode).toBe(200)
+  })
+
+  it("wallet warning sur validation → réponse 200 avec details pour le front opérateur", async () => {
+    rpcMock.data = [
+      {
+        sav_id: 12,
+        previous_status: 'in_progress',
+        new_status: 'validated',
+        new_version: 5,
+        assigned_to: 42,
+        email_outbox_id: 5002,
+      },
+    ]
+    runner.walletWarnings = [
+      {
+        code: 'WALLET_HTTP_FAILED',
+        message: "SAV validé, mais le crédit wallet a échoué: API wallet en erreur (HTTP 502).",
+        outboxId: 5002,
+        savId: 12,
+      },
+    ]
+    const res = mockRes()
+    await handler(statusReq(12, { status: 'validated', version: 4 }), res)
+
+    expect(res.statusCode).toBe(200)
+    const body = res.jsonBody as {
+      data: { walletWarnings: Array<{ code: string; message: string }> }
+    }
+    expect(body.data.walletWarnings).toHaveLength(1)
+    expect(body.data.walletWarnings[0]?.code).toBe('WALLET_HTTP_FAILED')
   })
 
   // ── AC#8 (server) — mapRpcError CREDIT_NOTE_PDF_REQUIRED ────────────────

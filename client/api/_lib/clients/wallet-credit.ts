@@ -31,6 +31,17 @@ export interface CreditSavWalletAfterEmailInput {
   smtpMessageId: string
 }
 
+export interface WalletCreditWarning {
+  code: string
+  message: string
+  outboxId: number
+  savId: number | null
+}
+
+export type CreditSavWalletAfterEmailResult =
+  | { ok: true }
+  | { ok: false; warning: WalletCreditWarning }
+
 function envValue(...names: string[]): string {
   for (const name of names) {
     const value = (process.env[name] ?? '').trim()
@@ -75,15 +86,29 @@ async function markWalletEvent(
   }
 }
 
+function walletWarning(
+  code: string,
+  message: string,
+  outboxId: number,
+  savId: number | null
+): CreditSavWalletAfterEmailResult {
+  return { ok: false, warning: { code, message, outboxId, savId } }
+}
+
 export async function creditSavWalletAfterEmail({
   requestId,
   outboxId,
   savId,
   smtpMessageId,
-}: CreditSavWalletAfterEmailInput): Promise<void> {
+}: CreditSavWalletAfterEmailInput): Promise<CreditSavWalletAfterEmailResult> {
   if (!Number.isInteger(savId) || (savId as number) <= 0) {
     logger.warn('wallet.credit.skipped_invalid_sav_id', { requestId, outboxId, savId })
-    return
+    return walletWarning(
+      'WALLET_INVALID_SAV_ID',
+      "SAV validé, mais le crédit wallet n'a pas été effectué: SAV invalide.",
+      outboxId,
+      savId
+    )
   }
 
   const admin = supabaseAdmin()
@@ -104,13 +129,23 @@ export async function creditSavWalletAfterEmail({
       savId,
       message: creditErr.message,
     })
-    return
+    return walletWarning(
+      'WALLET_CREDIT_NOTE_SELECT_FAILED',
+      "SAV validé, mais le crédit wallet n'a pas été effectué: lecture de l'avoir impossible.",
+      outboxId,
+      savId
+    )
   }
 
   const creditNote = (creditRows ?? [])[0]
   if (!creditNote) {
     logger.warn('wallet.credit.skipped_no_credit_note', { requestId, outboxId, savId })
-    return
+    return walletWarning(
+      'WALLET_NO_CREDIT_NOTE',
+      "SAV validé, mais le crédit wallet n'a pas été effectué: aucun avoir trouvé pour ce SAV.",
+      outboxId,
+      savId
+    )
   }
 
   if (!creditNote.pdf_web_url) {
@@ -120,7 +155,12 @@ export async function creditSavWalletAfterEmail({
       savId,
       creditNoteId: creditNote.id,
     })
-    return
+    return walletWarning(
+      'WALLET_CREDIT_NOTE_PDF_MISSING',
+      "SAV validé, mais le crédit wallet n'a pas été effectué: le PDF du bon SAV est absent.",
+      outboxId,
+      savId
+    )
   }
 
   const { data: member, error: memberErr } = (await admin
@@ -140,7 +180,12 @@ export async function creditSavWalletAfterEmail({
       creditNoteId: creditNote.id,
       message: memberErr?.message ?? 'member_not_found',
     })
-    return
+    return walletWarning(
+      'WALLET_MEMBER_NOT_FOUND',
+      "SAV validé, mais le crédit wallet n'a pas été effectué: adhérent introuvable.",
+      outboxId,
+      savId
+    )
   }
 
   const { data: sav, error: savErr } = (await admin
@@ -193,7 +238,7 @@ export async function creditSavWalletAfterEmail({
         savId,
         creditNoteId: creditNote.id,
       })
-      return
+      return { ok: true }
     }
     logger.error('wallet.credit.event_insert_failed', {
       requestId,
@@ -202,7 +247,12 @@ export async function creditSavWalletAfterEmail({
       creditNoteId: creditNote.id,
       message: eventInsertErr.message,
     })
-    return
+    return walletWarning(
+      'WALLET_EVENT_INSERT_FAILED',
+      "SAV validé, mais le crédit wallet n'a pas été effectué: journal wallet indisponible.",
+      outboxId,
+      savId
+    )
   }
 
   const eventId = eventRow?.id
@@ -213,7 +263,12 @@ export async function creditSavWalletAfterEmail({
       savId,
       creditNoteId: creditNote.id,
     })
-    return
+    return walletWarning(
+      'WALLET_EVENT_INSERT_MISSING_ID',
+      "SAV validé, mais le crédit wallet n'a pas été effectué: identifiant d'événement wallet absent.",
+      outboxId,
+      savId
+    )
   }
 
   if (walletCustomerId.length === 0) {
@@ -229,7 +284,12 @@ export async function creditSavWalletAfterEmail({
       savId,
       creditNoteId: creditNote.id,
     })
-    return
+    return walletWarning(
+      'WALLET_CUSTOMER_ID_MISSING',
+      "SAV validé, mais le crédit wallet n'a pas été effectué: identifiant wallet du client manquant ou invalide.",
+      outboxId,
+      savId
+    )
   }
 
   const consumerKey = envValue('WALLET_CONSUMER_KEY', 'SAV_WALLET_CONSUMER_KEY')
@@ -237,7 +297,12 @@ export async function creditSavWalletAfterEmail({
   if (!consumerKey || !consumerSecret) {
     await markWalletEvent(eventId, { status: 'failed', last_error: 'wallet_env_missing' }, requestId)
     logger.error('wallet.credit.env_missing', { requestId, eventId, outboxId, savId })
-    return
+    return walletWarning(
+      'WALLET_ENV_MISSING',
+      "SAV validé, mais le crédit wallet n'a pas été effectué: configuration wallet manquante.",
+      outboxId,
+      savId
+    )
   }
 
   const endpoint = `${walletBaseUrl().replace(/\/+$/, '')}/wallet/${encodeURIComponent(walletCustomerId)}`
@@ -278,7 +343,12 @@ export async function creditSavWalletAfterEmail({
         creditNoteId: creditNote.id,
         status: response.status,
       })
-      return
+      return walletWarning(
+        'WALLET_HTTP_FAILED',
+        `SAV validé, mais le crédit wallet a échoué: API wallet en erreur (HTTP ${response.status}).`,
+        outboxId,
+        savId
+      )
     }
 
     await markWalletEvent(
@@ -302,6 +372,7 @@ export async function creditSavWalletAfterEmail({
       walletCustomerId,
       amountTtcCents: creditNote.total_ttc_cents,
     })
+    return { ok: true }
   } catch (err) {
     await markWalletEvent(
       eventId,
@@ -320,5 +391,11 @@ export async function creditSavWalletAfterEmail({
       creditNoteId: creditNote.id,
       message: sanitizeForLog(err),
     })
+    return walletWarning(
+      'WALLET_FETCH_FAILED',
+      "SAV validé, mais le crédit wallet a échoué: API wallet injoignable.",
+      outboxId,
+      savId
+    )
   }
 }

@@ -227,7 +227,7 @@ vi.mock('../../../../api/_lib/emails/credit-note-attachment', () => ({
 }))
 
 vi.mock('../../../../api/_lib/clients/wallet-credit', () => ({
-  creditSavWalletAfterEmail: async () => undefined,
+  creditSavWalletAfterEmail: async () => ({ ok: true as const }),
 }))
 
 import { runRetryEmails } from '../../../../api/_lib/cron-runners/retry-emails'

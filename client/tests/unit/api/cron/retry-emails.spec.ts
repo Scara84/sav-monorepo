@@ -292,6 +292,7 @@ vi.mock('../../../../api/_lib/clients/wallet-credit', () => ({
     smtpMessageId: string
   }) => {
     state.walletCreditCalls.push(input)
+    return { ok: true as const }
   },
 }))
 

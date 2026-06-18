@@ -329,6 +329,50 @@ describe('SavDetailView — édition inline lignes (Story 3.6b)', () => {
     expect(patchStatusCall?.body).toMatchObject({ status: 'validated', version: 1 })
   })
 
+  it("TC-07b : validation OK + wallet warning → toast opérateur explicite", async () => {
+    const payload = buildPayload({ lines: [line({ id: 100 }), line({ id: 101 })] }) as {
+      data: { creditNote?: unknown }
+    }
+    payload.data.creditNote = {
+      id: 9,
+      number: 1,
+      numberFormatted: 'AV-2026-00001',
+      bonType: 'AVOIR',
+      totalTtcCents: 0,
+      pdfWebUrl: 'https://onedrive.example/AV-2026-00001.pdf',
+      issuedAt: '2026-03-02T10:00:00.000Z',
+      issuedByOperatorId: 42,
+    }
+    const ctrl = makeFetchController(payload)
+    ctrl.onceFor((url, m) => m === 'PATCH' && url.includes('/api/sav/1/status'), {
+      status: 200,
+      body: {
+        data: {
+          savId: 1,
+          status: 'validated',
+          version: 2,
+          walletWarnings: [
+            {
+              code: 'WALLET_HTTP_FAILED',
+              message:
+                "SAV validé, mais le crédit wallet a échoué: API wallet en erreur (HTTP 502).",
+            },
+          ],
+        },
+      },
+    })
+
+    const w = await mountDetail()
+    await flushPromises()
+
+    await w.find('[data-testid="sav-validate-btn"]').trigger('click')
+    await flushPromises()
+
+    const toast = w.find('[data-testid="sav-toast"]')
+    expect(toast.exists()).toBe(true)
+    expect(toast.text()).toContain('crédit wallet a échoué')
+  })
+
   it('TC-08 : 409 VERSION_CONFLICT au save ligne → toast + refresh auto', async () => {
     const ctrl = makeFetchController(buildPayload({ lines: [line({ id: 100 })] }))
     ctrl.onceFor((url, m) => m === 'PATCH' && url.includes('/api/sav/1/lines/100'), {

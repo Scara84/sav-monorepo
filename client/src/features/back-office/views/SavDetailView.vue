@@ -498,7 +498,20 @@ async function transitionStatus(target: SavStatus, opts: TransitionOptions = {})
       toastMessage.value = `Échec ${target} (erreur serveur).`
       return false
     }
+    const body = (await res.json().catch(() => null)) as {
+      data?: {
+        walletWarnings?: Array<{ message?: string }>
+      }
+    } | null
     await refresh()
+    const walletWarnings = body?.data?.walletWarnings ?? []
+    if (target === 'validated' && walletWarnings.length > 0) {
+      const firstMessage = walletWarnings[0]?.message?.trim()
+      toastMessage.value =
+        firstMessage && firstMessage.length > 0
+          ? firstMessage
+          : "SAV validé, mais un problème est survenu pendant le crédit wallet."
+    }
     return true
   } catch (e) {
     if (e instanceof DOMException && e.name === 'AbortError') {

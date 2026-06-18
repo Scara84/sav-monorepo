@@ -8,6 +8,7 @@ import { supabaseAdmin } from '../clients/supabase-admin'
 import { SAV_STATUSES, getAllowedTransitions, type SavStatus } from '../business/sav-status-machine'
 import { waitUntilOrVoid } from '../pdf/wait-until'
 import { runRetryEmails } from '../cron-runners/retry-emails'
+import type { WalletCreditWarning } from '../clients/wallet-credit'
 import type { ApiHandler, ApiRequest, ApiResponse } from '../types'
 
 /**
@@ -99,24 +100,35 @@ function statusCore(savId: number): ApiHandler {
         emailOutboxId: row.email_outbox_id,
       })
 
-      res.status(200).json({
-        data: {
-          savId: row.sav_id,
-          status: row.new_status,
-          version: row.new_version,
-          assignedTo: row.assigned_to,
-          previousStatus: row.previous_status,
-          emailOutboxId: row.email_outbox_id,
-        },
-      })
+      let walletWarnings: WalletCreditWarning[] = []
 
-      // Story V1.13 AC#3 (a) — trigger immédiat post-réponse si la RPC a
-      // enqueué une row (email_outbox_id non null). Pattern PATTERN-IMMEDIATE-
-      // OUTBOX-FLUSH : `waitUntilOrVoid` garde la lambda vivante côté Vercel.
-      // En env test, on await la promise (déterminisme — cf. capture.ts
-      // pattern Story 4.5). Un échec du trigger ne change PAS le code HTTP
-      // (200 déjà flushé) — le cron filet de sécurité rattrape.
-      if (row.email_outbox_id !== null && row.email_outbox_id !== undefined) {
+      // Pour la validation, on attend le flush immédiat afin de pouvoir
+      // remonter à l'opérateur un échec wallet sans annuler la transition SAV.
+      if (
+        row.new_status === 'validated' &&
+        row.email_outbox_id !== null &&
+        row.email_outbox_id !== undefined
+      ) {
+        try {
+          const retryResult = await runRetryEmails({ requestId, savId })
+          walletWarnings = retryResult.walletWarnings
+        } catch (err) {
+          logger.warn('sav.status.trigger_immediate_failed', {
+            requestId,
+            savId,
+            error: err instanceof Error ? err.message : String(err),
+          })
+          walletWarnings = [
+            {
+              code: 'WALLET_TRIGGER_FAILED',
+              message:
+                "SAV validé, mais le post-traitement email/wallet a échoué. Vérifiez les logs ou relancez le cron.",
+              outboxId: row.email_outbox_id,
+              savId,
+            },
+          ]
+        }
+      } else if (row.email_outbox_id !== null && row.email_outbox_id !== undefined) {
         const safeTriggerPromise = (async () => {
           try {
             await runRetryEmails({ requestId, savId })
@@ -134,6 +146,18 @@ function statusCore(savId: number): ApiHandler {
           waitUntilOrVoid(safeTriggerPromise)
         }
       }
+
+      res.status(200).json({
+        data: {
+          savId: row.sav_id,
+          status: row.new_status,
+          version: row.new_version,
+          assignedTo: row.assigned_to,
+          previousStatus: row.previous_status,
+          emailOutboxId: row.email_outbox_id,
+          walletWarnings,
+        },
+      })
     } catch (err) {
       logger.error('sav.status.exception', {
         requestId,

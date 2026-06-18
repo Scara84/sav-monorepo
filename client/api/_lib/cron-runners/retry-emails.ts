@@ -6,7 +6,7 @@ import { renderEmailTemplate } from '../emails/transactional/render'
 import type { EmailTemplateData } from '../emails/transactional/render'
 import { MEMBER_KINDS } from '../emails/transactional/kinds'
 import { resolveCreditNoteAttachment, resolveCreditNoteTtcCents } from '../emails/credit-note-attachment'
-import { creditSavWalletAfterEmail } from '../clients/wallet-credit'
+import { creditSavWalletAfterEmail, type WalletCreditWarning } from '../clients/wallet-credit'
 
 /**
  * Story 6.6 — Cron runner retry-emails.
@@ -44,6 +44,7 @@ export interface RetryEmailsResult {
   sent: number
   failed: number
   skipped_optout: number
+  walletWarnings: WalletCreditWarning[]
   durationMs: number
 }
 
@@ -118,14 +119,15 @@ async function creditWalletIfSavValidatedEmailSent(ctx: {
   requestId: string
   row: OutboxRow
   messageId: string
-}): Promise<void> {
-  if (ctx.row.kind !== 'sav_validated') return
-  await creditSavWalletAfterEmail({
+}): Promise<WalletCreditWarning | null> {
+  if (ctx.row.kind !== 'sav_validated') return null
+  const result = await creditSavWalletAfterEmail({
     requestId: ctx.requestId,
     outboxId: ctx.row.id,
     savId: ctx.row.sav_id,
     smtpMessageId: ctx.messageId,
   })
+  return result.ok ? null : result.warning
 }
 
 /**
@@ -262,6 +264,7 @@ export async function runRetryEmails({
         sent: 0,
         failed: 0,
         skipped_optout: 0,
+        walletWarnings: [],
         durationMs: Date.now() - startedAt,
       }
       return result
@@ -307,6 +310,7 @@ export async function runRetryEmails({
       sent: 0,
       failed: 0,
       skipped_optout: 0,
+      walletWarnings: [],
       durationMs: Date.now() - startedAt,
     }
     logger.info('cron.retry-emails.completed', { requestId, ...result })
@@ -356,6 +360,7 @@ export async function runRetryEmails({
   let sent = 0
   let failed = 0
   let skippedOptout = 0
+  const walletWarnings: WalletCreditWarning[] = []
 
   // 3. p-limit concurrency=5 + try/catch per-row.
   const limit = pLimit(CONCURRENCY)
@@ -560,11 +565,12 @@ export async function runRetryEmails({
               .eq('id', row.id)
               .single<{ smtp_message_id: string | null; status: string }>()
             if (verify?.smtp_message_id) {
-              await creditWalletIfSavValidatedEmailSent({
+              const walletWarning = await creditWalletIfSavValidatedEmailSent({
                 requestId,
                 row,
                 messageId: info.messageId,
               })
+              if (walletWarning) walletWarnings.push(walletWarning)
               sent += 1
               logger.error('cron.retry-emails.mark_sent_failed_but_verified', {
                 requestId,
@@ -600,11 +606,12 @@ export async function runRetryEmails({
                 hint: 'concurrent worker already marked',
               })
             }
-            await creditWalletIfSavValidatedEmailSent({
+            const walletWarning = await creditWalletIfSavValidatedEmailSent({
               requestId,
               row,
               messageId: info.messageId,
             })
+            if (walletWarning) walletWarnings.push(walletWarning)
             sent += 1
             logger.info('cron.retry-emails.sent', {
               requestId,
@@ -676,6 +683,7 @@ export async function runRetryEmails({
     sent,
     failed,
     skipped_optout: skippedOptout,
+    walletWarnings,
     durationMs: Date.now() - startedAt,
   }
   logger.info('cron.retry-emails.completed', { requestId, ...result })
