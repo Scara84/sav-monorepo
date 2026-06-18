@@ -41,6 +41,7 @@ const SAV_PAYLOAD = {
       version: 2,
       groupId: null,
       invoiceRef: 'FAC-1',
+      invoiceSpecialMention: '295_26S23_74_2',
       invoiceFdpCents: 0,
       totalAmountCents: 1500,
       tags: [],
@@ -101,6 +102,7 @@ describe('SavDetailView (Story 3.4)', () => {
     await flushPromises()
     expect(w.text()).toContain('SAV-2026-00001')
     expect(w.text()).toContain('Jean Dubois')
+    expect(w.text()).toContain('295_26S23_74_2')
     expect(w.text()).toContain('Lignes du SAV')
     expect(w.text()).toContain('Commentaires')
     expect(w.text()).toContain('Historique')

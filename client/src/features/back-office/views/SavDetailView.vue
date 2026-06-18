@@ -1286,6 +1286,10 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
             <dd>{{ sav.invoiceRef || '—' }}</dd>
           </div>
           <div>
+            <dt>Commande groupe</dt>
+            <dd>{{ sav.invoiceSpecialMention || '—' }}</dd>
+          </div>
+          <div>
             <dt>Reçu le</dt>
             <dd>{{ formatDateTime(sav.receivedAt) }}</dd>
           </div>

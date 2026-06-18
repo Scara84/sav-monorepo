@@ -32,6 +32,7 @@ const SAV_SELECT = `
   id, reference, status, version, member_id, group_id, invoice_ref, invoice_fdp_cents,
   total_amount_cents, tags, assigned_to,
   received_at, taken_at, validated_at, closed_at, cancelled_at, created_at, updated_at,
+  metadata,
   member:members!inner ( id, first_name, last_name, email, is_group_manager, group_id ),
   group:groups ( id, name ),
   assignee:operators!sav_assigned_to_fkey ( id, display_name, email ),
@@ -419,6 +420,7 @@ function projectSav(row: Record<string, unknown>): Record<string, unknown> {
     total_amount_cents: number | null
     tags: string[] | null
     assigned_to: number | null
+    metadata: Record<string, unknown> | null
     received_at: string
     taken_at: string | null
     validated_at: string | null
@@ -447,6 +449,10 @@ function projectSav(row: Record<string, unknown>): Record<string, unknown> {
     memberId: r.member_id,
     groupId: r.group_id,
     invoiceRef: r.invoice_ref,
+    invoiceSpecialMention:
+      typeof r.metadata?.['invoice_special_mention'] === 'string'
+        ? r.metadata['invoice_special_mention']
+        : null,
     invoiceFdpCents: r.invoice_fdp_cents,
     totalAmountCents: r.total_amount_cents,
     tags: r.tags ?? [],

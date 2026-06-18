@@ -27,9 +27,14 @@ ON CONFLICT (code) DO NOTHING;
 DO $$
 DECLARE
   v_product_id bigint;
+  v_group_id bigint;
 BEGIN
   SELECT id INTO v_product_id FROM products WHERE code = 'RPC-5-PROD';
+  INSERT INTO groups (name)
+  VALUES ('Groupe RPC Capture 4.0b')
+  RETURNING id INTO v_group_id;
   PERFORM set_config('test.product_id', v_product_id::text, false);
+  PERFORM set_config('test.group_id', v_group_id::text, false);
 END $$;
 
 -- ------------------------------------------------------------
@@ -97,6 +102,63 @@ BEGIN
   PERFORM set_config('test.happy_sav', v_sav_id::text, false);
 
   RAISE NOTICE 'OK Test 1 (AC #5.1) : happy path — sav+2 lines+1 file, member créé';
+END $$;
+
+-- ------------------------------------------------------------
+-- Test 1bis : `invoice_ref` persisté dans `sav`, héritage `group_id`
+-- depuis un member existant, et `invoice_special_mention` stocké en metadata.
+-- ------------------------------------------------------------
+DO $$
+DECLARE
+  v_payload jsonb;
+  v_sav_id bigint;
+  v_group_id bigint := current_setting('test.group_id')::bigint;
+  v_saved_invoice_ref text;
+  v_saved_group_id bigint;
+  v_saved_special_mention text;
+BEGIN
+  INSERT INTO members (
+    email, first_name, last_name, group_id, notification_prefs
+  ) VALUES (
+    'capture-40b-grouped@example.com', 'Camille', 'Group', v_group_id,
+    '{"status_updates":true,"weekly_recap":false}'::jsonb
+  );
+
+  v_payload := jsonb_build_object(
+    'customer', jsonb_build_object(
+      'email', 'capture-40b-grouped@example.com',
+      'firstName', 'Camille',
+      'lastName', 'Group'
+    ),
+    'invoice', jsonb_build_object(
+      'ref', 'FAC-40b-GROUP',
+      'specialMention', '295_26S23_74_2',
+      'label', 'Facture test groupée'
+    ),
+    'items', jsonb_build_array(
+      jsonb_build_object('productCode', 'RPC-5-PROD', 'productName', 'Produit Test 4.0b Capture', 'qtyRequested', 1, 'unit', 'kg')
+    ),
+    'files', '[]'::jsonb
+  );
+
+  SELECT sav_id INTO v_sav_id FROM capture_sav_from_webhook(v_payload);
+
+  SELECT invoice_ref, group_id, metadata ->> 'invoice_special_mention'
+    INTO v_saved_invoice_ref, v_saved_group_id, v_saved_special_mention
+    FROM sav
+   WHERE id = v_sav_id;
+
+  IF v_saved_invoice_ref <> 'FAC-40b-GROUP' THEN
+    RAISE EXCEPTION 'FAIL T1bis : invoice_ref=% (attendu FAC-40b-GROUP)', v_saved_invoice_ref;
+  END IF;
+  IF v_saved_group_id IS DISTINCT FROM v_group_id THEN
+    RAISE EXCEPTION 'FAIL T1bis : group_id=% (attendu %)', v_saved_group_id, v_group_id;
+  END IF;
+  IF v_saved_special_mention <> '295_26S23_74_2' THEN
+    RAISE EXCEPTION 'FAIL T1bis : invoice_special_mention=% (attendu 295_26S23_74_2)', v_saved_special_mention;
+  END IF;
+
+  RAISE NOTICE 'OK Test 1bis : invoice_ref + group_id + invoice_special_mention persistés';
 END $$;
 
 -- ------------------------------------------------------------

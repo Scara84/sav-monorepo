@@ -76,6 +76,7 @@ export interface SavDetailSav {
   version: number
   groupId: number | null
   invoiceRef: string
+  invoiceSpecialMention: string | null
   invoiceFdpCents: number | null
   totalAmountCents: number | null
   tags: string[]
