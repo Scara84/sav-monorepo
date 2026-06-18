@@ -1,4 +1,5 @@
 import { describe, it, expect } from 'vitest'
+import * as XLSX from 'xlsx'
 import { useExcelGenerator } from '../useExcelGenerator.js'
 
 describe('useExcelGenerator', () => {
@@ -206,6 +207,27 @@ describe('useExcelGenerator', () => {
       // Le résultat devrait être une chaîne base64 valide
       expect(typeof result).toBe('string')
       expect(result.length).toBeGreaterThan(0)
+    })
+
+    it('should prefer customer external_reference for ID Client', () => {
+      const facture = {
+        customer: {
+          id: 103010147,
+          external_reference: '9029',
+          name: 'Katia Ben Bachir',
+          emails: ['katiabenbachir@gmail.com'],
+        },
+        invoice_number: 'F-2026-39892',
+        special_mention: '295_26S23_74_2',
+      }
+
+      const result = excelGen.generateExcelFile([], [], facture)
+      const workbook = XLSX.read(result, { type: 'base64' })
+      const rows = XLSX.utils.sheet_to_json(workbook.Sheets['Infos Client'], {
+        header: 1,
+      })
+
+      expect(rows).toContainEqual(['ID Client', '9029'])
     })
   })
 })

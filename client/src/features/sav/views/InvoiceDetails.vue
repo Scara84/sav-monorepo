@@ -91,9 +91,13 @@ export default {
 
         // Assign details for display in this component's template
         this.invoiceNumber = invoiceData.invoice_number || 'N/A'
-        // Story 5.7 — Pennylane v2 ne retourne plus `customer.source_id`.
-        // Fallback sur `customer.id` (numeric v2) si présent.
-        this.customerId = invoiceData.customer?.source_id || invoiceData.customer?.id || 'N/A'
+        // `external_reference` porte l'ID client métier Fruitstock.
+        // `id` reste l'identifiant interne Pennylane et n'est qu'un fallback technique.
+        this.customerId =
+          invoiceData.customer?.external_reference ||
+          invoiceData.customer?.source_id ||
+          invoiceData.customer?.id ||
+          'N/A'
         this.paidStatus = invoiceData.paid || false
         this.customerName = invoiceData.customer?.name || 'N/A'
         this.specialMention = invoiceData.special_mention || ''

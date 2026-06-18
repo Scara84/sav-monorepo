@@ -70,6 +70,7 @@ export interface PennylaneInvoice {
      * « V2 relies exclusively on internal IDs »).
      */
     id: number | string
+    external_reference?: string | null
     name?: string | null
     emails: string[]
     first_name?: string | null

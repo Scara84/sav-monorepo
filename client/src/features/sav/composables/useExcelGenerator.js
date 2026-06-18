@@ -5,6 +5,9 @@ import * as XLSX from 'xlsx'
  * Extrait la logique de génération Excel de WebhookItemsList
  */
 export function useExcelGenerator() {
+  const getCustomerDisplayId = (customer) =>
+    customer?.external_reference || customer?.source_id || customer?.id || 'N/A'
+
   /**
    * Sépare le code article du nom du produit
    */
@@ -104,7 +107,7 @@ export function useExcelGenerator() {
     }
 
     const customerData = [
-      { Propriété: 'ID Client', Valeur: facture.customer?.source_id || 'N/A' },
+      { Propriété: 'ID Client', Valeur: getCustomerDisplayId(facture.customer) },
       { Propriété: 'Nom du client', Valeur: facture.customer?.name || 'N/A' },
       { Propriété: 'Email du client', Valeur: facture.customer?.emails?.[0] || 'N/A' },
       { Propriété: 'Téléphone du client', Valeur: facture.customer?.phone || 'N/A' },
@@ -201,5 +204,6 @@ export function useExcelGenerator() {
     generateExcelFile,
     splitProductLabel,
     formatAddress,
+    getCustomerDisplayId,
   }
 }
