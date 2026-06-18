@@ -130,6 +130,7 @@ export const captureWebhookSchema = z.object({
   customer: z.object({
     email: z.string().email().max(254),
     pennylaneCustomerId: z.string().max(64).optional(),
+    externalCustomerId: z.string().max(64).optional(),
     firstName: z.string().max(120).optional(),
     lastName: z.string().max(120).optional(),
     phone: z.string().max(32).optional(),

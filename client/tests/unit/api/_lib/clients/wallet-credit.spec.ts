@@ -11,6 +11,7 @@ interface CreditNoteRow {
 
 interface MemberRow {
   id: number
+  external_customer_id: string | null
   pennylane_customer_id: string | null
 }
 
@@ -204,7 +205,7 @@ async function loadModule(): Promise<{
     outboxId: number
     savId: number | null
     smtpMessageId: string
-  }) => Promise<void>
+  }) => Promise<unknown>
 }> {
   return (await import('../../../../../api/_lib/clients/wallet-credit')) as unknown as {
     creditSavWalletAfterEmail: (input: {
@@ -212,7 +213,7 @@ async function loadModule(): Promise<{
       outboxId: number
       savId: number | null
       smtpMessageId: string
-    }) => Promise<void>
+    }) => Promise<unknown>
   }
 }
 
@@ -252,7 +253,11 @@ describe('creditSavWalletAfterEmail', () => {
         pdf_web_url: 'https://x/av.pdf',
       },
     ]
-    state.membersById.set(77, { id: 77, pennylane_customer_id: 'pn-cust-42' })
+    state.membersById.set(77, {
+      id: 77,
+      external_customer_id: '9373',
+      pennylane_customer_id: 'pn-cust-42',
+    })
     state.savById.set(12, { id: 12, reference: 'SAV-2026-00012' })
 
     const { creditSavWalletAfterEmail } = await loadModule()
@@ -268,14 +273,14 @@ describe('creditSavWalletAfterEmail', () => {
       credit_note_id: 11,
       status: 'sent',
       attempts: 1,
-      wallet_customer_id: 'pn-cust-42',
+      wallet_customer_id: '9373',
       transaction_detail: 'SAV-2026-00012',
       smtp_message_id: '<msg-1@x>',
     })
 
     expect(state.fetchCalls).toHaveLength(1)
     const call = state.fetchCalls[0]!
-    expect(call.url).toBe('https://wallet.example.test/api/wallet/pn-cust-42')
+    expect(call.url).toBe('https://wallet.example.test/api/wallet/9373')
     expect(call.init?.method).toBe('POST')
     const body = JSON.parse(String(call.init?.body))
     expect(body).toMatchObject({
@@ -299,7 +304,11 @@ describe('creditSavWalletAfterEmail', () => {
         pdf_web_url: 'https://x/av.pdf',
       },
     ]
-    state.membersById.set(77, { id: 77, pennylane_customer_id: null })
+    state.membersById.set(77, {
+      id: 77,
+      external_customer_id: null,
+      pennylane_customer_id: null,
+    })
     state.savById.set(12, { id: 12, reference: 'SAV-2026-00012' })
 
     const { creditSavWalletAfterEmail } = await loadModule()
@@ -329,7 +338,11 @@ describe('creditSavWalletAfterEmail', () => {
         pdf_web_url: 'https://x/av.pdf',
       },
     ]
-    state.membersById.set(77, { id: 77, pennylane_customer_id: 'pn-cust-42' })
+    state.membersById.set(77, {
+      id: 77,
+      external_customer_id: '9373',
+      pennylane_customer_id: 'pn-cust-42',
+    })
     state.savById.set(12, { id: 12, reference: 'SAV-2026-00012' })
     state.existingCreditNoteIds.add(11)
 
@@ -356,7 +369,11 @@ describe('creditSavWalletAfterEmail', () => {
         pdf_web_url: 'https://x/av.pdf',
       },
     ]
-    state.membersById.set(77, { id: 77, pennylane_customer_id: 'pn-cust-42' })
+    state.membersById.set(77, {
+      id: 77,
+      external_customer_id: '9373',
+      pennylane_customer_id: 'pn-cust-42',
+    })
     state.savById.set(12, { id: 12, reference: 'SAV-2026-00012' })
     state.fetchResponse = { ok: false, status: 502, body: '{"error":"bad gateway"}' }
 
@@ -375,6 +392,47 @@ describe('creditSavWalletAfterEmail', () => {
       last_error: 'wallet_http_502',
       wallet_response_status: 502,
       wallet_response_body: '{"error":"bad gateway"}',
+    })
+  })
+
+  it("faux succès métier : HTTP 200 + 'User does not exist' => failed", async () => {
+    state.creditNotes = [
+      {
+        id: 11,
+        sav_id: 12,
+        member_id: 77,
+        total_ttc_cents: 4567,
+        number_formatted: 'AV-2026-00011',
+        pdf_web_url: 'https://x/av.pdf',
+      },
+    ]
+    state.membersById.set(77, {
+      id: 77,
+      external_customer_id: '9373',
+      pennylane_customer_id: 'pn-cust-42',
+    })
+    state.savById.set(12, { id: 12, reference: 'SAV-2026-00012' })
+    state.fetchResponse = { ok: true, status: 200, body: '"User does not exist"' }
+
+    const { creditSavWalletAfterEmail } = await loadModule()
+    const result = (await creditSavWalletAfterEmail({
+      requestId: 'req-5',
+      outboxId: 9005,
+      savId: 12,
+      smtpMessageId: '<msg-5@x>',
+    })) as { ok?: boolean; warning?: { code?: string } }
+
+    expect(result).toMatchObject({
+      ok: false,
+      warning: { code: 'WALLET_BUSINESS_FAILED' },
+    })
+    expect(state.events).toHaveLength(1)
+    expect(state.events[0]).toMatchObject({
+      status: 'failed',
+      attempts: 1,
+      last_error: 'wallet_business_error:user_does_not_exist',
+      wallet_response_status: 200,
+      wallet_response_body: '"User does not exist"',
     })
   })
 })

@@ -4,7 +4,8 @@
     "firstName": "Test",
     "lastName": "Adherent",
     "phone": "+33123456789",
-    "pennylaneCustomerId": "PL-12345"
+    "pennylaneCustomerId": "PL-12345",
+    "externalCustomerId": "9373"
   },
   "invoice": {
     "ref": "INV-2026-0042",

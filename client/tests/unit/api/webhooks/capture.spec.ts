@@ -154,6 +154,13 @@ describe('POST /api/webhooks/capture', () => {
       data: { savId: 42, reference: 'SAV-2026-00001', lineCount: 3, fileCount: 2 },
     })
     expect(db.rpcCalls).toHaveLength(1)
+    expect(
+      (
+        db.rpcCalls[0]?.['p_payload'] as {
+          customer?: { externalCustomerId?: string }
+        }
+      ).customer?.externalCustomerId
+    ).toBe('9373')
     expect(db.consumeCalls).toHaveLength(1)
     expect(db.inboxInserts).toHaveLength(1)
     expect(db.inboxInserts[0]).toMatchObject({ source: 'sav-form' })

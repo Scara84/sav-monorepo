@@ -16,6 +16,7 @@ interface CreditNoteRow {
 
 interface MemberRow {
   id: number
+  external_customer_id: string | null
   pennylane_customer_id: string | null
 }
 
@@ -95,6 +96,26 @@ function walletWarning(
   return { ok: false, warning: { code, message, outboxId, savId } }
 }
 
+function extractWalletBusinessError(rawBody: string): string | null {
+  const candidates = [rawBody.trim()]
+  try {
+    const parsed = JSON.parse(rawBody) as unknown
+    if (typeof parsed === 'string') candidates.push(parsed.trim())
+    if (parsed && typeof parsed === 'object') {
+      for (const key of ['error', 'message', 'detail']) {
+        const value = (parsed as Record<string, unknown>)[key]
+        if (typeof value === 'string') candidates.push(value.trim())
+      }
+    }
+  } catch {
+    // Réponse non JSON: on reste sur le texte brut.
+  }
+  const normalized = candidates
+    .map((value) => value.replace(/^"+|"+$/g, '').trim())
+    .filter((value) => value.length > 0)
+  return normalized.find((value) => /user does not exist/i.test(value)) ?? null
+}
+
 export async function creditSavWalletAfterEmail({
   requestId,
   outboxId,
@@ -165,7 +186,7 @@ export async function creditSavWalletAfterEmail({
 
   const { data: member, error: memberErr } = (await admin
     .from('members')
-    .select('id, pennylane_customer_id')
+    .select('id, external_customer_id, pennylane_customer_id')
     .eq('id', creditNote.member_id)
     .single()) as unknown as {
     data: MemberRow | null
@@ -208,7 +229,8 @@ export async function creditSavWalletAfterEmail({
     })
   }
 
-  const walletCustomerId = (member.pennylane_customer_id ?? '').trim()
+  const walletCustomerId =
+    (member.external_customer_id ?? '').trim() || (member.pennylane_customer_id ?? '').trim()
   const insertPayload = {
     sav_id: savId,
     credit_note_id: creditNote.id,
@@ -323,29 +345,37 @@ export async function creditSavWalletAfterEmail({
       signal: AbortSignal.timeout(WALLET_TIMEOUT_MS),
     })
     const body = truncateForLog(await response.text())
-    if (!response.ok) {
+    const businessError = extractWalletBusinessError(body)
+    if (!response.ok || businessError) {
+      const lastError =
+        businessError !== null
+          ? `wallet_business_error:${businessError.toLowerCase().replace(/\s+/g, '_')}`
+          : `wallet_http_${response.status}`
       await markWalletEvent(
         eventId,
         {
           status: 'failed',
           attempts: 1,
-          last_error: `wallet_http_${response.status}`,
+          last_error: lastError,
           wallet_response_status: response.status,
           wallet_response_body: body,
         },
         requestId
       )
-      logger.error('wallet.credit.http_failed', {
+      logger.error(businessError ? 'wallet.credit.business_failed' : 'wallet.credit.http_failed', {
         requestId,
         eventId,
         outboxId,
         savId,
         creditNoteId: creditNote.id,
         status: response.status,
+        businessError,
       })
       return walletWarning(
-        'WALLET_HTTP_FAILED',
-        `SAV validé, mais le crédit wallet a échoué: API wallet en erreur (HTTP ${response.status}).`,
+        businessError ? 'WALLET_BUSINESS_FAILED' : 'WALLET_HTTP_FAILED',
+        businessError
+          ? `SAV validé, mais le crédit wallet a échoué: ${businessError}.`
+          : `SAV validé, mais le crédit wallet a échoué: API wallet en erreur (HTTP ${response.status}).`,
         outboxId,
         savId
       )

@@ -806,6 +806,10 @@ export default {
           ...(props.facture?.customer?.id !== undefined && props.facture?.customer?.id !== null
             ? { pennylaneCustomerId: String(props.facture.customer.id) }
             : {}),
+          ...(props.facture?.customer?.external_reference !== undefined &&
+          props.facture?.customer?.external_reference !== null
+            ? { externalCustomerId: String(props.facture.customer.external_reference) }
+            : {}),
         }
         const captureInvoice = props.facture?.invoice_number
           ? {
