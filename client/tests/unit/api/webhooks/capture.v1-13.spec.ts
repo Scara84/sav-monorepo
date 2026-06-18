@@ -7,20 +7,16 @@ import fixturePayload from '../../../fixtures/webhook-capture-sample.json'
  * Story V1.13 AC#3 (d) — Trigger immédiat sur capture webhook.
  *
  * Couvre :
- *   (a) `runRetryEmails({ requestId, savId })` est chaîné APRÈS
- *       `enqueueNewSavAlerts` dans le `sideEffectPromise` existant.
+ *   (a) `runRetryEmails({ requestId, savId })` reste chaîné dans le
+ *       `sideEffectPromise` existant.
  *   (b) En env test, `sideEffectPromise` est await → le trigger doit avoir été
  *       observé au moment où la réponse est écrite (déterministe).
  *   (c) L'accusé client (sendMail direct 5.7) reste INCHANGÉ — pas touché par
  *       ce test (couvert par capture-emails.spec.ts).
- *   (d) Si enqueueNewSavAlerts échoue, le trigger NE doit PAS être lancé pour
- *       rien (pas d'enqueue ⇒ rien à flusher). Acceptable variation : le
- *       trigger peut tourner mais doit absorber un batch vide sans throw.
+ *   (d) L'enqueue opérateur `enqueue_new_sav_alerts` est temporairement
+ *       désactivé.
  *
  * Pattern : mock supabaseAdmin chainable (réutilise le mock capture.spec.ts).
- *
- * Statut ATDD : RED attendu avant impl Step 5 (chaînage absent dans
- * sideEffectPromise).
  */
 
 const LINK_SECRET = 'magic-secret-at-least-32-bytes-longABCD'
@@ -184,7 +180,7 @@ describe('POST /api/webhooks/capture — V1.13 AC#3 (d) trigger immédiat post-a
     vi.stubEnv('SMTP_SAV_FROM', 'SAV Fruitstock <sav@fruitstock.eu>')
   })
 
-  it('AC#3 (d.1) capture OK → enqueue_new_sav_alerts puis runRetryEmails(savId)', async () => {
+  it('AC#3 (d.1) capture OK → runRetryEmails(savId) et aucun enqueue opérateur', async () => {
     const token = makeToken()
     const req = mockReq({
       method: 'POST',
@@ -196,10 +192,9 @@ describe('POST /api/webhooks/capture — V1.13 AC#3 (d) trigger immédiat post-a
 
     expect(res.statusCode).toBe(201)
 
-    // L'enqueue alerts a été appelé avec le sav_id retourné par la RPC capture.
+    // L'alerte opérateur est désactivée : aucun appel RPC dédié.
     const alertsCall = db.rpcCalls.find((c) => c.fn === 'enqueue_new_sav_alerts')
-    expect(alertsCall).toBeDefined()
-    expect(alertsCall!.args['p_sav_id']).toBe(42)
+    expect(alertsCall).toBeUndefined()
 
     // Le trigger immédiat doit avoir été appelé avec le même savId.
     expect(runner.calls).toHaveLength(1)
