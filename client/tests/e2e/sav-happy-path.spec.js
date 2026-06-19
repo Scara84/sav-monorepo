@@ -107,9 +107,11 @@ test('SAV happy path (flow 2 étapes OneDrive upload session)', async ({ page })
     buffer: Buffer.from([0xff, 0xd8, 0xff, 0xd9]),
   })
 
-  await form.getByRole('button', { name: 'Valider la réclamation' }).click()
+  await form.getByRole('button', { name: 'Ajouter à ma demande SAV' }).click()
 
-  const submitAllButton = page.getByRole('button', { name: 'Valider toutes les réclamations' })
+  const submitAllButton = page.getByRole('button', {
+    name: 'Envoyer ma demande SAV (1 réclamation)',
+  })
   await expect(submitAllButton).toBeVisible()
   await submitAllButton.click()
 

@@ -38,6 +38,7 @@
 
       <div class="mb-4">
         <WebhookItemsList
+          ref="savItemsList"
           :items="invoiceItems"
           :facture="facture"
           @sav-submitted="handleSavSubmission"
@@ -78,6 +79,15 @@ export default {
       console.log('Demande SAV soumise avec succès.')
       this.$router.push({ name: 'SavConfirmation' })
     },
+    confirmSavLeave() {
+      return this.$refs.savItemsList?.confirmLeave?.() ?? true
+    },
+  },
+  beforeRouteLeave() {
+    return this.confirmSavLeave()
+  },
+  beforeRouteUpdate() {
+    return this.confirmSavLeave()
   },
   created() {
     const webhookResponseString = this.$route.query.webhookResponse

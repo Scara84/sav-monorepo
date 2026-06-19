@@ -61,9 +61,9 @@ const fillSavForm = async (page, { imageCount = 1 } = {}) => {
   await form.locator('input[type="file"]').setInputFiles(files)
   await expect(form.locator('img')).toHaveCount(imageCount)
 
-  await form.getByRole('button', { name: /Valider/ }).click()
+  await form.getByRole('button', { name: /Ajouter à ma demande SAV/ }).click()
 
-  const submitAllButton = page.getByRole('button', { name: /Valider toutes/ })
+  const submitAllButton = page.getByRole('button', { name: /Envoyer ma demande SAV/ })
   await expect(submitAllButton).toBeVisible()
   await submitAllButton.click()
 }

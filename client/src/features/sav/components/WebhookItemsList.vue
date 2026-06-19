@@ -188,12 +188,8 @@
     <!-- Encart d'aide process SAV -->
     <div class="mb-4 p-4 bg-blue-50 border-l-4 border-blue-400 text-blue-900 rounded">
       <strong>Comment faire une réclamation&nbsp;?</strong><br />
-      Pour chaque produit concerné, cliquez sur <b>«&nbsp;Signaler un problème&nbsp;»</b>,
-      remplissez le formulaire puis cliquez sur le bouton
-      <b>«&nbsp;Valider la réclamation&nbsp;»</b> pour enregistrer votre demande. Une fois toutes
-      vos réclamations saisies et validées, cliquez sur le bouton
-      <b>«&nbsp;Valider toutes les réclamations&nbsp;»</b> en bas de la page pour envoyer votre
-      demande SAV.
+      <span class="block mt-1"><b>1.</b> Ajoutez chaque produit concerné à votre demande.</span>
+      <span class="block"><b>2.</b> Utilisez ensuite «&nbsp;Envoyer ma demande SAV&nbsp;».</span>
     </div>
     <ul class="space-y-6">
       <li v-for="(item, index) in items" :key="index" class="bg-white p-4 rounded-lg shadow">
@@ -458,17 +454,22 @@
                   :disabled="getSavForm(index).loading"
                 >
                   <span v-if="getSavForm(index).loading">Envoi...</span>
-                  <span v-else>Valider la réclamation</span>
+                  <span v-else>Ajouter à ma demande SAV</span>
                 </button>
               </template>
               <template v-else>
-                <button
-                  type="button"
-                  @click="editItemForm(index)"
-                  class="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                >
-                  Modifier la réclamation
-                </button>
+                <div class="flex flex-col items-end gap-2 sm:flex-row sm:items-center">
+                  <p class="text-sm font-semibold text-amber-800">
+                    Ajoutée à votre demande — pas encore envoyée
+                  </p>
+                  <button
+                    type="button"
+                    @click="editItemForm(index)"
+                    class="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                  >
+                    Modifier la réclamation
+                  </button>
+                </div>
               </template>
             </div>
           </form>
@@ -477,28 +478,43 @@
     </ul>
     <p v-if="items.length === 0" class="text-gray-500 text-center py-4">Aucun élément à afficher</p>
 
-    <!-- Bouton de validation global -->
-    <div v-if="hasUnfinishedForms" class="mt-4 p-4 bg-yellow-50 border-l-4 border-yellow-400">
-      <p class="text-sm text-yellow-700">
-        Veuillez finaliser ou annuler toutes les demandes en cours avant de valider l'ensemble des
-        demandes.
-      </p>
-    </div>
-    <div v-if="hasFilledForms" class="mt-6 flex justify-center">
-      <button
-        @click="submitAllForms"
-        class="px-6 py-3 text-base font-medium text-white bg-green-600 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
-        :disabled="globalLoading"
-      >
-        <span v-if="globalLoading">Envoi...</span>
-        <span v-else>Valider toutes les réclamations</span>
-      </button>
+    <!-- Action d'envoi finale, persistante pendant le défilement -->
+    <div
+      v-if="hasFilledForms || hasUnfinishedForms"
+      class="sticky bottom-4 z-30 mt-6 rounded-xl border border-green-200 bg-white p-4 shadow-xl"
+      data-test="sav-submit-bar"
+    >
+      <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p v-if="filledFormsCount > 0" class="font-semibold text-gray-900">
+            {{ filledFormsCount }}
+            {{ filledFormsCount === 1 ? 'réclamation ajoutée' : 'réclamations ajoutées' }}
+          </p>
+          <p v-else class="font-semibold text-gray-900">Réclamation en cours de saisie</p>
+          <p v-if="hasUnfinishedForms" class="text-sm text-amber-700" role="alert">
+            Finalisez ou annulez la ligne en cours avant l’envoi.
+          </p>
+          <p v-else class="text-sm text-gray-600">Votre demande n’est pas encore envoyée.</p>
+        </div>
+        <button
+          type="button"
+          @click="submitAllForms"
+          class="w-full px-6 py-3 text-base font-medium text-white bg-green-600 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:cursor-not-allowed disabled:bg-gray-400 sm:w-auto"
+          :disabled="globalLoading || hasUnfinishedForms || !hasFilledForms"
+        >
+          <span v-if="globalLoading">Envoi...</span>
+          <span v-else>
+            Envoyer ma demande SAV ({{ filledFormsCount }}
+            {{ filledFormsCount === 1 ? 'réclamation' : 'réclamations' }})
+          </span>
+        </button>
+      </div>
     </div>
   </div>
 </template>
 
 <script>
-import { ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useSavForms } from '../composables/useSavForms.js'
 import { useImageUpload } from '../composables/useImageUpload.js'
 import { useApiClient } from '../composables/useApiClient.js'
@@ -524,7 +540,9 @@ export default {
     const {
       getSavForm,
       hasFilledForms,
+      filledFormsCount,
       hasUnfinishedForms,
+      hasDirtyForms,
       toggleSavForm,
       validateItemForm: validateSavItemForm,
       editItemForm: editSavItemForm,
@@ -550,6 +568,30 @@ export default {
     const uploadedFiles = ref(0)
     const toastType = ref('success')
     const globalLoading = ref(false)
+    const submissionSucceeded = ref(false)
+    const hasPendingSubmission = computed(
+      () => (filledFormsCount.value > 0 || hasDirtyForms.value) && !submissionSucceeded.value
+    )
+
+    watch(filledFormsCount, (count) => {
+      if (count > 0) submissionSucceeded.value = false
+    })
+
+    const handleBeforeUnload = (event) => {
+      if (!hasPendingSubmission.value) return
+      event.preventDefault()
+      event.returnValue = ''
+    }
+
+    const confirmLeave = () => {
+      if (!hasPendingSubmission.value) return true
+      return window.confirm(
+        'Votre demande SAV n’a pas encore été envoyée. Voulez-vous vraiment quitter cette page ?'
+      )
+    }
+
+    onMounted(() => window.addEventListener('beforeunload', handleBeforeUnload))
+    onBeforeUnmount(() => window.removeEventListener('beforeunload', handleBeforeUnload))
 
     // États pour le modal d'upload
     const uploadModalVisible = ref(false)
@@ -880,6 +922,7 @@ export default {
         })
 
         // Succès
+        submissionSucceeded.value = true
         uploadStatus.value = 'success'
         emit('sav-submitted')
       } catch (error) {
@@ -896,7 +939,9 @@ export default {
 
     return {
       hasFilledForms,
+      filledFormsCount,
       hasUnfinishedForms,
+      hasPendingSubmission,
       getSavForm,
       formatValue,
       currentUploadFile,
@@ -912,6 +957,9 @@ export default {
       toastMessage,
       toastType,
       globalLoading,
+      submissionSucceeded,
+      handleBeforeUnload,
+      confirmLeave,
       showToast,
       uploadModalVisible,
       uploadStatus,

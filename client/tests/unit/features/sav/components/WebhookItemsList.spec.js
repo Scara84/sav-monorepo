@@ -199,19 +199,89 @@ describe('WebhookItemsList.vue', () => {
   // Note: Les tests de validation et de soumission du formulaire
   // nécessitent une analyse plus approfondie du composant pour être correctement implémentés
 
-  it('affiche le bouton de validation globale quand un formulaire est rempli', async () => {
+  it('distingue clairement ajout local et envoi final', async () => {
     expect(wrapper.exists()).toBe(true)
 
+    await wrapper.find('button.btn-main').trigger('click')
+    expect(wrapper.text()).toContain('Ajouter à ma demande SAV')
+
+    const form = wrapper.vm.getSavForm(0)
+    form.quantity = '1'
+    form.unit = 'piece'
+    form.reason = 'manquant'
+
+    await wrapper.vm.validateItemForm(0)
+
+    await wrapper.vm.$nextTick()
+
+    expect(form.filled).toBe(true)
+    const submitButton = wrapper
+      .findAll('button')
+      .find((btn) => btn.text().includes('Envoyer ma demande SAV (1 réclamation)'))
+
+    expect(submitButton).toBeTruthy()
+    expect(wrapper.text()).toContain('Ajoutée à votre demande — pas encore envoyée')
+    expect(wrapper.text()).toContain('Votre demande n’est pas encore envoyée.')
+  })
+
+  it('affiche la barre finale désactivée tant qu’une ligne est incomplète', async () => {
+    const form = wrapper.vm.getSavForm(0)
+    form.showForm = true
+
+    await wrapper.vm.$nextTick()
+
+    const submitBar = wrapper.find('[data-test="sav-submit-bar"]')
+    const submitButton = submitBar.find('button')
+
+    expect(submitBar.exists()).toBe(true)
+    expect(submitButton.attributes('disabled')).toBeDefined()
+    expect(submitBar.text()).toContain('Finalisez ou annulez la ligne en cours avant l’envoi.')
+  })
+
+  it('avertit avant de quitter avec une demande préparée, puis cesse après succès', async () => {
+    const confirmSpy = vi.spyOn(window, 'confirm').mockReturnValue(false)
     const form = wrapper.vm.getSavForm(0)
     form.showForm = true
     form.filled = true
 
     await wrapper.vm.$nextTick()
 
-    const submitButton = wrapper
-      .findAll('button')
-      .find((btn) => btn.text().includes('Valider toutes les réclamations'))
+    const beforeUnloadEvent = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(beforeUnloadEvent)
 
-    expect(submitButton).toBeTruthy()
+    expect(beforeUnloadEvent.defaultPrevented).toBe(true)
+    expect(wrapper.vm.confirmLeave()).toBe(false)
+    expect(confirmSpy).toHaveBeenCalledOnce()
+
+    form.showForm = false
+    wrapper.vm.submissionSucceeded = true
+    await wrapper.vm.$nextTick()
+
+    const afterSuccessEvent = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(afterSuccessEvent)
+
+    expect(afterSuccessEvent.defaultPrevented).toBe(false)
+    expect(wrapper.vm.confirmLeave()).toBe(true)
+    expect(confirmSpy).toHaveBeenCalledOnce()
+
+    form.showForm = true
+    await wrapper.vm.$nextTick()
+
+    expect(wrapper.vm.submissionSucceeded).toBe(false)
+    expect(wrapper.vm.confirmLeave()).toBe(false)
+    expect(confirmSpy).toHaveBeenCalledTimes(2)
+  })
+
+  it('avertit si une ligne contient des données non encore ajoutées', async () => {
+    const form = wrapper.vm.getSavForm(0)
+    form.showForm = true
+    form.comment = 'Brouillon en cours'
+
+    await wrapper.vm.$nextTick()
+
+    const beforeUnloadEvent = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(beforeUnloadEvent)
+
+    expect(beforeUnloadEvent.defaultPrevented).toBe(true)
   })
 })

@@ -40,11 +40,28 @@ export function useSavForms() {
     return Object.values(savForms.value).some((form) => form.filled && form.showForm)
   })
 
+  const filledFormsCount = computed(() => {
+    return Object.values(savForms.value).filter((form) => form.filled && form.showForm).length
+  })
+
   /**
    * Vérifie s'il y a des formulaires non terminés
    */
   const hasUnfinishedForms = computed(() => {
     return Object.values(savForms.value).some((form) => form.showForm && !form.filled)
+  })
+
+  const hasDirtyForms = computed(() => {
+    return Object.values(savForms.value).some(
+      (form) =>
+        form.showForm &&
+        !form.filled &&
+        (form.quantity !== '' ||
+          form.unit !== '' ||
+          form.reason !== '' ||
+          form.comment.trim() !== '' ||
+          form.images.length > 0)
+    )
   })
 
   /**
@@ -127,7 +144,7 @@ export function useSavForms() {
       // Marquer le formulaire comme rempli et le griser
       form.filled = true
       form.showForm = true // Garder le formulaire visible mais grisé
-      showToast('Réclamation enregistrée pour cette ligne', 'success')
+      showToast('Réclamation ajoutée à votre demande SAV', 'success')
     } finally {
       form.loading = false
     }
@@ -176,7 +193,9 @@ export function useSavForms() {
     savForms,
     getSavForm,
     hasFilledForms,
+    filledFormsCount,
     hasUnfinishedForms,
+    hasDirtyForms,
     validateForm,
     toggleSavForm,
     validateItemForm,
