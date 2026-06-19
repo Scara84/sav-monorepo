@@ -3,6 +3,7 @@ import Home from '@/features/sav/views/Home.vue'
 import InvoiceDetails from '@/features/sav/views/InvoiceDetails.vue'
 import SavConfirmation from '@/features/sav/views/SavConfirmation.vue'
 import Maintenance from '@/views/Maintenance.vue'
+import { safeMemberRedirect } from '@/shared/utils/member-redirect.js'
 
 const routes = [
   {
@@ -201,16 +202,25 @@ router.beforeEach(async (to) => {
       headers: { Accept: 'application/json' },
     })
     if (!res.ok) {
-      return { path: '/', query: { reason: 'session_expired' } }
+      return {
+        path: '/',
+        query: { reason: 'session_expired', redirect: safeMemberRedirect(to.fullPath) },
+      }
     }
     const body = await res.json()
     const user = body && typeof body === 'object' ? body.user : null
     if (!user || user.type !== 'member') {
-      return { path: '/', query: { reason: 'session_expired' } }
+      return {
+        path: '/',
+        query: { reason: 'session_expired', redirect: safeMemberRedirect(to.fullPath) },
+      }
     }
     return true
   } catch {
-    return { path: '/', query: { reason: 'session_expired' } }
+    return {
+      path: '/',
+      query: { reason: 'session_expired', redirect: safeMemberRedirect(to.fullPath) },
+    }
   }
 })
 

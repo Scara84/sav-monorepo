@@ -44,6 +44,7 @@ interface State {
   savById: Map<number, SavRow>
   events: WalletEventRow[]
   existingCreditNoteIds: Set<number>
+  existingEventStatusByCreditNoteId: Map<number, WalletEventRow['status']>
   fetchCalls: Array<{ url: string; init?: RequestInit }>
   fetchResponse: { ok: boolean; status: number; body: string }
   fetchThrows: Error | null
@@ -57,6 +58,7 @@ const state = vi.hoisted(
       savById: new Map(),
       events: [],
       existingCreditNoteIds: new Set(),
+      existingEventStatusByCreditNoteId: new Map(),
       fetchCalls: [],
       fetchResponse: { ok: true, status: 200, body: '{"ok":true}' },
       fetchThrows: null,
@@ -108,7 +110,13 @@ vi.mock('../../../../../api/_lib/clients/supabase-admin', () => {
 
   function buildWalletEventsBuilder(): Record<string, unknown> {
     let updatePatch: Record<string, unknown> | null = null
+    let selectedStatus = false
+    let creditNoteIdFilter: number | null = null
     const out: Record<string, unknown> = {}
+    out['select'] = (columns?: string) => {
+      selectedStatus = columns === 'status'
+      return out
+    }
     out['insert'] = (payload: Record<string, unknown>) => {
       const creditNoteId = payload['credit_note_id'] as number
       if (state.existingCreditNoteIds.has(creditNoteId)) {
@@ -162,7 +170,21 @@ vi.mock('../../../../../api/_lib/clients/supabase-admin', () => {
         updatePatch = null
         return Promise.resolve({ error: null })
       }
+      if (selectedStatus && _col === 'credit_note_id') {
+        creditNoteIdFilter = val as number
+        return out
+      }
       return out
+    }
+    out['maybeSingle'] = () => {
+      const status =
+        creditNoteIdFilter === null
+          ? undefined
+          : state.existingEventStatusByCreditNoteId.get(creditNoteIdFilter)
+      return Promise.resolve({
+        data: status ? { status } : null,
+        error: null,
+      })
     }
     return out
   }
@@ -188,7 +210,7 @@ function stubFetch(): void {
   vi.stubGlobal(
     'fetch',
     vi.fn(async (url: string | URL, init?: RequestInit) => {
-      state.fetchCalls.push({ url: String(url), init })
+      state.fetchCalls.push({ url: String(url), ...(init ? { init } : {}) })
       if (state.fetchThrows) throw state.fetchThrows
       return {
         ok: state.fetchResponse.ok,
@@ -204,7 +226,7 @@ async function loadModule(): Promise<{
     requestId: string
     outboxId: number
     savId: number | null
-    smtpMessageId: string
+    smtpMessageId: string | null
   }) => Promise<unknown>
 }> {
   return (await import('../../../../../api/_lib/clients/wallet-credit')) as unknown as {
@@ -212,7 +234,7 @@ async function loadModule(): Promise<{
       requestId: string
       outboxId: number
       savId: number | null
-      smtpMessageId: string
+      smtpMessageId: string | null
     }) => Promise<unknown>
   }
 }
@@ -223,6 +245,7 @@ function resetState(): void {
   state.savById = new Map()
   state.events = []
   state.existingCreditNoteIds = new Set()
+  state.existingEventStatusByCreditNoteId = new Map()
   state.fetchCalls = []
   state.fetchResponse = { ok: true, status: 200, body: '{"ok":true}' }
   state.fetchThrows = null
@@ -265,7 +288,7 @@ describe('creditSavWalletAfterEmail', () => {
       requestId: 'req-1',
       outboxId: 9001,
       savId: 12,
-      smtpMessageId: '<msg-1@x>',
+      smtpMessageId: null,
     })
 
     expect(state.events).toHaveLength(1)
@@ -275,10 +298,11 @@ describe('creditSavWalletAfterEmail', () => {
       attempts: 1,
       wallet_customer_id: '9373',
       transaction_detail: 'SAV-2026-00012',
-      smtp_message_id: '<msg-1@x>',
+      smtp_message_id: null,
     })
 
     expect(state.fetchCalls).toHaveLength(1)
+    expect(state.events[0]?.smtp_message_id).toBeNull()
     const call = state.fetchCalls[0]!
     expect(call.url).toBe('https://wallet.example.test/api/wallet/9373')
     expect(call.init?.method).toBe('POST')
@@ -327,7 +351,7 @@ describe('creditSavWalletAfterEmail', () => {
     })
   })
 
-  it('idempotence : un event déjà présent bloque le second crédit sans recontacter le wallet', async () => {
+  it('idempotence : un event déjà sent confirme le crédit sans recontacter le wallet', async () => {
     state.creditNotes = [
       {
         id: 11,
@@ -345,9 +369,10 @@ describe('creditSavWalletAfterEmail', () => {
     })
     state.savById.set(12, { id: 12, reference: 'SAV-2026-00012' })
     state.existingCreditNoteIds.add(11)
+    state.existingEventStatusByCreditNoteId.set(11, 'sent')
 
     const { creditSavWalletAfterEmail } = await loadModule()
-    await creditSavWalletAfterEmail({
+    const result = await creditSavWalletAfterEmail({
       requestId: 'req-3',
       outboxId: 9003,
       savId: 12,
@@ -356,7 +381,46 @@ describe('creditSavWalletAfterEmail', () => {
 
     expect(state.fetchCalls).toHaveLength(0)
     expect(state.events).toHaveLength(0)
+    expect(result).toEqual({ ok: true })
   })
+
+  it.each(['failed', 'pending'] as const)(
+    'idempotence : un event %s ne confirme jamais le crédit',
+    async (status) => {
+      state.creditNotes = [
+        {
+          id: 11,
+          sav_id: 12,
+          member_id: 77,
+          total_ttc_cents: 4567,
+          number_formatted: 'AV-2026-00011',
+          pdf_web_url: 'https://x/av.pdf',
+        },
+      ]
+      state.membersById.set(77, {
+        id: 77,
+        external_customer_id: '9373',
+        pennylane_customer_id: null,
+      })
+      state.savById.set(12, { id: 12, reference: 'SAV-2026-00012' })
+      state.existingCreditNoteIds.add(11)
+      state.existingEventStatusByCreditNoteId.set(11, status)
+
+      const { creditSavWalletAfterEmail } = await loadModule()
+      const result = await creditSavWalletAfterEmail({
+        requestId: 'req-duplicate',
+        outboxId: 9003,
+        savId: 12,
+        smtpMessageId: null,
+      })
+
+      expect(result).toMatchObject({
+        ok: false,
+        warning: { code: 'WALLET_DUPLICATE_NOT_CONFIRMED' },
+      })
+      expect(state.fetchCalls).toHaveLength(0)
+    }
+  )
 
   it('échec HTTP : marque failed avec le status et le body de réponse', async () => {
     state.creditNotes = [

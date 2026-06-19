@@ -29,7 +29,7 @@ export interface CreditSavWalletAfterEmailInput {
   requestId: string
   outboxId: number
   savId: number | null
-  smtpMessageId: string
+  smtpMessageId: string | null
 }
 
 export interface WalletCreditWarning {
@@ -77,7 +77,10 @@ async function markWalletEvent(
   patch: Record<string, unknown>,
   requestId: string
 ): Promise<void> {
-  const { error } = await supabaseAdmin().from('wallet_credit_events').update(patch).eq('id', eventId)
+  const { error } = await supabaseAdmin()
+    .from('wallet_credit_events')
+    .update(patch)
+    .eq('id', eventId)
   if (error) {
     logger.error('wallet.credit.event_update_failed', {
       requestId,
@@ -254,13 +257,37 @@ export async function creditSavWalletAfterEmail({
 
   if (eventInsertErr) {
     if (eventInsertErr.code === '23505' || /duplicate key/i.test(eventInsertErr.message)) {
+      const { data: persistedEvent, error: persistedEventErr } = (await admin
+        .from('wallet_credit_events')
+        .select('status')
+        .eq('credit_note_id', creditNote.id)
+        .maybeSingle()) as unknown as {
+        data: { status: string } | null
+        error: { message: string } | null
+      }
       logger.info('wallet.credit.idempotent_skip', {
         requestId,
         outboxId,
         savId,
         creditNoteId: creditNote.id,
+        persistedStatus: persistedEvent?.status ?? 'unknown',
       })
-      return { ok: true }
+      if (!persistedEventErr && persistedEvent?.status === 'sent') return { ok: true }
+      if (persistedEventErr) {
+        logger.error('wallet.credit.idempotent_status_lookup_failed', {
+          requestId,
+          outboxId,
+          savId,
+          creditNoteId: creditNote.id,
+          message: persistedEventErr.message,
+        })
+      }
+      return walletWarning(
+        'WALLET_DUPLICATE_NOT_CONFIRMED',
+        "SAV validé, mais le crédit wallet n'est pas confirmé par le journal wallet.",
+        outboxId,
+        savId
+      )
     }
     logger.error('wallet.credit.event_insert_failed', {
       requestId,
@@ -317,7 +344,11 @@ export async function creditSavWalletAfterEmail({
   const consumerKey = envValue('WALLET_CONSUMER_KEY', 'SAV_WALLET_CONSUMER_KEY')
   const consumerSecret = envValue('WALLET_CONSUMER_SECRET', 'SAV_WALLET_CONSUMER_SECRET')
   if (!consumerKey || !consumerSecret) {
-    await markWalletEvent(eventId, { status: 'failed', last_error: 'wallet_env_missing' }, requestId)
+    await markWalletEvent(
+      eventId,
+      { status: 'failed', last_error: 'wallet_env_missing' },
+      requestId
+    )
     logger.error('wallet.credit.env_missing', { requestId, eventId, outboxId, savId })
     return walletWarning(
       'WALLET_ENV_MISSING',
@@ -423,7 +454,7 @@ export async function creditSavWalletAfterEmail({
     })
     return walletWarning(
       'WALLET_FETCH_FAILED',
-      "SAV validé, mais le crédit wallet a échoué: API wallet injoignable.",
+      'SAV validé, mais le crédit wallet a échoué: API wallet injoignable.',
       outboxId,
       savId
     )

@@ -5,7 +5,10 @@ import { logger } from '../logger'
 import { renderEmailTemplate } from '../emails/transactional/render'
 import type { EmailTemplateData } from '../emails/transactional/render'
 import { MEMBER_KINDS } from '../emails/transactional/kinds'
-import { resolveCreditNoteAttachment, resolveCreditNoteTtcCents } from '../emails/credit-note-attachment'
+import {
+  resolveCreditNoteAttachment,
+  resolveCreditNoteTtcCents,
+} from '../emails/credit-note-attachment'
 import { creditSavWalletAfterEmail, type WalletCreditWarning } from '../clients/wallet-credit'
 
 /**
@@ -115,19 +118,38 @@ export function computeBackoffMs(attemptsAfter: number): number {
   return Math.min(ms, BACKOFF_CAP_MS)
 }
 
-async function creditWalletIfSavValidatedEmailSent(ctx: {
+async function creditWalletBeforeSavValidatedEmail(ctx: {
   requestId: string
   row: OutboxRow
-  messageId: string
-}): Promise<WalletCreditWarning | null> {
-  if (ctx.row.kind !== 'sav_validated') return null
-  const result = await creditSavWalletAfterEmail({
-    requestId: ctx.requestId,
-    outboxId: ctx.row.id,
-    savId: ctx.row.sav_id,
-    smtpMessageId: ctx.messageId,
-  })
-  return result.ok ? null : result.warning
+}): Promise<{ confirmed: boolean; warning: WalletCreditWarning | null }> {
+  if (ctx.row.kind !== 'sav_validated') return { confirmed: false, warning: null }
+  try {
+    const result = await creditSavWalletAfterEmail({
+      requestId: ctx.requestId,
+      outboxId: ctx.row.id,
+      savId: ctx.row.sav_id,
+      smtpMessageId: null,
+    })
+    return result.ok
+      ? { confirmed: true, warning: null }
+      : { confirmed: false, warning: result.warning }
+  } catch (err) {
+    logger.warn('cron.retry-emails.wallet_credit_unexpected', {
+      requestId: ctx.requestId,
+      outboxId: ctx.row.id,
+      savId: ctx.row.sav_id,
+      message: err instanceof Error ? err.message : String(err),
+    })
+    return {
+      confirmed: false,
+      warning: {
+        code: 'WALLET_UNEXPECTED_FAILURE',
+        message: "SAV validé, mais le crédit wallet n'a pas pu être confirmé.",
+        outboxId: ctx.row.id,
+        savId: ctx.row.sav_id,
+      },
+    }
+  }
 }
 
 /**
@@ -245,9 +267,7 @@ export async function runRetryEmails({
   let selectErr: { message: string } | null = null
   const claimRpc = await admin.rpc(
     'claim_outbox_batch',
-    isScoped
-      ? { p_limit: BATCH_LIMIT, p_sav_id: savId }
-      : { p_limit: BATCH_LIMIT }
+    isScoped ? { p_limit: BATCH_LIMIT, p_sav_id: savId } : { p_limit: BATCH_LIMIT }
   )
   if (claimRpc.error) {
     if (isScoped) {
@@ -503,6 +523,9 @@ export async function runRetryEmails({
             if (creditNoteTtcCents !== null) {
               baseData['totalAmountCents'] = creditNoteTtcCents
             }
+            const walletCredit = await creditWalletBeforeSavValidatedEmail({ requestId, row })
+            baseData['walletCreditConfirmed'] = walletCredit.confirmed
+            if (walletCredit.warning) walletWarnings.push(walletCredit.warning)
           }
           const data = enrichTemplateData(baseData, row.sav_id, isOperatorKind, appBase)
           const rendered = renderEmailTemplate(row.kind, data)
@@ -535,9 +558,7 @@ export async function runRetryEmails({
             html: rendered.html,
             text: rendered.text,
             account,
-            ...(creditNoteAttachment !== null
-              ? { attachments: [creditNoteAttachment] }
-              : {}),
+            ...(creditNoteAttachment !== null ? { attachments: [creditNoteAttachment] } : {}),
           })
           const info = await withTimeout(sendPromise, SEND_TIMEOUT_MS, 'smtp_send')
 
@@ -565,12 +586,6 @@ export async function runRetryEmails({
               .eq('id', row.id)
               .single<{ smtp_message_id: string | null; status: string }>()
             if (verify?.smtp_message_id) {
-              const walletWarning = await creditWalletIfSavValidatedEmailSent({
-                requestId,
-                row,
-                messageId: info.messageId,
-              })
-              if (walletWarning) walletWarnings.push(walletWarning)
               sent += 1
               logger.error('cron.retry-emails.mark_sent_failed_but_verified', {
                 requestId,
@@ -606,12 +621,6 @@ export async function runRetryEmails({
                 hint: 'concurrent worker already marked',
               })
             }
-            const walletWarning = await creditWalletIfSavValidatedEmailSent({
-              requestId,
-              row,
-              messageId: info.messageId,
-            })
-            if (walletWarning) walletWarnings.push(walletWarning)
             sent += 1
             logger.info('cron.retry-emails.sent', {
               requestId,

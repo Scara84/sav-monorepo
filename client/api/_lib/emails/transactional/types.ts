@@ -47,6 +47,8 @@ export interface TransitionEmailData {
    * Spécifique à `sav_closed` ; ignoré par les autres kinds.
    */
   noCreditNote?: boolean
+  /** Injecté uniquement après confirmation effective du crédit wallet. */
+  walletCreditConfirmed?: boolean
 }
 
 /**

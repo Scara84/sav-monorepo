@@ -14,7 +14,7 @@
           la page d'accueil.
         </p>
         <RouterLink
-          to="/"
+          :to="newLinkTarget"
           data-test="cta-new-link"
           class="inline-block px-6 py-3 rounded-3xl bg-[color:var(--main-orange)] text-white font-semibold hover:bg-[#c6711d] transition"
         >
@@ -28,6 +28,7 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
 import { useRoute, useRouter, RouterLink } from 'vue-router'
+import { safeMemberRedirect } from '@/shared/utils/member-redirect.js'
 
 /**
  * Story 6.2 AC #1, #2 — landing magic-link adhérent.
@@ -45,6 +46,13 @@ const route = useRoute()
 const router = useRouter()
 
 const state = ref<'loading' | 'error'>('loading')
+const requestedRedirect = safeMemberRedirect(
+  readQueryParam(route.query['redirect'] as string | string[] | undefined)
+)
+const newLinkTarget = {
+  path: '/',
+  query: { reason: 'session_expired', redirect: requestedRedirect },
+}
 
 function readQueryParam(value: string | string[] | undefined): string | undefined {
   if (typeof value === 'string') return value
@@ -74,9 +82,7 @@ onMounted(async () => {
   // Token is in URL fragment (`#token=...`) — fragments never travel in Referer
   // headers, preventing third-party scripts loaded on this page from leaking it.
   // Backend contract: api/auth/magic-link/issue.ts:buildMagicUrl.
-  const token =
-    readTokenFromHash() ?? readQueryParam(route.query['token'] as string | string[] | undefined)
-  const redirectQuery = readQueryParam(route.query['redirect'] as string | string[] | undefined)
+  const token = readTokenFromHash()
 
   if (!token) {
     state.value = 'error'
@@ -100,7 +106,7 @@ onMounted(async () => {
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
         token,
-        ...(redirectQuery ? { redirect: redirectQuery } : {}),
+        redirect: requestedRedirect,
       }),
     })
 
@@ -112,12 +118,7 @@ onMounted(async () => {
     const body = (await res.json()) as { redirect?: string; user?: unknown }
     // Anti open-redirect : on suit le redirect retourné par le serveur (déjà
     // validé par safeRedirect côté verify endpoint), pas celui de la query.
-    const target =
-      typeof body.redirect === 'string' &&
-      body.redirect.startsWith('/') &&
-      !body.redirect.startsWith('//')
-        ? body.redirect
-        : '/monespace'
+    const target = safeMemberRedirect(body.redirect)
     await router.replace(target)
   } catch {
     state.value = 'error'

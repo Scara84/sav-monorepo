@@ -39,6 +39,7 @@ const originalFetch = globalThis.fetch
 describe('MagicLinkLandingView (Story 6.2)', () => {
   beforeEach(() => {
     routeMock.query = {}
+    window.location.hash = ''
     routerMock.replace.mockReset()
     routerMock.push.mockReset()
     vi.restoreAllMocks()
@@ -49,7 +50,8 @@ describe('MagicLinkLandingView (Story 6.2)', () => {
   })
 
   it('AC#1 (a) token valide → POST /api/auth/magic-link/verify + router.replace("/monespace")', async () => {
-    routeMock.query = { token: 'valid-jwt', redirect: '/monespace' }
+    routeMock.query = { redirect: '/monespace' }
+    window.location.hash = '#token=valid-jwt'
     globalThis.fetch = vi.fn(() =>
       Promise.resolve(
         jsonResponse(200, { redirect: '/monespace', user: { sub: 42, type: 'member' } })
@@ -75,7 +77,7 @@ describe('MagicLinkLandingView (Story 6.2)', () => {
   })
 
   it('AC#2 (b) token expiré (LINK_EXPIRED) → message "Lien expiré ou déjà utilisé" + CTA RouterLink to="/"', async () => {
-    routeMock.query = { token: 'expired-jwt' }
+    window.location.hash = '#token=expired-jwt'
     globalThis.fetch = vi.fn(() =>
       Promise.resolve(jsonResponse(401, { error: { code: 'LINK_EXPIRED' } }))
     ) as typeof globalThis.fetch
@@ -95,7 +97,7 @@ describe('MagicLinkLandingView (Story 6.2)', () => {
   })
 
   it('AC#2 token déjà consommé (LINK_CONSUMED) → même message non-PII que LINK_EXPIRED', async () => {
-    routeMock.query = { token: 'consumed-jwt' }
+    window.location.hash = '#token=consumed-jwt'
     globalThis.fetch = vi.fn(() =>
       Promise.resolve(jsonResponse(410, { error: { code: 'LINK_CONSUMED' } }))
     ) as typeof globalThis.fetch
@@ -128,7 +130,7 @@ describe('MagicLinkLandingView (Story 6.2)', () => {
   })
 
   it("AC#14d (d) UNAUTHENTICATED (signature invalide) → message d'erreur non-PII + CTA", async () => {
-    routeMock.query = { token: 'tampered' }
+    window.location.hash = '#token=tampered'
     globalThis.fetch = vi.fn(() =>
       Promise.resolve(jsonResponse(401, { error: { code: 'UNAUTHENTICATED' } }))
     ) as typeof globalThis.fetch
@@ -169,7 +171,7 @@ describe('MagicLinkLandingView (Story 6.2)', () => {
         '/api/auth/magic-link/verify',
         expect.objectContaining({
           method: 'POST',
-          body: JSON.stringify({ token: 'hash-jwt-from-email' }),
+          body: JSON.stringify({ token: 'hash-jwt-from-email', redirect: '/monespace' }),
         })
       )
       expect(routerMock.replace).toHaveBeenCalledWith('/monespace')
@@ -212,8 +214,24 @@ describe('MagicLinkLandingView (Story 6.2)', () => {
     }
   })
 
+  it('refuse un token transmis uniquement en query string', async () => {
+    routeMock.query = { token: 'valid', redirect: '/monespace' }
+    const fetchSpy = vi.fn()
+    globalThis.fetch = fetchSpy as typeof globalThis.fetch
+
+    const MagicLinkLandingView = (
+      await import('../../../../src/features/self-service/views/MagicLinkLandingView.vue')
+    ).default
+    const wrapper = mount(MagicLinkLandingView)
+    await flushPromises()
+
+    expect(fetchSpy).not.toHaveBeenCalled()
+    expect(wrapper.text()).toContain('Lien expiré ou déjà utilisé')
+  })
+
   it('AC#1 redirect = celui retourné par le verify endpoint (PAS celui de la query) — anti open-redirect', async () => {
-    routeMock.query = { token: 'valid', redirect: '//evil.com' }
+    routeMock.query = { redirect: '//evil.com' }
+    window.location.hash = '#token=valid'
     globalThis.fetch = vi.fn(() =>
       Promise.resolve(
         jsonResponse(200, { redirect: '/monespace', user: { sub: 1, type: 'member' } })
@@ -223,10 +241,32 @@ describe('MagicLinkLandingView (Story 6.2)', () => {
     const MagicLinkLandingView = (
       await import('../../../../src/features/self-service/views/MagicLinkLandingView.vue')
     ).default
-    mount(MagicLinkLandingView)
-    await flushPromises()
+    try {
+      mount(MagicLinkLandingView)
+      await flushPromises()
+      expect(routerMock.replace).toHaveBeenCalledWith('/monespace')
+      expect(routerMock.replace).not.toHaveBeenCalledWith('//evil.com')
+    } finally {
+      window.location.hash = ''
+    }
+  })
 
-    expect(routerMock.replace).toHaveBeenCalledWith('/monespace')
-    expect(routerMock.replace).not.toHaveBeenCalledWith('//evil.com')
+  it('rejette aussi un redirect hostile renvoyé par le serveur', async () => {
+    routeMock.query = { redirect: '/monespace/sav/9' }
+    window.location.hash = '#token=valid'
+    globalThis.fetch = vi.fn(() =>
+      Promise.resolve(jsonResponse(200, { redirect: '/monespace/%252e%252e/admin' }))
+    ) as typeof globalThis.fetch
+
+    const MagicLinkLandingView = (
+      await import('../../../../src/features/self-service/views/MagicLinkLandingView.vue')
+    ).default
+    try {
+      mount(MagicLinkLandingView)
+      await flushPromises()
+      expect(routerMock.replace).toHaveBeenCalledWith('/monespace')
+    } finally {
+      window.location.hash = ''
+    }
   })
 })

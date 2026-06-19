@@ -5,6 +5,33 @@
       class="sav-form-wrapper min-h-screen flex items-center justify-center bg-[color:var(--bg-white)]"
     >
       <div class="sav-form bg-white p-8 rounded-lg shadow-md w-full max-w-md">
+        <section v-if="showAccessForm" class="mb-8" data-test="member-access-form">
+          <h2 class="text-2xl font-extrabold mb-3 text-center text-[color:var(--main-orange)]">
+            Accéder à mon suivi SAV
+          </h2>
+          <p class="text-sm text-gray-600 mb-4">
+            Saisissez votre adresse e-mail pour recevoir un lien de connexion sécurisé.
+          </p>
+          <form class="space-y-4" @submit.prevent="requestAccessLink">
+            <label for="accessEmail" class="block font-bold text-[color:var(--text-dark)]">
+              Adresse e-mail
+            </label>
+            <input
+              id="accessEmail"
+              v-model="accessEmail"
+              type="email"
+              required
+              autocomplete="email"
+              class="w-full px-4 py-3 border-2 border-[color:var(--main-orange)] rounded-3xl"
+            />
+            <button type="submit" class="btn-main w-full" :disabled="accessLinkSubmitting">
+              {{ accessLinkSubmitting ? 'Envoi en cours…' : 'Recevoir mon lien de connexion' }}
+            </button>
+          </form>
+          <p v-if="accessLinkMessage" class="mt-4" role="status" data-test="access-message">
+            {{ accessLinkMessage }}
+          </p>
+        </section>
         <h2 class="text-2xl font-extrabold mb-6 text-center text-[color:var(--main-orange)]">
           Demande de Service Après-Vente
         </h2>
@@ -70,6 +97,7 @@
 
 <script>
 import { useApiClient } from '../composables/useApiClient.js'
+import { safeMemberRedirect } from '@/shared/utils/member-redirect.js'
 
 const apiClient = useApiClient()
 
@@ -83,9 +111,36 @@ export default {
       toast: null,
       // M-1 — référence au timer en vol pour clearTimeout avant re-déclenchement.
       toastTimer: null,
+      accessEmail: '',
+      accessLinkSubmitting: false,
+      accessLinkMessage: '',
     }
   },
   methods: {
+    async requestAccessLink() {
+      if (this.accessLinkSubmitting) return
+      this.accessLinkSubmitting = true
+      this.accessLinkMessage = ''
+      try {
+        const response = await fetch('/api/auth/magic-link/issue', {
+          method: 'POST',
+          credentials: 'include',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            email: this.accessEmail.trim(),
+            redirect: safeMemberRedirect(this.$route?.query?.redirect),
+          }),
+        })
+        if (!response.ok) throw new Error('MAGIC_LINK_ISSUE_FAILED')
+        this.accessLinkMessage =
+          'Si un compte existe pour cette adresse, vous recevrez un lien de connexion.'
+      } catch {
+        this.accessLinkMessage =
+          'Le lien ne peut pas être envoyé pour le moment. Merci de réessayer plus tard.'
+      } finally {
+        this.accessLinkSubmitting = false
+      }
+    },
     // H-10 W95 PATTERN-H10 — Toast non-bloquant avec auto-dismiss 5s.
     // Durée 5s (vs 4s ErpQueueView) : page publique, utilisateurs moins habitués.
     // M-1 — clearTimeout avant chaque nouvel appel évite le dismiss prématuré
@@ -146,6 +201,11 @@ export default {
         }
         this.showError('Une erreur est survenue lors de la recherche de votre facture.')
       }
+    },
+  },
+  computed: {
+    showAccessForm() {
+      return this.$route?.query?.reason === 'session_expired'
     },
   },
   // M-1 — Vue 3 Options API lifecycle hook (beforeDestroy = Vue 2 équivalent).

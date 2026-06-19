@@ -29,6 +29,9 @@ export function renderSavValidated(data: TransitionEmailData): TransactionalEmai
   const totalSafe = escapeHtml(formatEurFr(data.totalAmountCents ?? 0))
   const isNoCreditNote = data.noCreditNote === true
   const isFallback = !isNoCreditNote && data.pdfFallback === true
+  const walletCreditConfirmed = data.walletCreditConfirmed
+  const walletCreditSentence =
+    'Le montant de cet avoir a été crédité sur votre compte et sera automatiquement déduit de votre prochaine facture.'
 
   const subject = stripCrlf(`SAV ${data.savReference ?? ''} — validé`)
 
@@ -45,6 +48,7 @@ export function renderSavValidated(data: TransitionEmailData): TransactionalEmai
        <strong>validé</strong>.</p>
     <p>Montant validé : <strong>${totalSafe}</strong>.</p>
     ${bonSavParagraph}
+    ${walletCreditConfirmed === true ? `<p>${walletCreditSentence}</p>` : ''}
     <p style="color:#616161; font-size:13px;">L'équipe SAV Fruitstock.</p>`
 
   const html = wrapHtml(body, {
@@ -64,6 +68,7 @@ export function renderSavValidated(data: TransitionEmailData): TransactionalEmai
     `Bonne nouvelle : votre dossier SAV ${data.savReference ?? ''} a été validé.`,
     `Montant validé : ${formatEurFr(data.totalAmountCents ?? 0)}.`,
     bonSavTextLine,
+    walletCreditConfirmed === true ? walletCreditSentence : '',
     '',
     data.dossierUrl ? `Voir mon dossier : ${data.dossierUrl}` : '',
     '',

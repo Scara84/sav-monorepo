@@ -24,6 +24,7 @@ import type { TransitionEmailData } from '../../../../api/_lib/emails/transactio
 interface ExtendedTransitionEmailData extends TransitionEmailData {
   pdfFallback?: boolean
   noCreditNote?: boolean
+  walletCreditConfirmed?: boolean
 }
 
 const baseData: ExtendedTransitionEmailData = {
@@ -72,6 +73,27 @@ describe('renderSavValidated — V1.13 AC#5 (PJ bon SAV) 3 chemins', () => {
     const out = renderSavValidated({ ...baseData, pdfFallback: false })
     expect(out.html.toLowerCase()).toMatch(/pi[èe]ce[\s-]jointe|ci-joint/i)
     expect(out.html.toLowerCase()).not.toMatch(/disponible dans votre espace/i)
+  })
+
+  it('affiche la phrase wallet à l’identique en HTML et texte uniquement si confirmée', () => {
+    const phrase =
+      'Le montant de cet avoir a été crédité sur votre compte et sera automatiquement déduit de votre prochaine facture.'
+    const confirmedData: ExtendedTransitionEmailData = {
+      ...baseData,
+      walletCreditConfirmed: true,
+    }
+    const confirmed = renderSavValidated(confirmedData)
+    expect(confirmed.html).toContain(phrase)
+    expect(confirmed.text).toContain(phrase)
+
+    for (const unconfirmedData of [
+      { ...baseData, walletCreditConfirmed: false },
+      { ...baseData },
+    ] satisfies ExtendedTransitionEmailData[]) {
+      const unconfirmed = renderSavValidated(unconfirmedData)
+      expect(unconfirmed.html).not.toContain(phrase)
+      expect(unconfirmed.text).not.toContain(phrase)
+    }
   })
 
   // ── Chemin pdfFallback ─────────────────────────────────────────────────

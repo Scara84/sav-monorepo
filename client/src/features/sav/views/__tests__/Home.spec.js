@@ -33,17 +33,19 @@ vi.mock('../../components/HeroSection.vue', () => ({
 import HomeView from '../Home.vue'
 
 const $router = { push: vi.fn() }
+const $route = { query: {} }
 
 beforeEach(() => {
   mocks.lookupCalls = []
   mocks.lookupError = null
   $router.push.mockReset()
+  $route.query = {}
 })
 
 function makeWrapper() {
   return mount(HomeView, {
     global: {
-      mocks: { $router },
+      mocks: { $router, $route },
       stubs: { HeroSection: true },
     },
   })
@@ -124,5 +126,62 @@ describe('Home.vue — input numéro facture cutover Story 5.7', () => {
     const toast = w.find('[role="alert"]')
     expect(toast.exists()).toBe(true)
     expect(toast.text()).toContain('Trop de tentatives')
+  })
+})
+
+describe('Home.vue — accès au suivi SAV', () => {
+  it('demande un magic-link avec la destination dossier conservée et une réponse neutre', async () => {
+    $route.query = { reason: 'session_expired', redirect: '/monespace/sav/42' }
+    const fetchSpy = vi.spyOn(window, 'fetch').mockResolvedValue({ ok: true })
+    const w = makeWrapper()
+    await w.find('#accessEmail').setValue('member@example.com')
+    await w.find('[data-test="member-access-form"] form').trigger('submit.prevent')
+    await flushPromises()
+
+    expect(fetchSpy).toHaveBeenCalledWith(
+      '/api/auth/magic-link/issue',
+      expect.objectContaining({
+        body: JSON.stringify({
+          email: 'member@example.com',
+          redirect: '/monespace/sav/42',
+        }),
+      })
+    )
+    expect(w.find('[data-test="access-message"]').text()).toContain('Si un compte existe')
+    fetchSpy.mockRestore()
+  })
+
+  it('bloque une double soumission pendant la requête', async () => {
+    $route.query = { reason: 'session_expired', redirect: '/monespace/sav/42' }
+    let resolveFetch
+    const fetchSpy = vi
+      .spyOn(window, 'fetch')
+      .mockImplementation(() => new Promise((resolve) => (resolveFetch = resolve)))
+    const w = makeWrapper()
+    await w.find('#accessEmail').setValue('member@example.com')
+    const form = w.find('[data-test="member-access-form"] form')
+    await form.trigger('submit.prevent')
+    await form.trigger('submit.prevent')
+
+    expect(fetchSpy).toHaveBeenCalledTimes(1)
+    expect(w.find('[data-test="member-access-form"] button').attributes('disabled')).toBeDefined()
+    resolveFetch({ ok: true })
+    await flushPromises()
+    fetchSpy.mockRestore()
+  })
+
+  it('réactive le formulaire et affiche une erreur générique si la demande échoue', async () => {
+    $route.query = { reason: 'session_expired', redirect: '/monespace/sav/42' }
+    const fetchSpy = vi.spyOn(window, 'fetch').mockResolvedValue({ ok: false })
+    const w = makeWrapper()
+    await w.find('#accessEmail').setValue('  member@example.com  ')
+    await w.find('[data-test="member-access-form"] form').trigger('submit.prevent')
+    await flushPromises()
+
+    const request = fetchSpy.mock.calls[0][1]
+    expect(JSON.parse(request.body).email).toBe('member@example.com')
+    expect(w.find('[data-test="access-message"]').text()).toContain('réessayer')
+    expect(w.find('[data-test="member-access-form"] button').attributes('disabled')).toBeUndefined()
+    fetchSpy.mockRestore()
   })
 })

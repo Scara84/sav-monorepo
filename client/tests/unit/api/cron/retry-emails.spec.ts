@@ -79,8 +79,15 @@ interface State {
     requestId: string
     outboxId: number
     savId: number | null
-    smtpMessageId: string
+    smtpMessageId: string | null
   }>
+  walletCreditResult:
+    | { ok: true }
+    | {
+        ok: false
+        warning: { code: string; message: string; outboxId: number; savId: number | null }
+      }
+  operationOrder: string[]
 }
 
 const state = vi.hoisted(
@@ -99,6 +106,8 @@ const state = vi.hoisted(
       attachmentResolver: { kind: 'no_credit_note' },
       attachmentResolverCalls: [],
       walletCreditCalls: [],
+      walletCreditResult: { ok: true },
+      operationOrder: [],
     }) as State
 )
 
@@ -249,6 +258,7 @@ vi.mock('../../../../api/_lib/clients/smtp', () => ({
     attachments?: Array<{ filename: string; content: Buffer }>
   }) => {
     const idx = state.sendMailCalls.length
+    state.operationOrder.push('smtp')
     state.sendMailCalls.push({
       to: input.to,
       subject: input.subject,
@@ -289,10 +299,11 @@ vi.mock('../../../../api/_lib/clients/wallet-credit', () => ({
     requestId: string
     outboxId: number
     savId: number | null
-    smtpMessageId: string
+    smtpMessageId: string | null
   }) => {
+    state.operationOrder.push('wallet')
     state.walletCreditCalls.push(input)
-    return { ok: true as const }
+    return state.walletCreditResult
   },
 }))
 
@@ -338,6 +349,8 @@ function resetState(): void {
   state.attachmentResolver = { kind: 'no_credit_note' }
   state.attachmentResolverCalls = []
   state.walletCreditCalls = []
+  state.walletCreditResult = { ok: true }
+  state.operationOrder = []
 }
 
 describe('runRetryEmails (Story 6.6)', () => {
@@ -798,7 +811,7 @@ describe('runRetryEmails (Story 6.6)', () => {
     expect(mail.attachments![0]!.content).toBe(pdfBytes)
   })
 
-  it('wallet credit : sav_validated envoyé → crédit wallet déclenché après SMTP sent', async () => {
+  it('wallet credit : sav_validated → crédit wallet confirmé avant rendu et SMTP', async () => {
     state.outboxRows = [makeSavValidatedRow({ id: 44, sav_id: 3 })]
     state.membersById.set(100, { id: 100, notification_prefs: { status_updates: true } })
     state.attachmentResolver = {
@@ -815,14 +828,16 @@ describe('runRetryEmails (Story 6.6)', () => {
         requestId: 'req-wallet',
         outboxId: 44,
         savId: 3,
-        smtpMessageId: '<msg-0@x>',
+        smtpMessageId: null,
       },
     ])
-    const markSentIndex = state.rpcCalls.findIndex((c) => c.fn === 'mark_outbox_sent')
-    expect(markSentIndex).toBeGreaterThanOrEqual(0)
+    expect(state.operationOrder).toEqual(['wallet', 'smtp'])
+    expect(state.sendMailCalls[0]?.html).toContain(
+      'Le montant de cet avoir a été crédité sur votre compte et sera automatiquement déduit de votre prochaine facture.'
+    )
   })
 
-  it('wallet credit : sav_validated SMTP KO → aucun crédit wallet', async () => {
+  it('wallet credit : SMTP KO après crédit confirmé → retry retente sans perdre la confirmation', async () => {
     state.outboxRows = [makeSavValidatedRow({ id: 45, sav_id: 3 })]
     state.membersById.set(100, { id: 100, notification_prefs: { status_updates: true } })
     state.attachmentResolver = {
@@ -835,7 +850,39 @@ describe('runRetryEmails (Story 6.6)', () => {
     const r = await runRetryEmails({ requestId: 'req-wallet-fail' })
 
     expect(r.failed).toBe(1)
-    expect(state.walletCreditCalls).toHaveLength(0)
+    expect(state.operationOrder).toEqual(['wallet', 'smtp'])
+    expect(state.walletCreditCalls).toHaveLength(1)
+    expect(state.sendMailCalls[0]?.html).toContain('a été crédité sur votre compte')
+
+    state.sendMailFailIndices.clear()
+    state.operationOrder = []
+    const retry = await runRetryEmails({ requestId: 'req-wallet-retry' })
+    expect(retry.sent).toBe(1)
+    expect(state.operationOrder).toEqual(['wallet', 'smtp'])
+    expect(state.walletCreditCalls).toHaveLength(2)
+    expect(state.sendMailCalls[1]?.html).toContain('a été crédité sur votre compte')
+  })
+
+  it('wallet credit : échec non bloquant → warning et mail sans phrase affirmative', async () => {
+    state.outboxRows = [makeSavValidatedRow({ id: 46, sav_id: 3 })]
+    state.membersById.set(100, { id: 100, notification_prefs: { status_updates: true } })
+    state.attachmentResolver = { kind: 'unavailable' }
+    state.walletCreditResult = {
+      ok: false,
+      warning: {
+        code: 'WALLET_HTTP_FAILED',
+        message: 'wallet indisponible',
+        outboxId: 46,
+        savId: 3,
+      },
+    }
+
+    const r = await runRetryEmails({ requestId: 'req-wallet-warning' })
+
+    expect(r.sent).toBe(1)
+    expect(r.walletWarnings).toHaveLength(1)
+    expect(state.operationOrder).toEqual(['wallet', 'smtp'])
+    expect(state.sendMailCalls[0]?.html).not.toContain('a été crédité sur votre compte')
   })
 
   it('V1.10 AC#2 sav_validated + kind="unavailable" (avoir existe, PJ KO) → envoi + pdfFallback=true', async () => {

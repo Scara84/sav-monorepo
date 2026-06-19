@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { createRouter, createMemoryHistory } from 'vue-router'
 import { defineComponent } from 'vue'
+import { safeMemberRedirect } from '../../../../src/shared/utils/member-redirect.js'
 
 /**
  * Story 6.2 — guard Vue `requiresAuth: 'magic-link'`.
@@ -20,7 +21,10 @@ function buildRouter() {
         path: '/monespace',
         component: Stub,
         meta: { requiresAuth: 'magic-link' },
-        children: [{ path: '', name: 'member-sav-list', component: Stub }],
+        children: [
+          { path: '', name: 'member-sav-list', component: Stub },
+          { path: 'sav/:id', name: 'member-sav-detail', component: Stub },
+        ],
       },
       {
         path: '/monespace/auth',
@@ -43,15 +47,25 @@ function attachMagicLinkGuard(router: ReturnType<typeof buildRouter>) {
         credentials: 'include',
         headers: { Accept: 'application/json' },
       })
-      if (!res.ok) return { path: '/', query: { reason: 'session_expired' } }
+      if (!res.ok)
+        return {
+          path: '/',
+          query: { reason: 'session_expired', redirect: safeMemberRedirect(to.fullPath) },
+        }
       const body = (await res.json()) as { user?: { type?: string } }
       const user = body && typeof body === 'object' ? body.user : null
       if (!user || user.type !== 'member') {
-        return { path: '/', query: { reason: 'session_expired' } }
+        return {
+          path: '/',
+          query: { reason: 'session_expired', redirect: safeMemberRedirect(to.fullPath) },
+        }
       }
       return true
     } catch {
-      return { path: '/', query: { reason: 'session_expired' } }
+      return {
+        path: '/',
+        query: { reason: 'session_expired', redirect: safeMemberRedirect(to.fullPath) },
+      }
     }
   })
 }
@@ -85,6 +99,17 @@ describe('router guard — requiresAuth: "magic-link" (Story 6.2)', () => {
     await router.push('/monespace')
     expect(router.currentRoute.value.path).toBe('/')
     expect(router.currentRoute.value.query['reason']).toBe('session_expired')
+    expect(router.currentRoute.value.query['redirect']).toBe('/monespace')
+  })
+
+  it('conserve le dossier demandé après expiration de session', async () => {
+    globalThis.fetch = vi.fn(() =>
+      Promise.resolve(jsonResponse(401, {}))
+    ) as typeof globalThis.fetch
+    const router = buildRouter()
+    attachMagicLinkGuard(router)
+    await router.push('/monespace/sav/42')
+    expect(router.currentRoute.value.query['redirect']).toBe('/monespace/sav/42')
   })
 
   it('AC#12 navigation vers /monespace avec cookie member valide → fetch /api/auth/me → 200 → laisse passer', async () => {
@@ -129,5 +154,31 @@ describe('router guard — requiresAuth: "magic-link" (Story 6.2)', () => {
     attachMagicLinkGuard(router)
     await router.push('/monespace')
     expect(router.currentRoute.value.path).toBe('/monespace')
+  })
+})
+
+describe('safeMemberRedirect', () => {
+  it.each([
+    'https://evil.test/monespace',
+    '//evil.test',
+    '/monespace//sav/1',
+    '/monespace\\sav\\1',
+    '/monespace/sav/../1',
+    '/monespace/sav/%2e%2e/1',
+    '/monespace/sav/%252e%252e/1',
+    '/monespace/sav/%250aadmin',
+    '/monespace/sav/1\nadmin',
+    '/monespace%2fsav%2f1',
+    '/monespace/sav/1#fragment',
+    `/monespace/${'a'.repeat(501)}`,
+    '/admin/sav/1',
+  ])('rejette la destination hostile %s', (value) => {
+    expect(safeMemberRedirect(value)).toBe('/monespace')
+  })
+
+  it('accepte une route dossier membre avec query', () => {
+    expect(safeMemberRedirect('/monespace/sav/42?tab=comments')).toBe(
+      '/monespace/sav/42?tab=comments'
+    )
   })
 })
