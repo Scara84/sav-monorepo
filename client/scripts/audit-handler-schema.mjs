@@ -15,7 +15,7 @@
 import { readFileSync, readdirSync, statSync } from 'node:fs'
 import { join, relative } from 'node:path'
 
-// -------- Schema snapshot (from information_schema 2026-04-30 post-W113 migrations) --------
+// -------- Schema snapshot (from information_schema 2026-06-18 post-wallet migrations) --------
 // Public tables only. Update by running:
 //   SELECT table_name, jsonb_agg(column_name ORDER BY ordinal_position)
 //   FROM information_schema.columns WHERE table_schema='public' GROUP BY 1;
@@ -99,6 +99,8 @@ const SCHEMA = {
   members: [
     'id',
     'pennylane_customer_id',
+    // Migration 20260618223000_wallet_external_customer_id
+    'external_customer_id',
     'email',
     'first_name',
     'last_name',
@@ -258,6 +260,26 @@ const SCHEMA = {
     'created_at',
   ],
   validation_lists: ['id', 'list_code', 'value', 'value_es', 'sort_order', 'is_active'],
+  // Migration 20260615120000_wallet_credit_events
+  wallet_credit_events: [
+    'id',
+    'sav_id',
+    'credit_note_id',
+    'member_id',
+    'outbox_id',
+    'wallet_customer_id',
+    'amount_ttc_cents',
+    'transaction_detail',
+    'smtp_message_id',
+    'status',
+    'attempts',
+    'last_error',
+    'wallet_response_status',
+    'wallet_response_body',
+    'sent_at',
+    'created_at',
+    'updated_at',
+  ],
   webhook_inbox: ['id', 'source', 'signature', 'payload', 'received_at', 'processed_at', 'error'],
   // Story 8.4 — Réclamation fournisseur SOL Y FRUTA (migration 20260605000000_sav_supplier_claims)
   sav_supplier_claims: [
