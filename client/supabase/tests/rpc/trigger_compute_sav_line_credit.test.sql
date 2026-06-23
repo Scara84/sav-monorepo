@@ -40,7 +40,7 @@ BEGIN
 END $setup$;
 
 -- ============================================
--- Test 1 (AC #8) : Happy path ok
+-- Test 1 (AC #8) : V1.9-B awaiting puis arbitrage opérateur ok
 -- ============================================
 DO $test_1$
 DECLARE
@@ -53,7 +53,7 @@ BEGIN
   INSERT INTO sav_lines (
     sav_id, product_id, product_code_snapshot, product_name_snapshot,
     qty_requested, unit_requested, qty_invoiced, unit_invoiced,
-    unit_price_ht_cents, vat_rate_bp_snapshot, credit_coefficient
+    unit_price_ttc_cents, vat_rate_bp_snapshot, credit_coefficient
   ) VALUES (
     current_setting('test.sav_id')::bigint,
     current_setting('test.product_id')::bigint,
@@ -61,17 +61,30 @@ BEGIN
     10, 'kg', 10, 'kg', 200, 550, 1
   ) RETURNING * INTO v_row;
 
+  IF v_row.validation_status <> 'awaiting_arbitration' THEN
+    RAISE EXCEPTION 'FAIL Test 1a: status=% attendu awaiting_arbitration avant arbitrage', v_row.validation_status;
+  END IF;
+  IF v_row.credit_amount_cents IS NOT NULL THEN
+    RAISE EXCEPTION 'FAIL Test 1a: credit=% attendu NULL avant arbitrage', v_row.credit_amount_cents;
+  END IF;
+
+  UPDATE sav_lines
+     SET qty_arbitrated = 10,
+         unit_arbitrated = 'kg'
+   WHERE id = v_row.id
+  RETURNING * INTO v_row;
+
   IF v_row.validation_status <> 'ok' THEN
-    RAISE EXCEPTION 'FAIL Test 1: status=% attendu ok', v_row.validation_status;
+    RAISE EXCEPTION 'FAIL Test 1b: status=% attendu ok après arbitrage', v_row.validation_status;
   END IF;
-  IF v_row.credit_amount_cents <> 2000 THEN
-    RAISE EXCEPTION 'FAIL Test 1: credit=% attendu 2000', v_row.credit_amount_cents;
+  IF v_row.credit_amount_cents <> 1900 THEN
+    RAISE EXCEPTION 'FAIL Test 1b: credit=% attendu 1900', v_row.credit_amount_cents;
   END IF;
-  RAISE NOTICE 'OK Test 1 (AC #8) : happy path 10kg × 200c × 1 = 2000c';
+  RAISE NOTICE 'OK Test 1 (AC #8) : V1.9-B awaiting puis arbitrage 10kg × 190c HT × 1 = 1900c';
 END $test_1$;
 
 -- ============================================
--- Test 2 (AC #8) : Conversion kg demandé / piece facturé
+-- Test 2 (AC #8) : Arbitrage opérateur en unité facturée
 -- ============================================
 DO $test_2$
 DECLARE
@@ -83,22 +96,22 @@ BEGIN
   INSERT INTO sav_lines (
     sav_id, product_id, product_code_snapshot, product_name_snapshot,
     qty_requested, unit_requested, qty_invoiced, unit_invoiced,
-    unit_price_ht_cents, vat_rate_bp_snapshot, credit_coefficient,
-    piece_to_kg_weight_g
+    unit_price_ttc_cents, vat_rate_bp_snapshot, credit_coefficient,
+    piece_to_kg_weight_g, qty_arbitrated, unit_arbitrated
   ) VALUES (
     current_setting('test.sav_id')::bigint,
     current_setting('test.product_id')::bigint,
     'PROD-T2', 'Test 2',
-    5, 'kg', 25, 'piece', 30, 550, 1, 200
+    5, 'kg', 25, 'piece', 30, 550, 1, 200, 25, 'piece'
   ) RETURNING * INTO v_row;
 
   IF v_row.validation_status <> 'ok' THEN
     RAISE EXCEPTION 'FAIL Test 2: status=% attendu ok', v_row.validation_status;
   END IF;
-  IF v_row.credit_amount_cents <> 750 THEN
-    RAISE EXCEPTION 'FAIL Test 2: credit=% attendu 750 (5kg × 150c/kg × 1)', v_row.credit_amount_cents;
+  IF v_row.credit_amount_cents <> 700 THEN
+    RAISE EXCEPTION 'FAIL Test 2: credit=% attendu 700 (25 pièces arbitrées × 28c HT × 1)', v_row.credit_amount_cents;
   END IF;
-  RAISE NOTICE 'OK Test 2 (AC #8) : conversion piece→kg weight=200g';
+  RAISE NOTICE 'OK Test 2 (AC #8) : arbitrage opérateur trust complet en pièces';
 END $test_2$;
 
 -- ============================================
@@ -114,7 +127,7 @@ BEGIN
   INSERT INTO sav_lines (
     sav_id, product_id, product_code_snapshot, product_name_snapshot,
     qty_requested, unit_requested, qty_invoiced, unit_invoiced,
-    unit_price_ht_cents, vat_rate_bp_snapshot, credit_coefficient
+    unit_price_ttc_cents, vat_rate_bp_snapshot, credit_coefficient
   ) VALUES (
     current_setting('test.sav_id')::bigint,
     current_setting('test.product_id')::bigint,
@@ -132,7 +145,7 @@ BEGIN
 END $test_3$;
 
 -- ============================================
--- Test 4 (AC #8) : qty_exceeds_invoice strict (unités homogènes)
+-- Test 4 (AC #8) : qty_exceeds legacy attend désormais arbitrage
 -- ============================================
 DO $test_4$
 DECLARE
@@ -144,7 +157,7 @@ BEGIN
   INSERT INTO sav_lines (
     sav_id, product_id, product_code_snapshot, product_name_snapshot,
     qty_requested, unit_requested, qty_invoiced, unit_invoiced,
-    unit_price_ht_cents, vat_rate_bp_snapshot, credit_coefficient
+    unit_price_ttc_cents, vat_rate_bp_snapshot, credit_coefficient
   ) VALUES (
     current_setting('test.sav_id')::bigint,
     current_setting('test.product_id')::bigint,
@@ -152,14 +165,14 @@ BEGIN
     10, 'kg', 5, 'kg', 200, 550, 1
   ) RETURNING * INTO v_row;
 
-  IF v_row.validation_status <> 'qty_exceeds_invoice' THEN
-    RAISE EXCEPTION 'FAIL Test 4: status=% attendu qty_exceeds_invoice', v_row.validation_status;
+  IF v_row.validation_status <> 'awaiting_arbitration' THEN
+    RAISE EXCEPTION 'FAIL Test 4: status=% attendu awaiting_arbitration', v_row.validation_status;
   END IF;
-  RAISE NOTICE 'OK Test 4 (AC #8) : qty_exceeds_invoice 10>5';
+  RAISE NOTICE 'OK Test 4 (AC #8) : V1.9-B attend arbitrage avant contrôle métier final';
 END $test_4$;
 
 -- ============================================
--- Test 5 (AC #8) : unit_mismatch non convertible
+-- Test 5 (AC #8) : unit_mismatch legacy attend désormais arbitrage
 -- ============================================
 DO $test_5$
 DECLARE
@@ -171,7 +184,7 @@ BEGIN
   INSERT INTO sav_lines (
     sav_id, product_id, product_code_snapshot, product_name_snapshot,
     qty_requested, unit_requested, qty_invoiced, unit_invoiced,
-    unit_price_ht_cents, vat_rate_bp_snapshot, credit_coefficient
+    unit_price_ttc_cents, vat_rate_bp_snapshot, credit_coefficient
   ) VALUES (
     current_setting('test.sav_id')::bigint,
     current_setting('test.product_id')::bigint,
@@ -179,10 +192,10 @@ BEGIN
     3, 'kg', 3, 'liter', 500, 550, 1
   ) RETURNING * INTO v_row;
 
-  IF v_row.validation_status <> 'unit_mismatch' THEN
-    RAISE EXCEPTION 'FAIL Test 5: status=% attendu unit_mismatch', v_row.validation_status;
+  IF v_row.validation_status <> 'awaiting_arbitration' THEN
+    RAISE EXCEPTION 'FAIL Test 5: status=% attendu awaiting_arbitration', v_row.validation_status;
   END IF;
-  RAISE NOTICE 'OK Test 5 (AC #8) : unit_mismatch kg↔liter';
+  RAISE NOTICE 'OK Test 5 (AC #8) : V1.9-B attend arbitrage avant résolution unité';
 END $test_5$;
 
 -- ============================================
@@ -199,7 +212,7 @@ BEGIN
     INSERT INTO sav_lines (
       sav_id, product_id, product_code_snapshot, product_name_snapshot,
       qty_requested, unit_requested, qty_invoiced, unit_invoiced,
-      unit_price_ht_cents, vat_rate_bp_snapshot, credit_coefficient
+      unit_price_ttc_cents, vat_rate_bp_snapshot, credit_coefficient
     ) VALUES (
       current_setting('test.sav_id')::bigint,
       current_setting('test.product_id')::bigint,
@@ -217,7 +230,7 @@ BEGIN
 END $test_6$;
 
 -- ============================================
--- Test 7 (AC #8) : UPDATE recalcule credit_amount_cents
+-- Test 7 (AC #8) : UPDATE arbitrage recalcule credit_amount_cents
 -- ============================================
 DO $test_7$
 DECLARE
@@ -230,26 +243,25 @@ BEGIN
   INSERT INTO sav_lines (
     sav_id, product_id, product_code_snapshot, product_name_snapshot,
     qty_requested, unit_requested, qty_invoiced, unit_invoiced,
-    unit_price_ht_cents, vat_rate_bp_snapshot, credit_coefficient
+    unit_price_ttc_cents, vat_rate_bp_snapshot, credit_coefficient,
+    qty_arbitrated, unit_arbitrated
   ) VALUES (
     current_setting('test.sav_id')::bigint,
     current_setting('test.product_id')::bigint,
     'PROD-T7', 'Test 7',
-    5, 'kg', 5, 'kg', 200, 550, 1
+    5, 'kg', 5, 'kg', 200, 550, 1, 5, 'kg'
   ) RETURNING id INTO v_line_id;
 
-  UPDATE sav_lines SET qty_invoiced = 3 WHERE id = v_line_id
+  UPDATE sav_lines SET qty_arbitrated = 3 WHERE id = v_line_id
     RETURNING * INTO v_row;
 
-  IF v_row.credit_amount_cents IS NOT NULL
-     AND v_row.validation_status = 'ok' THEN
-    RAISE EXCEPTION 'FAIL Test 7: attendu qty_exceeds (5 > 3 après UPDATE), eu status=%, credit=%',
-                    v_row.validation_status, v_row.credit_amount_cents;
+  IF v_row.validation_status <> 'ok' THEN
+    RAISE EXCEPTION 'FAIL Test 7: status après UPDATE=% attendu ok', v_row.validation_status;
   END IF;
-  IF v_row.validation_status <> 'qty_exceeds_invoice' THEN
-    RAISE EXCEPTION 'FAIL Test 7: status après UPDATE=% attendu qty_exceeds_invoice', v_row.validation_status;
+  IF v_row.credit_amount_cents <> 570 THEN
+    RAISE EXCEPTION 'FAIL Test 7: credit après UPDATE=% attendu 570', v_row.credit_amount_cents;
   END IF;
-  RAISE NOTICE 'OK Test 7 (AC #8) : UPDATE qty_invoiced déclenche recalcul';
+  RAISE NOTICE 'OK Test 7 (AC #8) : UPDATE qty_arbitrated déclenche recalcul';
 END $test_7$;
 
 -- ============================================
@@ -267,18 +279,19 @@ BEGIN
 
   INSERT INTO sav_lines (sav_id, product_id, product_code_snapshot, product_name_snapshot,
     qty_requested, unit_requested, qty_invoiced, unit_invoiced,
-    unit_price_ht_cents, vat_rate_bp_snapshot, credit_coefficient)
+    unit_price_ttc_cents, vat_rate_bp_snapshot, credit_coefficient,
+    qty_arbitrated, unit_arbitrated)
   VALUES
-    (v_sav_id, v_prod_id, 'L1', 'L1', 10, 'kg', 10, 'kg', 200, 550, 1),
-    (v_sav_id, v_prod_id, 'L2', 'L2', 5,  'kg', 5,  'kg', 300, 550, 0.5),
-    (v_sav_id, v_prod_id, 'L3', 'L3', 3,  'kg', 3,  'kg', 100, 550, 1);
+    (v_sav_id, v_prod_id, 'L1', 'L1', 10, 'kg', 10, 'kg', 200, 550, 1, 10, 'kg'),
+    (v_sav_id, v_prod_id, 'L2', 'L2', 5,  'kg', 5,  'kg', 300, 550, 0.5, 5, 'kg'),
+    (v_sav_id, v_prod_id, 'L3', 'L3', 3,  'kg', 3,  'kg', 100, 550, 1, 3, 'kg');
 
   SELECT total_amount_cents INTO v_sav_total FROM sav WHERE id = v_sav_id;
-  v_expected := 2000 + 750 + 300; -- 3050
+  v_expected := 1900 + 710 + 285; -- 2895
   IF v_sav_total <> v_expected THEN
     RAISE EXCEPTION 'FAIL Test 8: total_amount_cents=% attendu %', v_sav_total, v_expected;
   END IF;
-  RAISE NOTICE 'OK Test 8 (AC #9) : recompute_sav_total 3 lignes ok = 3050c';
+  RAISE NOTICE 'OK Test 8 (AC #9) : recompute_sav_total 3 lignes ok = 2895c';
 END $test_8$;
 
 -- ============================================
@@ -290,22 +303,23 @@ DECLARE
   v_prod_id bigint := current_setting('test.product_id')::bigint;
   v_sav_total bigint;
 BEGIN
-  -- 1 ligne ok + 1 ligne unit_mismatch + 1 ligne to_calculate
+  -- 1 ligne ok + 1 ligne awaiting_arbitration + 1 ligne to_calculate
   DELETE FROM sav_lines WHERE sav_id = v_sav_id;
 
   INSERT INTO sav_lines (sav_id, product_id, product_code_snapshot, product_name_snapshot,
     qty_requested, unit_requested, qty_invoiced, unit_invoiced,
-    unit_price_ht_cents, vat_rate_bp_snapshot, credit_coefficient)
+    unit_price_ttc_cents, vat_rate_bp_snapshot, credit_coefficient,
+    qty_arbitrated, unit_arbitrated)
   VALUES
-    (v_sav_id, v_prod_id, 'OK1', 'OK1', 4, 'kg', 4, 'kg', 250, 550, 1), -- 1000c ok
-    (v_sav_id, v_prod_id, 'MIS', 'MIS', 2, 'kg', 2, 'liter', 500, 550, 1), -- unit_mismatch
-    (v_sav_id, v_prod_id, 'TC',  'TC',  1, 'kg', 1, 'kg', NULL, 550, 1); -- to_calculate
+    (v_sav_id, v_prod_id, 'OK1', 'OK1', 4, 'kg', 4, 'kg', 250, 550, 1, 4, 'kg'), -- 948c ok
+    (v_sav_id, v_prod_id, 'MIS', 'MIS', 2, 'kg', 2, 'liter', 500, 550, 1, NULL, NULL), -- awaiting_arbitration
+    (v_sav_id, v_prod_id, 'TC',  'TC',  1, 'kg', 1, 'kg', NULL, 550, 1, NULL, NULL); -- to_calculate
 
   SELECT total_amount_cents INTO v_sav_total FROM sav WHERE id = v_sav_id;
-  IF v_sav_total <> 1000 THEN
-    RAISE EXCEPTION 'FAIL Test 9: total=% attendu 1000 (seule ligne ok comptée)', v_sav_total;
+  IF v_sav_total <> 948 THEN
+    RAISE EXCEPTION 'FAIL Test 9: total=% attendu 948 (seule ligne ok comptée)', v_sav_total;
   END IF;
-  RAISE NOTICE 'OK Test 9 (AC #9) : recompute filtre non-ok, total=1000c';
+  RAISE NOTICE 'OK Test 9 (AC #9) : recompute filtre non-ok, total=948c';
 END $test_9$;
 
 -- ============================================
@@ -322,28 +336,30 @@ BEGIN
 
   INSERT INTO sav_lines (sav_id, product_id, product_code_snapshot, product_name_snapshot,
     qty_requested, unit_requested, qty_invoiced, unit_invoiced,
-    unit_price_ht_cents, vat_rate_bp_snapshot, credit_coefficient)
+    unit_price_ttc_cents, vat_rate_bp_snapshot, credit_coefficient,
+    qty_arbitrated, unit_arbitrated)
   VALUES
-    (v_sav_id, v_prod_id, 'A', 'A', 10, 'kg', 10, 'kg', 100, 550, 1) -- 1000c
+    (v_sav_id, v_prod_id, 'A', 'A', 10, 'kg', 10, 'kg', 100, 550, 1, 10, 'kg') -- 950c
   RETURNING id INTO v_line_id;
 
   INSERT INTO sav_lines (sav_id, product_id, product_code_snapshot, product_name_snapshot,
     qty_requested, unit_requested, qty_invoiced, unit_invoiced,
-    unit_price_ht_cents, vat_rate_bp_snapshot, credit_coefficient)
+    unit_price_ttc_cents, vat_rate_bp_snapshot, credit_coefficient,
+    qty_arbitrated, unit_arbitrated)
   VALUES
-    (v_sav_id, v_prod_id, 'B', 'B', 5, 'kg', 5, 'kg', 200, 550, 1); -- 1000c
+    (v_sav_id, v_prod_id, 'B', 'B', 5, 'kg', 5, 'kg', 200, 550, 1, 5, 'kg'); -- 950c
 
   SELECT total_amount_cents INTO v_sav_total FROM sav WHERE id = v_sav_id;
-  IF v_sav_total <> 2000 THEN
-    RAISE EXCEPTION 'FAIL Test 10a: total=% attendu 2000 avant DELETE', v_sav_total;
+  IF v_sav_total <> 1900 THEN
+    RAISE EXCEPTION 'FAIL Test 10a: total=% attendu 1900 avant DELETE', v_sav_total;
   END IF;
 
   DELETE FROM sav_lines WHERE id = v_line_id;
   SELECT total_amount_cents INTO v_sav_total FROM sav WHERE id = v_sav_id;
-  IF v_sav_total <> 1000 THEN
-    RAISE EXCEPTION 'FAIL Test 10b: total après DELETE=% attendu 1000', v_sav_total;
+  IF v_sav_total <> 950 THEN
+    RAISE EXCEPTION 'FAIL Test 10b: total après DELETE=% attendu 950', v_sav_total;
   END IF;
-  RAISE NOTICE 'OK Test 10 (AC #9) : DELETE décroît total 2000→1000';
+  RAISE NOTICE 'OK Test 10 (AC #9) : DELETE décroît total 1900→950';
 END $test_10$;
 
 -- ============================================
@@ -363,9 +379,10 @@ BEGIN
   -- Pose une ligne avec snapshot 550
   INSERT INTO sav_lines (sav_id, product_id, product_code_snapshot, product_name_snapshot,
     qty_requested, unit_requested, qty_invoiced, unit_invoiced,
-    unit_price_ht_cents, vat_rate_bp_snapshot, credit_coefficient)
+    unit_price_ttc_cents, vat_rate_bp_snapshot, credit_coefficient,
+    qty_arbitrated, unit_arbitrated)
   VALUES
-    (v_sav_id, v_prod_id, 'SNAP', 'SNAP', 10, 'kg', 10, 'kg', 200, 550, 1)
+    (v_sav_id, v_prod_id, 'SNAP', 'SNAP', 10, 'kg', 10, 'kg', 200, 550, 1, 10, 'kg')
   RETURNING id, credit_amount_cents INTO v_line_id, v_credit_before;
 
   -- Simule un changement de settings (insertion d'une nouvelle version)
@@ -394,7 +411,7 @@ BEGIN
 END $test_11$;
 
 -- ============================================
--- Test 12 (AC #8) : Arrondi au cent — 3 × 333 × 0.33 = 329.67 → 330
+-- Test 12 (AC #8) : Arrondi au cent — TTC converti HT puis coefficient
 -- ============================================
 DO $test_12$
 DECLARE
@@ -406,16 +423,17 @@ BEGIN
 
   INSERT INTO sav_lines (sav_id, product_id, product_code_snapshot, product_name_snapshot,
     qty_requested, unit_requested, qty_invoiced, unit_invoiced,
-    unit_price_ht_cents, vat_rate_bp_snapshot, credit_coefficient)
+    unit_price_ttc_cents, vat_rate_bp_snapshot, credit_coefficient,
+    qty_arbitrated, unit_arbitrated)
   VALUES
-    (v_sav_id, v_prod_id, 'ROUND', 'ROUND', 3, 'kg', 3, 'kg', 333, 550, 0.33)
+    (v_sav_id, v_prod_id, 'ROUND', 'ROUND', 3, 'kg', 3, 'kg', 333, 550, 0.33, 3, 'kg')
   RETURNING * INTO v_row;
 
-  IF v_row.credit_amount_cents <> 330 THEN
-    RAISE EXCEPTION 'FAIL Test 12: credit=% attendu 330 (3×333×0.33=329.67→330)',
+  IF v_row.credit_amount_cents <> 313 THEN
+    RAISE EXCEPTION 'FAIL Test 12: credit=% attendu 313 (3×316 HT×0.33=312.84→313)',
                     v_row.credit_amount_cents;
   END IF;
-  RAISE NOTICE 'OK Test 12 (AC #8) : arrondi half-away-from-zero 329.67→330';
+  RAISE NOTICE 'OK Test 12 (AC #8) : arrondi half-away-from-zero 312.84→313';
 END $test_12$;
 
 -- ============================================
@@ -433,9 +451,10 @@ BEGIN
 
   INSERT INTO sav_lines (sav_id, product_id, product_code_snapshot, product_name_snapshot,
     qty_requested, unit_requested, qty_invoiced, unit_invoiced,
-    unit_price_ht_cents, vat_rate_bp_snapshot, credit_coefficient)
+    unit_price_ttc_cents, vat_rate_bp_snapshot, credit_coefficient,
+    qty_arbitrated, unit_arbitrated)
   VALUES
-    (v_sav_id, v_prod_id, 'W', 'W', 10, 'kg', 10, 'kg', 150, 550, 1)
+    (v_sav_id, v_prod_id, 'W', 'W', 10, 'kg', 10, 'kg', 150, 550, 1, 10, 'kg')
   RETURNING id, credit_amount_cents INTO v_line_id, v_credit_before;
 
   -- UPDATE `line_number` (non-watchée) : le trigger BEFORE ne déclenche pas.
@@ -486,9 +505,10 @@ BEGIN
 
   INSERT INTO sav_lines (sav_id, product_id, product_code_snapshot, product_name_snapshot,
     qty_requested, unit_requested, qty_invoiced, unit_invoiced,
-    unit_price_ht_cents, vat_rate_bp_snapshot, credit_coefficient)
+    unit_price_ttc_cents, vat_rate_bp_snapshot, credit_coefficient,
+    qty_arbitrated, unit_arbitrated)
   VALUES
-    (v_sav_id, v_prod_id, 'IDEM', 'IDEM', 4, 'kg', 4, 'kg', 125, 550, 1)
+    (v_sav_id, v_prod_id, 'IDEM', 'IDEM', 4, 'kg', 4, 'kg', 125, 550, 1, 4, 'kg')
   RETURNING id, credit_amount_cents, validation_status
       INTO v_line_id, v_credit_before, v_status_before;
 
@@ -516,9 +536,10 @@ BEGIN
 
   INSERT INTO sav_lines (sav_id, product_id, product_code_snapshot, product_name_snapshot,
     qty_requested, unit_requested, qty_invoiced, unit_invoiced,
-    unit_price_ht_cents, vat_rate_bp_snapshot, credit_coefficient)
+    unit_price_ttc_cents, vat_rate_bp_snapshot, credit_coefficient,
+    qty_arbitrated, unit_arbitrated)
   VALUES
-    (v_sav_id, v_prod_id, 'ZERO', 'ZERO', 5, 'kg', 5, 'kg', 1000, 550, 0)
+    (v_sav_id, v_prod_id, 'ZERO', 'ZERO', 5, 'kg', 5, 'kg', 1000, 550, 0, 5, 'kg')
   RETURNING * INTO v_row;
 
   IF v_row.validation_status <> 'ok' THEN
@@ -545,7 +566,7 @@ BEGIN
   -- mais qty_invoiced/unit_invoiced NULL. Doit donner 'to_calculate'.
   INSERT INTO sav_lines (sav_id, product_id, product_code_snapshot, product_name_snapshot,
     qty_requested, unit_requested, qty_invoiced, unit_invoiced,
-    unit_price_ht_cents, vat_rate_bp_snapshot, credit_coefficient)
+    unit_price_ttc_cents, vat_rate_bp_snapshot, credit_coefficient)
   VALUES
     (v_sav_id, v_prod_id, 'D1', 'D1 capture incomplète',
      10, 'kg', NULL, NULL, 200, 550, 1)
@@ -564,7 +585,7 @@ BEGIN
 END $test_17$;
 
 -- ============================================
--- Test 18 (P3 CR) : immutability snapshot — unit_price_ht_cents protégé
+-- Test 18 (P3 CR) : immutability snapshot — unit_price_ttc_cents protégé
 -- ============================================
 DO $test_18$
 DECLARE
@@ -578,20 +599,20 @@ BEGIN
 
   INSERT INTO sav_lines (sav_id, product_id, product_code_snapshot, product_name_snapshot,
     qty_requested, unit_requested, qty_invoiced, unit_invoiced,
-    unit_price_ht_cents, vat_rate_bp_snapshot, credit_coefficient)
+    unit_price_ttc_cents, vat_rate_bp_snapshot, credit_coefficient)
   VALUES (v_sav_id, v_prod_id, 'P3', 'P3 snapshot gelé',
           5, 'kg', 5, 'kg', 200, 550, 1)
   RETURNING id INTO v_line_id;
 
-  -- Tentative modification unit_price_ht_cents : doit lever SNAPSHOT_IMMUTABLE
+  -- Tentative modification unit_price_ttc_cents : doit lever SNAPSHOT_IMMUTABLE
   BEGIN
-    UPDATE sav_lines SET unit_price_ht_cents = 999 WHERE id = v_line_id;
+    UPDATE sav_lines SET unit_price_ttc_cents = 999 WHERE id = v_line_id;
   EXCEPTION WHEN SQLSTATE 'P0001' THEN
     v_caught := true;
-    v_col := 'unit_price_ht_cents';
+    v_col := 'unit_price_ttc_cents';
   END;
   IF NOT v_caught THEN
-    RAISE EXCEPTION 'FAIL Test 18a (P3) : UPDATE unit_price_ht_cents aurait dû lever SNAPSHOT_IMMUTABLE';
+    RAISE EXCEPTION 'FAIL Test 18a (P3) : UPDATE unit_price_ttc_cents aurait dû lever SNAPSHOT_IMMUTABLE';
   END IF;
 
   -- Tentative vat_rate_bp_snapshot : doit aussi lever
@@ -611,7 +632,7 @@ BEGIN
 END $test_18$;
 
 -- ============================================
--- Test 19 (P10 CR) : validation_messages legacy plural synchro avec singulier
+-- Test 19 (P10 CR) : validation_messages legacy reste stable
 -- ============================================
 DO $test_19$
 DECLARE
@@ -624,8 +645,9 @@ BEGIN
   -- Cas 1 : status='ok' → validation_messages = '[]'
   INSERT INTO sav_lines (sav_id, product_id, product_code_snapshot, product_name_snapshot,
     qty_requested, unit_requested, qty_invoiced, unit_invoiced,
-    unit_price_ht_cents, vat_rate_bp_snapshot, credit_coefficient)
-  VALUES (v_sav_id, v_prod_id, 'P10-OK', 'P10 ok', 5, 'kg', 5, 'kg', 100, 550, 1)
+    unit_price_ttc_cents, vat_rate_bp_snapshot, credit_coefficient,
+    qty_arbitrated, unit_arbitrated)
+  VALUES (v_sav_id, v_prod_id, 'P10-OK', 'P10 ok', 5, 'kg', 5, 'kg', 100, 550, 1, 5, 'kg')
   RETURNING * INTO v_row;
 
   IF v_row.validation_status <> 'ok' THEN
@@ -635,25 +657,24 @@ BEGIN
     RAISE EXCEPTION 'FAIL Test 19a (P10): validation_messages=% attendu [] sur ok', v_row.validation_messages;
   END IF;
 
-  -- Cas 2 : status='unit_mismatch' → validation_messages = [message singulier]
+  -- Cas 2 : status='awaiting_arbitration' → validation_message singulier, tableau legacy vide
   DELETE FROM sav_lines WHERE sav_id = v_sav_id;
   INSERT INTO sav_lines (sav_id, product_id, product_code_snapshot, product_name_snapshot,
     qty_requested, unit_requested, qty_invoiced, unit_invoiced,
-    unit_price_ht_cents, vat_rate_bp_snapshot, credit_coefficient)
+    unit_price_ttc_cents, vat_rate_bp_snapshot, credit_coefficient)
   VALUES (v_sav_id, v_prod_id, 'P10-MIS', 'P10 mismatch', 2, 'kg', 2, 'liter', 100, 550, 1)
   RETURNING * INTO v_row;
 
-  IF v_row.validation_status <> 'unit_mismatch' THEN
-    RAISE EXCEPTION 'FAIL Test 19b (P10): status=% attendu unit_mismatch', v_row.validation_status;
+  IF v_row.validation_status <> 'awaiting_arbitration' THEN
+    RAISE EXCEPTION 'FAIL Test 19b (P10): status=% attendu awaiting_arbitration', v_row.validation_status;
   END IF;
-  IF jsonb_array_length(v_row.validation_messages) <> 1 THEN
-    RAISE EXCEPTION 'FAIL Test 19b (P10): validation_messages=% attendu array de 1 élément', v_row.validation_messages;
+  IF v_row.validation_message <> 'Arbitrage opérateur requis (Row 3)' THEN
+    RAISE EXCEPTION 'FAIL Test 19b (P10): validation_message=% attendu arbitrage requis', v_row.validation_message;
   END IF;
-  IF v_row.validation_messages->>0 <> v_row.validation_message THEN
-    RAISE EXCEPTION 'FAIL Test 19b (P10): mismatch entre singulier (%) et pluriel (%s)',
-                    v_row.validation_message, v_row.validation_messages->>0;
+  IF v_row.validation_messages <> '[]'::jsonb THEN
+    RAISE EXCEPTION 'FAIL Test 19b (P10): validation_messages=% attendu [] sur awaiting_arbitration', v_row.validation_messages;
   END IF;
-  RAISE NOTICE 'OK Test 19 (P10 CR) : validation_messages legacy synchronisé avec singulier';
+  RAISE NOTICE 'OK Test 19 (P10 CR) : validation_messages legacy stable';
 END $test_19$;
 
 -- ============================================
@@ -672,8 +693,9 @@ BEGIN
 
   INSERT INTO sav_lines (sav_id, product_id, product_code_snapshot, product_name_snapshot,
     qty_requested, unit_requested, qty_invoiced, unit_invoiced,
-    unit_price_ht_cents, vat_rate_bp_snapshot, credit_coefficient)
-  VALUES (v_sav_id, v_prod_id, 'P4', 'P4 guard', 5, 'kg', 5, 'kg', 100, 550, 1)
+    unit_price_ttc_cents, vat_rate_bp_snapshot, credit_coefficient,
+    qty_arbitrated, unit_arbitrated)
+  VALUES (v_sav_id, v_prod_id, 'P4', 'P4 guard', 5, 'kg', 5, 'kg', 100, 550, 1, 5, 'kg')
   RETURNING id INTO v_line_id;
 
   -- Capture updated_at post-INSERT (trigger AFTER set_updated_at doit avoir tourné)

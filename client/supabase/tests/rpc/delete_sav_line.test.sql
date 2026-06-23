@@ -31,22 +31,22 @@ BEGIN
   INSERT INTO sav (member_id, status) VALUES (v_mem, 'in_progress') RETURNING id INTO v_sav;
   INSERT INTO sav (member_id, status) VALUES (v_mem, 'closed') RETURNING id INTO v_sav_closed;
 
-  -- Ligne A : qty match, crédit calculé via trigger compute → 2 × 100 × 1 = 200
+  -- Ligne A : qty arbitrée, crédit calculé via trigger compute → 2 × 95 HT × 1 = 190
   INSERT INTO sav_lines (
     sav_id, product_code_snapshot, product_name_snapshot,
-    qty_requested, unit_requested, qty_invoiced, unit_invoiced,
-    unit_price_ht_cents, vat_rate_bp_snapshot, credit_coefficient
+    qty_requested, unit_requested, qty_invoiced, unit_invoiced, qty_arbitrated, unit_arbitrated,
+    unit_price_ttc_cents, vat_rate_bp_snapshot, credit_coefficient
   ) VALUES (
-    v_sav, 'P-A', 'Produit A', 2, 'kg', 2, 'kg', 100, 550, 1
+    v_sav, 'P-A', 'Produit A', 2, 'kg', 2, 'kg', 2, 'kg', 100, 550, 1
   ) RETURNING id INTO v_line_a;
 
-  -- Ligne B : qty match, crédit = 3 × 200 × 1 = 600
+  -- Ligne B : qty arbitrée, crédit = 3 × 190 HT × 1 = 570
   INSERT INTO sav_lines (
     sav_id, product_code_snapshot, product_name_snapshot,
-    qty_requested, unit_requested, qty_invoiced, unit_invoiced,
-    unit_price_ht_cents, vat_rate_bp_snapshot, credit_coefficient
+    qty_requested, unit_requested, qty_invoiced, unit_invoiced, qty_arbitrated, unit_arbitrated,
+    unit_price_ttc_cents, vat_rate_bp_snapshot, credit_coefficient
   ) VALUES (
-    v_sav, 'P-B', 'Produit B', 3, 'kg', 3, 'kg', 200, 550, 1
+    v_sav, 'P-B', 'Produit B', 3, 'kg', 3, 'kg', 3, 'kg', 200, 550, 1
   ) RETURNING id INTO v_line_b;
 
   PERFORM set_config('test.sav_id', v_sav::text, false);
@@ -76,10 +76,10 @@ BEGIN
     RAISE EXCEPTION 'FAIL Test 1 setup : sav introuvable';
   END IF;
 
-  -- total_amount_cents initial = 200 + 600 = 800
+  -- total_amount_cents initial = 190 + 570 = 760
   SELECT total_amount_cents INTO v_total FROM sav WHERE id = v_sav;
-  IF v_total <> 800 THEN
-    RAISE EXCEPTION 'FAIL Test 1 setup : total initial attendu 800, reçu %', v_total;
+  IF v_total <> 760 THEN
+    RAISE EXCEPTION 'FAIL Test 1 setup : total initial attendu 760, reçu %', v_total;
   END IF;
 
   SELECT * INTO v_result FROM delete_sav_line(v_sav, v_line_a, v_version::int, v_op);
@@ -92,10 +92,10 @@ BEGIN
     RAISE EXCEPTION 'FAIL Test 1 : ligne A doit être supprimée';
   END IF;
 
-  -- Test 2 merged ici : total recomputé (seule ligne B restante → 600).
+  -- Test 2 merged ici : total recomputé (seule ligne B restante → 570).
   SELECT total_amount_cents INTO v_total FROM sav WHERE id = v_sav;
-  IF v_total <> 600 THEN
-    RAISE EXCEPTION 'FAIL Test 2 : total recomputé attendu 600, reçu %', v_total;
+  IF v_total <> 570 THEN
+    RAISE EXCEPTION 'FAIL Test 2 : total recomputé attendu 570, reçu %', v_total;
   END IF;
 
   RAISE NOTICE 'OK Tests 1+2 (AC #1) : delete + sav.version++ + recompute_sav_total';

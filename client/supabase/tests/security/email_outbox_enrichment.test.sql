@@ -9,8 +9,8 @@
 --   - 4 CHECKs (recipient_email non-vide, attempts<=50, status enrichi,
 --     au moins une cible)
 --   - whitelist `kind` (8 valeurs)
---   - index partiel `idx_email_outbox_due` + conservation
---     `idx_email_outbox_dedup_pending` (F51)
+--   - index partiel `idx_email_outbox_due` + conservation du dedup F51
+--     split par acteur opérateur
 --   - 2 triggers (set_updated_at, sync_retry_count_attempts)
 --   - RLS service_role-only inchangée
 --   - members.notification_prefs CHECK schéma + index opt-in weekly_recap
@@ -406,14 +406,17 @@ END $$;
 DO $$
 DECLARE
   v_due_exists      boolean;
-  v_dedup_exists    boolean;
+  v_dedup_no_operator_exists  boolean;
+  v_dedup_per_operator_exists boolean;
   v_optin_exists    boolean;
   v_pending_exists  boolean;
 BEGIN
   SELECT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname='idx_email_outbox_due')
     INTO v_due_exists;
-  SELECT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname='idx_email_outbox_dedup_pending')
-    INTO v_dedup_exists;
+  SELECT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname='idx_email_outbox_dedup_pending_no_operator')
+    INTO v_dedup_no_operator_exists;
+  SELECT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname='idx_email_outbox_dedup_pending_per_operator')
+    INTO v_dedup_per_operator_exists;
   SELECT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname='idx_members_weekly_recap_optin')
     INTO v_optin_exists;
   SELECT EXISTS (SELECT 1 FROM pg_indexes WHERE schemaname='public' AND indexname='idx_email_outbox_pending')
@@ -422,8 +425,9 @@ BEGIN
   IF NOT v_due_exists THEN
     RAISE EXCEPTION 'FAIL S6.1.AC5.idx-a: idx_email_outbox_due absent';
   END IF;
-  IF NOT v_dedup_exists THEN
-    RAISE EXCEPTION 'FAIL S6.1.AC5.idx-b: idx_email_outbox_dedup_pending absent (régression F51)';
+  IF NOT v_dedup_no_operator_exists OR NOT v_dedup_per_operator_exists THEN
+    RAISE EXCEPTION 'FAIL S6.1.AC5.idx-b: index dedup pending split absent (no_operator=%, per_operator=%)',
+      v_dedup_no_operator_exists, v_dedup_per_operator_exists;
   END IF;
   IF NOT v_optin_exists THEN
     RAISE EXCEPTION 'FAIL S6.1.AC8.idx-c: idx_members_weekly_recap_optin absent';
@@ -432,7 +436,7 @@ BEGIN
     RAISE EXCEPTION 'FAIL S6.1.AC5.idx-d: idx_email_outbox_pending toujours présent (devrait être REMPLACÉ par idx_email_outbox_due)';
   END IF;
 
-  RAISE NOTICE '✓ Index : idx_email_outbox_due présent, idx_email_outbox_dedup_pending conservé, idx_members_weekly_recap_optin présent, ancien idx_email_outbox_pending supprimé';
+  RAISE NOTICE '✓ Index : idx_email_outbox_due présent, dedup pending split conservé, idx_members_weekly_recap_optin présent, ancien idx_email_outbox_pending supprimé';
 END $$;
 
 ROLLBACK;

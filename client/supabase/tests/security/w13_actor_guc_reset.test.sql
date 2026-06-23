@@ -41,7 +41,7 @@ BEGIN
     SELECT proconfig INTO v_proconfig
       FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
      WHERE n.nspname = 'public' AND p.proname = v_fn
-       AND pg_get_function_identity_arguments(p.oid) = v_args;
+       AND oidvectortypes(p.proargtypes) = v_args;
     IF v_proconfig IS NULL OR NOT EXISTS (
       SELECT 1 FROM unnest(v_proconfig) cfg WHERE cfg LIKE 'app.actor_operator_id=%'
     ) THEN
@@ -91,7 +91,7 @@ BEGIN
   SELECT count(*) INTO v_audit_count_before FROM audit_trail
    WHERE entity_type = 'sav' AND entity_id = v_sav;
 
-  PERFORM public.assign_sav(v_sav, v_op, 0, v_op);
+  PERFORM public.assign_sav(v_sav, v_op, 1, v_op);
 
   SELECT count(*) INTO v_audit_count_after FROM audit_trail
    WHERE entity_type = 'sav' AND entity_id = v_sav;

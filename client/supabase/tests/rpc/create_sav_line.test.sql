@@ -58,15 +58,15 @@ BEGIN
       'qtyRequested', 2.5,
       'unitRequested', 'kg'
     ),
-    0,
+    1,
     v_op
   );
 
   IF v_result.line_id IS NULL THEN
     RAISE EXCEPTION 'FAIL Test 1 : line_id attendu non NULL';
   END IF;
-  IF v_result.new_version <> 1 THEN
-    RAISE EXCEPTION 'FAIL Test 1 : new_version attendu 1, reçu %', v_result.new_version;
+  IF v_result.new_version <> 2 THEN
+    RAISE EXCEPTION 'FAIL Test 1 : new_version attendu 2, reçu %', v_result.new_version;
   END IF;
 
   SELECT line_number, credit_coefficient, credit_coefficient_label
@@ -104,7 +104,7 @@ BEGIN
       'qtyRequested', 1.0,
       'unitRequested', 'piece'
     ),
-    1,
+    2,
     v_op
   );
 
@@ -112,15 +112,15 @@ BEGIN
   IF v_line_number <> 2 THEN
     RAISE EXCEPTION 'FAIL Test 2 : line_number attendu 2, reçu %', v_line_number;
   END IF;
-  IF v_result.new_version <> 2 THEN
-    RAISE EXCEPTION 'FAIL Test 2 : new_version attendu 2, reçu %', v_result.new_version;
+  IF v_result.new_version <> 3 THEN
+    RAISE EXCEPTION 'FAIL Test 2 : new_version attendu 3, reçu %', v_result.new_version;
   END IF;
 
   RAISE NOTICE 'OK Test 2 (AC #1) : line_number auto MAX+1';
 END $$;
 
 -- ------------------------------------------------------------
--- Test 3 (AC #1) : ligne avec qty_invoiced + unit_invoiced + prix →
+-- Test 3 (AC #1) : ligne avec facture + arbitrage + prix →
 -- trigger compute_sav_line_credit calcule credit_amount_cents + validation_status='ok'.
 -- ------------------------------------------------------------
 DO $$
@@ -140,12 +140,14 @@ BEGIN
       'unitRequested', 'kg',
       'qtyInvoiced', 2.0,
       'unitInvoiced', 'kg',
-      'unitPriceHtCents', 1000,
+      'qtyArbitrated', 2.0,
+      'unitArbitrated', 'kg',
+      'unitPriceTtcCents', 1000,
       'vatRateBpSnapshot', 550,
       'creditCoefficient', 0.5,
       'creditCoefficientLabel', '50%'
     ),
-    2,
+    3,
     v_op
   );
 
@@ -156,9 +158,9 @@ BEGIN
   IF v_status <> 'ok' THEN
     RAISE EXCEPTION 'FAIL Test 3 : validation_status attendu ok, reçu %', v_status;
   END IF;
-  -- 2 × 1000 × 0.5 = 1000 cents
-  IF v_credit <> 1000 THEN
-    RAISE EXCEPTION 'FAIL Test 3 : credit_amount_cents attendu 1000, reçu %', v_credit;
+  -- V1.8 : 1000 TTC à 5.5% -> 948 HT ; 2 × 948 × 0.5 = 948 cents
+  IF v_credit <> 948 THEN
+    RAISE EXCEPTION 'FAIL Test 3 : credit_amount_cents attendu 948, reçu %', v_credit;
   END IF;
   IF v_result.validation_status <> 'ok' THEN
     RAISE EXCEPTION 'FAIL Test 3 : RPC validation_status retour attendu ok, reçu %', v_result.validation_status;
@@ -273,39 +275,39 @@ END $$;
 
 -- ------------------------------------------------------------
 -- Test 7 (F52) : patch ne peut PAS forcer validation_status.
--- Le trigger compute s'exécute et réécrit validation_status selon les inputs.
--- Ici qty_requested=10 > qty_invoiced=1 → trigger produit qty_exceeds_invoice
--- même si le client tente de poser validation_status='ok' (ignoré par RPC).
+-- Le champ est rejeté par la RPC avant insertion.
 -- ------------------------------------------------------------
 DO $$
 DECLARE
   v_sav bigint := current_setting('test.sav_id')::bigint;
   v_op  bigint := current_setting('test.op_id')::bigint;
-  v_result record;
-  v_status text;
+  v_caught text;
 BEGIN
-  SELECT * INTO v_result FROM create_sav_line(
-    v_sav,
-    jsonb_build_object(
-      'productCodeSnapshot', 'P-F52',
-      'productNameSnapshot', 'F52',
-      'qtyRequested', 10,
-      'unitRequested', 'kg',
-      'qtyInvoiced', 1,
-      'unitInvoiced', 'kg',
-      'unitPriceHtCents', 500,
-      'validationStatus', 'ok'  -- CLIENT TRY BYPASS — doit être ignoré
-    ),
-    3,
-    v_op
-  );
+  BEGIN
+    PERFORM create_sav_line(
+      v_sav,
+      jsonb_build_object(
+        'productCodeSnapshot', 'P-F52',
+        'productNameSnapshot', 'F52',
+        'qtyRequested', 10,
+        'unitRequested', 'kg',
+        'qtyInvoiced', 1,
+        'unitInvoiced', 'kg',
+        'unitPriceTtcCents', 500,
+        'validationStatus', 'ok'  -- CLIENT TRY BYPASS — doit être rejeté
+      ),
+      4,
+      v_op
+    );
+  EXCEPTION WHEN sqlstate 'P0001' THEN
+    v_caught := SQLERRM;
+  END;
 
-  SELECT validation_status INTO v_status FROM sav_lines WHERE id = v_result.line_id;
-  IF v_status <> 'qty_exceeds_invoice' THEN
-    RAISE EXCEPTION 'FAIL Test 7 (F52) : trigger doit imposer qty_exceeds_invoice, reçu %', v_status;
+  IF v_caught IS NULL OR v_caught NOT LIKE 'FORBIDDEN_FIELD|field=validationStatus%' THEN
+    RAISE EXCEPTION 'FAIL Test 7 (F52) : FORBIDDEN_FIELD validationStatus attendu, reçu %', v_caught;
   END IF;
 
-  RAISE NOTICE 'OK Test 7 (F52) : validation_status imposé par trigger, pas par patch';
+  RAISE NOTICE 'OK Test 7 (F52) : validation_status rejeté par la RPC, pas pilotable par patch';
 END $$;
 
 -- ------------------------------------------------------------

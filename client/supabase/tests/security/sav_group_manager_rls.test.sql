@@ -68,8 +68,8 @@ END $$;
 -- ------------------------------------------------------------
 SET LOCAL ROLE service_role;
 
-INSERT INTO groups (name) VALUES ('S65-GroupA-NiceEst') ON CONFLICT (name) DO NOTHING;
-INSERT INTO groups (name) VALUES ('S65-GroupB-Marseille') ON CONFLICT (name) DO NOTHING;
+INSERT INTO groups (code, name) VALUES ('S65-GROUP-A', 'S65-GroupA-NiceEst') ON CONFLICT (code) DO NOTHING;
+INSERT INTO groups (code, name) VALUES ('S65-GROUP-B', 'S65-GroupB-Marseille') ON CONFLICT (code) DO NOTHING;
 
 DO $$
 DECLARE
@@ -83,8 +83,8 @@ DECLARE
   v_sav_b2  bigint;
   v_sav_mgr_a bigint;
 BEGIN
-  SELECT id INTO v_group_a FROM groups WHERE name = 'S65-GroupA-NiceEst';
-  SELECT id INTO v_group_b FROM groups WHERE name = 'S65-GroupB-Marseille';
+  SELECT id INTO v_group_a FROM groups WHERE code = 'S65-GROUP-A';
+  SELECT id INTO v_group_b FROM groups WHERE code = 'S65-GROUP-B';
 
   INSERT INTO members (email, last_name, group_id, is_group_manager)
        VALUES ('s65-mgr-a@example.com', 'S65MgrA', v_group_a, true)

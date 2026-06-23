@@ -182,7 +182,7 @@ BEGIN
   INSERT INTO sav_lines (
     sav_id, product_code_snapshot, product_name_snapshot,
     qty_requested, unit_requested, qty_invoiced, unit_invoiced,
-    unit_price_ht_cents, vat_rate_bp_snapshot, credit_coefficient
+    unit_price_ttc_cents, vat_rate_bp_snapshot, credit_coefficient
   ) VALUES (
     v_sav, 'P-W14', 'Produit W14', 1, 'kg', 1, 'kg', 100, 550, 1
   );

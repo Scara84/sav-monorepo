@@ -89,15 +89,15 @@ END $$;
 -- ------------------------------------------------------------
 -- Test 1 (AC #5 Test 1) : Prix complets — tous les 5 champs renseignés
 --
--- Payload: unitPriceHtCents=2500, vatRateBp=550, qtyInvoiced=2.5,
+-- Payload: unitPriceTtcCents=2500, vatRateBp=550, qtyInvoiced=2.5,
 --          invoiceLineId='pennylane-uuid-abc', unitInvoiced='kg'
 -- Attendu:
---   - unit_price_ht_cents = 2500
+--   - unit_price_ttc_cents = 2500
 --   - vat_rate_bp_snapshot = 550
 --   - qty_invoiced = 2.5
 --   - invoice_line_id = 'pennylane-uuid-abc'
 --   - unit_invoiced = 'kg'
---   - validation_status = 'ok' (trigger atteint le branch ok car unit_invoiced est renseigné)
+--   - validation_status = 'awaiting_arbitration' (facture complète, arbitrage opérateur Row 3 requis)
 -- RED: échoue si la RPC ne lit pas les nouveaux champs JSONB ou n'écrit pas unit_invoiced.
 -- NEEDS-FIX: avant ce fix, unit_invoiced était NULL → trigger forçait 'to_calculate'.
 -- ------------------------------------------------------------
@@ -130,7 +130,7 @@ DECLARE
         'unit',              'kg',
         'cause',             'moisissure',
         -- Story 4.7 nouveaux champs (5 au total avec fix unit_invoiced)
-        'unitPriceHtCents',  2500,
+        'unitPriceTtcCents',  2500,
         'vatRateBp',         550,
         'qtyInvoiced',       2.5,
         'invoiceLineId',     'pennylane-uuid-abc',
@@ -148,14 +148,14 @@ BEGIN
     RAISE EXCEPTION 'FAIL Test 1 : RPC n''a pas retourné de sav_id';
   END IF;
 
-  SELECT l.unit_price_ht_cents, l.vat_rate_bp_snapshot, l.qty_invoiced,
+  SELECT l.unit_price_ttc_cents, l.vat_rate_bp_snapshot, l.qty_invoiced,
          l.invoice_line_id, l.validation_status, l.unit_requested, l.unit_invoiced
     INTO v_price_cents, v_vat_bp, v_qty_inv, v_inv_line_id, v_val_status, v_unit_req, v_unit_inv
   FROM sav_lines l WHERE l.sav_id = v_sav_id LIMIT 1;
 
   -- Vérifications Story 4.7 (RED)
   IF v_price_cents <> 2500 THEN
-    RAISE EXCEPTION 'FAIL Test 1 : unit_price_ht_cents=% (attendu 2500)', v_price_cents;
+    RAISE EXCEPTION 'FAIL Test 1 : unit_price_ttc_cents=% (attendu 2500)', v_price_cents;
   END IF;
   IF v_vat_bp <> 550 THEN
     RAISE EXCEPTION 'FAIL Test 1 : vat_rate_bp_snapshot=% (attendu 550)', v_vat_bp;
@@ -172,11 +172,9 @@ BEGIN
     RAISE EXCEPTION 'FAIL Test 1 (NEEDS-FIX) : unit_invoiced=% (attendu kg)', v_unit_inv;
   END IF;
 
-  -- Vérifications invariant cumul historique
-  -- validation_status DOIT être 'ok' — trigger atteint le happy path car unit_invoiced est renseigné.
-  -- AVANT fix : unit_invoiced IS NULL → trigger forçait 'to_calculate' (LINES_BLOCKED AC #6 Story 4.0).
-  IF v_val_status <> 'ok' THEN
-    RAISE EXCEPTION 'FAIL Test 1 (NEEDS-FIX) : validation_status=% (attendu ok — trigger doit atteindre happy path)', v_val_status;
+  -- V1.9-B : la capture écrit la vérité facture, puis attend l'arbitrage opérateur Row 3.
+  IF v_val_status <> 'awaiting_arbitration' THEN
+    RAISE EXCEPTION 'FAIL Test 1 : validation_status=% (attendu awaiting_arbitration — arbitrage opérateur Row 3 requis)', v_val_status;
   END IF;
   IF v_unit_req <> 'kg' THEN
     RAISE EXCEPTION 'FAIL Test 1 : unit_requested=% (attendu kg — Story 4.0 mapping)', v_unit_req;
@@ -191,7 +189,7 @@ BEGIN
 
   -- L-3 fix : set_config('test47.sav_id_t1', ...) retiré — dead code (Test 4 crée son propre SAV).
 
-  RAISE NOTICE 'OK Test 1 (AC #5 Test 1) : prix complets capturés — unit_price_ht_cents=2500 vat_bp=550 qty_inv=2.5 invoice_line_id=pennylane-uuid-abc unit_invoiced=kg validation_status=ok';
+  RAISE NOTICE 'OK Test 1 (AC #5 Test 1) : prix complets capturés — unit_price_ttc_cents=2500 vat_bp=550 qty_inv=2.5 invoice_line_id=pennylane-uuid-abc unit_invoiced=kg validation_status=awaiting_arbitration';
 END $$;
 
 -- ------------------------------------------------------------
@@ -199,7 +197,7 @@ END $$;
 --
 -- Payload SANS aucun des 5 champs prix (ni unitInvoiced).
 -- Attendu:
---   - unit_price_ht_cents IS NULL
+--   - unit_price_ttc_cents IS NULL
 --   - vat_rate_bp_snapshot IS NULL
 --   - qty_invoiced IS NULL
 --   - invoice_line_id IS NULL
@@ -250,14 +248,14 @@ BEGIN
     RAISE EXCEPTION 'FAIL Test 2 : RPC n''a pas retourné de sav_id (régression rétrocompat)';
   END IF;
 
-  SELECT l.unit_price_ht_cents, l.vat_rate_bp_snapshot, l.qty_invoiced,
+  SELECT l.unit_price_ttc_cents, l.vat_rate_bp_snapshot, l.qty_invoiced,
          l.invoice_line_id, l.validation_status, l.unit_requested, l.unit_invoiced
     INTO v_price_cents, v_vat_bp, v_qty_inv, v_inv_line_id, v_val_status, v_unit_req, v_unit_inv
   FROM sav_lines l WHERE l.sav_id = v_sav_id LIMIT 1;
 
   -- Vérifications NULL (comportement legacy préservé pour les colonnes prix)
   IF v_price_cents IS NOT NULL THEN
-    RAISE EXCEPTION 'FAIL Test 2 : unit_price_ht_cents=% (attendu NULL)', v_price_cents;
+    RAISE EXCEPTION 'FAIL Test 2 : unit_price_ttc_cents=% (attendu NULL)', v_price_cents;
   END IF;
   IF v_vat_bp IS NOT NULL THEN
     RAISE EXCEPTION 'FAIL Test 2 : vat_rate_bp_snapshot=% (attendu NULL)', v_vat_bp;
@@ -289,20 +287,20 @@ END $$;
 -- ------------------------------------------------------------
 -- Test 3 (AC #5 Test 3) : Prix = 0 cents (gratuité / geste commercial)
 --
--- Payload: unitPriceHtCents=0, vatRateBp=0, qtyInvoiced=1, unitInvoiced='piece'
+-- Payload: unitPriceTtcCents=0, vatRateBp=0, qtyInvoiced=1, unitInvoiced='piece'
 -- Attendu:
---   - unit_price_ht_cents = 0 (PAS NULL — distinction sémantique préservée)
+--   - unit_price_ttc_cents = 0 (PAS NULL — distinction sémantique préservée)
 --   - vat_rate_bp_snapshot = 0
 --   - qty_invoiced = 1
---   - unit_invoiced = 'piece' (fourni via unitInvoiced → trigger atteint le branch ok)
---   - validation_status = 'ok'
+--   - unit_invoiced = 'piece'
+--   - validation_status = 'awaiting_arbitration' (facture complète, arbitrage opérateur Row 3 requis)
 --
--- NOTE: unitInvoiced='piece' est requis pour que le trigger atteigne le happy path.
+-- NOTE: unitInvoiced='piece' est requis pour sortir du statut to_calculate.
 -- Sans unitInvoiced (ou avec unitInvoiced=NULL), le trigger D1 forcerait 'to_calculate'
 -- même pour les prix à 0.
 -- OQ-2 : unitInvoiced doit être dans l'enum ['kg','piece','liter','g'] — 'unite' retiré.
 -- RED: échoue si la RPC ne lit pas les champs (0 serait interprété comme NULL si mal casté).
--- NEEDS-FIX: unit_invoiced doit être renseigné pour que validation_status soit 'ok'.
+-- NEEDS-FIX: unit_invoiced doit être renseigné pour que validation_status soit awaiting_arbitration plutôt que to_calculate.
 -- ------------------------------------------------------------
 DO $$
 DECLARE
@@ -327,7 +325,7 @@ DECLARE
         'unit',             'kg',
         -- Prix = 0 (gratuité) + unitInvoiced pour trigger happy path
         -- OQ-2 : 'unite' remplacé par 'piece' (enum ['kg','piece','liter','g'])
-        'unitPriceHtCents', 0,
+        'unitPriceTtcCents', 0,
         'vatRateBp',        0,
         'qtyInvoiced',      1,
         'unitInvoiced',     'piece'
@@ -343,17 +341,17 @@ BEGIN
     RAISE EXCEPTION 'FAIL Test 3 : RPC n''a pas retourné de sav_id';
   END IF;
 
-  SELECT l.unit_price_ht_cents, l.vat_rate_bp_snapshot, l.qty_invoiced, l.validation_status,
+  SELECT l.unit_price_ttc_cents, l.vat_rate_bp_snapshot, l.qty_invoiced, l.validation_status,
          l.unit_invoiced
     INTO v_price_cents, v_vat_bp, v_qty_inv, v_val_status, v_unit_inv
   FROM sav_lines l WHERE l.sav_id = v_sav_id LIMIT 1;
 
-  -- unit_price_ht_cents doit être 0, PAS NULL
+  -- unit_price_ttc_cents doit être 0, PAS NULL
   IF v_price_cents IS NULL THEN
-    RAISE EXCEPTION 'FAIL Test 3 : unit_price_ht_cents IS NULL (attendu 0 — distinction sémantique 0 vs NULL)';
+    RAISE EXCEPTION 'FAIL Test 3 : unit_price_ttc_cents IS NULL (attendu 0 — distinction sémantique 0 vs NULL)';
   END IF;
   IF v_price_cents <> 0 THEN
-    RAISE EXCEPTION 'FAIL Test 3 : unit_price_ht_cents=% (attendu 0)', v_price_cents;
+    RAISE EXCEPTION 'FAIL Test 3 : unit_price_ttc_cents=% (attendu 0)', v_price_cents;
   END IF;
 
   IF v_vat_bp IS NULL THEN
@@ -372,20 +370,20 @@ BEGIN
     RAISE EXCEPTION 'FAIL Test 3 (NEEDS-FIX) : unit_invoiced=% (attendu piece — OQ-2 enum tightened)', v_unit_inv;
   END IF;
 
-  -- validation_status = 'ok' car unit_invoiced est renseigné (trigger atteint happy path)
-  IF v_val_status <> 'ok' THEN
-    RAISE EXCEPTION 'FAIL Test 3 (NEEDS-FIX) : validation_status=% (attendu ok — trigger happy path avec unit_invoiced=piece)', v_val_status;
+  -- V1.9-B : facture complète, mais pas encore arbitrée par l'opérateur.
+  IF v_val_status <> 'awaiting_arbitration' THEN
+    RAISE EXCEPTION 'FAIL Test 3 : validation_status=% (attendu awaiting_arbitration — arbitrage opérateur Row 3 requis)', v_val_status;
   END IF;
 
-  RAISE NOTICE 'OK Test 3 (AC #5 Test 3) : prix=0 préservé (distinct de NULL) — unit_price_ht_cents=0 vat_bp=0 qty_inv=1 unit_invoiced=piece validation_status=ok';
+  RAISE NOTICE 'OK Test 3 (AC #5 Test 3) : prix=0 préservé (distinct de NULL) — unit_price_ttc_cents=0 vat_bp=0 qty_inv=1 unit_invoiced=piece validation_status=awaiting_arbitration';
 END $$;
 
 -- ------------------------------------------------------------
 -- Test 4 (AC #5 Test 4) : Interaction trigger freeze — gel structurel NFR-D2 P3
 --
 -- Vérifie :
--- a) INSERT avec unit_price_ht_cents=2500 PASSE (trigger est BEFORE UPDATE OF, pas BEFORE INSERT)
--- b) UPDATE post-INSERT sur unit_price_ht_cents BLOQUE avec SNAPSHOT_IMMUTABLE|...
+-- a) INSERT avec unit_price_ttc_cents=2500 PASSE (trigger est BEFORE UPDATE OF, pas BEFORE INSERT)
+-- b) UPDATE post-INSERT sur unit_price_ttc_cents BLOQUE avec SNAPSHOT_IMMUTABLE|...
 --
 -- Ce test documente explicitement le gel structurel pour le futur lecteur.
 -- La RPC capture_sav_from_webhook est le SEUL writer légitime.
@@ -409,7 +407,7 @@ DECLARE
         'productName',      'Produit Test 4 freeze',
         'qtyRequested',     1,
         'unit',             'kg',
-        'unitPriceHtCents', 2500,
+        'unitPriceTtcCents', 2500,
         'vatRateBp',        550,
         'qtyInvoiced',      1
       )
@@ -417,7 +415,7 @@ DECLARE
     'files', '[]'::jsonb
   );
 BEGIN
-  -- a) INSERT via RPC avec unitPriceHtCents=2500 → doit PASSER
+  -- a) INSERT via RPC avec unitPriceTtcCents=2500 → doit PASSER
   SELECT t.sav_id INTO v_sav_id
   FROM capture_sav_from_webhook(v_payload) t;
 
@@ -432,13 +430,13 @@ BEGIN
     RAISE EXCEPTION 'FAIL Test 4a : aucune ligne insérée';
   END IF;
 
-  RAISE NOTICE 'OK Test 4a : INSERT avec unit_price_ht_cents=2500 PASSE (trigger = BEFORE UPDATE OF, pas BEFORE INSERT)';
+  RAISE NOTICE 'OK Test 4a : INSERT avec unit_price_ttc_cents=2500 PASSE (trigger = BEFORE UPDATE OF, pas BEFORE INSERT)';
 
-  -- b) UPDATE post-INSERT sur unit_price_ht_cents → doit BLOQUER avec SNAPSHOT_IMMUTABLE
+  -- b) UPDATE post-INSERT sur unit_price_ttc_cents → doit BLOQUER avec SNAPSHOT_IMMUTABLE
   BEGIN
-    UPDATE sav_lines SET unit_price_ht_cents = 3000 WHERE id = v_line_id;
+    UPDATE sav_lines SET unit_price_ttc_cents = 3000 WHERE id = v_line_id;
     -- Si on arrive ici, le trigger n'a PAS bloqué → FAIL
-    RAISE EXCEPTION 'FAIL Test 4b : UPDATE unit_price_ht_cents aurait dû être bloqué par trg_sav_lines_prevent_snapshot_update';
+    RAISE EXCEPTION 'FAIL Test 4b : UPDATE unit_price_ttc_cents aurait dû être bloqué par trg_sav_lines_prevent_snapshot_update';
   EXCEPTION WHEN OTHERS THEN
     IF SQLERRM LIKE 'SNAPSHOT_IMMUTABLE%' OR SQLERRM LIKE '%SNAPSHOT_IMMUTABLE%' THEN
       v_caught := true;
@@ -494,7 +492,7 @@ DECLARE
         'unit',             'liter',
         'cause',            'produit avarié',
         -- Avec les 5 nouveaux champs 4.7 (dont unitInvoiced pour trigger happy path)
-        'unitPriceHtCents', 1200,
+        'unitPriceTtcCents', 1200,
         'vatRateBp',        2000,
         'qtyInvoiced',      3.0,
         'invoiceLineId',    'pl-uuid-test5',
@@ -543,22 +541,17 @@ BEGIN
     RAISE EXCEPTION 'FAIL Test 5 (régression 4.0) : unit_requested=% (attendu liter)', v_unit_req;
   END IF;
 
-  -- Story 4.7 fix — avec unitInvoiced fourni, le trigger doit atteindre le branch 'ok'
-  -- (unit_requested='liter' = unit_invoiced='liter', qty_invoiced=3.0 >= qty_requested=3)
-  IF v_val_status <> 'ok' THEN
-    RAISE EXCEPTION 'FAIL Test 5 (NEEDS-FIX) : validation_status=% (attendu ok — trigger happy path avec unitInvoiced=liter)', v_val_status;
+  -- V1.9-B : avec unitInvoiced fourni, la facture est complète mais requiert l'arbitrage opérateur.
+  IF v_val_status <> 'awaiting_arbitration' THEN
+    RAISE EXCEPTION 'FAIL Test 5 : validation_status=% (attendu awaiting_arbitration — arbitrage opérateur Row 3 requis)', v_val_status;
   END IF;
 
-  -- OQ-1 KNOWN ISSUE : trigger 'ok' branch écrit NEW.validation_messages := '[]'::jsonb,
-  -- écrasant la cause jsonb insérée par la RPC (Story 5.7 invariant). Ce comportement est
-  -- connu et tracké comme cross-story regression V1.1 (voir story doc section dédiée).
-  -- Ici on asserter le comportement ACTUEL (trigger écrase → '[]') et on émet un RAISE NOTICE.
-  RAISE NOTICE 'KNOWN-ISSUE: trigger compute_sav_line_credit ok branch overwrites validation_messages, losing cause data inserted by RPC. Tracked as cross-story regression V1.1 followup.';
+  -- V1.9-B : awaiting_arbitration préserve la cause jsonb insérée par la RPC.
   IF v_val_messages IS NULL THEN
-    RAISE EXCEPTION 'FAIL Test 5 : validation_messages IS NULL (attendu []::jsonb — trigger ok branch doit écrire []::jsonb)';
+    RAISE EXCEPTION 'FAIL Test 5 : validation_messages IS NULL (attendu cause jsonb préservée)';
   END IF;
-  IF v_val_messages <> '[]'::jsonb THEN
-    RAISE EXCEPTION 'FAIL Test 5 (OQ-1 known behavior) : validation_messages=% (attendu []::jsonb — trigger ok branch écrase la cause)', v_val_messages;
+  IF v_val_messages <> '[{"kind":"cause","text":"produit avarié"}]'::jsonb THEN
+    RAISE EXCEPTION 'FAIL Test 5 : validation_messages=% (attendu cause jsonb préservée)', v_val_messages;
   END IF;
 
   -- Story 2.4 — sav_files INSERT
@@ -570,7 +563,7 @@ BEGIN
     RAISE EXCEPTION 'FAIL Test 5 (régression 2.4) : aucun sav_files inséré';
   END IF;
 
-  RAISE NOTICE 'OK Test 5 (régression cumul) : notification_prefs(6.1)=OK unit_requested(4.0)=liter validation_status=ok(4.7fix) validation_messages=[]::jsonb(trigger ok branch overwrites — OQ-1 known) sav_files(2.4)=OK';
+  RAISE NOTICE 'OK Test 5 (régression cumul) : notification_prefs(6.1)=OK unit_requested(4.0)=liter validation_status=awaiting_arbitration(V1.9-B) validation_messages cause préservée sav_files(2.4)=OK';
 END $$;
 
 -- ------------------------------------------------------------

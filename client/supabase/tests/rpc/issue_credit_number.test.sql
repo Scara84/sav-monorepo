@@ -388,9 +388,12 @@ END $$;
 DO $$
 DECLARE
   v_op    bigint := current_setting('test.op_id')::bigint;
-  v_sav_1 bigint := current_setting('test.sav_id_1')::bigint;
+  v_mem   bigint := current_setting('test.mem_id')::bigint;
+  v_sav_1 bigint;
   v_row   credit_notes;
 BEGIN
+  INSERT INTO sav (member_id, status) VALUES (v_mem, 'in_progress') RETURNING id INTO v_sav_1;
+
   -- Poser un lock préalable sur sav_1 dans cette tx.
   PERFORM 1 FROM sav WHERE id = v_sav_1 FOR UPDATE;
 
@@ -537,10 +540,15 @@ END $$;
 DO $$
 DECLARE
   v_op     bigint := current_setting('test.op_id')::bigint;
-  v_sav_1  bigint := current_setting('test.sav_id_1')::bigint;
+  v_mem    bigint := current_setting('test.mem_id')::bigint;
+  v_sav_1  bigint;
+  v_sav_2  bigint;
   v_row    credit_notes;
   v_caught boolean;
 BEGIN
+  INSERT INTO sav (member_id, status) VALUES (v_mem, 'in_progress') RETURNING id INTO v_sav_1;
+  INSERT INTO sav (member_id, status) VALUES (v_mem, 'in_progress') RETURNING id INTO v_sav_2;
+
   -- Happy path normalisé : '  avoir  ' → 'AVOIR' → accepté.
   v_row := issue_credit_number(v_sav_1, '  avoir  ', 1000, 0, 55, 1055, v_op);
   IF v_row.bon_type <> 'AVOIR' THEN
@@ -548,7 +556,7 @@ BEGIN
   END IF;
 
   -- Happy path casse mixte : 'Paypal' → 'PAYPAL' → accepté.
-  v_row := issue_credit_number(v_sav_1, 'Paypal', 500, 0, 28, 528, v_op);
+  v_row := issue_credit_number(v_sav_2, 'Paypal', 500, 0, 28, 528, v_op);
   IF v_row.bon_type <> 'PAYPAL' THEN
     RAISE EXCEPTION 'FAIL Test 14.b : normalisation échouée, bon_type stocké = %', v_row.bon_type;
   END IF;

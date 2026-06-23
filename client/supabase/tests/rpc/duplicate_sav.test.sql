@@ -6,8 +6,8 @@
 --   - Happy path : nouveau SAV en draft, tags=['dupliqué'], assigned_to=acteur,
 --     nouvelle reference distincte générée par trigger
 --   - Story 4.0 D2 : 11 colonnes PRD-target copiées
---   - validation_status reset à 'ok' + validation_message=NULL sur la copie
---     (même si source est 'blocked' avec message)
+--   - validation_status recalculé à 'awaiting_arbitration' sur la copie
+--     car les champs d'arbitrage opérateur ne sont pas copiés
 --   - credit_amount_cents NULL dans la copie (recomputé Epic 4.2)
 --   - notes_internal = 'Dupliqué de <source_reference>'
 --   - F50 ACTOR_NOT_FOUND (Epic 3 CR)
@@ -110,7 +110,7 @@ BEGIN
   -- 3 lignes sources avec les 11 colonnes PRD renseignées.
   INSERT INTO sav_lines (sav_id, product_code_snapshot, product_name_snapshot,
     qty_requested, unit_requested, qty_invoiced, unit_invoiced,
-    unit_price_ht_cents, vat_rate_bp_snapshot,
+    unit_price_ttc_cents, vat_rate_bp_snapshot,
     credit_coefficient, credit_coefficient_label, piece_to_kg_weight_g,
     position, line_number)
   VALUES
@@ -140,7 +140,7 @@ BEGIN
     OR s.unit_requested           IS DISTINCT FROM d.unit_requested
     OR s.qty_invoiced             IS DISTINCT FROM d.qty_invoiced
     OR s.unit_invoiced            IS DISTINCT FROM d.unit_invoiced
-    OR s.unit_price_ht_cents      IS DISTINCT FROM d.unit_price_ht_cents
+    OR s.unit_price_ttc_cents      IS DISTINCT FROM d.unit_price_ttc_cents
     OR s.vat_rate_bp_snapshot     IS DISTINCT FROM d.vat_rate_bp_snapshot
     OR s.credit_coefficient       IS DISTINCT FROM d.credit_coefficient
     OR s.credit_coefficient_label IS DISTINCT FROM d.credit_coefficient_label
@@ -156,8 +156,8 @@ BEGIN
 END $$;
 
 -- ------------------------------------------------------------
--- Test 3 (AC #4.3) : validation_status reset à 'ok' + validation_message=NULL
--- sur les lignes copiées, même si source est 'blocked' avec message.
+-- Test 3 (AC #4.3) : validation_status recalculé à 'awaiting_arbitration'
+-- sur les lignes copiées, même si les sources sont calculables.
 -- ------------------------------------------------------------
 DO $$
 DECLARE
@@ -165,43 +165,39 @@ DECLARE
   v_mem bigint := current_setting('test.mem_id')::bigint;
   v_src_sav bigint;
   v_new_sav bigint;
-  v_non_ok_count int;
-  v_non_null_msg_count int;
+  v_non_awaiting_count int;
+  v_missing_msg_count int;
 BEGIN
   INSERT INTO sav (member_id, status) VALUES (v_mem, 'in_progress')
   RETURNING id INTO v_src_sav;
 
-  -- Epic 4.2 note : le trigger compute_sav_line_credit (BEFORE INSERT, livré
-  -- par la migration 20260426120000) écrase désormais validation_status /
-  -- validation_message / credit_amount_cents en fonction des inputs. La
-  -- RPC duplicate_sav passe bien 'ok' + NULL dans son INSERT (cf. migration
-  -- 20260424130000 §duplicate_sav), mais c'est le trigger qui détermine le
-  -- résultat final. Pour valider que duplicate_sav produit bien des lignes
-  -- **cohérentes** dans la copie, on fournit des inputs VALIDES (prix + TVA
-  -- snapshot + unités cohérentes, coef ∈ [0,1]) → trigger posera 'ok' partout.
+  -- La RPC duplicate_sav ne copie pas l'arbitrage Row 3. Les lignes copiées
+  -- doivent donc revenir en attente d'arbitrage, même si les sources étaient calculables.
   INSERT INTO sav_lines (sav_id, product_code_snapshot, product_name_snapshot,
-    qty_requested, unit_requested, qty_invoiced, unit_invoiced,
-    unit_price_ht_cents, vat_rate_bp_snapshot, credit_coefficient)
+    qty_requested, unit_requested, qty_invoiced, unit_invoiced, qty_arbitrated, unit_arbitrated,
+    unit_price_ttc_cents, vat_rate_bp_snapshot, credit_coefficient)
   VALUES
-    (v_src_sav, 'OK-A', 'OK A', 1.0, 'kg',    1.0, 'kg',    200, 550, 1),
-    (v_src_sav, 'OK-B', 'OK B', 2.0, 'kg',    2.0, 'kg',    300, 550, 0.5),
-    (v_src_sav, 'OK-C', 'OK C', 3.0, 'piece', 3.0, 'piece', 150, 2000, 1);
+    (v_src_sav, 'OK-A', 'OK A', 1.0, 'kg',    1.0, 'kg',    1.0, 'kg',    200, 550, 1),
+    (v_src_sav, 'OK-B', 'OK B', 2.0, 'kg',    2.0, 'kg',    2.0, 'kg',    300, 550, 0.5),
+    (v_src_sav, 'OK-C', 'OK C', 3.0, 'piece', 3.0, 'piece', 3.0, 'piece', 150, 2000, 1);
 
   SELECT new_sav_id INTO v_new_sav FROM duplicate_sav(v_src_sav, v_op);
 
-  SELECT count(*) INTO v_non_ok_count
-    FROM sav_lines WHERE sav_id = v_new_sav AND validation_status <> 'ok';
-  IF v_non_ok_count <> 0 THEN
-    RAISE EXCEPTION 'FAIL T3 : % ligne(s) copiée(s) avec validation_status != ok (attendu 0)', v_non_ok_count;
+  SELECT count(*) INTO v_non_awaiting_count
+    FROM sav_lines WHERE sav_id = v_new_sav AND validation_status <> 'awaiting_arbitration';
+  IF v_non_awaiting_count <> 0 THEN
+    RAISE EXCEPTION 'FAIL T3 : % ligne(s) copiée(s) avec validation_status != awaiting_arbitration (attendu 0)', v_non_awaiting_count;
   END IF;
 
-  SELECT count(*) INTO v_non_null_msg_count
-    FROM sav_lines WHERE sav_id = v_new_sav AND validation_message IS NOT NULL;
-  IF v_non_null_msg_count <> 0 THEN
-    RAISE EXCEPTION 'FAIL T3 : % ligne(s) copiée(s) avec validation_message NOT NULL (attendu 0)', v_non_null_msg_count;
+  SELECT count(*) INTO v_missing_msg_count
+    FROM sav_lines
+   WHERE sav_id = v_new_sav
+     AND validation_message IS DISTINCT FROM 'Arbitrage opérateur requis (Row 3)';
+  IF v_missing_msg_count <> 0 THEN
+    RAISE EXCEPTION 'FAIL T3 : % ligne(s) copiée(s) sans message awaiting_arbitration attendu', v_missing_msg_count;
   END IF;
 
-  RAISE NOTICE 'OK Test 3 (AC #4.3) : copie + trigger 4.2 ⇒ 3 lignes ok, 0 message';
+  RAISE NOTICE 'OK Test 3 (AC #4.3) : copie sans arbitrage ⇒ 3 lignes awaiting_arbitration';
 END $$;
 
 -- ------------------------------------------------------------

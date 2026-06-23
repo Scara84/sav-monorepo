@@ -14,7 +14,7 @@
 
 -- ============================================
 -- Case V1-01 — Happy path kg coefficient TOTAL
--- AC: AC#2.5 — 10 kg × 250 c × 1.0 = 2500 c
+-- AC: AC#2.5 — 10 kg × 250 c × 1.0 = 2370 c (V1.8 TTC→HT)
 -- ============================================
 DO $cas_1$
 DECLARE
@@ -25,8 +25,9 @@ BEGIN
   INSERT INTO sav_lines (
     sav_id, product_id, product_code_snapshot, product_name_snapshot,
     qty_requested, unit_requested, qty_invoiced, unit_invoiced,
-    unit_price_ht_cents, vat_rate_bp_snapshot,
-    credit_coefficient, piece_to_kg_weight_g
+    unit_price_ttc_cents, vat_rate_bp_snapshot,
+    credit_coefficient, piece_to_kg_weight_g,
+    qty_arbitrated, unit_arbitrated
   ) VALUES (
     v_sav_id, v_product_id, 'FIXTURE-V1-01', 'Fixture case V1-01',
     10, 'kg',
@@ -35,15 +36,17 @@ BEGIN
     250,
     550,
     1,
-    NULL
+    NULL,
+    10,
+    'kg'
   )
   RETURNING * INTO v_row;
 
   IF v_row.validation_status <> 'ok' THEN
     RAISE EXCEPTION 'FAIL Fixture V1-01: validation_status=% attendu ok', v_row.validation_status;
   END IF;
-  IF v_row.credit_amount_cents IS DISTINCT FROM 2500 THEN
-    RAISE EXCEPTION 'FAIL Fixture V1-01: credit_amount_cents=% attendu 2500', v_row.credit_amount_cents;
+  IF v_row.credit_amount_cents IS DISTINCT FROM 2370 THEN
+    RAISE EXCEPTION 'FAIL Fixture V1-01: credit_amount_cents=% attendu 2370', v_row.credit_amount_cents;
   END IF;
   IF v_row.validation_message IS DISTINCT FROM NULL THEN
     RAISE EXCEPTION 'FAIL Fixture V1-01: validation_message=% attendu NULL', v_row.validation_message;
@@ -53,7 +56,7 @@ END $cas_1$;
 
 -- ============================================
 -- Case V1-03 — Happy path piece coefficient libre 0.35
--- AC: AC#2.5 — 12 pcs × 150 c × 0.35 = 630 c
+-- AC: AC#2.5 — 12 pcs × 150 c × 0.35 = 596 c (V1.8 TTC→HT)
 -- ============================================
 DO $cas_2$
 DECLARE
@@ -64,8 +67,9 @@ BEGIN
   INSERT INTO sav_lines (
     sav_id, product_id, product_code_snapshot, product_name_snapshot,
     qty_requested, unit_requested, qty_invoiced, unit_invoiced,
-    unit_price_ht_cents, vat_rate_bp_snapshot,
-    credit_coefficient, piece_to_kg_weight_g
+    unit_price_ttc_cents, vat_rate_bp_snapshot,
+    credit_coefficient, piece_to_kg_weight_g,
+    qty_arbitrated, unit_arbitrated
   ) VALUES (
     v_sav_id, v_product_id, 'FIXTURE-V1-03', 'Fixture case V1-03',
     12, 'piece',
@@ -74,15 +78,17 @@ BEGIN
     150,
     550,
     0.35,
-    NULL
+    NULL,
+    12,
+    'piece'
   )
   RETURNING * INTO v_row;
 
   IF v_row.validation_status <> 'ok' THEN
     RAISE EXCEPTION 'FAIL Fixture V1-03: validation_status=% attendu ok', v_row.validation_status;
   END IF;
-  IF v_row.credit_amount_cents IS DISTINCT FROM 630 THEN
-    RAISE EXCEPTION 'FAIL Fixture V1-03: credit_amount_cents=% attendu 630', v_row.credit_amount_cents;
+  IF v_row.credit_amount_cents IS DISTINCT FROM 596 THEN
+    RAISE EXCEPTION 'FAIL Fixture V1-03: credit_amount_cents=% attendu 596', v_row.credit_amount_cents;
   END IF;
   IF v_row.validation_message IS DISTINCT FROM NULL THEN
     RAISE EXCEPTION 'FAIL Fixture V1-03: validation_message=% attendu NULL', v_row.validation_message;
@@ -103,8 +109,9 @@ BEGIN
   INSERT INTO sav_lines (
     sav_id, product_id, product_code_snapshot, product_name_snapshot,
     qty_requested, unit_requested, qty_invoiced, unit_invoiced,
-    unit_price_ht_cents, vat_rate_bp_snapshot,
-    credit_coefficient, piece_to_kg_weight_g
+    unit_price_ttc_cents, vat_rate_bp_snapshot,
+    credit_coefficient, piece_to_kg_weight_g,
+    qty_arbitrated, unit_arbitrated
   ) VALUES (
     v_sav_id, v_product_id, 'FIXTURE-V1-08', 'Fixture case V1-08',
     5, 'kg',
@@ -113,15 +120,17 @@ BEGIN
     30,
     550,
     1,
-    200
+    200,
+    25,
+    'piece'
   )
   RETURNING * INTO v_row;
 
   IF v_row.validation_status <> 'ok' THEN
     RAISE EXCEPTION 'FAIL Fixture V1-08: validation_status=% attendu ok', v_row.validation_status;
   END IF;
-  IF v_row.credit_amount_cents IS DISTINCT FROM 750 THEN
-    RAISE EXCEPTION 'FAIL Fixture V1-08: credit_amount_cents=% attendu 750', v_row.credit_amount_cents;
+  IF v_row.credit_amount_cents IS DISTINCT FROM 700 THEN
+    RAISE EXCEPTION 'FAIL Fixture V1-08: credit_amount_cents=% attendu 700', v_row.credit_amount_cents;
   END IF;
   IF v_row.validation_message IS DISTINCT FROM NULL THEN
     RAISE EXCEPTION 'FAIL Fixture V1-08: validation_message=% attendu NULL', v_row.validation_message;
@@ -142,8 +151,9 @@ BEGIN
   INSERT INTO sav_lines (
     sav_id, product_id, product_code_snapshot, product_name_snapshot,
     qty_requested, unit_requested, qty_invoiced, unit_invoiced,
-    unit_price_ht_cents, vat_rate_bp_snapshot,
-    credit_coefficient, piece_to_kg_weight_g
+    unit_price_ttc_cents, vat_rate_bp_snapshot,
+    credit_coefficient, piece_to_kg_weight_g,
+    qty_arbitrated, unit_arbitrated
   ) VALUES (
     v_sav_id, v_product_id, 'FIXTURE-V1-12', 'Fixture case V1-12',
     2, 'piece',
@@ -152,18 +162,20 @@ BEGIN
     120,
     550,
     1,
+    NULL,
+    NULL,
     NULL
   )
   RETURNING * INTO v_row;
 
-  IF v_row.validation_status <> 'unit_mismatch' THEN
-    RAISE EXCEPTION 'FAIL Fixture V1-12: validation_status=% attendu unit_mismatch', v_row.validation_status;
+  IF v_row.validation_status <> 'awaiting_arbitration' THEN
+    RAISE EXCEPTION 'FAIL Fixture V1-12: validation_status=% attendu awaiting_arbitration', v_row.validation_status;
   END IF;
   IF v_row.credit_amount_cents IS DISTINCT FROM NULL THEN
     RAISE EXCEPTION 'FAIL Fixture V1-12: credit_amount_cents=% attendu NULL', v_row.credit_amount_cents;
   END IF;
-  IF v_row.validation_message IS DISTINCT FROM 'Unité demandée (piece) ≠ unité facturée (liter) — conversion indisponible' THEN
-    RAISE EXCEPTION 'FAIL Fixture V1-12: validation_message=% attendu %', v_row.validation_message, 'Unité demandée (piece) ≠ unité facturée (liter) — conversion indisponible';
+  IF v_row.validation_message IS DISTINCT FROM 'Arbitrage opérateur requis (Row 3)' THEN
+    RAISE EXCEPTION 'FAIL Fixture V1-12: validation_message=% attendu %', v_row.validation_message, 'Arbitrage opérateur requis (Row 3)';
   END IF;
   RAISE NOTICE 'OK Fixture V1-12 — unit_mismatch — piece ↔ liter';
 END $cas_4$;
@@ -181,8 +193,9 @@ BEGIN
   INSERT INTO sav_lines (
     sav_id, product_id, product_code_snapshot, product_name_snapshot,
     qty_requested, unit_requested, qty_invoiced, unit_invoiced,
-    unit_price_ht_cents, vat_rate_bp_snapshot,
-    credit_coefficient, piece_to_kg_weight_g
+    unit_price_ttc_cents, vat_rate_bp_snapshot,
+    credit_coefficient, piece_to_kg_weight_g,
+    qty_arbitrated, unit_arbitrated
   ) VALUES (
     v_sav_id, v_product_id, 'FIXTURE-V1-15', 'Fixture case V1-15',
     6, 'piece',
@@ -191,15 +204,17 @@ BEGIN
     999,
     2000,
     1,
-    NULL
+    NULL,
+    6,
+    'piece'
   )
   RETURNING * INTO v_row;
 
   IF v_row.validation_status <> 'ok' THEN
     RAISE EXCEPTION 'FAIL Fixture V1-15: validation_status=% attendu ok', v_row.validation_status;
   END IF;
-  IF v_row.credit_amount_cents IS DISTINCT FROM 5994 THEN
-    RAISE EXCEPTION 'FAIL Fixture V1-15: credit_amount_cents=% attendu 5994', v_row.credit_amount_cents;
+  IF v_row.credit_amount_cents IS DISTINCT FROM 4998 THEN
+    RAISE EXCEPTION 'FAIL Fixture V1-15: credit_amount_cents=% attendu 4998', v_row.credit_amount_cents;
   END IF;
   IF v_row.validation_message IS DISTINCT FROM NULL THEN
     RAISE EXCEPTION 'FAIL Fixture V1-15: validation_message=% attendu NULL', v_row.validation_message;

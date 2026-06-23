@@ -14,8 +14,9 @@
 BEGIN;
 
 -- Setup : opérateur + member + 2 SAVs in_progress + lignes bloquées
-INSERT INTO operators (id, email, full_name, is_active)
-VALUES (90008, 'w8-op@example.com', 'W8 Operator', true)
+INSERT INTO operators (id, email, display_name, role, is_active)
+OVERRIDING SYSTEM VALUE
+VALUES (90008, 'w8-op@example.com', 'W8 Operator', 'sav-operator', true)
   ON CONFLICT (id) DO NOTHING;
 
 INSERT INTO members (email, last_name) VALUES ('w8@example.com', 'W8')
@@ -44,8 +45,7 @@ BEGIN
   VALUES
     (v_sav_multi, 1, 0, 'P1', 'P1', 1, 'kg', 1, 'unit_mismatch'),
     (v_sav_multi, 2, 1, 'P2', 'P2', 1, 'kg', 1, 'qty_exceeds_invoice'),
-    (v_sav_multi, 3, 2, 'P3', 'P3', 1, 'kg', 1, 'to_calculate')
-  RETURNING id INTO v_line1; -- single id captured, OK for setup
+    (v_sav_multi, 3, 2, 'P3', 'P3', 1, 'kg', 1, 'to_calculate');
 
   -- SAV solo : 1 ligne bloquée
   INSERT INTO sav (reference, member_id, status, version)

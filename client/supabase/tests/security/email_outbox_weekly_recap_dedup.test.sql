@@ -32,8 +32,8 @@ SET LOCAL ROLE service_role;
 
 INSERT INTO members (email, first_name, last_name, is_group_manager, notification_prefs)
 VALUES
-  ('s67-mgr-a@example.com', 'Alice', 'Manager', true, '{"weekly_recap": true}'::jsonb),
-  ('s67-mgr-b@example.com', 'Bob',   'Manager', true, '{"weekly_recap": true}'::jsonb)
+  ('s67-mgr-a@example.com', 'Alice', 'Manager', true, '{"status_updates":true,"weekly_recap":true}'::jsonb),
+  ('s67-mgr-b@example.com', 'Bob',   'Manager', true, '{"status_updates":true,"weekly_recap":true}'::jsonb)
 ON CONFLICT (email) DO NOTHING;
 
 DO $$

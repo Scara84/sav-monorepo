@@ -32,7 +32,7 @@ type FixtureCase = {
     unit_requested: Unit
     qty_invoiced: number | null
     unit_invoiced: Unit | null
-    unit_price_ht_cents: number | null
+    unit_price_ttc_cents: number | null
     vat_rate_bp_snapshot: number | null
     credit_coefficient: number
     piece_to_kg_weight_g: number | null
@@ -92,22 +92,32 @@ function sqlNumericOrNull(v: number | null, field: string): string {
 function caseToDoBlock(c: FixtureCase, index: number): string {
   const { input, expected } = c
   const testN = index + 1
+  const hasSqlArbitration = expected.validation_status === 'ok'
+  const sqlExpectedStatus =
+    expected.validation_status === 'unit_mismatch' || expected.validation_status === 'qty_exceeds_invoice'
+      ? 'awaiting_arbitration'
+      : expected.validation_status
+  const sqlExpectedMsg =
+    sqlExpectedStatus === 'awaiting_arbitration'
+      ? 'Arbitrage opérateur requis (Row 3)'
+      : expected.validation_message
+  const sqlExpectedAmount = sqlExpectedStatus === 'ok' ? expected.credit_amount_cents : null
   // Les % dans les labels/messages RAISE doivent être doublés en PL/pgSQL
   // (format placeholder). Doubler après l'échappement des quotes.
   const label = c.label.replace(/'/g, "''").replace(/%/g, '%%')
-  const expectedStatus = sqlLiteral(expected.validation_status)
-  const expectedMsg = sqlLiteral(expected.validation_message)
+  const expectedStatus = sqlLiteral(sqlExpectedStatus)
+  const expectedMsg = sqlLiteral(sqlExpectedMsg)
   const expectedAmount =
-    expected.credit_amount_cents === null ? 'NULL' : String(expected.credit_amount_cents)
+    sqlExpectedAmount === null ? 'NULL' : String(sqlExpectedAmount)
   // PL/pgSQL : RAISE EXCEPTION '...%...', NULL pose "too few parameters" — on
   // cast en text explicite quand le message attendu est null pour éviter le
   // bug d'inférence.
   const msgAssertionCmp =
-    expected.validation_message === null
+    sqlExpectedMsg === null
       ? `v_row.validation_message IS DISTINCT FROM NULL`
       : `v_row.validation_message IS DISTINCT FROM ${expectedMsg}`
   const msgAssertionMsg =
-    expected.validation_message === null
+    sqlExpectedMsg === null
       ? `'FAIL Fixture ${c.id}: validation_message=% attendu NULL', v_row.validation_message`
       : `'FAIL Fixture ${c.id}: validation_message=% attendu %', v_row.validation_message, ${expectedMsg}`
 
@@ -126,22 +136,25 @@ BEGIN
   INSERT INTO sav_lines (
     sav_id, product_id, product_code_snapshot, product_name_snapshot,
     qty_requested, unit_requested, qty_invoiced, unit_invoiced,
-    unit_price_ht_cents, vat_rate_bp_snapshot,
-    credit_coefficient, piece_to_kg_weight_g
+    unit_price_ttc_cents, vat_rate_bp_snapshot,
+    credit_coefficient, piece_to_kg_weight_g,
+    qty_arbitrated, unit_arbitrated
   ) VALUES (
     v_sav_id, v_product_id, 'FIXTURE-${c.id}', 'Fixture case ${c.id}',
     ${sqlNumericOrNull(input.qty_requested, `${c.id}.qty_requested`)}, ${sqlLiteral(input.unit_requested)},
     ${sqlNumericOrNull(input.qty_invoiced, `${c.id}.qty_invoiced`)},
     ${sqlLiteral(input.unit_invoiced)},
-    ${sqlNumericOrNull(input.unit_price_ht_cents, `${c.id}.unit_price_ht_cents`)},
+    ${sqlNumericOrNull(input.unit_price_ttc_cents, `${c.id}.unit_price_ttc_cents`)},
     ${sqlNumericOrNull(input.vat_rate_bp_snapshot, `${c.id}.vat_rate_bp_snapshot`)},
     ${sqlNumericOrNull(input.credit_coefficient, `${c.id}.credit_coefficient`)},
-    ${sqlNumericOrNull(input.piece_to_kg_weight_g, `${c.id}.piece_to_kg_weight_g`)}
+    ${sqlNumericOrNull(input.piece_to_kg_weight_g, `${c.id}.piece_to_kg_weight_g`)},
+    ${hasSqlArbitration ? sqlNumericOrNull(input.qty_invoiced, `${c.id}.qty_arbitrated`) : 'NULL'},
+    ${hasSqlArbitration ? sqlLiteral(input.unit_invoiced) : 'NULL'}
   )
   RETURNING * INTO v_row;
 
   IF v_row.validation_status <> ${expectedStatus} THEN
-    RAISE EXCEPTION 'FAIL Fixture ${c.id}: validation_status=% attendu ${expected.validation_status}', v_row.validation_status;
+    RAISE EXCEPTION 'FAIL Fixture ${c.id}: validation_status=% attendu ${sqlExpectedStatus}', v_row.validation_status;
   END IF;
   IF v_row.credit_amount_cents IS DISTINCT FROM ${expectedAmount} THEN
     RAISE EXCEPTION 'FAIL Fixture ${c.id}: credit_amount_cents=% attendu ${expectedAmount}', v_row.credit_amount_cents;

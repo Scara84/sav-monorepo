@@ -46,7 +46,7 @@ BEGIN
     SELECT proconfig INTO v_proconfig
       FROM pg_proc p JOIN pg_namespace n ON n.oid = p.pronamespace
      WHERE n.nspname = 'public' AND p.proname = v_fn
-       AND pg_get_function_identity_arguments(p.oid) = v_args;
+       AND oidvectortypes(p.proargtypes) = v_args;
     IF v_proconfig IS NULL THEN
       RAISE EXCEPTION 'FAIL W2.A: pg_proc.proconfig est NULL pour public.%(%) — search_path absent',
         v_fn, v_args;

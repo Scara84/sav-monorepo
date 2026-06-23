@@ -271,10 +271,20 @@ END $$;
 DO $$
 DECLARE
   v_cnt int;
+  v_operator_id bigint;
 BEGIN
+  SET LOCAL ROLE service_role;
+  SELECT id INTO v_operator_id
+    FROM operators
+    WHERE azure_oid = '00000000-0000-0000-0000-00000000fa21'::uuid
+      AND is_active;
+  IF v_operator_id IS NULL THEN
+    RAISE EXCEPTION 'FAIL SAV-RLS-05: opérateur fixture actif introuvable';
+  END IF;
+
   SET LOCAL ROLE authenticated;
   PERFORM set_config('app.current_member_id', '', true);
-  PERFORM set_config('app.actor_operator_id', '999', true);
+  PERFORM set_config('app.actor_operator_id', v_operator_id::text, true);
   SELECT count(*) INTO v_cnt FROM sav;
   IF v_cnt < 3 THEN
     RAISE EXCEPTION 'FAIL SAV-RLS-05: operator voit % SAV (attendu >= 3)', v_cnt;

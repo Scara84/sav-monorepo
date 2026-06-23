@@ -62,7 +62,7 @@ BEGIN
   SELECT version INTO v_version FROM sav WHERE id = v_sav;
   PERFORM transition_sav_status(
     p_sav_id            => v_sav,
-    p_new_status        => 'in_progress',
+    p_new_status        => 'cancelled',
     p_expected_version  => v_version::int,
     p_actor_operator_id => v_op,
     p_note              => null
@@ -70,7 +70,7 @@ BEGIN
 
   SELECT * INTO v_outbox
   FROM email_outbox
-  WHERE sav_id = v_sav AND kind = 'sav_in_progress' AND status = 'pending'
+  WHERE sav_id = v_sav AND kind = 'sav_cancelled' AND status = 'pending'
   LIMIT 1;
 
   IF v_outbox.id IS NULL THEN
@@ -93,7 +93,7 @@ BEGIN
     RAISE EXCEPTION 'FAIL Cas (a) : template_data.memberFirstName incorrect';
   END IF;
 
-  IF v_outbox.template_data->>'newStatus' IS DISTINCT FROM 'in_progress' THEN
+  IF v_outbox.template_data->>'newStatus' IS DISTINCT FROM 'cancelled' THEN
     RAISE EXCEPTION 'FAIL Cas (a) : template_data.newStatus incorrect';
   END IF;
 
@@ -118,7 +118,7 @@ BEGIN
   -- ========================================================
   BEGIN
     INSERT INTO email_outbox (kind, recipient_email, subject, html_body, sav_id, status, account)
-    VALUES ('sav_in_progress', 's66-member@example.com', 'dup', '', v_sav, 'pending', 'sav');
+    VALUES ('sav_cancelled', 's66-member@example.com', 'dup', '', v_sav, 'pending', 'sav');
     RAISE EXCEPTION 'FAIL Cas (b) : INSERT doublon (sav_id, kind) WHERE status=pending aurait dû unique_violation';
   EXCEPTION
     WHEN unique_violation THEN
@@ -137,20 +137,20 @@ BEGIN
       RAISE NOTICE 'OK Cas (c) — whitelist kind rejette sav_unknown_kind';
   END;
 
-  -- Cas (c-bis) : les 4 kinds valides Story 6.6 sont acceptés (chacun via savepoint
+  -- Cas (c-bis) : les kinds actifs Story 6.6/V1.13 sont acceptés (chacun via savepoint
   -- pour éviter unique_violation sur (sav_id, kind) WHERE status=pending).
   --
   -- On utilise sav_b distinct + différents kinds → pas de collision.
   -- HARDENING P0-1 : l'index dédup `_no_operator` (sav_id, kind) WHERE
   -- recipient_operator_id IS NULL couvre ces inserts (pas de operator_id).
   FOR v_outbox IN
-    SELECT k FROM unnest(ARRAY['sav_validated','sav_closed','sav_cancelled']) AS k
+    SELECT k FROM unnest(ARRAY['sav_validated','sav_closed']) AS k
   LOOP
     INSERT INTO email_outbox (kind, recipient_email, subject, html_body, sav_id, status, account)
     VALUES (v_outbox.k, 's66-member@example.com', 'kind ok', '', v_sav_b, 'pending', 'sav')
     ON CONFLICT (sav_id, kind) WHERE (status = 'pending' AND recipient_operator_id IS NULL) DO NOTHING;
   END LOOP;
-  RAISE NOTICE 'OK Cas (c-bis) — 3 kinds Story 6.6 (validated/closed/cancelled) whitelisted acceptés';
+  RAISE NOTICE 'OK Cas (c-bis) — kinds Story 6.6/V1.13 whitelisted acceptés';
 
   -- ========================================================
   -- Cas (d) HARDENING P0-3 — replay double-envoi opérateur

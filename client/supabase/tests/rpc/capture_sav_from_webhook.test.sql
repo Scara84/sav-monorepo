@@ -30,8 +30,8 @@ DECLARE
   v_group_id bigint;
 BEGIN
   SELECT id INTO v_product_id FROM products WHERE code = 'RPC-5-PROD';
-  INSERT INTO groups (name)
-  VALUES ('Groupe RPC Capture 4.0b')
+  INSERT INTO groups (code, name)
+  VALUES ('RPC-CAPTURE-40B', 'Groupe RPC Capture 4.0b')
   RETURNING id INTO v_group_id;
   PERFORM set_config('test.product_id', v_product_id::text, false);
   PERFORM set_config('test.group_id', v_group_id::text, false);
@@ -270,7 +270,7 @@ BEGIN
   -- validation_messages (plural legacy) avec validation_message (singulier).
   -- validation_messages = '[]' UNIQUEMENT si validation_status='ok' et
   -- validation_message IS NULL. Comme capture_sav_from_webhook produit des
-  -- lignes sans unit_price_ht_cents → trigger pose 'to_calculate' + message,
+  -- lignes sans unit_price_ttc_cents → trigger pose 'to_calculate' + message,
   -- donc validation_messages contient le message. On vérifie la COHÉRENCE
   -- (plural aligné avec singulier) plutôt que l'ancienne attente d'un tableau
   -- vide systématique.

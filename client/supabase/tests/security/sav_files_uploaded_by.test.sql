@@ -95,6 +95,9 @@ BEGIN
   SELECT id INTO v_mem FROM members WHERE email = 's63-uploader@example.com';
   SELECT id INTO v_op  FROM operators WHERE email = 's63-operator@example.com';
   INSERT INTO sav (member_id, status) VALUES (v_mem, 'received') RETURNING id INTO v_sav;
+  PERFORM set_config('test.s63_member_id', v_mem::text, false);
+  PERFORM set_config('test.s63_operator_id', v_op::text, false);
+  PERFORM set_config('test.s63_sav_id', v_sav::text, false);
 
   -- (1) member-only OK
   INSERT INTO sav_files (
@@ -153,8 +156,8 @@ DECLARE
   v_sav  bigint;
   cnt_self  int;
 BEGIN
-  SELECT id INTO v_mem FROM members WHERE email = 's63-uploader@example.com';
-  SELECT id INTO v_sav FROM sav WHERE member_id = v_mem ORDER BY id DESC LIMIT 1;
+  v_mem := current_setting('test.s63_member_id')::bigint;
+  v_sav := current_setting('test.s63_sav_id')::bigint;
 
   PERFORM set_config('app.current_member_id', v_mem::text, true);
   PERFORM set_config('app.actor_operator_id', '', true);
@@ -177,9 +180,9 @@ DECLARE
   v_op   bigint;
   v_sav  bigint;
 BEGIN
-  SELECT id INTO v_mem FROM members WHERE email = 's63-uploader@example.com';
-  SELECT id INTO v_op  FROM operators WHERE email = 's63-operator@example.com';
-  SELECT id INTO v_sav FROM sav WHERE member_id = v_mem ORDER BY id DESC LIMIT 1;
+  v_mem := current_setting('test.s63_member_id')::bigint;
+  v_op := current_setting('test.s63_operator_id')::bigint;
+  v_sav := current_setting('test.s63_sav_id')::bigint;
 
   -- 1 commentaire visibility='all' du member, 1 'internal' opérateur.
   INSERT INTO sav_comments (sav_id, author_member_id, visibility, body)
@@ -197,8 +200,8 @@ DECLARE
   cnt_all       int;
   cnt_internal  int;
 BEGIN
-  SELECT id INTO v_mem FROM members WHERE email = 's63-uploader@example.com';
-  SELECT id INTO v_sav FROM sav WHERE member_id = v_mem ORDER BY id DESC LIMIT 1;
+  v_mem := current_setting('test.s63_member_id')::bigint;
+  v_sav := current_setting('test.s63_sav_id')::bigint;
 
   PERFORM set_config('app.current_member_id', v_mem::text, true);
   PERFORM set_config('app.actor_operator_id', '', true);

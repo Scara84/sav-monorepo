@@ -285,7 +285,14 @@ DECLARE
 BEGIN
   SELECT id INTO v_member_id FROM public.members LIMIT 1;
   IF v_member_id IS NULL THEN
-    RAISE EXCEPTION 'FAIL setup (XOR): aucun membre en DB pour respecter magic_link_tokens_target_xor + FK members(id). Insère au moins 1 membre avant de lancer Bloc F.';
+    INSERT INTO public.members (email, first_name, last_name, notification_prefs)
+    VALUES (
+      'h02-token-fixture@example.test',
+      'H02',
+      'Fixture',
+      '{"status_updates":true,"weekly_recap":false}'::jsonb
+    )
+    RETURNING id INTO v_member_id;
   END IF;
 
   -- magic_link_tokens (3 rows : 2 éligibles purge, 1 récent conservé)

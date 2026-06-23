@@ -18,7 +18,7 @@
  *   Test type: unit + self-test regression (PATTERN-H15-B doctrine)
  *
  * AC#5 (Trackers) : static-file assertion.
- *   Vérifie sprint-status.yaml ligne h-15 done + memory mis à jour.
+ *   Vérifie sprint-status.yaml ligne h-15 done + preuve repo du gap mémoire.
  *   Test type: unit / static-file-assertion
  *
  * GREEN-guards (invariants) :
@@ -50,16 +50,9 @@ const MIGRATION_FIX_PATH = resolve(MIGRATIONS_DIR, '20260521120000_fix_capture_s
 const MIGRATION_BUGGY_PATH = resolve(MIGRATIONS_DIR, '20260518120000_v1-9-b-arbitration-motif.sql')
 const AUDIT_REPORT_PATH = resolve(ARTIFACTS_DIR, 'h-15-audit-source-values.md')
 const SPRINT_STATUS_PATH = resolve(ARTIFACTS_DIR, 'sprint-status.yaml')
+const INTEGRATION_README_PATH = resolve(CLIENT_ROOT, 'tests', 'integration', 'README.md')
 const AUDIT_CHECK_SCRIPT_PATH = resolve(CLIENT_ROOT, 'scripts', 'audit-check-constraints.mjs')
 const AUDIT_SCHEMA_SCRIPT_PATH = resolve(CLIENT_ROOT, 'scripts', 'audit-handler-schema.mjs')
-const MEMORY_INTEGRATION_GAP_PATH = resolve(
-  '/Users/antho/.claude/projects/-Users-antho-Dev-sav-monorepo/memory',
-  'feedback_test_integration_gap.md'
-)
-const MEMORY_INDEX_PATH = resolve(
-  '/Users/antho/.claude/projects/-Users-antho-Dev-sav-monorepo/memory',
-  'MEMORY.md'
-)
 
 // ---------------------------------------------------------------------------
 // GREEN GUARDS — must PASS before and after Step 3 DEV
@@ -408,22 +401,24 @@ describe('H15-AC5 — sprint-status.yaml tracker', () => {
   })
 })
 
-describe('H15-AC5 — memory feedback_test_integration_gap update', () => {
-  it('RED — memory file feedback_test_integration_gap.md existe', () => {
-    expect(existsSync(MEMORY_INTEGRATION_GAP_PATH)).toBe(true)
+describe('H15-AC5 — preuve repo feedback_test_integration_gap', () => {
+  it('RED — artefact h-15 versionné existe', () => {
+    expect(existsSync(AUDIT_REPORT_PATH)).toBe(true)
   })
 
-  it('RED — memory contient section h-15 (renforcement du gate)', () => {
-    const content = readFileSync(MEMORY_INTEGRATION_GAP_PATH, 'utf8')
-    // AC#5.2 — ajouter section 2026-05-15 h-15 renforce le gate
-    expect(content).toContain('h-15')
+  it('RED — preuves h-15 référencent feedback_test_integration_gap', () => {
+    const integrationReadme = readFileSync(INTEGRATION_README_PATH, 'utf8')
+    const migration = readFileSync(MIGRATION_FIX_PATH, 'utf8')
+    const script = readFileSync(AUDIT_CHECK_SCRIPT_PATH, 'utf8')
+    expect(integrationReadme).toContain('feedback_test_integration_gap')
+    expect(integrationReadme).toContain('H-15')
+    expect(migration).toContain('h-15')
+    expect(script).toContain('CHECK IN')
   })
 
-  it('RED — memory mentionne la fermeture de la classe "CHECK IN violation"', () => {
-    const content = readFileSync(MEMORY_INTEGRATION_GAP_PATH, 'utf8')
-    // AC#5.2 — la mémoire doit documenter la fermeture de la classe de bug
-    // Specifically: the CHECK IN literal validation class must be mentioned
-    // (not just audit:schema which was already there pre-h-15)
+  it('RED — artefact h-15 mentionne la fermeture de la classe "CHECK IN violation"', () => {
+    const content = readFileSync(AUDIT_REPORT_PATH, 'utf8')
+    // AC#5.2 — la preuve versionnée doit documenter la fermeture de la classe de bug.
     const mentionsCheckClass =
       content.includes('CHECK IN') ||
       content.includes('audit-check-constraints') ||
@@ -432,14 +427,10 @@ describe('H15-AC5 — memory feedback_test_integration_gap update', () => {
     expect(mentionsCheckClass).toBe(true)
   })
 
-  it('RED — memory MEMORY.md contient statut "renforcé" pour feedback_test_integration_gap', () => {
-    const content = readFileSync(MEMORY_INDEX_PATH, 'utf8')
-    // AC#5.3 — update de l'entrée index
-    const entryMatch = content.match(/feedback_test_integration_gap[^\n]*/)
-    expect(entryMatch).not.toBeNull()
-    const entry = entryMatch![0]
-    // Must contain reference to h-15 reinforcement
-    expect(entry).toContain('h-15')
+  it('RED — artefact d audit h-15 prouve le gate renforcé', () => {
+    const content = readFileSync(AUDIT_REPORT_PATH, 'utf8')
+    expect(content).toContain('audit:check-constraints')
+    expect(content).toContain('ferme cette classe de bug')
   })
 })
 

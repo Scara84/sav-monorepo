@@ -61,9 +61,8 @@ END $$;
 
 -- ------------------------------------------------------------
 -- Test 1 (AC #1.1) : Happy path draft→received→in_progress→validated→closed.
--- 4 transitions → version bumpée de 4. Emails émis uniquement pour
--- (in_progress, validated, closed) car la RPC exclut 'received' du IN list
--- (cf. 20260423120000_epic_3_cr_security_patches.sql:572).
+-- 4 transitions → version bumpée de 4. V1.13 n'émet plus que validated/cancelled ;
+-- ce scénario attend donc uniquement sav_validated.
 -- ------------------------------------------------------------
 DO $$
 DECLARE
@@ -79,9 +78,16 @@ BEGIN
   RETURNING id, version INTO v_sav, v_version;
 
   PERFORM transition_sav_status(v_sav, 'received',    v_version::int, v_op);   -- no email
-  PERFORM transition_sav_status(v_sav, 'in_progress', (v_version+1)::int, v_op); -- email 1
-  PERFORM transition_sav_status(v_sav, 'validated',   (v_version+2)::int, v_op); -- email 2
-  PERFORM transition_sav_status(v_sav, 'closed',      (v_version+3)::int, v_op); -- email 3
+  PERFORM transition_sav_status(v_sav, 'in_progress', (v_version+1)::int, v_op); -- no email V1.13
+  INSERT INTO credit_notes (
+    number, sav_id, member_id, total_ht_cents, discount_cents, vat_cents,
+    total_ttc_cents, bon_type, issued_by_operator_id, pdf_web_url
+  )
+  VALUES (
+    99040101, v_sav, v_mem, 100, 0, 5, 105, 'AVOIR', v_op, 'https://example.com/t1-credit-note.pdf'
+  );
+  PERFORM transition_sav_status(v_sav, 'validated',   (v_version+2)::int, v_op); -- email sav_validated
+  PERFORM transition_sav_status(v_sav, 'closed',      (v_version+3)::int, v_op); -- no email V1.13
 
   SELECT version INTO v_final_version FROM sav WHERE id = v_sav;
   IF v_final_version <> v_version + 4 THEN
@@ -89,23 +95,18 @@ BEGIN
   END IF;
 
   SELECT count(*) INTO v_email_count FROM email_outbox WHERE sav_id = v_sav;
-  IF v_email_count <> 3 THEN
-    RAISE EXCEPTION 'FAIL T1 : %/3 emails émis (in_progress/validated/closed — "received" exclu par la RPC)', v_email_count;
+  IF v_email_count <> 1 THEN
+    RAISE EXCEPTION 'FAIL T1 : %/1 emails émis (V1.13 attend sav_validated uniquement)', v_email_count;
   END IF;
 
-  -- Chaque kind attendu présent exactement 1 fois.
-  FOR v_kind_count IN
-    SELECT count(*) FROM email_outbox
-     WHERE sav_id = v_sav
-       AND kind IN ('sav_in_progress','sav_validated','sav_closed')
-    GROUP BY kind
-  LOOP
-    IF v_kind_count <> 1 THEN
-      RAISE EXCEPTION 'FAIL T1 : kind email inattendu count=%', v_kind_count;
-    END IF;
-  END LOOP;
+  SELECT count(*) INTO v_kind_count FROM email_outbox
+   WHERE sav_id = v_sav
+     AND kind = 'sav_validated';
+  IF v_kind_count <> 1 THEN
+    RAISE EXCEPTION 'FAIL T1 : sav_validated count=% (attendu 1)', v_kind_count;
+  END IF;
 
-  RAISE NOTICE 'OK Test 1 (AC #1.1) : happy path 4 transitions, version+4, 3 emails (in_progress/validated/closed)';
+  RAISE NOTICE 'OK Test 1 (AC #1.1) : happy path 4 transitions, version+4, 1 email sav_validated (V1.13)';
 END $$;
 
 -- ------------------------------------------------------------
@@ -282,9 +283,7 @@ BEGIN
 END $$;
 
 -- ------------------------------------------------------------
--- Test 7 (AC #1.7, F51) : ON CONFLICT (sav_id, kind) WHERE status='pending'
--- DO NOTHING. Deux transitions vers le même kind 'sav_in_progress' ne
--- créent qu'une seule row pending (rebound received↔in_progress).
+-- Test 7 (V1.13) : rebound received↔in_progress ne crée plus de row outbox legacy.
 -- ------------------------------------------------------------
 DO $$
 DECLARE
@@ -298,18 +297,18 @@ BEGIN
   RETURNING id, version INTO v_sav, v_version;
 
   PERFORM transition_sav_status(v_sav, 'received',    v_version::int,     v_op);
-  PERFORM transition_sav_status(v_sav, 'in_progress', (v_version + 1)::int, v_op); -- email pending sav_in_progress #1
+  PERFORM transition_sav_status(v_sav, 'in_progress', (v_version + 1)::int, v_op); -- no email V1.13
   PERFORM transition_sav_status(v_sav, 'received',    (v_version + 2)::int, v_op); -- pas d'email
-  PERFORM transition_sav_status(v_sav, 'in_progress', (v_version + 3)::int, v_op); -- ON CONFLICT DO NOTHING
+  PERFORM transition_sav_status(v_sav, 'in_progress', (v_version + 3)::int, v_op); -- no email V1.13
 
   SELECT count(*) INTO v_inprogress_count
     FROM email_outbox
     WHERE sav_id = v_sav AND kind = 'sav_in_progress' AND status = 'pending';
-  IF v_inprogress_count <> 1 THEN
-    RAISE EXCEPTION 'FAIL T7 : %/1 email pending sav_in_progress (F51 ON CONFLICT DO NOTHING attendu)', v_inprogress_count;
+  IF v_inprogress_count <> 0 THEN
+    RAISE EXCEPTION 'FAIL T7 : % email pending sav_in_progress legacy (attendu 0 depuis V1.13)', v_inprogress_count;
   END IF;
 
-  RAISE NOTICE 'OK Test 7 (AC #1.7, F51) : 2e enfilement sav_in_progress dédupé (ON CONFLICT DO NOTHING)';
+  RAISE NOTICE 'OK Test 7 (V1.13) : rebound in_progress silencieux, aucune row sav_in_progress legacy';
 END $$;
 
 -- ------------------------------------------------------------
@@ -417,6 +416,13 @@ BEGIN
   END IF;
 
   -- in_progress → validated : validated_at renseigné.
+  INSERT INTO credit_notes (
+    number, sav_id, member_id, total_ht_cents, discount_cents, vat_cents,
+    total_ttc_cents, bon_type, issued_by_operator_id, pdf_web_url
+  )
+  VALUES (
+    99040110, v_sav, v_mem, 100, 0, 5, 105, 'AVOIR', v_op, 'https://example.com/t10-credit-note.pdf'
+  );
   PERFORM transition_sav_status(v_sav, 'validated', (v_version + 2)::int, v_op);
   SELECT validated_at INTO v_validated FROM sav WHERE id = v_sav;
   IF v_validated IS NULL THEN

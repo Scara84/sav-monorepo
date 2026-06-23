@@ -229,13 +229,13 @@ BEGIN
   -- Epic 4.2 note : le trigger BEFORE INSERT/UPDATE compute_sav_line_credit
   -- écrase désormais validation_status. Pour valider F52 (whitelist RPC
   -- n'inclut pas validationStatus), on pose une source **valide** qui fait
-  -- calculer 'ok' par le trigger, puis on tente de la patcher en 'blocked'
+  -- calculer 'awaiting_arbitration' par le trigger, puis on tente de la patcher en 'blocked'
   -- via l'API RPC. Si le patch passait, on aurait 'blocked'. Comme la
-  -- whitelist rejette + le trigger recalcule 'ok' sur les inputs inchangés,
-  -- le résultat final = 'ok'. Test validé si status = 'ok'.
+  -- whitelist rejette + le trigger recalcule le statut sur les inputs inchangés,
+  -- le résultat final = 'awaiting_arbitration'. Test validé si status = 'awaiting_arbitration'.
   INSERT INTO sav_lines (sav_id, product_code_snapshot, product_name_snapshot,
     qty_requested, unit_requested, qty_invoiced, unit_invoiced,
-    unit_price_ht_cents, vat_rate_bp_snapshot, credit_coefficient)
+    unit_price_ttc_cents, vat_rate_bp_snapshot, credit_coefficient)
   VALUES (v_sav, 'F52-T', 'F52 Test', 1.0, 'kg', 1.0, 'kg', 200, 550, 1)
   RETURNING id INTO v_line;
 
@@ -250,8 +250,8 @@ BEGIN
   );
 
   SELECT validation_status INTO v_status_after FROM sav_lines WHERE id = v_line;
-  IF v_status_after <> 'ok' THEN
-    RAISE EXCEPTION 'FAIL F52 : validation_status post-patch=% (attendu ok — le patch blocked aurait dû être ignoré)', v_status_after;
+  IF v_status_after <> 'awaiting_arbitration' THEN
+    RAISE EXCEPTION 'FAIL F52 : validation_status post-patch=% (attendu awaiting_arbitration — le patch blocked aurait dû être ignoré)', v_status_after;
   END IF;
   RAISE NOTICE 'OK Test 7 (AC #5, F52) : validationStatus ignoré dans patch (whitelist + trigger reset)';
 END $$;
@@ -364,12 +364,20 @@ BEGIN
   RETURNING id, version INTO v_sav, v_sav_version;
 
   -- Epic 4.2 note : le trigger compute_sav_line_credit écrase validation_status.
-  -- On fournit des inputs valides (prix + TVA + unités cohérentes) pour que
+  -- On fournit des inputs valides (prix + TVA + arbitrage cohérent) pour que
   -- le trigger pose 'ok' authentiquement (pas de valeur littérale forcée).
   INSERT INTO sav_lines (sav_id, product_code_snapshot, product_name_snapshot,
-    qty_requested, unit_requested, qty_invoiced, unit_invoiced,
-    unit_price_ht_cents, vat_rate_bp_snapshot, credit_coefficient)
-  VALUES (v_sav, 'T9b-OK', 'T9b OK', 1.0, 'kg', 1.0, 'kg', 200, 550, 1);
+    qty_requested, unit_requested, qty_invoiced, unit_invoiced, qty_arbitrated, unit_arbitrated,
+    unit_price_ttc_cents, vat_rate_bp_snapshot, credit_coefficient)
+  VALUES (v_sav, 'T9b-OK', 'T9b OK', 1.0, 'kg', 1.0, 'kg', 1.0, 'kg', 200, 550, 1);
+
+  INSERT INTO credit_notes (
+    number, sav_id, member_id, total_ht_cents, discount_cents, vat_cents,
+    total_ttc_cents, bon_type, issued_by_operator_id, pdf_web_url
+  )
+  VALUES (
+    99040091, v_sav, v_mem, 190, 0, 10, 200, 'AVOIR', v_op, 'https://example.com/credit-note.pdf'
+  );
 
   BEGIN
     PERFORM transition_sav_status(v_sav, 'validated', v_sav_version, v_op);
