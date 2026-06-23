@@ -84,6 +84,7 @@ _bmad-output/test-artifacts/*
 !_bmad-output/test-artifacts/*.md
 _bmad-input
 .agents/
+.codex/
 .claude
 CLAUDE.md
 CLAUDE.local.md
