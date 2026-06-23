@@ -1,0 +1,408 @@
+# Travaux différés — sav-monorepo
+
+## Deferred from: code review of 6-6-envoi-emails-transactionnels (2026-04-29)
+
+- **W6.6-N1 (Hardening NIT) — `BACKOFF_CAP_MS = 24h` sur 5 attempts max** : le cap 24h dans `computeBackoffMs` est dead code en V1 (avec `MAX_ATTEMPTS=5`, le worst-case `2^5 * 60s = 32 min` n'atteint jamais 24h). Conservé pour forward-compat si MAX_ATTEMPTS bump (kinds critiques tolérant > 5). OK en V1, à nettoyer si pas utilisé Epic 7. [`client/api/_lib/cron-runners/retry-emails.ts:75`]
+
+- **W6.6-N4 (Test NIT) — concurrency test timing flake** : `AC#6 (h) concurrency=5` mesure `elapsed >= 80ms` avec hang 50ms × 10. Sur runner CI lent, peut flake. Mitigation : si flake observé, bump hang 50ms → 100ms (préserve la logique mais double la fenêtre tolérante). [`client/tests/unit/api/cron/retry-emails.spec.ts:333`]
+
+- **W6.6-I5 (Hardening MEDIUM) — SMTP connection leak sur withTimeout** : nodemailer ne supporte pas AbortController. Quand `withTimeout` reject à 10s, la promise `transporter.sendMail` continue et la TCP connection peut rester ouverte côté nodemailer (pool interne). Sur volumes V1 (~80 emails/jour) impact négligeable car runtime Vercel recyclé après 60s. Mitigation post-V1 (~+10 LOC) : recreate transporter par batch via `transporter.close()` ou bump `socketTimeout` dans `_lib/clients/smtp.ts`. [`client/api/_lib/cron-runners/retry-emails.ts:withTimeout`, `client/api/_lib/clients/smtp.ts`]
+
+- **W6.6-Layer1-NIT (Audit RGPD INFO) — `messageId` loggé en clair dans cron logs** : `cron.retry-emails.sent` et variantes loguent `messageId` (ex `<msg-abc123@infomaniak.fr>`). Ce n'est pas une PII directe mais permet de corréler logs ↔ emails Infomaniak. À évaluer pour audit RGPD : soit garder (utile au debug en prod), soit hasher (`sha256(messageId).slice(0,8)`) si la rétention logs > 30j. *Audit RGPD à faire post-merge.* [`client/api/_lib/cron-runners/retry-emails.ts:logger.info('cron.retry-emails.sent')`]
+
+## Deferred from: code review of 6-5-scope-etendu-responsable-de-groupe (2026-04-29)
+
+- **W6.5-0 (Auditor MEDIUM) — AC #4 tri `member_last_name ASC` non implémenté** : la spec AC #4 mentionne "tri par received_at DESC (défaut) ou member_last_name ASC". Le handler `sav-list-handler.ts` ne pose que `.order('received_at', desc).order('id', desc)` ; aucun query param `sort` exposé. Décision CR (2026-04-29) : déféré — faible valeur fonctionnelle V1, le tri received_at couvre 95% du besoin opérationnel (manager voit les SAV groupe les plus récents en premier). Si feedback utilisateur réclame, à ajouter en story polish (~5 lignes : Zod `sort: z.enum(['received_at_desc','last_name_asc']).default('received_at_desc')` + query.order conditionnel + 1 test). [`client/api/_lib/self-service/sav-list-handler.ts:330-341`]
+
+- **W6.5-1 (Edge HIGH) — `.or()` cursor precedence fragile post-refactor** : `sav-list-handler.ts` chaîne `.eq('group_id').neq('member_id').or(cursor)` pour scope=group ; si un futur refactor unifie sur le pattern polymorphique de `sav-detail/sav-comment` (`.or('member_id.eq.X,group_id.eq.Y')`), le `.or(cursor)` ajouté ensuite produit `(ownership1 OR ownership2) AND (cursor)` selon la sérialisation Postgrest — risque de bug pagination cross-group. Mitigation : test integration end-to-end Postgrest, ou wrap explicite `.and()` autour du ownership. *Pre-existing pattern Story 6.2.* [`client/api/_lib/self-service/sav-list-handler.ts:305-337`]
+
+- **W6.5-2 (Blind HIGH) — Outbox `commentExcerpt` non sanitisé HTML/template** : `sav-comment-handler.ts:1072,1117,1186` — `commentExcerpt` (substring brute du body utilisateur) injecté dans `template_data` JSONB. Si Story 6.6 (sender) fait du templating naïf, vecteur d'injection HTML / template variables (`{{secret}}`, `<a href="evil">`). À traiter dans Story 6.6 : HTML-escape côté template render layer. *Forward-coupled Story 6.6.* [`client/api/_lib/self-service/sav-comment-handler.ts:1072`]
+
+- **W6.5-3 (Edge MEDIUM) — Membres anonymisés (RGPD) toujours exposés dans group lists** : pas de filtre `members.anonymized_at IS NULL` sur la jointure `members:members!sav_member_id_fkey ( first_name, last_name )` dans `SELECT_EXPR_GROUP`. Manager voit l'existence de SAV de membres anonymisés (avec `first_name='ANON'`/`last_name='XXX'` post-anonymisation). Couplé à Story 7.6 RGPD anonymisation. Fix : ajouter inner-join filter `members!inner` + `.is('members.anonymized_at', null)`. *Forward-coupled Story 7.6.* [`client/api/_lib/self-service/sav-list-handler.ts:133, 221`]
+
+- **W6.5-4 (Edge MEDIUM) — Layer 2 skipped quand manager consulte SON propre SAV** : `accessedAsManager = canActAsManager && sav.member_id !== memberId` → si manager ouvre son propre SAV, Layer 2 (`requireActiveManager()`) est sauté. Si l'admin a révoqué `is_group_manager=false` mid-session, le manager peut continuer à voir SES PROPRES SAV (via path Story 6.3 inchangé) — comportement intentionnel et acceptable, mais pas de test explicite. À ajouter test "manager révoqué consulting own SAV → 200 OK" pour documenter le contrat. *Documented residual risk.* [`client/api/_lib/self-service/sav-detail-handler.ts:632`, `sav-comment-handler.ts:1011`]
+
+- **W6.5-5 (Blind MEDIUM) — `decodeCursor` ne borne pas `id` upper limit** : `sav-list-handler.ts:177-190` checke `Number.isInteger(id) && id > 0` mais aucune borne MAX. Cursor avec id=2^53-1 passe ; PG accepte mais comportement opaque. Pre-existing Story 6.2, transverse à tous les handlers cursor. Fix : `id <= 2147483647`. *Pre-existing Story 6.2.* [`client/api/_lib/self-service/sav-list-handler.ts:177`]
+
+- **W6.5-6 (Blind MEDIUM) — Mock test `.or()` parser permissif (false-green risk)** : `sav-detail-handler-6-5.spec.ts:65-79` et `sav-comment-handler-6-5.spec.ts:50-69` parsent `member_id.eq.X,group_id.eq.Y` via `split(',')` naïf. Postgrest `.or()` peut contenir `and(...)` nested → split inccorrect. Tests passent même si Postgrest sérialisation diverge. Mitigation : test integration via Supabase test container, ou pin la sérialisation supabase-js ≥ 2.x. *Test improvement, low priority.* [`client/tests/unit/api/self-service/sav-detail-handler-6-5.spec.ts:65`]
+
+- **W6.5-7 (Edge MEDIUM) — `groupQ` ref persiste cross-tab switch (UX)** : `MemberSavListView.vue:groupQ` n'est pas reset au switch self↔group. User type "Martin" sur group, switch self → switch back group : input garde "Martin" mais data shown est unfiltered (le composable n'a pas mémorisé le q). Fix : reset `groupQ.value = ''` sur `onTabClick('self')`, OU mémoriser q dans `useMemberSavList` et synchroniser. *UX polish.* [`client/src/features/self-service/views/MemberSavListView.vue:1825`]
+
+- **W6.5-8 (Edge MEDIUM) — `onSearchSubmit` ignore `lastStatusFilter`** : `refetchGroupWithQuery()` re-fetch sans status param → backend retourne all statuses → client filter visibleRows refait le filtre côté JS. Inefficace mais fonctionnel. Fix : passer `q` ET `statusFilter` au composable refactorisé. *UX/perf polish.* [`client/src/features/self-service/views/MemberSavListView.vue:1838-1865`]
+
+- **W6.5-9 (Blind LOW) — Anti-énumération timing leak via `requireActiveManager` latency** : Layer 2 (~5-15ms DB query) ne tourne QUE si `accessedAsManager`. Manager peut probe SAV IDs `1..N` et distinguer "exists in group" (slow) vs "not found" (fast). Faible severity (manager déjà authentifié, scope limité au groupe). Hardening future : exécuter requireActiveManager systématiquement quand `canActAsManager`, en parallèle du SAV select (constant-time). *Future hardening.* [`client/api/_lib/self-service/sav-detail-handler.ts:633-661`]
+
+- **W6.5-10 (Blind LOW) — Optimistic comment double-submit race** : `useMemberSavDetail.ts:addComment` capture `before = data.value.comments` au début ; deux submits rapides → second `before` ne contient pas la première optimistic row → on success, `[body2.data, ...before]` écrase la première. Pre-existing Story 6.3. Fix : splice par id sur 201 plutôt que reset array. *Pre-existing Story 6.3.* [`client/src/features/self-service/composables/useMemberSavDetail.ts:131-178`]
+
+- **W6.5-11 (Blind LOW) — Pas de check CSRF/Origin visible sur POST self-service** : cookie session SameSite (présumé Lax/Strict) seul mécanisme. Concern projet-wide — à traiter en story sécurité dédiée Epic 7 (audit cookies + CSRF tokens si SameSite!=Strict). *Project-wide concern.* [transverse self-service handlers]
+
+- **W6.5-12 (Blind+Edge LOW) — RLS `jwt.claims->>'sub'::bigint` throws sur claim non-numérique** : si `sub` est `'abc'` ou whitespace `' '`, le cast `::bigint` lève → SELECT échoue, pas de leak (fail-noisy). Tous les chemins V1 utilisent service_role bypass donc inerte. Hardening : helper SQL `app.jwt_sub_or_null()` qui parse safely. *Low-severity hardening.* [`client/supabase/migrations/20260509150000_rls_group_manager_scope.sql:73, 116, 138, 173`]
+
+## Deferred from: code review of 5-4-export-csv-reporting-ad-hoc (2026-04-28 second pass)
+
+- **W53 (Edge HIGH) — `count: 'exact'` HEAD scan peut OOM/timeout sur grosses tables** : `admin.from('sav').select('id', { count: 'exact', head: true })` déclenche un COUNT(*) plein sur les filtres + JOINs. Sur dataset multi-coop ou volumes Fruitstock V2, peut consommer le budget lambda Vercel (10-30s) avant même la fetch → `QUERY_FAILED` sans rows. Fix : `count: 'planned'` (estimation pg_class rapide) puis escalade `exact` uniquement quand l'estimation flirte avec `CSV_SOFT_LIMIT_ROWS`/`HARD_LIMIT_ROWS`. Alternative : `.limit(HARD_LIMIT_ROWS+1)` sur la query data et rejeter post-fetch si length>limit. [`api/_lib/reports/export-csv-handler.ts:countQ`]
+
+- **W54 (Blind MEDIUM) — Aucun timeout (`AbortSignal.timeout`) sur les Supabase queries** : un hang DB (load, query plan dégradé, network) tient la lambda jusqu'au kill Vercel ; le rate-limit a déjà été incrémenté côté `op:sub` → l'utilisateur ne peut pas retry pendant 1 min sans avoir reçu de résultat. À transposer transversalement sur tous les handlers Epic 5 (export-supplier, reports/*). Fix : passer `{ signal: AbortSignal.timeout(45_000) }` aux clients Supabase, et décrémenter le bucket rate-limit sur hard failure. [`api/_lib/reports/export-csv-handler.ts` + transverse]
+
+- **W55 (Blind LOW) — SheetJS `xlsx` historique CVE (proto-pollution CVE-2023-30533, ReDoS CVE-2024-22363)** : on ne fait que de l'écriture (`XLSX.utils.aoa_to_sheet` + `XLSX.write`), surface d'attaque réduite, mais la lib reste sensible. À vérifier au prochain audit dépendances : confirmer version pinned ≥ 0.20.2 dans `package.json`, sinon bump ; à terme évaluer migration `exceljs` (stream writer + plus actif côté sécurité). [`api/_lib/reports/xlsx-generator.ts`]
+
+## Deferred from: code review of 5-4-export-csv-reporting-ad-hoc (2026-04-27)
+
+- **W47 (AA2 LOW) — Streaming CSV non implémenté V1** : la spec AC #5 mentionne le streaming en chunks pour CSV ≥ 1000 lignes (`res.write` + Transfer-Encoding chunked) pour éviter spike mémoire lambda. Le contrat `ApiResponse` actuel n'expose pas `res.write()` ni `pipe()` ; on bufferise tout. Acceptable V1 (≤ 5000 lignes CSV ~500 KB sous budget 1 GB lambda confortable). Si bench réel pousse > 30k lignes, migrer vers async job + OneDrive (cf. Dev Notes Story 5.4 §"Pourquoi pas streaming XLSX ?"). [`api/_lib/reports/export-csv-handler.ts:sendBinary`]
+
+- **W48 (EC18 LOW) — Pas de touche Échap pour fermer le menu Export** : le menu déroulant CSV/XLSX se ferme au mouseleave (souris) ou au clic d'un item. Pas d'Escape handler ni de focus-trap. Accessibilité partielle pour utilisateurs clavier. Fix : `@keydown.esc="closeExportMenu"` sur le wrapper + focus restoration sur le bouton trigger. [`src/features/back-office/views/SavListView.vue:export-csv-wrapper`]
+
+- **W49 (EC15 INFO) — PostgREST `db-max-rows` cap inconnu en prod Supabase** : le handler fait `.limit(50_000)`. Si l'instance Supabase Cloud a `db-max-rows` configuré (pas le cas par défaut, mais possible), notre export sera silencieusement tronqué. À vérifier au déploiement (curl `/rest/v1/sav?limit=50000` doit renvoyer 50k rows si la base les contient). Si limite, soit ajuster `db-max-rows`, soit paginer côté handler (cursor en boucle interne). [`api/_lib/reports/export-csv-handler.ts:HARD_LIMIT_ROWS`]
+
+- **W50 (EC22 INFO) — Vercel response body limit** : Hobby plan = 4.5 MB par défaut. Un XLSX de 50k lignes ≈ 5 MB. Risque de 413 côté Vercel avant que notre handler termine. À monitorer post-déploiement. Fallback Epic 7 : route via OneDrive (upload puis 302 redirect, comme `export-download` Story 5.2). [`api/_lib/reports/export-csv-handler.ts:sendBinary`]
+
+- **W51 (Dev Notes carry-over) — Audit trail `sav_exports` applicatif** : la spec Dev Notes mentionne "défer Epic 7 : ajouter audit trail sav_exports applicatif (pas en DB, logger applicatif centralisé)". Aujourd'hui on log `export.csv.success` avec filters_hash + row_count + durationMs ; pas de persistance DB. Si besoin RGPD pour traçabilité PII export → ajouter un INSERT `audit_trail` côté handler (pattern Story 5.1 trigger PG ou applicatif). [`api/_lib/reports/export-csv-handler.ts:logger.info`]
+
+- **W52 (Bench V1) — Pas de bench rigoureux performance** : Dev Notes Story 5.4 explicitement défère ("volumes Fruitstock prévu : < 5000 lignes / an la 1re année"). Si volumes réels divergent, lancer `scripts/bench/reports.ts` adapté (pattern Story 5.3) avec datasets 1k/5k/30k/50k. Targets AC #5 : < 2s p95 / 1k lignes, < 5s / 5k, < 10s / 50k.
+
+## Deferred from: code review of 5-8-refonte-auth-operateurs-magic-link (2026-04-27)
+
+- **W36 — `logAuthEvent(...).catch(() => undefined)` swallow silencieusement** : pattern hérité Story 1.5, présent dans tous les handlers magic-link (adhérent + opérateur). Audit log peut être perdu si Supabase RPC indispo. Acceptable en V1 (audit best-effort), mais à traiter transversalement Epic 6 — soit retry queue, soit dégrader le 202 en 503 si l'audit ne passe pas. [`api/auth/operator/{issue,verify}.ts`, `api/auth/magic-link/{issue,verify}.ts`]
+- **W37 — `X-Forwarded-For` IP-spoofing pour rate-limit** : `readIp()` prend la première IP du header sans valider qu'elle vient bien du proxy de confiance. Un attaquant en environnement direct peut alterner la première IP pour bypass `mlink-op:ip` (5/min/IP). Mitigé par le rate-limit `mlink-op:email` ajouté CR (5/h/email). Fix transverse : whitelist Vercel proxy IPs ou utiliser `req.ip` exclusif quand connu. [`api/auth/operator/issue.ts:readIp`, transverse à toutes les routes]
+- **W38 — `OPERATOR_SESSION_TTL_HOURS` borne sup 168h (7j)** : pour un back-office opérateur SAV avec rôle privilégié, 7j de session est large. À trancher avec PM si réduire la borne sup à 24h ou 48h. [`api/auth/operator/verify.ts:readOperatorSessionTtlSec`]
+- **W39 — `MagicLinkPayload.kind` accepte `undefined` (rétrocompat tokens pré-5.8)** : 15 min après le déploiement, plus aucun token sans `kind` ne peut exister. Le check `verified.payload.kind !== undefined` est une fenêtre transitoire. À durcir : 24h post-deploy, exiger `kind === 'member'` ou `kind === 'operator'`. La defense-in-depth `stored.target_kind` rattrape mais durcir améliore le signal. [`api/_lib/auth/magic-link.ts:isMagicLinkPayload`]
+- **W40 — `magic_link_tokens` croît sans purge** : aucun job cron ne supprime les tokens consommés / expirés. Sur des mois, table + index `idx_magic_link_*` bloat. À ajouter Epic 6 : `DELETE FROM magic_link_tokens WHERE expires_at < now() - interval '7 days'` quotidien. [`api/cron/dispatcher.ts` extensions]
+- **W41 — `CREATE INDEX` sans `CONCURRENTLY`** : la migration 20260506130000 prend ACCESS EXCLUSIVE LOCK pendant la création des 2 nouveaux index. Sur small dataset Fruitstock OK, mais à généraliser : `CREATE INDEX CONCURRENTLY` pour les futures migrations. Note : `CONCURRENTLY` interdit dans une transaction → split en migration dédiée. [`supabase/migrations/20260506130000_operators_magic_link.sql`]
+- **W42 — Endpoint `/api/auth/operator/verify` retourne JSON brut sur 4xx, UX dégradée** : un opérateur qui clique un lien expiré voit `{error:{code:'LINK_EXPIRED',...}}` dans le navigateur. V1.5 : créer page `/admin/login` qui lit `?error=expired|consumed|invalid` et affiche message + lien pour redemander un magic-link. [`api/auth/operator/verify.ts`, `src/features/back-office/views/AdminLoginView.vue`]
+- **W43 — `returnTo` non préservé après login opérateur** : verify redirect 302 `/admin` toujours, peu importe la page d'origine. UX dégradée : user sur `/admin/sav/123` est renvoyé sur `/admin`. V1.5 : embarquer `state` dans le JWT issue + valider en safe-redirect (`^/(?!/)`). [`api/auth/operator/{issue,verify}.ts`]
+- **W44 — Anciennes URLs `/api/auth/msal/{login,callback}` → 404** : bookmarks et liens email envoyés avant Story 5.8 produisent un 404 sec. Ajouter rewrite Vercel `/api/auth/msal/login → /admin/login` (302) pour adoucir la transition. Fenêtre suggérée : 30j post-deploy puis retirer. [`vercel.json` rewrites]
+- **W45 — `auth_events` row pour `internal_error` non créée** : le catch global du handler `issue.ts` log via `logger.error()` mais n'INSÈRE pas de row `auth_events` avec `reason='internal_error'`. Le brief Tâche 3.5 du spec l'exigeait. Mineur car logger structuré suffit en V1, mais audit complet souhaitable. [`api/auth/operator/issue.ts:catch`]
+- **W46 — Lien depuis `README.md` ou `docs/index.md` vers `docs/operator-onboarding.md` non créé** : Tâche 8.5 du spec demandait un cross-link. À ajouter à la prochaine itération doc. [`docs/index.md` ou `README.md`]
+
+## Deferred from: code review of 4-0-dette-schema-sav-lines-prd-target (2026-04-23)
+
+- **D1 — COALESCE empêche le null-clearing des champs nullable dans `update_sav_line`** : `unit_invoiced`, `qty_invoiced`, `credit_coefficient_label`, `piece_to_kg_weight_g` ne peuvent pas être effacés via l'API (COALESCE absorbe le JSON null). Décision Antho : défer V1 — workflow "effacer un champ posé" absent de l'UI V1 ; trigger Epic 4.2 réécrit ces colonnes de toute façon. Fix : remplacer COALESCE par `CASE WHEN p_patch ? 'field' THEN ... ELSE current_value END` pour les 4 nullable, en Epic 4.2 ou à la demande. [`20260424130000_rpc_sav_lines_prd_target_updates.sql:94-107`]
+
+- **W1 — Race condition trigger `assign_sav_line_number`** : `SELECT COALESCE(MAX(line_number), 0) + 1` sans verrou advisory → deux inserts concurrents pour le même `sav_id` calculent le même next-value et l'un d'eux aborte sur UNIQUE violation. V1 safe (seul writer = capture_sav_from_webhook séquentiel). Fixer en Epic 4.2 : séquence par sav_id (via séquence PG dédiée) ou advisory lock `pg_try_advisory_xact_lock(sav_id)`. [`20260424120000_sav_lines_prd_target.sql:152-157`]
+- ~~**W2**~~ — résolu commit `16df7d3` (migration `20260503130000_security_w2_w10_w17_search_path_qualify.sql` : ALTER FUNCTION SET search_path = public, pg_temp sur les 9 RPCs SECURITY DEFINER manquantes ; mécanisme PG save/restore zéro drift body).
+- **W3 — `capture_sav_from_webhook` non-idempotent** : un retry Make.com double les lignes `sav_lines` (pas d'`ON CONFLICT` sur les lignes). Behavior pre-existing non modifié par Story 4.0. Solution : idempotency key sur `(sav_id, product_code_snapshot, position)` ou guard sur `sav.reference` déjà existant. À traiter avec l'intégration Make.com (Epic 2 carry-over ou Epic 7). [`20260424130000_rpc_sav_lines_prd_target_updates.sql:193-226`]
+- ~~**W4**~~ — résolu commit `01334d0` (migration `20260502120000_rpc_update_sav_line_p_expected_version_bigint.sql` : DROP + CREATE FUNCTION update_sav_line avec p_expected_version bigint).
+
+## Deferred from: code review of 4-0b-dette-tests-sql-rpc-epic-3 (2026-04-23)
+
+- **W5 — `ON CONFLICT ... DO NOTHING RETURNING id` retourne NULL silencieusement sur conflit** : `transition_sav_status` remonte `email_outbox_id=NULL` indistinctement quand (a) l'email a été skippé (F59 email vide) et (b) l'email a été dédup (F51 pending existant). Caller ne peut pas discriminer. Pré-existant Epic 3 CR F51, comportement intentionnel à V1. Traiter en Epic 6 (dispatcher email) si le caller a besoin de la distinction. [`20260423120000_epic_3_cr_security_patches.sql` + `20260424140000_rpc_variable_conflict_use_column.sql`]
+- **W6 — F61 `GET DIAGNOSTICS ROW_COUNT=0` défense théorique** : le CAS verrou via SELECT FOR UPDATE rend ROW_COUNT=0 pratiquement inatteignable en sync. Défense en profondeur contre triggers concurrents hypothétiques. Test behavioral impossible en SQL sync (couverture = Epic 4.6 load 10k avoirs). Pré-existant Epic 3 CR. [`transition_sav_status`]
+- **W7 — `update_sav_line` edge cases pré-existants** (hors scope tests 4.0b) : (a) patch individuel de `position`/`line_number` peut violer UNIQUE(sav_id, line_number) sans reorder ; (b) pas de `GET DIAGNOSTICS` entre UPDATE sav_lines et UPDATE sav.version → data drift possible si race DELETE concurrente ; (c) cast numeric/bigint accepte `NaN`/`Infinity`/négatifs (validation Zod amont en place, défense DB absente). Traiter en Epic 4.2 moteur calcul ou cleanup sécurité Epic 7. [`20260424130000_rpc_sav_lines_prd_target_updates.sql:94-111`]
+- ~~**W8**~~ — résolu commit `7c0e630` (migration `20260504150000_transition_sav_status_lines_blocked_pipe_format.sql` : CREATE OR REPLACE FUNCTION `transition_sav_status` avec `array_to_string(v_blocked_ids, ',')` → format `LINES_BLOCKED|ids=1,2,3` pipe-friendly. Body identique sauf bloc LINES_BLOCKED, SET search_path + actor_operator_id reset (W2+W13) ré-incorporés explicitement. Test SQL `w8_lines_blocked_pipe_format.test.sql` 2 cas multi/singleton).
+- **W9 — Email subject concat non-escapé** : `'SAV ' || v_sav_reference || ' : ' || p_new_status`. Si `reference` contenait du user-controlled data (non V1, la reference est générée par trigger), header/HTML injection possible downstream. Epic 6 (dispatcher HTML) gère le templating final. [`transition_sav_status`]
+
+## Deferred from: code review of 4-2-moteur-calculs-metier-typescript-triggers-miroirs-fixture-excel (2026-04-25)
+
+- **W16 (BH2)** — Conversion double-round precision drift sur `weight` non-divisible (ex: 201g). `creditCalculation.ts:108,112` et trigger PG font `round` sur `price_effective` intermédiaire puis re-multiplient × qty × coef → dérive potentielle de quelques cents sur grosses commandes. Les fixtures V1 n'exercent pas ces cas. Défer shadow run Epic 7 avec cas réels Excel — si dérive > 1 cent observée, refacto : `credit = round(qty × price_raw × coef / divisor)` en une passe sans intermédiaire rounded.
+- ~~**W17 (BH3)**~~ — résolu commit `16df7d3` (migration `20260503130000_security_w2_w10_w17_search_path_qualify.sql` : `recompute_sav_total()` re-créé avec `FROM public.sav_lines` + `UPDATE public.sav` + `PERFORM 1 FROM public.sav` qualifiés ; defense-in-depth complémentaire au SET search_path).
+- ~~**W18**~~ — résolu commit `a3584ec` (helper TS `formatQty(value)` exporté + utilisé dans `validation_message` qty_exceeds_invoice ; migration `20260504140000_compute_sav_line_credit_format_qty.sql` mirror PG via `regexp_replace(qty::text, '\.?0+$', '')`. 7 tests Vitest dont 1 assertion message + 6 cas formatQty).
+- ~~**W19**~~ — résolu commit `f4a79e8` (sqlLiteral élargi boolean/bigint/array, export + guard ESM main(), 7 tests vitest).
+- ~~**W20**~~ — résolu commit `f4a79e8` (Test 11 refacto +1/-1 pour 2 mutations net identiques au lieu de no-op).
+- ~~**W21**~~ — résolu commit `f4a79e8` (DELETE FROM sav_lines en début de chaque DO bloc Tests 1-7).
+- ~~**W22**~~ — résolu commit `a83bef1` (migration `20260504120000_settings_overlap_guard.sql` : trigger BEFORE INSERT WHEN (NEW.valid_to IS NULL) qui ferme automatiquement la version active précédente (`UPDATE ... SET valid_to = NEW.valid_from`) — sémantique supersede atomique. Couplé à W37 partial UNIQUE INDEX. Test SQL 3 cas).
+- **W23 (EC-19)** — ESLint `no-restricted-imports` est statique et local : un dev peut mettre l'IO dans `api/_lib/clients/ioHelper.ts` puis l'importer depuis `_lib/business/` — la règle ne voit pas l'import transitif. Mitigation Epic 7 : test Vitest qui analyse l'AST de `_lib/business/**/*` et check les imports transitifs. [`client/package.json` eslintConfig override]
+- **W24 (EC-22)** — TS `to_calculate` vs PG `check_violation` quand `coef > 1 AND price NULL` : TS short-circuit sur to_calculate (path §1), PG CHECK sur `credit_coefficient` fire avant le trigger. Divergence théorique rarement atteinte (Zod valide coef en amont), mais documentée.
+- **W25 (EC-23)** — `computeCreditNoteTotals` accepte seulement des HT non-null. Contrat explicité Story 4.4 handler : filter `credit_amount_cents !== null AND validation_status === 'ok'` avant appel. Éventuellement ajouter overload qui prend `SavLineComputed[]` et filtre en interne. [`vatRemise.ts:589-598`]
+- ~~**W26**~~ — résolu commit `2538855` (migration `20260504130000_sav_lines_immutable_sav_id.sql` : trigger BEFORE UPDATE OF sav_id raise `IMMUTABLE_SAV_ID|line_id=...|old_sav_id=...|new_sav_id=...` ERRCODE check_violation. Défense en profondeur vs whitelist update_sav_line. Test SQL 2 cas).
+- **W27 (EC-30)** — `computeCreditNoteTotals` retourne un seul `vat_cents` agrégé, sans split par taux TVA. Story 4.5 (template PDF bon SAV) aura besoin du détail par bracket (550bp / 2000bp) pour la mention légale française multi-taux. Ajout signature retournant `{ vatByRateBp: Record<number, number>, ... }` Story 4.5. [`vatRemise.ts:ComputeCreditNoteTotals`]
+- ~~**W28**~~ — résolu commit `e688043` (`SettingRow.id?: number` optionnel + `resolveSettingAt` tie-break déterministe `valid_from DESC, id DESC`. Sans id (legacy callers), fallback first-vue wins préservé. Test Vitest : 2 rows même valid_from id=10/20 → id=20 wins, inversion ordre input idempotente).
+
+## Deferred from: code review of 4-1-migration-avoirs-sequence-transactionnelle-rpc (2026-04-24)
+
+- ~~**W10**~~ — résolu commit `16df7d3` (migration `20260503130000_security_w2_w10_w17_search_path_qualify.sql` : `audit_changes()` re-créé avec SET search_path + INSERT INTO public.audit_trail qualifié, conserve PII masking sha-256 Story 1.6).
+- ~~**W11**~~ — résolu commit `6d1b68e` (migration `20260503150000_security_w11_purge_audit_pii_for_member.sql` : helper `purge_audit_pii_for_member(p_member_id bigint)` Option B curative ; câblage Story Epic 7.6 future).
+- ~~**W12**~~ — résolu Story 4.6 done (load test `credit-sequence.ts` 10 000 émissions concurrentes).
+- ~~**W13**~~ — résolu commit `6197b04` (migration `20260503140000_security_w13_actor_guc_reset.sql` : ALTER FUNCTION SET app.actor_operator_id='' sur les 8 RPCs SECURITY DEFINER ciblées ; mécanisme PG save/restore defense-in-depth pgBouncer).
+- ~~**W14**~~ — résolu commit `b5dbbd8` (migration `20260503120000_security_w14_rls_active_operator.sql` : 4 policies authenticated durcies avec EXISTS operators is_active — credit_notes, sav, sav_lines, sav_files. Bloquant Epic 6 levé).
+- ~~**W15**~~ — résolu commit `4f74df8` (PRD §846 patché avec `AT TIME ZONE 'UTC'` + pointeur Story 4.1).
+
+## Deferred from: code review of 4-3-integration-moteur-vue-detail-preview-live (2026-04-24)
+
+- **W29 — Test cross-stack DB↔TS (Task 4.4 Story 4.3)** : UPDATE via RPC, fetch détail, assert TS `linesComputed[i].credit_amount_cents === DB credit_amount_cents` sur fixture 4.2. Optionnel V1 per AC. Requiert environnement Supabase + RPC INSERT disponible en CI, à planifier quand l'intégration DB-CI sera prête. [`client/src/features/back-office/composables/useSavLinePreview.test.ts`]
+- ~~**W30**~~ — résolu commit `79d850f` (logger.warn `settings.unknown_value_shape` dans detail-handler quand shape ≠ {bp:N} + test régression).
+- ~~**W31**~~ — résolu commit `79d850f` (ESLint patterns `**/clients/**` + globals `XMLHttpRequest`/`WebSocket` + 3 tests programmatiques).
+- ~~**W32**~~ — résolu commit `79d850f` (`Number.isNaN(fromMs)` + `Number.isNaN(toMs)` rejet explicite dans `resolveSettingAt` + 2 tests).
+
+## Deferred from: code review of 4-4-emission-atomique-n-avoir-bon-sav (2026-04-24)
+
+- **W33 (CR 4.4 D1) — Clock drift fenêtre settings `valid_from <= now AND (valid_to IS NULL OR valid_to > now)`** : pattern identique Story 4.3 `detail-handler.ts` (strict `>`) et 4.4 `emit-handler.ts`. Sur une transition de version settings où `valid_to_A = valid_from_B` à la seconde près, la fenêtre de matching peut renvoyer 0 row (si now tombe pile sur la borne), forçant un fallback silencieux ou un 500. Proba faible mais déterministe sur la borne. À traiter globalement : soit remplacer `>` par `>=` côté `valid_to`, soit permettre une tolérance 1s dans le resolver. Pré-existant 4.3, hors scope patch 4.4 immédiat. [`client/api/_lib/sav/detail-handler.ts:131-135` + `client/api/_lib/credit-notes/emit-handler.ts`]
+
+## Deferred from: code review of 4-5-template-pdf-charte-fruitstock-generation-serverless (2026-04-24)
+
+- ~~**W34**~~ — résolu commit `ceab551` (helper `isTransientGraphError(err)` exporté ; retry block short-circuit sur 400/403/404/413 + assertions locales — gain ~7s lambda budget. 2 tests Vitest : 400 short-circuit + 503 retry).
+- ~~**W35**~~ — résolu commit `ceab551` (helper `forceRefreshAccessToken()` ajouté à `graph.js` via MSAL `acquireTokenByClientCredential({ skipCache: true })` ; retry block invoque le refresh AVANT le retry suivant sur 401 ; logs PDF_UPLOAD_TOKEN_REFRESHED/REFRESH_FAILED. 2 tests Vitest : 401 → refresh + retry success, 401×3 → raise après 3 tentatives + 2 refresh sans boucle infinie).
+- ~~**W36**~~ — résolu commit `8b04c0e` (install `@vercel/functions ^3.4.4` en dep production + commentaire `wait-until.ts` mis à jour).
+- ~~**W37**~~ — résolu commit `a83bef1` (migration `20260504120000_settings_overlap_guard.sql` : `CREATE UNIQUE INDEX settings_one_active_per_key ON settings(key) WHERE valid_to IS NULL`. Couplé à W22 trigger BEFORE INSERT — défense en profondeur indépendante. Audit DB préview confirmé zéro overlap pré-existante).
+
+## Deferred from: code review of 4-6-test-de-charge-sequence-d-avoir (2026-04-24)
+
+- **W38 — Intégration CI du load test `credit-sequence`** : V1 le script tourne uniquement en manuel (pré-merge final Epic 4 + pré-cutover Epic 7). V1.1 envisage un job GitHub Actions `workflow_dispatch` (trigger manuel) ciblant une DB préview Supabase dédiée + secret store CI pour `SUPABASE_SERVICE_ROLE_KEY` + archivage du JSON report en artifact. **Jamais** en push `main` ni en PR (charge DB trop coûteuse). [`client/scripts/load-test/credit-sequence.ts` + `.github/workflows/`]
+- **W39 (CR 4.6) — Checklist Epic 4 final + Checklist cutover Epic 7 référencent le load test** : AC #10 de Story 4.6 exige que le script soit inscrit dans « Checklist Epic 4 final + Checklist cutover Epic 7 » comme étape obligatoire « Load test credit-sequence passed within last 7 days ». Ces documents de checklist ne sont pas encore matérialisés dans le repo ; à créer ou compléter au kickoff Epic 7. [`_bmad-output/implementation-artifacts/4-6-test-de-charge-sequence-d-avoir.md` AC #10 + futures checklist files]
+
+## Deferred from: code review of story-5-1 (2026-04-24)
+
+- **Formule cachée `v:0` lue comme 0 dans les viewers read-only Excel Online / LibreOffice headless** — Excel desktop recalcule à l'ouverture, pas d'impact Rufino qui ouvre dans Excel. Revoir si un bug fournisseur est remonté.
+- **Guard spec textuel bypassable** (`'RUF' + 'INO'`, template literals, `String.fromCharCode`, indirection `process.env`) — Story 5.6 (ajout MARTINEZ) validera empiriquement le principe FR36 en pratique. Considérer un test black-box comportemental si régression.
+- **CHECK `total_amount_cents >= 0` interdit montants négatifs** — Design V1. Si une cancellation/reversal fournisseur apparaît, ALTER CHECK en Epic 7.
+- **Multiples `validation_messages.kind='cause'` : first-wins silencieux** — À documenter en invariant Story 5.2 UI ou Story 3.6b. Pas de régression V1.
+- **RLS `NULLIF(..., '')` whitespace-only GUC** — Concern middleware-level (Epic 1 auth). Le middleware actuel ne pose jamais de whitespace ; revoir si bug.
+- ~~**Coverage ≥ 90% non empiriquement vérifiée**~~ — mesuré commit `53e596e` (86.14% global / 91.6% hors `upload-export.ts` mocké par design ; détail dans Debug Log Story 5.1). Suivi dédié : couverture `upload-export.ts` exige integration test Microsoft Graph (hors scope unitaire).
+
+## Deferred from: code review of story-5-2 (2026-04-24)
+
+- ~~**W40**~~ — résolu commit `498c627` (router `draft.ts` enveloppé `withAuth({ types: ['member'] })` top-level + tests).
+- ~~**W41**~~ — résolu commit `031bdfa` (focus-trap + `@keydown.esc` sur `ExportSupplierModal` + tests A11y).
+- ~~**W42**~~ — résolu commit `031bdfa` (`useSupplierExport` exposé via `generating`/`fetchingHistory` + `generateError`/`historyError` + consumers + tests).
+- **W43 — `require('../graph.js')` dans `upload-export.ts`** : pattern hérité Epic 4.5 (`uploadCreditNotePdf` utilise le même `require`). Migrer à `import` top-level quand `graph.js` sera converti TS/ESM. Cross-cutting Epic 5+. [`client/api/_lib/exports/upload-export.ts` + `client/api/_lib/onedrive-ts.ts`]
+- ~~**W44**~~ — résolu commit `cd0128e` (garde-fou `BENCH_ALLOW_DESTRUCTIVE=1` requis dans `scripts/bench/export-supplier.ts`).
+- ~~**W45**~~ — résolu commit `cd0128e` (`ExportHistoryView.vue` `router.replace` merge `route.query` au lieu d'écraser).
+- ~~**W46**~~ — résolu commit `031bdfa` (AbortController par fetch dans `useSupplierExport` + `onScopeDispose` + tests).
+- ~~**W47**~~ — résolu commit `cd0128e` (test `W47 uploadExportXlsx ne retry pas` — assert 1 seul appel sur erreur transient).
+- ~~**W48**~~ — résolu commit `cd0128e` (`?supplier=` vide → transform vers `undefined` puis regex, test ajouté).
+- ~~**W49**~~ — résolu commit `031bdfa` (mapping HTTP 5xx → `GATEWAY` dans `classifyHttpError` + `errorMessages.GATEWAY` + tests 502/504).
+- ~~**W50**~~ — résolu commit `031bdfa` (flag local `historyLoadFailed` dans `ExportSupplierModal` + UI distincte échec vs empty + test).
+- ~~**W51**~~ — résolu commit `cd0128e` (`{{ formatDate(item.period_from) }} → {{ formatDate(item.period_to) }}` dans `ExportHistoryView`).
+- ~~**W52**~~ — résolu commit `498c627` (`METHOD_NOT_ALLOWED: 405` ajouté à `STATUS_BY_CODE` + refactor 4 routers + tests T23/P08/R07/W52 mis à jour).
+- **W53 — `upload-complete` cap `MAX_DRAFT_FILES=20` bloque les legitimate replaces quand `existingFiles.length > cap`** : un brouillon corrompu (pre-existant >20 files) ne peut plus être modifié. Pré-existant Story 2.4, pas introduit par 5.2 mais révélé par la consolidation. Check séparé : replace autorisé même si >= cap. [`client/api/_lib/self-service/upload-complete-handler.ts`]
+- **W54 — Race concurrente 2 exports même (supplier, période)** : pas de UNIQUE constraint applicative sur `(supplier_code, period_from, period_to)`. 2 operators cliquant simultanément → 2 rows DB, 1 fichier OneDrive (replace gagne 1 itemId). Design append-only documenté, mais advisory-lock ou UNIQUE partiel éliminerait l'ambiguïté. Epic 7 si pertinent. [`client/supabase/migrations/20260501120000_supplier_exports.sql`]
+- **W55 — Route `/admin/exports/history` diverge de la spec `/back-office/exports/history`** : le router actuel met tout sous `/admin/*` (pattern Epic 3). Harmoniser : soit refactorer les routes existantes `/admin/sav` → `/back-office/sav`, soit amender la spec Epic 5 pour adopter `/admin`. Décision produit requise. [`client/src/router/index.js`]
+- **W56 — Bench `5-2-bench-report.md` non exécuté V1** : bloqué par placeholder settings `onedrive.exports_folder_root`. À exécuter au cutover Epic 7. Pattern identique Story 4.5. [`_bmad-output/implementation-artifacts/5-2-bench-report.md`]
+
+## Deferred from: session polish moyen (2026-04-26)
+
+- **W57 — `ALTER FUNCTION SET app.actor_operator_id` non applicable côté Supabase** : la migration `20260503140000_security_w13_actor_guc_reset.sql` (W13 originale) tente `ALTER FUNCTION ... SET app.actor_operator_id = ''` sur 8 RPCs SECURITY DEFINER. Or sur Supabase, **ni le rôle postgres en local ni supabase_admin en cloud n'ont le droit** de poser un GUC custom via ALTER FUNCTION SET (`permission denied to set parameter` confirmé via tests directs et SQL Editor). La migration a été marquée appliquée dans schema_migrations mais n'a JAMAIS été exécutée propremment — defense pgBouncer absente. Pattern de remplacement validé en commit `3330b3d` pour W8 : `PERFORM set_config('app.actor_operator_id', '', false)` en fin de body de la RPC (avant RETURN NEXT, `is_local=false` = session-wide reset équivalent au mécanisme W13). Refactor à appliquer sur les 8 RPCs concernées : transition_sav_status, assign_sav, update_sav_line, update_sav_tags, duplicate_sav, create_sav_line, delete_sav_line, et 1 autre (cf. migration W13 originale lignes 46-65). Bloquant pour la portabilité Supabase Cloud / local CLI. [`client/supabase/migrations/20260503140000_security_w13_actor_guc_reset.sql`]
+
+- **W58 — État mixte cloud preview vs schema_migrations tracking** : la cloud preview `viwgyrqpyryagzgvnfoi` a un état désaligné entre les fichiers locaux et le tracking Supabase. (a) 10 versions originales avec timestamps "Studio" (générés au dashboard, ex: `20260423070753`) ont été renommées vers les timestamps fichier (ex: `20260422160000`) via `migration repair --status reverted` + `--status applied` lors de la session polish moyen. (b) 4 migrations session polish (W22+W37, W26, W18, W8) appliquées via SQL Editor cloud + insérées manuellement dans schema_migrations via execute_sql MCP. (c) Tables/triggers Epic 3 patches + Epic 4 (sav_lines, transition_sav_status 5-args, compute_sav_line_credit) existent **hors tracking** sur la cloud preview — ont été appliqués manuellement à un moment indéterminé et n'apparaissent dans aucune row de schema_migrations. (d) Tables Epic 4.4+ (`credit_notes`, `supplier_exports`) NE sont PAS sur la cloud preview alors que les Stories 4.4/4.5/4.6/5.1/5.2 sont marquées done — ces stories n'ont donc jamais été testées contre la cloud preview cloud (probablement contre Supabase local Docker). Décision à prendre en début de prochaine session : (1) `npx supabase db reset --linked` pour repartir from-scratch (perte data préview), ou (2) audit ciblé table-par-table pour insérer les rows schema_migrations correspondantes aux objets déjà déployés, puis push complet. Bloquant pour utiliser la cloud preview comme environnement d'intégration cohérent. [`viwgyrqpyryagzgvnfoi.supabase_migrations.schema_migrations`]
+
+## Deferred from: code review of 5-3-endpoints-reporting-dashboard-vue (2026-04-26)
+
+- **R1 — Index `idx_sav_received_at_status (received_at DESC, status)` redondant et sous-optimal vs `idx_sav_status (status, received_at DESC)`** : le predicate `status=X AND received_at >= Y` (top-products/top-suppliers) bénéficie davantage de l'index existant (égalité d'abord, range ensuite). Le nouvel index ajoute du write-amp pour 0 gain probable. À vérifier via EXPLAIN ANALYZE puis DROP. [`client/supabase/migrations/20260505120000_reports_indexes_rpcs.sql:3217-3223`]
+- **R2 — `top-products` : pas d'index composite couvrant `(product_id, sav_id) INCLUDE (credit_amount_cents)`** : le partial index sur `product_id WHERE NOT NULL` seul force heap-fetches. À reconsidérer si bench p95 dépasse 1.5 s à 30k+ rows. [`client/supabase/migrations/20260505120000_reports_indexes_rpcs.sql:3340`]
+- **R3 — RPC `SECURITY DEFINER` sans check JWT explicite à l'intérieur** : défense périphérique `withAuth({types:['operator']})` côté router suffit V1. Si une RPC est exposée par GRANT élargi par erreur lors d'un refactor, elle bypassera RLS. Ajouter `IF current_setting('request.jwt.claims', true)::jsonb->>'role' IS DISTINCT FROM 'operator' THEN raise FORBIDDEN END IF` en défense en profondeur. [`client/supabase/migrations/20260505120000_reports_indexes_rpcs.sql` 5 RPCs]
+- **R4 — `vercel.json` rewrites n'autorisent pas le filtre méthode** : un POST/DELETE vers `/api/reports/*` est routé puis rejeté 405 côté router. Limite plateforme Vercel. Pas un bug, mais surface API publique non clean. [`client/vercel.json:427-442`]
+- **R5 — `top-products` peut renvoyer `name_fr=null`** : la table `products` autorise NULL sur `name_fr`, le handler n'applique pas de COALESCE → cellule vide UI. UX dégradée mais pas crash. Ajouter `COALESCE(p.name_fr, p.code, '—')` côté RPC ou fallback `<em>(sans nom)</em>` côté Vue. [`client/api/_lib/reports/top-products-handler.ts:1096`]
+- **R6 — `total_cents` overflow `Number` coercion bigint au-delà de 2^53** : le handler coerce `string|number` via `Number(v)` (commenté in-code « safe en V1 »). Aucun garde-fou si jamais un agrégat dépasse ~9 PB€. À typer en `BigInt` ou parser en string + assertion si projet multi-decennies. [`client/api/_lib/reports/cost-timeline-handler.ts:756`]
+- **R7 — Tests SQL absents pour les 5 RPC reporting** : la logique métier (gap-fill, percentiles, extraction JSONB, fenêtre N-1) vit côté SQL ; les specs vitest mockent `supabase.rpc()` et n'exercent jamais les CTE. Sujet transverse Epic 4.0b (tests pgTAP). [`client/supabase/migrations/20260505120000_reports_indexes_rpcs.sql` entier]
+- **R8 — `MAX_RANGE_DAYS = 2 * 365 + 1 = 731` ignore les bissextiles** : une fenêtre `2024-01-01 → 2026-01-01` = 732 jours est rejetée alors que c'est 2 ans calendaires exacts. Refus 1× tous les 4 ans pour requête métier légitime. Calculer en mois (`differenceInCalendarMonths <= 24`) ou tolérance `2*366`. [`client/api/_lib/reports/delay-distribution-handler.ts:900`]
+- **R9 — `fetchJson` rejette `body.data` falsy au lieu de `=== undefined`** : pas un cas réel pour ces 4 endpoints (objets non vides). Risque uniquement si réutilisation du composable pour endpoint retournant `data: 0/false/''`. [`client/src/features/back-office/composables/useDashboard.ts:2624`]
+- **R10 — DashboardView : pas de cache cross-mount** : navigation rapide entre `/admin/dashboard` et autre route relance 4 fetches à chaque mount. Optimisation V2 — TanStack Query, Pinia store, ou cache manuel TTL. [`client/src/features/back-office/views/DashboardView.vue:3047`]
+
+## Deferred from: code review of 5-3 — fix W13 no-op (2026-04-27)
+
+- **W13 — refactor set_config(false) body sur 7 RPCs restantes** : la migration `20260503140000_security_w13_actor_guc_reset` a été convertie en no-op documenté (le `ALTER FUNCTION ... SET app.actor_operator_id = ''` originel a TOUJOURS échoué avec `permission denied to set parameter` — limitation Supabase sur les GUC custom). Le pattern de remplacement (W8 commit `3330b3d`) est `PERFORM set_config('app.actor_operator_id', '', false)` en fin de body. Seule `transition_sav_status` a été convertie (migration 20260504150000). À convertir : `assign_sav`, `update_sav_line`, `update_sav_tags`, `duplicate_sav`, `create_sav_line`, `delete_sav_line`, `issue_credit_number`. Defense pgBouncer transaction-pooling préservée par le `SET LOCAL` (mode Supabase par défaut) — defense-in-depth manquante uniquement pour les modes pgBouncer non-default. Coût estimé : 1 migration nouvelle (DROP + CREATE chaque RPC avec PERFORM set_config en fin).
+
+## Deferred from: code review of 5-3 — bench p95 bloqué config preview (2026-04-27)
+
+- **R-bench — Exécuter le bench p95 reports.ts avec données réelles** : ~~le bench réel n'a pas pu tourner contre la preview car MSAL n'est pas configuré côté env vars Preview Vercel (`/api/auth/msal/login` → `Configuration manquante`) et le redirect_uri preview n'est pas whitelisté côté Azure App Registration~~ — **obsolète 2026-05-15**, vérifié : (a) MSAL est utilisé backend M2M Microsoft Graph uniquement, pas d'OAuth user-facing depuis le redesign Story 1.4 (login opérateur = magic-link), donc pas de `/api/auth/msal/login` (route 404) et pas de `redirect_uri` à whitelister Azure pour les previews ; (b) `AZURE_TENANT_ID/CLIENT_ID/CLIENT_SECRET` SONT configurés sur le scope Preview Vercel (healthcheck `graph:ok` le prouve). Le script `client/scripts/bench/reports.ts` est en place et robuste (interpolation NIST R7 P7, clamp 29 fév P8, garde-fou MIN_OK_RATE=90 % qui FAIL bruyamment au lieu d'un faux PASS). Cibles théoriques D2-C maintenues : cost-timeline < 2 s, top-products < 1.5 s, delay-distribution < 1 s, top-reasons-suppliers < 1.5 s. **Smoke test 2026-05-15** sur preview `sav-monorepo-client-git-refonte-phase-2-ants-projects-3dc3de65.vercel.app` (auth magic-link opérateur + bench-in-browser via `chrome-devtools evaluate_script` + `fetch credentials:same-origin`, workaround cookie `sav_session` HttpOnly) : 40/40 réponses 200, p95 cost-timeline=1755 ms (cold start lambda — warm steady-state ~510 ms), top-products=370 ms, delay-distribution=382 ms, top-reasons-suppliers=503 ms → **PASS technique cibles D2-C mais non représentatif** (Supabase `viwgyrqpyryagzgvnfoi` vide post-reset, 0 SAV, les RPCs Supabase ne mesurent rien — chiffres = network + cold start + handler boilerplate). À ré-exécuter avec données réelles post-cutover Epic 7 pour cibles affinables. Cf. story h-14-benchmarks-prod + memory `project_preview_supabase_state_pre_cutover`.
+
+## Deferred from: code review of 5-5-job-cron-alertes-seuil-produit-config-admin (2026-04-28)
+
+- **W57 — Router `meta.roles` non enforcé par `beforeEach`** [client/src/router/index.js:69, 82+] : sav-operator peut naviguer `/admin/settings`, l'API renvoie 403 → mauvais UX. Préexistant à Story 5.5 (toutes les routes admin du repo héritent du même pattern). À traiter en Story 7.4 ou patch transverse Epic 7.
+- **W58 — N+1 query loop par produit dans threshold-alerts.ts** : 5 roundtrips séquentiels × N produits. Volume actuel petit (< 5 produits/jour). Refacto bulk select / RPC composite si volume > 50 produits/jour.
+- **W59 — Sémantique `sav!inner` filter PostgREST embedded à valider** [threshold-alerts.ts:943-949] : `.gte('sav.received_at', ...)` filtre l'embed pas le parent. Test d'intégration nécessaire.
+- **W60 — Pas de timeout per-job dans le dispatcher cron** : un runner stalé peut starver les jobs suivants jusqu'au timeout Vercel 60s. `Promise.race` 30s/job. Cross-cutting → Story 1.7 ou patch Epic 7.
+- **W61 — `settings_dedup_hours` non snapshoté dans `threshold_alert_sent`** : si dedup_hours change, audit trail ne permet pas la reconstruction exacte. Ajouter colonne `settings_dedup_hours integer NOT NULL`. Migration séparée.
+- **W62 — Produit missing log spam quotidien** [threshold-alerts.ts:937-940] : si product_id orphelin, runner `continue` sans trace → re-détecte chaque jour. Insérer trace synthétique pour suppress, ou audit cleanup.
+- **W63 — `settings.value` sans champ version** : schema drift silencieux si nouveau champ ajouté. Ajouter `value_version: 1` dans le JSON. Story 7.4.
+- **W64 — Migration `settings_threshold_alert` ré-applicable si versions manuellement closed** : idempotence `WHERE NOT EXISTS valid_to IS NULL` re-insère si admin a closé toutes les versions actives manuellement. Scénario ops rare, accepter V1.
+- **W65 — `loadHistory` abort race + `loading.value` reset edge** [useAdminSettings.ts:1530-1538] : refactor composable global Story 7.4.
+- **W66 — `loadCurrent` race avec `loadHistory`** [useAdminSettings.ts:1492-1511] : `find()` utilise `history.value` actuel, contamination par appel concurrent. Refactor avec endpoint dédié `loadCurrent` (cf. spec AC #11).
+- ~~**W67**~~ — résolu 2026-04-28 via Chrome DevTools MCP. Steps 1-4 + 6 exécutés en local (Vercel dev + Supabase préview). Step 5 (UI) exécuté en MCP : auth opérateur via magic-link JWT minté local (migration Story 5.8 `20260506130000_operators_magic_link` appliquée préalablement sur préview, manquait), modification 5→8 + note Test E2E, ligne historique vérifiée (auteur fraize), reload persiste 8/7/24, restauration 5/7/24 OK. Voir `5-5-validation-e2e.md` (matrice + step 5 detail) et screenshots `5-5-step5-0{1,2,3}-*.png`.
+
+## Deferred from: code review of 5-6-ajout-d-un-deuxieme-fournisseur-validation-architecture (2026-04-28)
+
+- **W68 — Bench p95 MARTINEZ non exécuté empiriquement** [Story 5.6 AC #8 + #12] : instrumentation `scripts/bench/export-supplier.ts --supplier=MARTINEZ` OK + rapport `5-6-bench-report.md` créé, mais settings OneDrive en placeholder bloquent le run réel. Self-flagged dans la story. Action : exécuter à cutover Epic 7 quand OneDrive prod sera configuré, compléter le rapport p95.
+- **W69 — Champ `display_name?: string` dans `SupplierExportConfig`** : V2 — élimine la duplication labels hardcodés (`'Rufino (ES)'` dans FALLBACK + tests) et règle les codes mixtes/underscore (`humanLabel('GARCIA_SL')` → `'Garcia_sl'` cosmétique). Pas requis V1 (2 fournisseurs propres, codes simples).
+- **W70 — Granularité rôle dans handlers exports** [`exports-config-list-handler.ts`, autres] : tous les handlers exports partagent `withAuth({ types: ['operator'] })` sans distinction admin/sav-operator. À aligner cross-cutting Epic 6 si besoin de durcissement (ex. `sav-viewer` lecture seule).
+- **W71 — Gestion HTTP 401 dédiée** [tous fetch composables] : code `UNAUTHORIZED` distinct + redirect `/login` non géré uniformément. Cross-cutting Epic 6 quand le pattern session-expirée sera défini globalement.
+
+## Deferred from: dev of 5-7-cutover-make-pennylane-emails (2026-04-28)
+
+- **W72 — Suppression définitive Make scenarios 3197846 + 3203836** [J+30 post-cutover, action Antho via UI Make] : les scenarios restent en `disabled` 30j pour rollback ; à supprimer définitivement après stabilisation. Cf. `docs/cutover-make-runbook.md` §5 Checklist J+30.
+- ~~**W73 — Suppression env vars `VITE_WEBHOOK_URL` + `VITE_WEBHOOK_URL_DATA_SAV`** [J+30 post-cutover, commit séparé `client/.env.example`] : actuellement commentées avec note DEPRECATED. À déclasser totalement après stabilisation (cutover irréversible).~~ — résolu 2026-05-14 h-13 (étendu au bloc HMAC Story 2.2 résiduel sur demande user, cf. CR HIGH-1).
+- **W74 — Migration emails `sav-capture` vers `email_outbox` Epic 6 (Story 6.1+6.6)** : V1 = fire-and-forget `Promise.allSettled` après le 201 dans `webhooks/capture.ts`. Trade-off accepté par PM (cf. brief AC #2 « best-effort »). Au cutover Epic 6, refactor mineur : remplacer les 2 `sendMail()` par un `enqueueEmail()` qui pousse dans `email_outbox` avec retry queue.
+- ~~**W75 — Validation D1/D2 forme payload Pennylane v2 list (curl preview avec vraie clé API)** : la doc indique `{ data: [...], cursor: ... }` mais shape détaillée à confirmer empiriquement. Le DS preview avec une vraie facture Fruitstock confirmera `customer.emails: string[]` + `line_items[]` + URL-encoding `:` → `%3A` (vs littéral). Adapter `pennylane.ts` si shape diverge.~~ — résolu 2026-05-14 h-13 (curl prod read-only confirmé : P1 encoding `%3A` ✅, P2 `customer.emails` absent inline mais récupéré via fallback `fetchCustomer()` existant ✅, P3 shape root `{items, has_more, next_cursor}` aligné code ✅ — validation passive OK, no patch. Cf. `h-13-w75-pennylane-shape-validation.md`).
+- ~~**W76 — Communication adhérents changement format input** [D3 Story 5.7] : décision PM avant cutover entre (a) banner Home.vue 30j, (b) email Mailchimp/Sendinblue, (c) accepter les 2 formats temporairement (refusé : coût v1+v2). Action : acter avant cutover, implémenter la solution choisie.~~ — résolu 2026-05-14 h-13b — option **(c) inaction documentée**. Volume `email_mismatch` J+16 partiel (28 avril → 14 mai) qualitativement <50/jour (jugement PM, baseline 30j vraie déclinée comme inutile vu signal clair). Seuil J+7 runbook §5 (100/jour) non atteint. Re-trigger explicite : si volume monte ≥100/jour post-J+30 → ré-ouvrir H-13b en (a) banner Home.vue. Soft-dep W93 (`metric.email_mismatch.count` alerting) optionnel pour automatiser la re-évaluation.
+- **W77 — reCAPTCHA v3 / Cloudflare Turnstile sur `/api/invoices/lookup`** [V1.5 si abus détecté] : rate-limit 5/min/IP est suffisant V1 pour volumétrie ~10 SAV/jour. Surveiller logs `invoice.lookup.failed reason=email_mismatch` post-cutover ; si > 100/jour, introduire un challenge anti-bot.
+- **W78 — `sav_submit_tokens` purge cron** : index partiel actif sur `WHERE used_at IS NULL` purge naturellement les rows actives, mais les rows consommées s'accumulent indéfiniment. Cron job optionnel : `DELETE FROM sav_submit_tokens WHERE used_at IS NOT NULL OR expires_at < now() - interval '7 days'`. Volume bas (~10/jour), pas urgent.
+- **W79 — `htmlTable` legacy passé via `metadata` dans le payload capture** : conservé pour compat amont du builder côté Vue (`buildSavHtmlTable`) qui le génère avant submit. Le serveur ne le consomme pas (utilise le templating natif `sav-capture-templates.ts`). À nettoyer côté Vue quand le builder sera supprimé.
+
+## Deferred from: code review of 5-7-cutover-make-pennylane-emails (2026-04-28)
+
+- **W80 — Helper IP `rightmost` pattern utilisé en fallback rate-limit** [`client/api/invoices.ts` + `submit-token-handler.ts`] : pattern préexistant partagé avec autres endpoints (Story 5.4, 5.5). À ré-évaluer dans un audit cross-endpoint dédié (durcissement XFF parsing + `req.ip` priorité).
+- **W81 — `signCaptureToken` accepte secret de longueur arbitraire** : pattern préexistant magic-link Story 1.5. Ajouter check `secret.length >= 32` au boot du handler (cross-cutting auth).
+- **W82 — `productCode` fallback sur `productName.slice(0, 32)`** [`WebhookItemsList.vue:651`] : silencieusement remplace product_id manquant par truncated name (collisions possibles). Front pré-existant 5.7-untouched. À traiter quand l'épic refonte UI sera planifié.
+- **W83 — `unit: form.unit || 'piece'` falsy-coercion** [`WebhookItemsList.vue:658`] : empty string → 'piece'. Validation côté front à durcir avant submit.
+- **W84 — `qtyRequested: Number(form.quantity) || 0` confus côté serveur** [`WebhookItemsList.vue:657`] : 0 et NaN → 400 Zod (positive required). Validation front à durcir.
+- **W85 — Regex `F-\d{4}-\d{1,8}` permissive (années/numéros impossibles)** [`Home.vue:954` + `invoices.ts:1868`] : `F-0000-0` accepté, Pennylane retourne 404. Resserrer si bugs reportés (`F-(2020|2021|...|year+1)-\d{5,8}`).
+- **W86 — Pas de throttle SMTP per-IP côté `sendCaptureEmails`** [`webhooks/capture.ts`] : abus indirect via flood de tokens valides. Rate-limit token issue (10/min/IP) limite déjà à 600/h max. Acceptable V1.
+- **W87 — Normalisation IDN/Unicode emails** [`invoices.ts:1989-2001`] : simple `toLowerCase().trim()` ne couvre pas les variantes IDN (`ü` vs `ü`). Edge case rare ; à traiter si reporté.
+- **W88 — Edge cases NBSP/Unicode dans `invoiceNumber`** [`pennylane.ts`] : `\d` JS regex ASCII-only, validations en cascade rejettent. Mineur.
+- **W89 — `WebhookItemsList.vue` files dedup absent** : même image attachée à plusieurs forms → doublons dans payload `files[]`. Edge case UX.
+- **W90 — `fetchCaptureToken` retry 5xx → tokens orphelins en DB** : couplé à W78 (purge). Chaque retry insère une nouvelle row.
+- **W91 — `consumeCaptureToken` ne distingue pas « jamais existé » vs « consommé »** [`submit-token-handler.ts:1693-1717`] : forensics limitée. Defense-in-depth ; ajouter logs distincts par cause d'échec.
+- **W92 — `verifyCaptureToken` ne vérifie pas `iat <= now`** [`submit-token-handler.ts:1641-1684`] : minor JWT hygiene. Clock skew 30s acceptable en pratique.
+- **W93 — `email_mismatch` loggé en `info` sans alerting** [`invoices.ts:1993-1998`] : runbook §5 J+30 prévoit threshold check ; structurer en `metric.email_mismatch.count` pour alerting (PagerDuty/Sentry).
+- **W94 — Pennylane 4xx → 503 looping côté front** : alerting opérationnel à mettre en place sur `reason='pennylane_upstream'` (Sentry threshold).
+- **W95 — `alert(...)` UX bloquante dans `Home.vue`** : pré-existant, refactor en toast/banner Vue 3.
+- **W96 — `transformedReference` fallback drift entre `Home.vue` et `InvoiceDetails.vue:1037-1038`** : backwards-compat à documenter en deprecation, tracker la suppression future.
+- **W97 — Test couvrant le warn log `dual_auth_received` (CA-08)** [`capture-auth.spec.ts`] : à vérifier sur déroulé complet du fichier de test ; ajouter assertion sur `logger.warn` si manquant.
+- ~~**W98 — Validation empirique `%3A` Pennylane filter encoding** : doublon de W75 (réfraction de la même validation curl preview). Consolider en W75 lors de la résolution.~~ — résolu 2026-05-14 h-13 (consolidé avec W75).
+- **W99 — Cron purge `sav_submit_tokens`** : doublon de W78. Consolider lors de l'implémentation.
+
+
+## Deferred from: code review of 6-3-detail-sav-adherent-commentaires-bidirectionnels-fichiers (2026-04-29)
+
+- **W100 — Anti-énumération inconsistante côté `upload-complete-handler.ts:118` (Story 2.4)** : retourne `403 FORBIDDEN` si `sav.member_id !== memberId`, alors que la doctrine privacy AC #5 (Story 6.2/6.3) impose `404 NOT_FOUND` pour anti-énumération. Pré-existant Story 2.4, hors scope 6.3. Action : aligner sur 404 lors d'un cleanup cross-handler self-service (groupe avec une éventuelle Story 7.x).
+- **W101 — Course optimistic comment ↔ reload concurrent dans `useMemberSavDetail.ts`** : si `addComment` est en vol au moment où un `reload()` externe (focus/visibility) remplace `data.value`, le rollback restaure `before` (snapshot pris à l'addComment t0) et écrase potentiellement de nouveaux commentaires arrivés entre t0 et la résolution. Edge case rare (besoin d'un reload concurrent). Mitig possible : capturer un seqnum côté composable et abandonner le rollback si `data.value.id` ou `version` a changé. Acceptable V1.
+- **W102 — Rate-limit `sav-comment` : keyFrom retourne undefined sur id non-numérique → 400 « Clé rate limit manquante »** : message d'erreur leak l'implémentation interne (rate-limit) avant le check id. Mineur (erreur 400 reste correct fonctionnellement). Action : pré-valider l'id côté handler avant le rate-limit, ou améliorer le message côté `with-rate-limit.ts` (cross-cutting).
+
+
+## Deferred from: code review of 6-4-telechargement-pdf-bon-sav-preferences-notifications (2026-04-29)
+
+- **W103 — Auto-refresh 30s sur état `credit-note-pdf-pending`** [`MemberSavDetailView.vue` Sub-2 Task 5] : Story 6.4 sub-task mentionne un auto-refresh 30s pour passer de l'état "génération en cours" au bouton de téléchargement quand le PDF apparaît. AC #1 ne l'exige pas, déféré pour rester minimal. L'adhérent peut rafraîchir manuellement. À implémenter si feedback utilisateur le réclame (refresh `useMemberSavDetail` toutes les 30s tant que `creditNote && !hasPdf`, avec stop quand `hasPdf===true`).
+- **W104 — JSONB merge applicative read-modify-write dans `preferences-handler.ts`** : remplacer par RPC SECURITY DEFINER `member_prefs_merge(p_member_id, p_patch)` utilisant l'opérateur SQL `||` (cf. AC #7 spec). Élimine la race last-writer-wins en cas de PATCH concurrent multi-onglets. Mineur en V1 (préférences low-throughput, 2 toggles), mais Story 6.7 ajoutera potentiellement `weekly_recap_day`/`weekly_recap_hour`, augmentant la surface. Recommandation : appliquer avant Story 6.7 (P2 de la CR Story 6.4).
+- **W105 — `MemberPreferencesView` envoie systématiquement `status_updates` même non modifié** : pollue les audit logs (chaque save inclut toutes les clés du form). Devrait n'envoyer que les clés modifiées (REST hygiene PATCH partial). Cosmetic.
+- **W106 — `me-handler` ne pose pas `Cache-Control: no-store` sur les paths 401/404/500** : pré-existant Story 6.2. Risque CDN cache d'une réponse non-authentifiée. Audit cross-handler magic-link à prévoir.
+- **W107 — Member anonymized + JWT encore actif retourne 200 isGroupManager=false dans `me-handler`** [`me-handler.ts:74-104`] : edge case ; en pratique l'anonymisation devrait invalider le JWT en amont (révocation refresh tokens). À traiter avec le pipeline RGPD anonymisation (out of scope Story 6.4).
+- **W108 — Story 6.4 spec drift response envelope** : story file AC #7 dit `{ notificationPrefs }` direct, code retourne `{ data: { notificationPrefs } }` pour aligner avec `sav-list-handler`/`sav-detail-handler`/`submit-token-handler`. À documenter dans `docs/api-contracts-vercel.md` post-merge pour fermer la boucle traçabilité.
+
+
+## Deferred from: code review of 7-5-audit-trail-filtrable-file-erp-consultable (2026-05-01)
+
+- **W116 — F-6 `sav_id=abc` silently ignoré au lieu de 422 INVALID_PARAMS** [`erp-queue-list-handler.ts:171-173`] : utilise actuellement `Number(...)` + `Number.isInteger` mais sans rejeter explicitement les invalides — silencieusement no-op. À aligner sur validation stricte Zod `z.coerce.number().int().positive()` cohérente avec `entity_type`/`actor`/`from`/`to` du audit-trail handler. Faible priorité (no-op safe).
+- **W117 — F-7 `useAdminErpQueue.retryPush` laisse la ligne pending visible dans liste filtrée failed** [`useAdminErpQueue.ts:114-124`] : après retry, la ligne reste dans `pushes.value` avec `status='pending'` ; si l'utilisateur a filtré `status='failed'`, confusion UX (la ligne « ne devrait plus être là »). Mitigation V2 : soit refetch après retry, soit retirer la ligne du tableau local quand `filters.status === 'failed'`. Toast success couvre le besoin immédiat.
+- **W118 — F-8 `action` filter `ilike` semantics non documenté + wildcards `%`/`_` non escapés** [`audit-trail-list-handler.ts:174`] : `ilike('action', action)` = case-insensitive exact match (sans wildcards user). Mais `?action=%retry%` devient un wildcard arbitraire. Spec dit « string libre » donc fonctionnellement OK, mais documentation manquante côté UI/API contract. V2 : soit escape `%`/`_` dans `auditActionSchema.transform`, soit basculer en `eq()` strict.
+- **W119 — F-11 `from`/`to` parsing tolère espace au lieu de T (parsé local-time)** [`audit-trail-schema.ts:120`] : `Date.parse('2026-04-01 10:00')` = local-time (impl-dépendant). En prod l'UI utilise `<input type="date">` qui produit toujours `YYYY-MM-DD`, donc cas marginal. V2 : soit valider format ISO strict (rejeter espace), soit forcer UTC.
+- **W120 — F-14 Sensitive keyword masking trop agressif** [`ErpQueueView.vue:73`] : `SENSITIVE_KEYWORDS = /(signature|idempotency_key|payload)/gi` masque le mot anywhere. « request payload too large » → « request *** too large ». DEV-3 documenté trade-off acceptable (admin a debug DB raw). V2 : restreindre à patterns plus précis (ex. `signature=<value>` plutôt que mot isolé).
+
+## Deferred from: code review of v1-7-workflow-back-office-bout-en-bout (2026-05-07)
+
+- **F-10 — `creditNoteDegraded` flag jamais surfacé UI** [`useSavDetail.ts`] : detail-handler.ts expose `meta.creditNoteDegraded` quand la 5e query parallèle échoue ; UI traite comme "pas d'avoir" → bouton Émettre visible → 409 si avoir réellement existant. Impact UX faible (un refresh résout). V2 : ajouter banner dégradé ou refuser de rendre les boutons workflow tant que la lecture n'a pas réussi.
+- **F-11 — Mock `credit_notes` ignore filtre `.eq('sav_id', ...)`** [`tests/unit/api/sav/detail.spec.ts:71`] : retourne `db.creditNote` quel que soit le sav_id. Si bug futur projette un mauvais avoir (tenant leak / scoping bug), pas détecté. V2 : capturer le sav_id dans le mock + assertion. Pattern partagé avec d'autres mocks tables ; refonte coordonnée.
+- **F-13 — `confirmFn` vs `window.prompt` inconsistance** [`SavDetailView.vue:332/418`] : Clôturer utilise `confirmFn` (stubbable) ; Annuler utilise `window.prompt` direct. Modale custom pour motif annulation = OOS#8 V1.7. V2 : extraire `<MotifPrompt>` Vue 3 component si UAT remonte friction.
+- **F-14 — `bon_type` projection sans whitelist runtime** [`detail-handler.ts:projectCreditNote`] : la projection passthrough `bon_type` brut. Si DB contient une valeur legacy/typo, l'UI l'affiche tel quel. Aucune assertion runtime côté API. V2 : enum guard runtime ou alerte log si valeur hors `BON_TYPES`.
+- **F-15 — `closeSav` / `transitionStatus` pas d'abort/timeout** [`SavDetailView.vue:transitionStatus`] : pas de `AbortController` ni timeout sur le `fetch`. Si réseau lent + transition `'closed'` en cours, UI bloquée sur "Clôture…" sine die. V2 : étendre pattern `useSavDetail` F49 (AbortController) aux transitions workflow.
+
+## Deferred from: UAT V1.7/V1.8 — UX redesign tableau lignes SAV (2026-05-07)
+
+- **V1.9-A — Split visuel ligne SAV en 2 rows (demande client + validation opérateur)** [`SavDetailView.vue`] : actuellement 1 row de tableau cumule qty demandée + qty facturée + unit_invoiced + PU TTC + coef + validation + actions → tassé visuellement. UX cible : Row 1 dédiée à la demande adhérent (qty_requested + unit_requested) **read-only opérateur** (c'est la voix du client) ; Row 2 dédiée à la validation opérateur (qty_invoiced + unit_invoiced + piece_to_kg_weight_g + price + coef + validation_status). Permet à l'opérateur de raisonner : "le client demande X kg, je vois sur la facture qu'on a livré Y pièces de Z g chacune, je convertis et je valide". Décisions architecturales à prendre : (a) layout colspan ou table imbriquée ou simply 2 `<tr>` par ligne SAV ; (b) sélecteurs data-testid impactés (workflow.spec.ts/preview.test.ts/edit.spec.ts à reécrire) ; (c) mode lecture vs édition (peut-être que le row 2 est éditable inline en in_progress, row 1 jamais). Pattern réutilisable pour d'autres vues (member self-service ?). À ouvrir comme story V1.9 dédiée via `/bmad-create-story` au début de la prochaine session UI.
+
+## Deferred from: UAT V1.8 — Bug UI Settings admin valid_from timezone (2026-05-07)
+
+- **V1.x-B — Settings admin UI envoie `valid_from` en heure locale Paris au lieu d'UTC** [`/admin/settings`] : pendant UAT V1.8, l'opérateur a saisi une nouvelle valeur `company.legal_name=FRUITSTOCK` à 17:38 Paris (= 15:38 UTC). Mais l'UI a envoyé `valid_from = '2026-05-07T15:38:00'` interprété comme UTC → la nouvelle row est devenue active dans le futur (15:38 UTC = 17:38 Paris). Le placeholder `<à renseigner cutover>` restait actif jusqu'à 15:38 UTC, donc le PDF a continué à fail-closed sur missing_company_key tant que l'UTC réelle (14:45) était < 15:38. **Symptôme** : l'opérateur croit avoir validé une mise à jour de settings, mais elle ne prend effet que H+2 plus tard sans explication. **Fix attendu** : SettingsAdminView (Story 5.5) doit envoyer `valid_from` au format UTC ISO (ex: `new Date().toISOString()`) ou laisser le serveur résoudre le `now()` côté DB plutôt que d'envoyer une string locale. À investiguer dans `client/src/features/back-office/views/SettingsAdminView.vue` + handler PATCH /api/admin/settings.
+
+## Deferred from: UAT V1.8 — SharePoint cross-origin auth (V2 ?) (2026-05-07)
+
+- **V2-A — Backend proxy unifié pour PDF + fichiers SAV (extension PATTERN-V5)** : actuellement, les liens "Ouvrir" sur les fichiers SAV (`SavDetailView.vue:1090` `<a :href="f.webUrl">`) et "Télécharger le PDF" sur l'avoir émis (`SavDetailView.vue:1218` `<a :href="/api/credit-notes/:number/pdf">`) redirigent in fine vers SharePoint webUrl, qui demande une authentification Microsoft à l'opérateur. L'objectif UX : aucune connexion MS nécessaire pour l'opérateur back-office (cohérent avec PATTERN-V5 V1.5 qui proxy déjà les thumbnails images). Solution = étendre PATTERN-V5 aux téléchargements de fichiers complets (PDF, images full-size, autres fichiers SAV) via un endpoint backend proxy qui stream le contenu via Microsoft Graph + token app-level. Détails dans le prompt de session V2-A préparé en fin d'UAT V1.8 (à rouvrir en nouvelle session).
+
+## Deferred from: spec credit-note-pdf-regenerate-feedback — feedback/régénérer PDF avoir (2026-06-09)
+
+Contexte : `SavDetailView.vue` poll borné post-émission + bouton « Régénérer le PDF » en phase `failed`. Décision de design approuvée = **poll uniquement après émission**. Revues adversariales 3-couches → findings non-bloquants ci-dessous (pas de loopback : conformes au spec / hors scope V1).
+
+- ~~**CN-PDF-D1 — Armer le poll au `onMounted` / reload**~~ → **FAIT 2026-06-09**. `onMounted` appelle `maybeStartPdfPoll()` après le `refresh()` initial : un reload pendant une génération en cours montre `pending`+poll au lieu de `failed` immédiat. Tradeoff retenu : ~15 s de « en cours » sur un avoir réellement en échec avant le bouton. Test `CN-PDF-D1` ajouté. Sous-cas `watch(id)` (navigation détail→détail sans démontage) reste non couvert — rare, non traité.
+- **CN-PDF-D2 — Utiliser le `pdf_web_url` du corps 200 de régénération (éviter flicker `failed` sur lag read-replica)** : `regeneratePdf()` sur 200 ignore le `data.pdf_web_url` renvoyé et s'appuie sur `refresh()` (GET /api/sav/:id). Si la lecture tape une réplique en retard, `pdfWebUrl` peut revenir null → retombe en `failed` malgré un succès (le handler lui-même documente ce type de race à `regenerate-pdf-handler.ts:155`). Re-clic → 409 → lien (eventually consistent). **Fix V2** : exploiter directement le `pdf_web_url` du corps 200 pour piloter la phase `ready` sans dépendre du refresh.
+- **CN-PDF-D3 — Messages distincts + parité redirect login sur 401/404 de régénération** : `regeneratePdf()` mappe seulement 200/409/429/500-failure_kind ; 401/403/404 (`FORBIDDEN`/`CREDIT_NOTE_NOT_FOUND`) retombent sur le message générique « Échec de la régénération du PDF. ». De plus, un 401 sur régénération (raw `fetch`) ne déclenche PAS le redirect `/admin/login` que fait `fetchDetail`. Hors scope V1 (matrice spec = 200/409/500/429 ; cas quasi-impossibles pour un opérateur sur son propre avoir). **Fix V2** : message « Session expirée »/« Avoir introuvable » + redirect 401.
+
+---
+
+## Demande fournisseur — message de plafonnement qty (spec-supplier-claim-cap-msg-unit, 2026-06-09)
+
+Revue 3-couches du fix « message de cap avec unité + mention conversion ». 38/38 tests verts, typecheck 0. Un finding non-bloquant (pas de loopback : pré-existant, non régressé, hors scope du spec frozen) :
+
+- **SC-CAPMSG-D1 — `'Unité non reconnue'` avec `kilosPiezas = 'Kilos'` → libellé « kg » sur un cap en unité fournisseur** : quand le moteur ne reconnaît pas l'unité SAV mais que `kilosPiezas = 'Kilos'`, le serveur pose `unidad = 'Kilos'` → `effectiveCapUnit = 'Kilos'`, `effectiveCap = qteFact` (en unité `unite`, pas en kg). `buildClampMessage` tombe alors dans la branche `capUnit === 'Kilos' → 'kg'` et affiche « kg » alors que la vraie unité du cap est `unite`. **Non régressé** : le code pré-fix affichait déjà « kg » dans ce cas. **Dégénéré** : ligne `blockingForGeneration = true` (non générable), combinaison de données rare (unité SAV non reconnue + catalogue Kilos). **Fix V2** : remplacer l'heuristique `conversionFlag === 'ATTENTION A CONVERTIR'` par une règle fondée sur la SOURCE du cap — « kg » seulement quand `cap` provient de `kilosNetos` (converti), sinon `unite` (cap = `qteFact` brut). Cela couvre aussi proprement `'Unité non reconnue'`. Touche la règle figée « Always » du spec → nécessite renégociation du frozen.
+
+## UAT process complet — colonne « Avoir » affichée en HT (2026-06-10)
+
+**Constat (UAT réel, SAV F-2026-39952)** : dans la table « Lignes du SAV » du
+back-office (SavDetailView), la colonne **Avoir** affiche le montant **HT**
+(pomelo : PU TTC 9,22 € → Avoir 8,74 € = 9,22/1,055 ; avocat : 12,59 × 0,425
+/ 1,055 = 5,07 €) alors que la colonne voisine est libellée **PU TTC**.
+
+**Demande user** : afficher l'avoir en **TTC** pour être aligné avec PU TTC
+(ou a minima libeller explicitement « Avoir HT » si le HT est voulu côté
+comptable). Vérifier l'impact d'affichage uniquement — ne PAS toucher au
+moteur de calcul ni au PDF d'avoir (montants comptables HT/TVA/TTC corrects
+par ailleurs, à confirmer au moment du fix).
+
+**Priorité** : UX/lisibilité, non bloquant pour le promote. À traiter après
+la campagne de tests en cours (emails redirigés EMAIL_REDIRECT_ALL_TO).
+
+## UAT process complet — PDF avoir : colonnes prix incohérentes + code pollué (2026-06-10)
+
+**Constats (UAT réel, avoir AV-2026-00003 / SAV-2026-00003)** sur le template
+PDF charte Fruitstock (Story 4.5) :
+
+1. **Colonne « Prix HT » affiche un prix TTC** : 9,22 € = PU TTC capturé
+   (pomelo). Le libellé dit HT, la valeur est TTC. En face, « Montant » est
+   bien HT (8,74 €) → ligne incohérente (9,22 × 100 % ≠ 8,74 affiché).
+   Demande user : aligner — soit tout TTC, soit libellés corrects HT/TTC.
+   Les totaux (Sous-total HT 13,81 / TVA 0,76 / Total TTC 14,57) sont justes.
+   Lien avec l'entrée « colonne Avoir HT » du back-office (même chantier
+   d'harmonisation affichage HT/TTC).
+
+2. **Colonne « Code » polluée par la désignation** : affiche
+   « 3010-2K POMELO STAR RUBY (CN) (C » au lieu de « 3010-2K ». Cause racine
+   AMONT (pas le PDF) : WebhookItemsList.vue:821-823 — fallback
+   `productCode = product_id || code || productName.slice(0, 32)` quand la
+   ligne Pennylane n'a pas de product_id. Touche aussi la colonne Code du
+   back-office. Piste : extraire le code du début du label (pattern
+   `^\d{4}(-\w+)?`) ou lookup catalogue par préfixe, plutôt que slice(0,32).
+
+3. **Colonne « Produit » tronquée par ellipsis** dans le PDF : demande user =
+   désignation complète (wrap multi-ligne plutôt que « … »).
+
+**Priorité** : 1 et 3 = affichage PDF (non bloquant, mais le PDF part au
+client en V1 → à corriger avant promote idéalement) ; 2 = qualité de données
+capture (pollue les snapshots persistés — plus c'est tôt corrigé, moins de
+SAV avec codes pollués en base).
+
+## UAT process complet — FEATURE : email client de fin de process avec bon SAV PDF (2026-06-10)
+
+**Constat (UAT réel bout-en-bout, SAV-2026-00003)** : une fois le process
+terminé (avoir émis + clôture), le client ne reçoit AUCUN email de
+confirmation avec le bon SAV en PDF. L'email `sav_closed` existant (Story
+6.6) est une notification nue (« SAV — clôturé », lien espace adhérent) ;
+le bon SAV PDF (Stories 4.4/4.5) n'est téléchargeable que depuis l'espace
+adhérent (Story 6.4), jamais poussé.
+
+**Demande user (candidate STORY V1, pas un polish)** : ajouter l'étape —
+email de confirmation de fin de SAV au client avec le bon SAV PDF.
+
+Points de cadrage pour la story (bmad-create-story) :
+- Déclencheur : émission de l'avoir ou transition `closed` ? (probablement
+  closed, cohérent avec l'outbox kind `sav_closed` existant)
+- PDF en pièce jointe vs lien signé de téléchargement : l'infra
+  `SmtpMailInput` (smtp.ts) ne supporte pas les attachments aujourd'hui —
+  à étendre (nodemailer le permet) OU réutiliser le lien magic-link 6.4.
+  Attention taille/spam si PJ ; le PDF est sur OneDrive (web_url présent).
+- Respecter notification_prefs (status_updates) + pattern outbox/retry 6.6
+  (pas d'envoi direct dans le handler de transition).
+- EMAIL_REDIRECT_ALL_TO couvrira automatiquement les tests.
+
+**Priorité** : à arbitrer — feature visible client, possiblement attendue
+pour le promote V1 (même famille que l'enchaînement post-avoir Epic 8).
+
+## 2026-06-11 — spec-credit-note-force-regenerate-pdf (CR itération 3)
+
+- **Budget lambda 10s (vercel.json maxDuration) sur le chemin force** : RPC + DELETE Graph + render react-pdf + upload avec retries (1s+2s+4s) peut dépasser 10s en worst case → lambda tuée post-commit RPC (état DB sain, UI refresh au catch, mais UX dégradée). Décider un bump maxDuration au promote. (EH v3 M-3)
+- **Bucket rate-limit partagé force/recovery (1/min/avoir)** : après un force échoué en génération, le bouton recovery est 429 pendant ~60 s. Friction assumée V1 ; séparer les buckets ou exempter le recovery en V2. (BH v3 #11)
+- **Tests vraie-DB non écrits : concurrence deux forces simultanés + sabotage INSERT audit (rollback)** : corrects par construction (FOR UPDATE ; plpgsql sans bloc EXCEPTION → RAISE = rollback complet). Commentaires trompeurs corrigés dans regenerate.spec.ts (CR P6c). À couvrir si l'invariant devient critique. (Auditor v3 DEF-1/DEF-2)
+- **TOCTOU résiduel fingerprint** : une ligne NON-ok INSÉRÉE entre le fetch handler et la RPC passe le fingerprint (qui ne compare que les lignes ok) alors que le PDF la rendra. Même exposition que l'émission existante. Fingerprint toutes-lignes en V2. (EH v3 L-3)
+- **Hygiène tests integration force-regenerate** : teardown ne purge pas les lignes audit_trail générées par les triggers cascade (sav/sav_lines/members/operators). (EH v3 L-5)
+
+## 2026-06-12 — spec-reconcile-code-token-v114-align (CR)
+
+- **Collision de variantes décimales dans un même fichier fournisseur** : si un data.xlsx contenait à la fois `3745-3,5K` ET `3745-3.5K` en FACTURE_GROUPE, les deux fusionnent sur la clé normalisée → première row gagnante (warning `multiple-matches`), et une seule entrée `unusedSupplierLines` (verbatim de la 1re occurrence). Improbable (un fichier garde une convention unique) ; si ça arrive, ajouter un warning dédié « collision décimale ». (BH/EH/Auditor CR 2026-06-12)
+
+## 2026-06-12 — spec-unidades-multipack-conversion-cap (CR)
+
+- **COMENTARIOS pré-rempli dupliqué** : le composable préfixe `flag + ' ' + conversionComment` or le comment commence déjà par le flag → « converti pièce→kg converti pièce→kg via… » (pattern hérité 8.6, reproduit par le nouveau flag). Cosmétique, visible dans l'input opérateur et le doc. (EH/Auditor LOW)
+- **Garde de plausibilité Kilos Netos** : la conversion multi-pack fait confiance à la sémantique « Kilos Netos = quantité de facturation » (PO 2026-06-12, vérifiée sur le fichier réel). Durcissement V2 possible : vérifier par ligne l'invariant `Importe_fichier ≈ kilosNetos × precio` avant d'auto-convertir, sinon ATTENTION A CONVERTIR. (BH HIGH-décision, accepté PO)
+- **Pas de re-cap serveur au generate** (DN-6=iii LOCKED, pré-existant) : l'élévation du cap client qteFact→kilosNetos ne change pas la classe de risque, tracé pour mémoire.
+
+## 2026-06-12 — spec-pennylane-v2-invoice-lines-pagination (CR)
+
+- **429/Retry-After non distingué dans la pagination sub-resource** : la pagination multiplie jusqu'à 5× les requêtes par lookup sur une API à ~200 req/h. Un 429 mid-pagination → null + warn `sub_resource_fetch_non_ok` (fail-total correct), mais sans distinction du 429 ni backoff. Volume réel Fruitstock (~32 lignes = 1 page avec limit=100) rend le risque faible en V1 ; à tracer si le volume de lookups augmente. (BH DEFERRED)
+- **Budget temps non composé au niveau handler** : `SUB_RESOURCE_BUDGET_MS=6000` est ancré au début de la boucle sub-resource, pas de l'invocation — worst case GET LIST (8 s) + fetchCustomer (8 s) en amont peut déjà consommer le `maxDuration: 10 s` Vercel avant la pagination. Pré-existant (timeouts 8 s baseline), documenté honnêtement dans la JSDoc des constantes. Fix V2 : deadline dérivée de l'entrée du handler passée en paramètre. (EH M-4)
+- ~~Champ montant ligne réel à confirmer en prod~~ **RÉSOLU UAT 2026-06-12** : la sub-resource réelle expose `currency_amount` TTC par ligne — Σ 31 lignes = 1200,03 € = `currency_amount` facture exact sur F-2026-39939, garde-fou somme silencieux, zéro bruit HT/TTC. (Auditor D-1)

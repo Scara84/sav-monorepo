@@ -1,0 +1,248 @@
+{
+  "members": {
+    "sheet_name": "CLIENTS",
+    "mapping_kind": "legacy",
+    "columns": [
+      { "header": "ID", "source": "members.id", "transform": "direct" },
+      { "header": "PRENOM NOM", "source": "first_name || ' ' || last_name", "transform": "concat" },
+      { "header": "EMAIL", "source": "members.email", "transform": "direct" },
+      { "header": "GROUPE", "source": "groups.name", "transform": "lookup:group_id→groups.name" },
+      { "header": "DEPT", "source": "groups.dept", "transform": "lookup:group_id→groups.dept" },
+      {
+        "header": "KEY",
+        "source": "members.pennylane_customer_id",
+        "transform": "direct",
+        "note": "pennylane_customer_id = legacy KEY column"
+      }
+    ]
+  },
+  "products": {
+    "sheet_name": "BDD",
+    "mapping_kind": "legacy",
+    "columns": [
+      { "header": "CODE", "source": "products.code", "transform": "direct" },
+      { "header": "DESIGNATION (FR)", "source": "products.name_fr", "transform": "direct" },
+      { "header": "DESIGNATION (ENG)", "source": "products.name_en", "transform": "direct" },
+      { "header": "DESIGNATION (ESP)", "source": "products.name_es", "transform": "direct" },
+      { "header": "ORIGEN", "source": "products.origin", "transform": "direct" },
+      {
+        "header": "INFO",
+        "source": null,
+        "transform": "empty_v1",
+        "note": "Colonne legacy vide en V1"
+      },
+      {
+        "header": "TAXE",
+        "source": "products.vat_rate_bp",
+        "transform": "divide_100",
+        "note": "vat_rate_bp / 100"
+      },
+      { "header": "UNITÉ (FR)", "source": "products.default_unit", "transform": "direct" },
+      {
+        "header": "10kg (FR)",
+        "source": null,
+        "transform": "empty_v1",
+        "note": "Prix tranche — vide V1"
+      },
+      {
+        "header": "30kg (FR)2",
+        "source": null,
+        "transform": "empty_v1",
+        "note": "Prix tranche — vide V1"
+      },
+      {
+        "header": "60kg (FR)",
+        "source": null,
+        "transform": "empty_v1",
+        "note": "Prix tranche — vide V1"
+      },
+      {
+        "header": "5kg Min",
+        "source": null,
+        "transform": "empty_v1",
+        "note": "Prix tranche — vide V1"
+      },
+      {
+        "header": "CAGETTE (5kg)",
+        "source": null,
+        "transform": "empty_v1",
+        "note": "Prix tranche — vide V1"
+      },
+      {
+        "header": "PRIX (ESP)",
+        "source": null,
+        "transform": "empty_v1",
+        "note": "Prix export — vide V1"
+      },
+      {
+        "header": "10kg (ESP)",
+        "source": null,
+        "transform": "empty_v1",
+        "note": "Prix tranche — vide V1"
+      },
+      {
+        "header": "30kg (ESP)",
+        "source": null,
+        "transform": "empty_v1",
+        "note": "Prix tranche — vide V1"
+      },
+      {
+        "header": "60kg (ESP)",
+        "source": null,
+        "transform": "empty_v1",
+        "note": "Prix tranche — vide V1"
+      },
+      {
+        "header": "Récup code",
+        "source": null,
+        "transform": "empty_v1",
+        "note": "Colonne macro legacy — vide V1"
+      }
+    ]
+  },
+  "groups": {
+    "sheet_name": "GROUPES",
+    "mapping_kind": "legacy",
+    "columns": [
+      { "header": "NOM", "source": "groups.name", "transform": "direct" },
+      { "header": "DEPT", "source": "groups.dept", "transform": "direct" },
+      {
+        "header": "Colonne1",
+        "source": null,
+        "transform": "empty_v1",
+        "note": "Colonne macro legacy — vide V1"
+      }
+    ]
+  },
+  "validation_lists": {
+    "sheet_name": "LISTE",
+    "mapping_kind": "legacy",
+    "columns": [
+      { "header": "key", "source": "validation_lists.key", "transform": "direct" },
+      {
+        "header": "CHERCHER",
+        "source": null,
+        "transform": "empty_v1",
+        "note": "Colonne macro legacy — vide V1"
+      },
+      {
+        "header": "FREQUENCE",
+        "source": null,
+        "transform": "empty_v1",
+        "note": "Colonne macro legacy — vide V1"
+      },
+      { "header": "VALEUR", "source": "validation_lists.value", "transform": "direct" },
+      {
+        "header": "COPIE PRENOM NOM",
+        "source": null,
+        "transform": "empty_v1",
+        "note": "Colonne macro legacy — vide V1"
+      },
+      {
+        "header": "FILTRE PRENOM NOM",
+        "source": null,
+        "transform": "empty_v1",
+        "note": "Colonne macro legacy — vide V1"
+      },
+      {
+        "header": "COPIE ID",
+        "source": null,
+        "transform": "empty_v1",
+        "note": "Colonne macro legacy — vide V1"
+      }
+    ]
+  },
+  "sav": {
+    "sheet_name": "sav",
+    "mapping_kind": "technical",
+    "columns": [
+      { "header": "id", "source": "sav.id", "transform": "direct" },
+      { "header": "reference", "source": "sav.reference", "transform": "direct" },
+      { "header": "member_id", "source": "sav.member_id", "transform": "direct" },
+      { "header": "status", "source": "sav.status", "transform": "direct" },
+      { "header": "created_at", "source": "sav.created_at", "transform": "direct" },
+      { "header": "validated_at", "source": "sav.validated_at", "transform": "direct" },
+      { "header": "closed_at", "source": "sav.closed_at", "transform": "direct" },
+      { "header": "sav_cause", "source": "sav.sav_cause", "transform": "direct" },
+      { "header": "notes", "source": "sav.notes", "transform": "direct" }
+    ]
+  },
+  "sav_lines": {
+    "sheet_name": "sav_lines",
+    "mapping_kind": "technical",
+    "columns": [
+      { "header": "id", "source": "sav_lines.id", "transform": "direct" },
+      { "header": "sav_id", "source": "sav_lines.sav_id", "transform": "direct" },
+      { "header": "product_code", "source": "sav_lines.product_code", "transform": "direct" },
+      { "header": "quantity", "source": "sav_lines.quantity", "transform": "direct" },
+      {
+        "header": "unit_price_ht_cents",
+        "source": "sav_lines.unit_price_ht_cents",
+        "transform": "direct"
+      },
+      { "header": "vat_rate_bp", "source": "sav_lines.vat_rate_bp", "transform": "direct" },
+      {
+        "header": "line_total_ttc_cents",
+        "source": "sav_lines.line_total_ttc_cents",
+        "transform": "direct"
+      },
+      {
+        "header": "credit_coefficient",
+        "source": "sav_lines.credit_coefficient",
+        "transform": "direct"
+      }
+    ]
+  },
+  "sav_comments": {
+    "sheet_name": "sav_comments",
+    "mapping_kind": "technical",
+    "columns": [
+      { "header": "id", "source": "sav_comments.id", "transform": "direct" },
+      { "header": "sav_id", "source": "sav_comments.sav_id", "transform": "direct" },
+      {
+        "header": "author_operator_id",
+        "source": "sav_comments.author_operator_id",
+        "transform": "direct"
+      },
+      { "header": "body", "source": "sav_comments.body", "transform": "direct" },
+      { "header": "internal", "source": "sav_comments.internal", "transform": "direct" },
+      { "header": "created_at", "source": "sav_comments.created_at", "transform": "direct" }
+    ]
+  },
+  "sav_files": {
+    "sheet_name": "sav_files",
+    "mapping_kind": "technical",
+    "columns": [
+      { "header": "id", "source": "sav_files.id", "transform": "direct" },
+      { "header": "sav_id", "source": "sav_files.sav_id", "transform": "direct" },
+      { "header": "filename", "source": "sav_files.filename", "transform": "direct" },
+      { "header": "web_url", "source": "sav_files.web_url", "transform": "direct" },
+      { "header": "mime_type", "source": "sav_files.mime_type", "transform": "direct" },
+      { "header": "uploaded_at", "source": "sav_files.uploaded_at", "transform": "direct" }
+    ]
+  },
+  "credit_notes": {
+    "sheet_name": "credit_notes",
+    "mapping_kind": "technical",
+    "columns": [
+      { "header": "id", "source": "credit_notes.id", "transform": "direct" },
+      { "header": "number", "source": "credit_notes.number", "transform": "direct" },
+      { "header": "sav_id", "source": "credit_notes.sav_id", "transform": "direct" },
+      { "header": "member_id", "source": "credit_notes.member_id", "transform": "direct" },
+      {
+        "header": "total_ht_cents",
+        "source": "credit_notes.total_ht_cents",
+        "transform": "direct"
+      },
+      { "header": "vat_cents", "source": "credit_notes.vat_cents", "transform": "direct" },
+      {
+        "header": "total_ttc_cents",
+        "source": "credit_notes.total_ttc_cents",
+        "transform": "direct"
+      },
+      { "header": "bon_type", "source": "credit_notes.bon_type", "transform": "direct" },
+      { "header": "issued_at", "source": "credit_notes.issued_at", "transform": "direct" },
+      { "header": "pdf_path", "source": "credit_notes.pdf_path", "transform": "direct" }
+    ]
+  }
+}

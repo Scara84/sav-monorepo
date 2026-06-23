@@ -4,7 +4,223 @@
   "installCommand": "npm install",
   "framework": "vite",
   "functions": {
-    "api/upload-session.js": { "maxDuration": 10 },
-    "api/folder-share-link.js": { "maxDuration": 10 }
-  }
+    "api/health.ts": { "maxDuration": 10 },
+    "api/auth/magic-link/issue.ts": { "maxDuration": 10 },
+    "api/auth/magic-link/verify.ts": { "maxDuration": 5 },
+    "api/auth/operator/issue.ts": { "maxDuration": 10 },
+    "api/auth/operator/verify.ts": { "maxDuration": 5 },
+    "api/cron/dispatcher.ts": { "maxDuration": 60 },
+    "api/webhooks/capture.ts": { "maxDuration": 30 },
+    "api/self-service/draft.ts": { "maxDuration": 15 },
+    "api/sav.ts": { "maxDuration": 30 },
+    "api/credit-notes.ts": { "maxDuration": 10 },
+    "api/pilotage.ts": { "maxDuration": 30 },
+    "api/invoices.ts": { "maxDuration": 10 }
+  },
+  "crons": [{ "path": "/api/cron/dispatcher", "schedule": "0 3 * * *" }],
+  "rewrites": [
+    { "source": "/api/sav", "destination": "/api/sav?op=list" },
+    {
+      "source": "/api/sav/tags/suggestions",
+      "destination": "/api/sav?op=tags-suggestions"
+    },
+    {
+      "source": "/api/admin/sav-files/upload-session",
+      "destination": "/api/sav?op=admin-upload-session"
+    },
+    {
+      "source": "/api/admin/sav-files/upload-complete",
+      "destination": "/api/sav?op=admin-upload-complete"
+    },
+    { "source": "/api/sav/:id/status", "destination": "/api/sav?op=status&id=:id" },
+    {
+      "source": "/api/sav/:id/import-supplier-prices",
+      "destination": "/api/sav?op=import-supplier-prices&id=:id"
+    },
+    {
+      "source": "/api/sav/:id/apply-supplier-prices",
+      "destination": "/api/sav?op=apply-supplier-prices&id=:id"
+    },
+    { "source": "/api/sav/:id/assign", "destination": "/api/sav?op=assign&id=:id" },
+    { "source": "/api/sav/:id/tags", "destination": "/api/sav?op=tags&id=:id" },
+    { "source": "/api/sav/:id/comments", "destination": "/api/sav?op=comments&id=:id" },
+    { "source": "/api/sav/:id/duplicate", "destination": "/api/sav?op=duplicate&id=:id" },
+    {
+      "source": "/api/sav/:id/credit-notes",
+      "destination": "/api/sav?op=credit-notes&id=:id"
+    },
+    {
+      "source": "/api/sav/:id/lines/:lineId",
+      "destination": "/api/sav?op=line&id=:id&lineId=:lineId"
+    },
+    {
+      "source": "/api/sav/:id/lines",
+      "destination": "/api/sav?op=line&id=:id"
+    },
+    {
+      "source": "/api/sav/files/:id/thumbnail",
+      "destination": "/api/sav?op=file-thumbnail&fileId=:id"
+    },
+    {
+      "source": "/api/sav/files/:id/download",
+      "destination": "/api/sav?op=file-download&fileId=:id"
+    },
+    { "source": "/api/sav/:id", "destination": "/api/sav?op=detail&id=:id" },
+    {
+      "source": "/api/credit-notes/:number/pdf",
+      "destination": "/api/credit-notes?op=pdf&number=:number"
+    },
+    {
+      "source": "/api/credit-notes/:number/regenerate-pdf",
+      "destination": "/api/credit-notes?op=regenerate&number=:number"
+    },
+    {
+      "source": "/api/self-service/upload-session",
+      "destination": "/api/self-service/draft?op=upload-session"
+    },
+    {
+      "source": "/api/self-service/upload-complete",
+      "destination": "/api/self-service/draft?op=upload-complete"
+    },
+    {
+      "source": "/api/self-service/submit-token",
+      "destination": "/api/self-service/draft?op=submit-token"
+    },
+    {
+      "source": "/api/auth/me",
+      "destination": "/api/self-service/draft?op=me"
+    },
+    {
+      "source": "/api/self-service/sav",
+      "destination": "/api/self-service/draft?op=sav-list"
+    },
+    {
+      "source": "/api/self-service/sav/:id/comments",
+      "destination": "/api/self-service/draft?op=sav-comment&id=:id"
+    },
+    {
+      "source": "/api/self-service/sav/:id",
+      "destination": "/api/self-service/draft?op=sav-detail&id=:id"
+    },
+    {
+      "source": "/api/self-service/preferences",
+      "destination": "/api/self-service/draft?op=preferences"
+    },
+    {
+      "source": "/api/invoices/lookup",
+      "destination": "/api/invoices?op=lookup"
+    },
+    {
+      "source": "/api/upload-session",
+      "destination": "/api/invoices?op=upload-session"
+    },
+    {
+      "source": "/api/folder-share-link",
+      "destination": "/api/invoices?op=folder-share-link"
+    },
+    {
+      "source": "/api/exports/supplier",
+      "destination": "/api/pilotage?op=export-supplier"
+    },
+    {
+      "source": "/api/exports/supplier/history",
+      "destination": "/api/pilotage?op=export-history"
+    },
+    {
+      "source": "/api/exports/supplier/config-list",
+      "destination": "/api/pilotage?op=export-config-list"
+    },
+    {
+      "source": "/api/exports/supplier/:id/download",
+      "destination": "/api/pilotage?op=export-download&id=:id"
+    },
+    {
+      "source": "/api/reports/cost-timeline",
+      "destination": "/api/pilotage?op=cost-timeline"
+    },
+    {
+      "source": "/api/reports/top-products",
+      "destination": "/api/pilotage?op=top-products"
+    },
+    {
+      "source": "/api/reports/delay-distribution",
+      "destination": "/api/pilotage?op=delay-distribution"
+    },
+    {
+      "source": "/api/reports/top-reasons-suppliers",
+      "destination": "/api/pilotage?op=top-reasons-suppliers"
+    },
+    {
+      "source": "/api/reports/export-csv",
+      "destination": "/api/pilotage?op=export-csv"
+    },
+    {
+      "source": "/api/admin/settings/threshold_alert/history",
+      "destination": "/api/pilotage?op=admin-settings-threshold-history"
+    },
+    {
+      "source": "/api/admin/settings/threshold_alert",
+      "destination": "/api/pilotage?op=admin-settings-threshold-patch"
+    },
+    {
+      "source": "/api/admin/settings/:key/history",
+      "destination": "/api/pilotage?op=admin-setting-history&key=:key"
+    },
+    {
+      "source": "/api/admin/settings/:key",
+      "destination": "/api/pilotage?op=admin-setting-rotate&key=:key"
+    },
+    {
+      "source": "/api/admin/settings",
+      "destination": "/api/pilotage?op=admin-settings-list"
+    },
+    {
+      "source": "/api/admin/operators/:id",
+      "destination": "/api/pilotage?op=admin-operator-update&id=:id"
+    },
+    {
+      "source": "/api/admin/operators",
+      "destination": "/api/pilotage?op=admin-operators-list"
+    },
+    {
+      "source": "/api/admin/products/:id",
+      "destination": "/api/pilotage?op=admin-product-update&id=:id"
+    },
+    {
+      "source": "/api/admin/products",
+      "destination": "/api/pilotage?op=admin-products-list"
+    },
+    {
+      "source": "/api/admin/validation-lists/:id",
+      "destination": "/api/pilotage?op=admin-validation-list-update&id=:id"
+    },
+    {
+      "source": "/api/admin/validation-lists",
+      "destination": "/api/pilotage?op=admin-validation-lists-list"
+    },
+    {
+      "source": "/api/admin/audit-trail",
+      "destination": "/api/pilotage?op=admin-audit-trail-list"
+    },
+    {
+      "source": "/api/admin/erp-queue/:id/retry",
+      "destination": "/api/pilotage?op=admin-erp-push-retry&id=:id"
+    },
+    {
+      "source": "/api/admin/erp-queue",
+      "destination": "/api/pilotage?op=admin-erp-queue-list"
+    },
+    {
+      "source": "/api/admin/members/:id/rgpd-export",
+      "destination": "/api/pilotage?op=admin-rgpd-export&id=:id"
+    },
+    {
+      "source": "/api/admin/members/:id/anonymize",
+      "destination": "/api/pilotage?op=admin-member-anonymize&id=:id"
+    },
+    {
+      "source": "/((?!api/|assets/|src/|@vite/|@id/|@fs/|node_modules/|favicon\\.ico|robots\\.txt|.*\\.(?:js|css|vue|ts|tsx|json|map|png|jpg|jpeg|svg|ico|webp|woff2?)).*)",
+      "destination": "/index.html"
+    }
+  ]
 }

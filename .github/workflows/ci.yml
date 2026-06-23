@@ -1,0 +1,190 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  quality:
+    name: Typecheck + Unit tests + Build
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: client
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Lint (non-blocking — legacy Epic 1 JS errors)
+        run: npm run lint || true
+
+      - name: Lint — moteur business (no-io enforced)
+        run: npm run lint:business
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Lint ESM-only guards (PATTERN-V3 defense-in-depth)
+        run: npm run lint:esm
+
+      - name: Unit tests
+        run: npm test -- --run
+
+      - name: DPIA gate (Story 7-7 — blocker avant merge main)
+        run: npm run verify:dpia
+
+      - name: Build
+        run: npm run build
+
+  migrations-check:
+    name: Supabase migrations on fresh DB
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_USER: postgres
+          POSTGRES_DB: postgres
+        ports: ['5432:5432']
+        options: >-
+          --health-cmd "pg_isready -U postgres" --health-interval 5s
+          --health-timeout 5s --health-retries 10
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install psql
+        run: sudo apt-get update && sudo apt-get install -y postgresql-client
+
+      - name: Create Supabase-compatible roles
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+          DO $$ BEGIN
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'anon') THEN
+              CREATE ROLE anon NOLOGIN;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'authenticated') THEN
+              CREATE ROLE authenticated NOLOGIN;
+            END IF;
+            IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'service_role') THEN
+              CREATE ROLE service_role NOLOGIN BYPASSRLS;
+            END IF;
+          END $$;
+          SQL
+
+      - name: Apply migrations
+        env:
+          PGPASSWORD: postgres
+        run: |
+          for f in client/supabase/migrations/*.sql; do
+            echo "Applying $f"
+            psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f "$f"
+          done
+
+      - name: Grant Supabase roles permissions on public schema
+        env:
+          PGPASSWORD: postgres
+        run: |
+          psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 <<'SQL'
+          GRANT USAGE ON SCHEMA public TO anon, authenticated, service_role;
+          GRANT ALL ON ALL TABLES IN SCHEMA public TO service_role;
+          GRANT ALL ON ALL SEQUENCES IN SCHEMA public TO service_role;
+          GRANT ALL ON ALL FUNCTIONS IN SCHEMA public TO service_role;
+          GRANT SELECT ON ALL TABLES IN SCHEMA public TO anon, authenticated;
+          ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO service_role;
+          ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO anon, authenticated;
+          SQL
+
+      - name: Apply seed
+        env:
+          PGPASSWORD: postgres
+        if: hashFiles('client/supabase/seed.sql') != ''
+        run: psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f client/supabase/seed.sql
+
+      - name: Run RLS tests
+        env:
+          PGPASSWORD: postgres
+        if: hashFiles('client/supabase/tests/rls/*.sql') != ''
+        run: |
+          for f in client/supabase/tests/rls/*.sql; do
+            echo "Running RLS test $f"
+            psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f "$f"
+          done
+
+      - name: Setup Node (fixture sync check)
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: npm
+          cache-dependency-path: client/package-lock.json
+
+      - name: Install fixture tooling
+        working-directory: client
+        run: npm ci
+
+      - name: Check fixture SQL sync (TS↔SQL mirror)
+        working-directory: client
+        run: |
+          npx tsx ../scripts/fixtures/gen-sql-fixture-cases.ts
+          cd ..
+          GENERATED_FILE="client/supabase/tests/rpc/_generated_fixture_cases.sql"
+          if [ ! -f "$GENERATED_FILE" ]; then
+            echo "::error::Fichier généré absent après run : $GENERATED_FILE"
+            exit 1
+          fi
+          # git status --porcelain capture aussi les fichiers untracked (git diff --quiet ne les voit pas)
+          CHANGES=$(git status --porcelain -- "$GENERATED_FILE")
+          if [ -n "$CHANGES" ]; then
+            echo "::error::Fixture désynchronisée — régénérer via: npx tsx scripts/fixtures/gen-sql-fixture-cases.ts && git add $GENERATED_FILE"
+            echo "État Git :"
+            echo "$CHANGES"
+            echo "--- Diff (si tracké) ---"
+            git diff -- "$GENERATED_FILE" || true
+            exit 1
+          fi
+
+      - name: Run RPC tests
+        env:
+          PGPASSWORD: postgres
+        if: hashFiles('client/supabase/tests/rpc/*.sql') != ''
+        run: |
+          for f in client/supabase/tests/rpc/*.sql; do
+            # Ignorer les fichiers préfixés _ (includes/fragments, non-standalone)
+            if [[ "$(basename "$f")" == _* ]]; then
+              echo "Skipping include fragment $f"
+              continue
+            fi
+            echo "Running RPC test $f"
+            psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f "$f"
+          done
+
+      - name: Run security tests
+        env:
+          PGPASSWORD: postgres
+        if: hashFiles('client/supabase/tests/security/*.sql') != ''
+        run: |
+          for f in client/supabase/tests/security/*.sql; do
+            if [[ "$(basename "$f")" == _* ]]; then
+              echo "Skipping include fragment $f"
+              continue
+            fi
+            echo "Running security test $f"
+            psql -h localhost -U postgres -d postgres -v ON_ERROR_STOP=1 -f "$f"
+          done

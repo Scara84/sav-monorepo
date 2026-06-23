@@ -12,7 +12,7 @@ function getMsalClient() {
   const { MICROSOFT_CLIENT_ID, MICROSOFT_TENANT_ID, MICROSOFT_CLIENT_SECRET } = process.env
   if (!MICROSOFT_CLIENT_ID || !MICROSOFT_TENANT_ID || !MICROSOFT_CLIENT_SECRET) {
     throw new Error(
-      'Variables d\'environnement Microsoft manquantes (MICROSOFT_CLIENT_ID, MICROSOFT_TENANT_ID, MICROSOFT_CLIENT_SECRET)'
+      "Variables d'environnement Microsoft manquantes (MICROSOFT_CLIENT_ID, MICROSOFT_TENANT_ID, MICROSOFT_CLIENT_SECRET)"
     )
   }
 
@@ -31,7 +31,23 @@ async function getAccessToken() {
   const msal = getMsalClient()
   const response = await msal.acquireTokenByClientCredential({ scopes: GRAPH_SCOPES })
   if (!response || !response.accessToken) {
-    throw new Error('Aucun token d\'accès reçu de MSAL')
+    throw new Error("Aucun token d'accès reçu de MSAL")
+  }
+  return response.accessToken
+}
+
+// W35 (2026-05-04) — force MSAL à invalider son cache de token et à
+// re-acquérir un nouveau JWT. À appeler quand Graph API renvoie 401
+// (mid-retry token expiré côté Microsoft alors que MSAL local le cache
+// encore comme valide). Réutilise le même CCA — pas de re-init MSAL.
+async function forceRefreshAccessToken() {
+  const msal = getMsalClient()
+  const response = await msal.acquireTokenByClientCredential({
+    scopes: GRAPH_SCOPES,
+    skipCache: true,
+  })
+  if (!response || !response.accessToken) {
+    throw new Error("Aucun token d'accès reçu de MSAL (forceRefresh)")
   }
   return response.accessToken
 }
@@ -56,4 +72,10 @@ function __resetForTests() {
   graphClientInstance = null
 }
 
-module.exports = { getMsalClient, getAccessToken, getGraphClient, __resetForTests }
+module.exports = {
+  getMsalClient,
+  getAccessToken,
+  forceRefreshAccessToken,
+  getGraphClient,
+  __resetForTests,
+}

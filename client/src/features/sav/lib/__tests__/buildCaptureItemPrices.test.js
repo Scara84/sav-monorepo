@@ -1,0 +1,435 @@
+import { describe, it, expect } from 'vitest'
+import { buildCaptureItemPrices, mapPennylaneUnit } from '../buildCaptureItemPrices.js'
+
+/**
+ * Story 4.7 — Unit tests for Pennylane invoice line → capture payload price mapping.
+ *
+ * Three main scenarios required by the task:
+ *   (a) Full prices on invoice → 5 fields in payload
+ *   (b) Prices in euros vs cents conversion is correct
+ *   (c) Basis points conversion is correct
+ *
+ * Additional cases cover: fallback computation, missing fields, null/empty, unit mapping.
+ */
+
+describe('mapPennylaneUnit', () => {
+  it('maps "kg" directly', () => {
+    expect(mapPennylaneUnit('kg')).toBe('kg')
+  })
+
+  it('maps "Kilogramme" (French full word) to "kg"', () => {
+    expect(mapPennylaneUnit('Kilogramme')).toBe('kg')
+  })
+
+  it('maps "Kilogrammes" (French plural) to "kg"', () => {
+    expect(mapPennylaneUnit('Kilogrammes')).toBe('kg')
+  })
+
+  it('maps "piece" directly', () => {
+    expect(mapPennylaneUnit('piece')).toBe('piece')
+  })
+
+  it('maps "Pièces" (French plural) to "piece"', () => {
+    expect(mapPennylaneUnit('Pièces')).toBe('piece')
+  })
+
+  it('maps "Unité" to "piece"', () => {
+    expect(mapPennylaneUnit('Unité')).toBe('piece')
+  })
+
+  it('maps "litre" to "liter"', () => {
+    expect(mapPennylaneUnit('litre')).toBe('liter')
+  })
+
+  it('maps "Litres" to "liter"', () => {
+    expect(mapPennylaneUnit('Litres')).toBe('liter')
+  })
+
+  it('maps "g" directly', () => {
+    expect(mapPennylaneUnit('g')).toBe('g')
+  })
+
+  it('maps "gramme" to "g"', () => {
+    expect(mapPennylaneUnit('gramme')).toBe('g')
+  })
+
+  it('returns null for unknown unit', () => {
+    expect(mapPennylaneUnit('boite')).toBeNull()
+  })
+
+  it('returns null for null input', () => {
+    expect(mapPennylaneUnit(null)).toBeNull()
+  })
+
+  it('returns null for undefined input', () => {
+    expect(mapPennylaneUnit(undefined)).toBeNull()
+  })
+
+  it('is case-insensitive (uppercase)', () => {
+    expect(mapPennylaneUnit('KG')).toBe('kg')
+    expect(mapPennylaneUnit('PIECE')).toBe('piece')
+  })
+
+  it('trims surrounding whitespace', () => {
+    expect(mapPennylaneUnit('  kg  ')).toBe('kg')
+  })
+})
+
+describe('buildCaptureItemPrices', () => {
+  describe('(a) full prices in invoice → 5 fields in payload', () => {
+    it('returns all 5 price fields when a complete Pennylane line is provided', () => {
+      const factureItem = {
+        id: 'pl-uuid-abc-123',
+        unit_amount: 25.0,
+        vat_rate: 5.5,
+        quantity: 2.5,
+        unit: 'kg',
+      }
+
+      const result = buildCaptureItemPrices(factureItem)
+
+      expect(result).toEqual({
+        unitPriceTtcCents: 2500,
+        vatRateBp: 550,
+        qtyInvoiced: 2.5,
+        invoiceLineId: 'pl-uuid-abc-123',
+        unitInvoiced: 'kg',
+      })
+    })
+
+    it('includes unitInvoiced only when prices are present', () => {
+      const withPrices = buildCaptureItemPrices({
+        id: 'x',
+        unit_amount: 10,
+        vat_rate: 20,
+        quantity: 1,
+        unit: 'piece',
+      })
+      expect(withPrices.unitInvoiced).toBe('piece')
+    })
+
+    it('omits unitInvoiced when unit_amount is absent (prices absent)', () => {
+      const withoutPrices = buildCaptureItemPrices({
+        id: 'x',
+        quantity: 1,
+        unit: 'kg',
+      })
+      expect(withoutPrices.unitInvoiced).toBeUndefined()
+    })
+  })
+
+  describe('(b) euros vs cents conversion', () => {
+    it('converts unit_amount 25.00 euros → 2500 cents', () => {
+      const result = buildCaptureItemPrices({
+        unit_amount: 25.0,
+        vat_rate: 20,
+        quantity: 1,
+        unit: 'piece',
+      })
+      expect(result.unitPriceTtcCents).toBe(2500)
+    })
+
+    it('converts unit_amount 0.99 euros → 99 cents (rounds correctly)', () => {
+      const result = buildCaptureItemPrices({
+        unit_amount: 0.99,
+        vat_rate: 20,
+        quantity: 1,
+        unit: 'kg',
+      })
+      expect(result.unitPriceTtcCents).toBe(99)
+    })
+
+    it('converts unit_amount 1.234 euros → 123 cents (Math.round)', () => {
+      const result = buildCaptureItemPrices({
+        unit_amount: 1.234,
+        vat_rate: 20,
+        quantity: 1,
+        unit: 'kg',
+      })
+      expect(result.unitPriceTtcCents).toBe(123)
+    })
+
+    it('converts unit_amount 1.235 euros → 124 cents (rounds up at .5)', () => {
+      const result = buildCaptureItemPrices({
+        unit_amount: 1.235,
+        vat_rate: 20,
+        quantity: 1,
+        unit: 'kg',
+      })
+      expect(result.unitPriceTtcCents).toBe(124)
+    })
+
+    it('falls back to amount/quantity when unit_amount is absent', () => {
+      // amount = 50€ total, quantity = 2 → unit price = 25€ → 2500 cents
+      const result = buildCaptureItemPrices({ amount: 50, quantity: 2, vat_rate: 20, unit: 'kg' })
+      expect(result.unitPriceTtcCents).toBe(2500)
+    })
+
+    it('fallback: floating point division is rounded correctly (3kg @ 8.97€ = 2.99€/kg = 299 cents)', () => {
+      const result = buildCaptureItemPrices({
+        amount: 8.97,
+        quantity: 3,
+        vat_rate: 5.5,
+        unit: 'kg',
+      })
+      expect(result.unitPriceTtcCents).toBe(299)
+    })
+
+    it('returns no unitPriceTtcCents when neither unit_amount nor amount/quantity available', () => {
+      const result = buildCaptureItemPrices({ vat_rate: 5.5, quantity: 2, unit: 'kg' })
+      expect(result.unitPriceTtcCents).toBeUndefined()
+    })
+
+    it('returns no unitPriceTtcCents when quantity is 0 (division by zero guard)', () => {
+      const result = buildCaptureItemPrices({ amount: 10, quantity: 0, vat_rate: 5.5, unit: 'kg' })
+      expect(result.unitPriceTtcCents).toBeUndefined()
+    })
+
+    it('handles unit_amount = 0 (free product / commercial gesture)', () => {
+      const result = buildCaptureItemPrices({
+        unit_amount: 0,
+        vat_rate: 0,
+        quantity: 1,
+        unit: 'piece',
+      })
+      expect(result.unitPriceTtcCents).toBe(0)
+    })
+  })
+
+  describe('(c) basis points (vatRateBp) conversion', () => {
+    it('converts 5.5% → 550 basis points', () => {
+      const result = buildCaptureItemPrices({
+        unit_amount: 1,
+        vat_rate: 5.5,
+        quantity: 1,
+        unit: 'kg',
+      })
+      expect(result.vatRateBp).toBe(550)
+    })
+
+    it('converts 20% → 2000 basis points', () => {
+      const result = buildCaptureItemPrices({
+        unit_amount: 1,
+        vat_rate: 20,
+        quantity: 1,
+        unit: 'kg',
+      })
+      expect(result.vatRateBp).toBe(2000)
+    })
+
+    it('converts 0% → 0 basis points (exempt)', () => {
+      const result = buildCaptureItemPrices({
+        unit_amount: 1,
+        vat_rate: 0,
+        quantity: 1,
+        unit: 'piece',
+      })
+      expect(result.vatRateBp).toBe(0)
+    })
+
+    it('converts 10% → 1000 basis points', () => {
+      const result = buildCaptureItemPrices({
+        unit_amount: 1,
+        vat_rate: 10,
+        quantity: 1,
+        unit: 'piece',
+      })
+      expect(result.vatRateBp).toBe(1000)
+    })
+
+    it('returns no vatRateBp when vat_rate is absent', () => {
+      const result = buildCaptureItemPrices({ unit_amount: 1, quantity: 1, unit: 'kg' })
+      expect(result.vatRateBp).toBeUndefined()
+    })
+
+    it('parses Pennylane V2 coded "FR_55" → 5.5% → 550 bp', () => {
+      const result = buildCaptureItemPrices({
+        unit_amount: 7.83,
+        vat_rate: 'FR_55',
+        quantity: 1,
+        unit: 'piece',
+      })
+      expect(result.vatRateBp).toBe(550)
+    })
+
+    it('parses "FR_200" → 20% → 2000 bp', () => {
+      const result = buildCaptureItemPrices({
+        unit_amount: 1,
+        vat_rate: 'FR_200',
+        quantity: 1,
+        unit: 'piece',
+      })
+      expect(result.vatRateBp).toBe(2000)
+    })
+
+    it('parses "FR_100" → 10% → 1000 bp', () => {
+      const result = buildCaptureItemPrices({
+        unit_amount: 1,
+        vat_rate: 'FR_100',
+        quantity: 1,
+        unit: 'piece',
+      })
+      expect(result.vatRateBp).toBe(1000)
+    })
+
+    it('parses "FR_21" → 2.1% → 210 bp', () => {
+      const result = buildCaptureItemPrices({
+        unit_amount: 1,
+        vat_rate: 'FR_21',
+        quantity: 1,
+        unit: 'piece',
+      })
+      expect(result.vatRateBp).toBe(210)
+    })
+
+    it('returns no vatRateBp on unparseable vat_rate string', () => {
+      const result = buildCaptureItemPrices({
+        unit_amount: 1,
+        vat_rate: 'GARBAGE',
+        quantity: 1,
+        unit: 'kg',
+      })
+      expect(result.vatRateBp).toBeUndefined()
+    })
+  })
+
+  describe('(c-bis) parseVatRateToBp helper export', () => {
+    it('handles numeric input', async () => {
+      const { parseVatRateToBp } = await import('../buildCaptureItemPrices.js')
+      expect(parseVatRateToBp(5.5)).toBe(550)
+      expect(parseVatRateToBp(20)).toBe(2000)
+      expect(parseVatRateToBp(0)).toBe(0)
+    })
+
+    it('handles numeric string input', async () => {
+      const { parseVatRateToBp } = await import('../buildCaptureItemPrices.js')
+      expect(parseVatRateToBp('5.5')).toBe(550)
+      expect(parseVatRateToBp('20')).toBe(2000)
+    })
+
+    it('handles Pennylane coded strings', async () => {
+      const { parseVatRateToBp } = await import('../buildCaptureItemPrices.js')
+      expect(parseVatRateToBp('FR_55')).toBe(550)
+      expect(parseVatRateToBp('FR_200')).toBe(2000)
+      expect(parseVatRateToBp('FR_100')).toBe(1000)
+      expect(parseVatRateToBp('FR_21')).toBe(210)
+      expect(parseVatRateToBp('FR_0')).toBe(0)
+    })
+
+    it('returns null for null/undefined/empty/garbage', async () => {
+      const { parseVatRateToBp } = await import('../buildCaptureItemPrices.js')
+      expect(parseVatRateToBp(null)).toBeNull()
+      expect(parseVatRateToBp(undefined)).toBeNull()
+      expect(parseVatRateToBp('')).toBeNull()
+      expect(parseVatRateToBp('GARBAGE')).toBeNull()
+    })
+  })
+
+  describe('invoiceLineId', () => {
+    it('passes through the Pennylane UUID as string', () => {
+      const result = buildCaptureItemPrices({
+        id: 'abc-123-uuid',
+        unit_amount: 1,
+        vat_rate: 5.5,
+        quantity: 1,
+        unit: 'kg',
+      })
+      expect(result.invoiceLineId).toBe('abc-123-uuid')
+    })
+
+    it('truncates invoiceLineId to 255 chars (defensive — UUIDs are 36 chars)', () => {
+      const longId = 'x'.repeat(300)
+      const result = buildCaptureItemPrices({
+        id: longId,
+        unit_amount: 1,
+        vat_rate: 5.5,
+        quantity: 1,
+        unit: 'kg',
+      })
+      expect(result.invoiceLineId).toHaveLength(255)
+    })
+
+    it('omits invoiceLineId when id is absent', () => {
+      const result = buildCaptureItemPrices({
+        unit_amount: 1,
+        vat_rate: 5.5,
+        quantity: 1,
+        unit: 'kg',
+      })
+      expect(result.invoiceLineId).toBeUndefined()
+    })
+
+    it('converts numeric id to string', () => {
+      const result = buildCaptureItemPrices({
+        id: 12345,
+        unit_amount: 1,
+        vat_rate: 5.5,
+        quantity: 1,
+        unit: 'kg',
+      })
+      expect(result.invoiceLineId).toBe('12345')
+    })
+  })
+
+  describe('qtyInvoiced', () => {
+    it('includes qtyInvoiced as numeric pass-through', () => {
+      const result = buildCaptureItemPrices({
+        unit_amount: 1,
+        vat_rate: 5.5,
+        quantity: 3.75,
+        unit: 'kg',
+      })
+      expect(result.qtyInvoiced).toBe(3.75)
+    })
+
+    it('omits qtyInvoiced when quantity is absent', () => {
+      const result = buildCaptureItemPrices({ unit_amount: 1, vat_rate: 5.5, unit: 'kg' })
+      expect(result.qtyInvoiced).toBeUndefined()
+    })
+  })
+
+  describe('missing/empty input', () => {
+    it('returns empty object for null input', () => {
+      expect(buildCaptureItemPrices(null)).toEqual({})
+    })
+
+    it('returns empty object for undefined input', () => {
+      expect(buildCaptureItemPrices(undefined)).toEqual({})
+    })
+
+    it('returns empty object for empty object', () => {
+      expect(buildCaptureItemPrices({})).toEqual({})
+    })
+
+    it('returns partial object when only some fields are present', () => {
+      const result = buildCaptureItemPrices({ id: 'xyz', quantity: 5 })
+      expect(result.invoiceLineId).toBe('xyz')
+      expect(result.qtyInvoiced).toBe(5)
+      expect(result.unitPriceTtcCents).toBeUndefined()
+      expect(result.vatRateBp).toBeUndefined()
+      expect(result.unitInvoiced).toBeUndefined()
+    })
+  })
+
+  describe('Pennylane unit mapping in context', () => {
+    it('maps "Kilogramme" → unitInvoiced = "kg" when prices present', () => {
+      const result = buildCaptureItemPrices({
+        unit_amount: 10,
+        vat_rate: 5.5,
+        quantity: 2,
+        unit: 'Kilogramme',
+      })
+      expect(result.unitInvoiced).toBe('kg')
+    })
+
+    it('does NOT set unitInvoiced for unmapped unit even with prices', () => {
+      const result = buildCaptureItemPrices({
+        unit_amount: 10,
+        vat_rate: 5.5,
+        quantity: 2,
+        unit: 'boite',
+      })
+      expect(result.unitInvoiced).toBeUndefined()
+    })
+  })
+})

@@ -61,9 +61,9 @@ const fillSavForm = async (page, { imageCount = 1 } = {}) => {
   await form.locator('input[type="file"]').setInputFiles(files)
   await expect(form.locator('img')).toHaveCount(imageCount)
 
-  await form.getByRole('button', { name: /Valider/ }).click()
+  await form.getByRole('button', { name: /Ajouter à ma demande SAV/ }).click()
 
-  const submitAllButton = page.getByRole('button', { name: /Valider toutes/ })
+  const submitAllButton = page.getByRole('button', { name: /Envoyer ma demande SAV/ })
   await expect(submitAllButton).toBeVisible()
   await submitAllButton.click()
 }
@@ -111,7 +111,7 @@ test('SAV error — rate limit sur share link (429)', async ({ page }) => {
         success: true,
         uploadUrl: `${MOCK_GRAPH_HOST}/upload/${encodeURIComponent(body.filename || 'file')}`,
         storagePath: `SAV_Images/${body.savDossier || 'SAV_TEST'}/${body.filename || 'file'}`,
-        expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+        expiresAt: new Date(Date.now() + 3600000).toISOString(),
       }),
     })
   })
@@ -163,7 +163,7 @@ test('SAV error — PUT Graph échoue partiellement (500)', async ({ page }) => 
         success: true,
         uploadUrl: `${MOCK_GRAPH_HOST}/upload/${encodeURIComponent(body.filename || 'file')}`,
         storagePath: `SAV_Images/${body.savDossier || 'SAV_TEST'}/${body.filename || 'file'}`,
-        expiresAt: new Date(Date.now() + 3600_000).toISOString(),
+        expiresAt: new Date(Date.now() + 3600000).toISOString(),
       }),
     })
   })

@@ -1,19 +1,4 @@
-import { config } from '@vue/test-utils'
-import { createI18n } from 'vue-i18n'
 import { vi } from 'vitest'
-
-// Configuration globale pour les tests
-const i18n = createI18n({
-  legacy: false,
-  locale: 'fr',
-  fallbackLocale: 'fr',
-  messages: {
-    fr: {}
-  }
-})
-
-// Configuration globale des composants Vue
-config.global.plugins = [i18n]
 
 // Mocks globaux
 global.CSS = { supports: () => false }
@@ -23,14 +8,14 @@ global.fetch = vi.fn(() =>
   Promise.resolve({
     ok: true,
     json: () => Promise.resolve({}),
-    text: () => Promise.resolve('')
+    text: () => Promise.resolve(''),
   })
 )
 
 // Configuration pour les tests d'éléments HTML
 Object.defineProperty(window, 'matchMedia', {
   writable: true,
-  value: vi.fn().mockImplementation(query => ({
+  value: vi.fn().mockImplementation((query) => ({
     matches: false,
     media: query,
     onchange: null,

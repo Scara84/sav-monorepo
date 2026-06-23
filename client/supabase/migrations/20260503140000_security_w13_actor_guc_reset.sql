@@ -1,0 +1,45 @@
+-- ============================================================
+-- Migration : 20260503140000_security_w13_actor_guc_reset.sql (NO-OP)
+-- Domaine   : Sécurité — reset GUC app.actor_operator_id en fin de RPC
+-- Issue     : W13 (deferred-work post-Story 4.1)
+-- ============================================================
+-- HISTORIQUE :
+--   Cette migration tentait initialement d'ajouter `ALTER FUNCTION ...
+--   SET app.actor_operator_id = ''` sur 8 RPCs SECURITY DEFINER pour
+--   bénéficier du save/restore PG natif (defense pgBouncer transaction
+--   pooling). Elle a TOUJOURS échoué :
+--     `ERROR: permission denied to set parameter "app.actor_operator_id"`
+--   aussi bien en local (rôle postgres non-superuser) qu'en cloud
+--   preview (rôle supabase_admin) — limitation Supabase confirmée sur
+--   les GUC custom non whitelistées.
+--
+--   Le commit 3330b3d4 (W8 — 2026-04-26) a établi le pattern de
+--   remplacement pour W13 : `PERFORM set_config('app.actor_operator_id',
+--   '', false)` en fin de body de chaque RPC (`is_local=false` →
+--   session-wide reset, équivalent fonctionnel au save/restore mais
+--   applicable par tout rôle car set_config dynamique est autorisé).
+--   La RPC `transition_sav_status` a été convertie dans
+--   20260504150000_transition_sav_status_lines_blocked_pipe_format.sql.
+--
+--   Les 7 autres RPCs (assign_sav, update_sav_line, update_sav_tags,
+--   duplicate_sav, create_sav_line, delete_sav_line, issue_credit_number)
+--   restent à convertir au pattern set_config(false) — cf. deferred-work
+--   « W13 — refactor set_config body sur 7 RPCs restantes ».
+--
+-- POURQUOI NO-OP :
+--   La version originale (ALTER FUNCTION ... SET) ne s'est jamais
+--   appliquée proprement. La purger en no-op permet de débloquer le
+--   tracker `supabase_migrations.schema_migrations` sur l'environnement
+--   cloud (la pousser fait planter `db push --include-all` sur le
+--   permission denied) sans modifier le comportement runtime — qui
+--   reposait DÉJÀ sur le SET LOCAL transaction-mode pgBouncer.
+--
+--   Defense-in-depth W13 préservée par migration 20260504150000 sur
+--   `transition_sav_status` ; les 7 autres RPCs gardent leur
+--   comportement V1 (SET LOCAL transaction-mode = pas de fuite GUC en
+--   pgBouncer transaction pool, qui est le mode Supabase par défaut).
+-- ============================================================
+
+-- (no statements — voir commentaire au-dessus)
+
+-- END 20260503140000_security_w13_actor_guc_reset.sql

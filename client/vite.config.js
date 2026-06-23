@@ -5,18 +5,21 @@ import { fileURLToPath, URL } from 'node:url'
 const srcPath = fileURLToPath(new URL('./src', import.meta.url))
 
 export default defineConfig(({ mode }) => {
-  // Charge les variables d'environnement
-  const env = loadEnv(mode, process.cwd(), '')
+  // Charge les variables d'environnement (loadEnv expose les VITE_* dans process.env)
+  // eslint-disable-next-line no-unused-vars -- side-effect-only: loadEnv populates process.env
+  const _env = loadEnv(mode, process.cwd(), '')
 
   return {
     plugins: [vue()],
     // Configuration pour le build de production
-    base: '',
+    // base: '/' (absolu) requis pour SPA Vue Router — sinon /admin/sav charge
+    // les assets en /admin/assets/* (404). Voir Vercel rewrites SPA fallback.
+    base: '/',
     build: {
       outDir: 'dist',
       assetsDir: 'assets',
       emptyOutDir: true,
-      sourcemap: false
+      sourcemap: false,
     },
     server: {
       port: 5173,
@@ -37,41 +40,41 @@ export default defineConfig(({ mode }) => {
         },
         {
           find: '@assets',
-          replacement: `${srcPath}/assets`
+          replacement: `${srcPath}/assets`,
         },
         {
           find: '@components',
-          replacement: `${srcPath}/components`
+          replacement: `${srcPath}/components`,
         },
         {
           find: '@composables',
-          replacement: `${srcPath}/composables`
+          replacement: `${srcPath}/composables`,
         },
         {
           find: '@features',
-          replacement: `${srcPath}/features`
+          replacement: `${srcPath}/features`,
         },
         {
           find: '@router',
-          replacement: `${srcPath}/router`
+          replacement: `${srcPath}/router`,
         },
         {
           find: '@stores',
-          replacement: `${srcPath}/stores`
+          replacement: `${srcPath}/stores`,
         },
         {
           find: '@styles',
-          replacement: `${srcPath}/styles`
+          replacement: `${srcPath}/styles`,
         },
         {
           find: '@utils',
-          replacement: `${srcPath}/utils`
+          replacement: `${srcPath}/utils`,
         },
         {
           find: '@shared',
-          replacement: fileURLToPath(new URL('./shared', import.meta.url))
-        }
-      ]
-    }
+          replacement: fileURLToPath(new URL('./shared', import.meta.url)),
+        },
+      ],
+    },
   }
 })

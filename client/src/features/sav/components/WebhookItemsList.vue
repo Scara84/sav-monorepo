@@ -188,19 +188,11 @@
     <!-- Encart d'aide process SAV -->
     <div class="mb-4 p-4 bg-blue-50 border-l-4 border-blue-400 text-blue-900 rounded">
       <strong>Comment faire une réclamation&nbsp;?</strong><br />
-      Pour chaque produit concerné, cliquez sur <b>«&nbsp;Signaler un problème&nbsp;»</b>,
-      remplissez le formulaire puis cliquez sur le bouton
-      <b>«&nbsp;Valider la réclamation&nbsp;»</b> pour enregistrer votre demande. Une fois toutes
-      vos réclamations saisies et validées, cliquez sur le bouton
-      <b>«&nbsp;Valider toutes les réclamations&nbsp;»</b> en bas de la page pour envoyer votre
-      demande SAV.
+      <span class="block mt-1"><b>1.</b> Ajoutez chaque produit concerné à votre demande.</span>
+      <span class="block"><b>2.</b> Utilisez ensuite «&nbsp;Envoyer ma demande SAV&nbsp;».</span>
     </div>
     <ul class="space-y-6">
-      <li
-        v-for="(item, index) in items"
-        :key="index"
-        class="bg-white p-4 rounded-lg shadow"
-      >
+      <li v-for="(item, index) in items" :key="index" class="bg-white p-4 rounded-lg shadow">
         <!-- Nom du produit sur toute la largeur -->
         <h3 class="text-xl mb-4">
           {{ item.label }}
@@ -240,10 +232,7 @@
         </div>
 
         <!-- Formulaire SAV -->
-        <div
-          v-if="getSavForm(index).showForm"
-          class="mt-4 p-4 bg-gray-50 rounded-2xl"
-        >
+        <div v-if="getSavForm(index).showForm" class="mt-4 p-4 bg-gray-50 rounded-2xl">
           <form
             class="space-y-4"
             :class="{ 'opacity-75': getSavForm(index).filled }"
@@ -257,6 +246,11 @@
                 <input
                   type="number"
                   step="0.01"
+                  min="0.01"
+                  max="9999.99"
+                  inputmode="decimal"
+                  :data-test="`sav-form-quantity-${index}`"
+                  placeholder="ex: 1.5"
                   v-model="getSavForm(index).quantity"
                   :disabled="getSavForm(index).filled"
                   class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 disabled:bg-gray-100"
@@ -268,7 +262,9 @@
                 </p>
               </div>
               <div>
-                <label class="block text-[color:var(--text-dark)] font-semibold text-base">Unité</label>
+                <label class="block text-[color:var(--text-dark)] font-semibold text-base"
+                  >Unité</label
+                >
                 <select
                   v-model="getSavForm(index).unit"
                   :disabled="getSavForm(index).filled"
@@ -286,7 +282,9 @@
                 </p>
               </div>
               <div>
-                <label class="block text-[color:var(--text-dark)] font-semibold text-base">Motif</label>
+                <label class="block text-[color:var(--text-dark)] font-semibold text-base"
+                  >Motif</label
+                >
                 <select
                   v-model="getSavForm(index).reason"
                   :disabled="getSavForm(index).filled"
@@ -333,7 +331,8 @@
                 Photos
                 <span class="text-xs text-gray-500"
                   >({{ getSavForm(index).reason === 'abime' ? 'obligatoire' : 'optionnel' }} -
-                  formats acceptés: JPEG, PNG, GIF, WebP, SVG, HEIC - max {{ maxFileSizeMb }}Mo par image)</span
+                  formats acceptés: JPEG, PNG, GIF, WebP, SVG, HEIC - max {{ maxFileSizeMb }}Mo par
+                  image)</span
                 >
               </label>
 
@@ -384,7 +383,9 @@
                   </p>
 
                   <!-- Texte secondaire -->
-                  <p class="text-xs text-gray-500">JPEG, PNG, GIF, WebP, SVG, HEIC (max {{ maxFileSizeMb }}Mo)</p>
+                  <p class="text-xs text-gray-500">
+                    JPEG, PNG, GIF, WebP, SVG, HEIC (max {{ maxFileSizeMb }}Mo)
+                  </p>
                 </div>
               </div>
               <!-- Prévisualisation des images -->
@@ -453,17 +454,22 @@
                   :disabled="getSavForm(index).loading"
                 >
                   <span v-if="getSavForm(index).loading">Envoi...</span>
-                  <span v-else>Valider la réclamation</span>
+                  <span v-else>Ajouter à ma demande SAV</span>
                 </button>
               </template>
               <template v-else>
-                <button
-                  type="button"
-                  @click="editItemForm(index)"
-                  class="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                >
-                  Modifier la réclamation
-                </button>
+                <div class="flex flex-col items-end gap-2 sm:flex-row sm:items-center">
+                  <p class="text-sm font-semibold text-amber-800">
+                    Ajoutée à votre demande — pas encore envoyée
+                  </p>
+                  <button
+                    type="button"
+                    @click="editItemForm(index)"
+                    class="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
+                  >
+                    Modifier la réclamation
+                  </button>
+                </div>
               </template>
             </div>
           </form>
@@ -472,33 +478,50 @@
     </ul>
     <p v-if="items.length === 0" class="text-gray-500 text-center py-4">Aucun élément à afficher</p>
 
-    <!-- Bouton de validation global -->
-    <div v-if="hasUnfinishedForms" class="mt-4 p-4 bg-yellow-50 border-l-4 border-yellow-400">
-      <p class="text-sm text-yellow-700">
-        Veuillez finaliser ou annuler toutes les demandes en cours avant de valider l'ensemble des
-        demandes.
-      </p>
-    </div>
-    <div v-if="hasFilledForms" class="mt-6 flex justify-center">
-      <button
-        @click="submitAllForms"
-        class="px-6 py-3 text-base font-medium text-white bg-green-600 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500"
-        :disabled="globalLoading"
-      >
-        <span v-if="globalLoading">Envoi...</span>
-        <span v-else>Valider toutes les réclamations</span>
-      </button>
+    <!-- Action d'envoi finale, persistante pendant le défilement -->
+    <div
+      v-if="hasFilledForms || hasUnfinishedForms"
+      class="sticky bottom-4 z-30 mt-6 rounded-xl border border-green-200 bg-white p-4 shadow-xl"
+      data-test="sav-submit-bar"
+    >
+      <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+        <div>
+          <p v-if="filledFormsCount > 0" class="font-semibold text-gray-900">
+            {{ filledFormsCount }}
+            {{ filledFormsCount === 1 ? 'réclamation ajoutée' : 'réclamations ajoutées' }}
+          </p>
+          <p v-else class="font-semibold text-gray-900">Réclamation en cours de saisie</p>
+          <p v-if="hasUnfinishedForms" class="text-sm text-amber-700" role="alert">
+            Finalisez ou annulez la ligne en cours avant l’envoi.
+          </p>
+          <p v-else class="text-sm text-gray-600">Votre demande n’est pas encore envoyée.</p>
+        </div>
+        <button
+          type="button"
+          @click="submitAllForms"
+          class="w-full px-6 py-3 text-base font-medium text-white bg-green-600 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:cursor-not-allowed disabled:bg-gray-400 sm:w-auto"
+          :disabled="globalLoading || hasUnfinishedForms || !hasFilledForms"
+        >
+          <span v-if="globalLoading">Envoi...</span>
+          <span v-else>
+            Envoyer ma demande SAV ({{ filledFormsCount }}
+            {{ filledFormsCount === 1 ? 'réclamation' : 'réclamations' }})
+          </span>
+        </button>
+      </div>
     </div>
   </div>
 </template>
 
 <script>
-import { ref, watch } from 'vue'
+import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useSavForms } from '../composables/useSavForms.js'
 import { useImageUpload } from '../composables/useImageUpload.js'
 import { useApiClient } from '../composables/useApiClient.js'
 import { useExcelGenerator } from '../composables/useExcelGenerator.js'
 import { buildSavHtmlTable } from '../lib/buildSavHtmlTable.js'
+import { buildCaptureItemPrices } from '../lib/buildCaptureItemPrices.js'
+import { extractProductCode } from '../lib/extractProductCode.js'
 
 export default {
   name: 'WebhookItemsList',
@@ -517,7 +540,9 @@ export default {
     const {
       getSavForm,
       hasFilledForms,
+      filledFormsCount,
       hasUnfinishedForms,
+      hasDirtyForms,
       toggleSavForm,
       validateItemForm: validateSavItemForm,
       editItemForm: editSavItemForm,
@@ -529,8 +554,11 @@ export default {
       removeImage: removeImageBase,
       maxFileSizeMb,
     } = useImageUpload()
-    const { uploadToBackend: uploadToBackendApi, getFolderShareLink, submitSavWebhook } =
-      useApiClient()
+    const {
+      uploadToBackend: uploadToBackendApi,
+      getFolderShareLink,
+      submitSavWebhook,
+    } = useApiClient()
     const { generateExcelFile } = useExcelGenerator()
     const toastMessage = ref('')
 
@@ -540,6 +568,30 @@ export default {
     const uploadedFiles = ref(0)
     const toastType = ref('success')
     const globalLoading = ref(false)
+    const submissionSucceeded = ref(false)
+    const hasPendingSubmission = computed(
+      () => (filledFormsCount.value > 0 || hasDirtyForms.value) && !submissionSucceeded.value
+    )
+
+    watch(filledFormsCount, (count) => {
+      if (count > 0) submissionSucceeded.value = false
+    })
+
+    const handleBeforeUnload = (event) => {
+      if (!hasPendingSubmission.value) return
+      event.preventDefault()
+      event.returnValue = ''
+    }
+
+    const confirmLeave = () => {
+      if (!hasPendingSubmission.value) return true
+      return window.confirm(
+        'Votre demande SAV n’a pas encore été envoyée. Voulez-vous vraiment quitter cette page ?'
+      )
+    }
+
+    onMounted(() => window.addEventListener('beforeunload', handleBeforeUnload))
+    onBeforeUnmount(() => window.removeEventListener('beforeunload', handleBeforeUnload))
 
     // États pour le modal d'upload
     const uploadModalVisible = ref(false)
@@ -665,6 +717,19 @@ export default {
           return
         }
 
+        // Story 5.7 patch P14 — refuser le submit si le numéro de facture
+        // est absent : sans `invoice.ref`, les emails portent un sujet
+        // « Demande SAV Facture (facture inconnue) » embarrassant. La
+        // facture devrait toujours être présente côté UI (chargement avant
+        // d'arriver à l'écran), un manque ici signale un bug amont.
+        if (!props.facture?.invoice_number) {
+          uploadStatus.value = 'error'
+          uploadErrorMessage.value =
+            'Numéro de facture manquant — impossible de soumettre la demande'
+          globalLoading.value = false
+          return
+        }
+
         // Créer un nom de dossier unique pour cette demande de SAV
         const specialMention = props.facture?.special_mention || ''
         const sanitizedSpecialMention =
@@ -684,7 +749,7 @@ export default {
         for (const { form } of filledForms) {
           if (form.images && form.images.length > 0) {
             for (let imgObj of form.images) {
-              if (imgObj.file && !imgObj.uploadedUrl) {
+              if (imgObj.file && (!imgObj.uploadedUrl || !imgObj.itemId)) {
                 allFiles.push(imgObj.file)
                 fileMapping.set(imgObj.file, imgObj)
               }
@@ -699,10 +764,14 @@ export default {
         let uploadErrors = []
         const uploadPromises = allFiles.map(async (file) => {
           const imgObj = fileMapping.get(file)
+          imgObj.uploadError = false // AC#2 M1 — reset au début de chaque tentative (idempotent retry)
           try {
             currentUploadFile.value = file.name
-            const uploadedUrl = await uploadToBackend(file, savDossier)
-            imgObj.uploadedUrl = uploadedUrl
+            // V1.6 AC#9 : uploadToBackend retourne { webUrl, itemId } (pas string)
+            const uploadResult = await uploadToBackend(file, savDossier)
+            imgObj.uploadedUrl = uploadResult.webUrl
+            imgObj.itemId = uploadResult.itemId
+            imgObj.uploadError = false // AC#2 M1 — reset explicite sur success (defense-in-depth)
             uploadedFiles.value++
           } catch (e) {
             imgObj.uploadError = true
@@ -729,36 +798,9 @@ export default {
           return
         }
 
-        // Générer le tableau HTML pour Make.com
+        // Story 5.7 — htmlTable conservé en metadata (rétrocompat amont
+        // builder Vue), le serveur utilise les templates natifs.
         const htmlTable = buildSavHtmlTable(filledForms, props.items)
-
-        // ÉTAPE 2 : Préparer les payloads pour le webhook
-        const payload = filledForms.map(({ form, index }) => {
-          const images =
-            form.images && form.images.length > 0
-              ? form.images.map((img) => ({
-                  url: img.uploadedUrl || '',
-                  fileName: img.file ? img.file.name : '',
-                }))
-              : []
-          const factureItem = props.items[index] || {}
-          return {
-            ...form,
-            images: images,
-            itemIndex: index,
-            factureInfo: {
-              label: factureItem.label,
-              quantityFacturee: factureItem.quantity,
-              unit: factureItem.unit,
-              vat_rate: factureItem.vat_rate,
-              prixUnitaire:
-                factureItem.amount && factureItem.quantity
-                  ? factureItem.amount / factureItem.quantity
-                  : undefined,
-              prixTotal: factureItem.amount,
-            },
-          }
-        })
 
         // ÉTAPE 3 : Upload du fichier Excel via le backend
         const excelBase64 = generateExcelFile(filledForms, props.items, props.facture)
@@ -768,18 +810,111 @@ export default {
         }
 
         currentUploadFile.value = excelFile.filename
-        await uploadToBackend(excelFile, savDossier, true)
-        uploadedFiles.value++
+
+        // AC#3 M2 — try/catch local Excel cohérent avec le pattern image upload (lignes 722-736)
+        // AC#3 M3 — Le retour { webUrl, itemId } est volontairement discarded :
+        // captureWebhookSchema.files[] ne trace que les images (cf. capture-webhook.ts:56-68).
+        // L'Excel est uploadé sur OneDrive pour archivage dossier uniquement (visible via
+        // folderShareLink ligne 772). DN-2 V1.6.1 = ne PAS persister Excel onedriveItemId
+        // côté backend (pas de changement schema requis).
+        try {
+          await uploadToBackend(excelFile, savDossier, true)
+          uploadedFiles.value++
+        } catch (e) {
+          uploadStatus.value = 'error'
+          uploadErrorMessage.value = `Échec de l'upload du fichier Excel (${excelFile.filename}) : ${e.message || 'Erreur inconnue'}`
+          globalLoading.value = false
+          console.error(`Erreur upload Excel ${excelFile.filename}:`, e)
+          return // AC#3 — early-exit intentionnel (return discard, pattern lignes 752-753)
+        }
 
         // ÉTAPE 4 : Obtenir le lien de partage pour le dossier global
         const folderShareLink = await getFolderShareLink(savDossier)
 
-        // ÉTAPE 5 : Envoi au webhook avec le lien du dossier
+        // ÉTAPE 5 : Envoi au backend `/api/webhooks/capture` (Story 5.7).
+        // Le payload doit matcher `captureWebhookSchema` (cf. AC #4 + AC #7) :
+        // { customer, invoice, items, files, metadata }.
+        const captureCustomer = {
+          email: props.facture?.customer?.emails?.[0] || props.facture?.customer?.email || '',
+          ...(props.facture?.customer?.first_name
+            ? { firstName: props.facture.customer.first_name }
+            : {}),
+          ...(props.facture?.customer?.last_name
+            ? { lastName: props.facture.customer.last_name }
+            : {}),
+          ...(props.facture?.customer?.phone ? { phone: props.facture.customer.phone } : {}),
+          ...(props.facture?.customer?.name ? { fullName: props.facture.customer.name } : {}),
+          // Pennylane v2 : `customer.id` est le numeric internal ID.
+          ...(props.facture?.customer?.id !== undefined && props.facture?.customer?.id !== null
+            ? { pennylaneCustomerId: String(props.facture.customer.id) }
+            : {}),
+          ...(props.facture?.customer?.external_reference !== undefined &&
+          props.facture?.customer?.external_reference !== null
+            ? { externalCustomerId: String(props.facture.customer.external_reference) }
+            : {}),
+        }
+        const captureInvoice = props.facture?.invoice_number
+          ? {
+              ref: String(props.facture.invoice_number),
+              ...(props.facture.special_mention
+                ? { specialMention: String(props.facture.special_mention) }
+                : {}),
+              ...(props.facture.label ? { label: String(props.facture.label) } : {}),
+            }
+          : undefined
+        const captureItems = filledForms.map(({ form, index }) => {
+          const factureItem = props.items[index] || {}
+          const productName = factureItem.label || factureItem.product_name || 'Article inconnu'
+          // Story V1.12 AC#1 — priorité INCHANGÉE :
+          //   product_id (Pennylane) > code (Pennylane) > extractProductCode(label) > slice(0,32) (fallback)
+          // L'helper applique le pattern catalogue Fruitstock ^([0-9]{3,5}(?:-[A-Z0-9]{1,6})?)\s
+          // et garantit un fallback slice(0,32) non-vide quand aucun code n'est détecté.
+          const productCode = factureItem.product_id
+            ? String(factureItem.product_id)
+            : factureItem.code || extractProductCode(productName)
+          const item = {
+            productCode,
+            productName,
+            qtyRequested: Number(form.quantity) || 0,
+            unit: form.unit || 'piece',
+          }
+          const cause = [form.reason, form.comment]
+            .filter((v) => v && String(v).trim().length > 0)
+            .join(' — ')
+          if (cause) item.cause = cause
+
+          // Story 4.7 — Inject Pennylane invoice line prices into the capture payload.
+          // buildCaptureItemPrices extracts the 5 price fields from the Pennylane line
+          // already in component state. See lib/buildCaptureItemPrices.js for the full
+          // mapping rationale (unit_amount → unitPriceTtcCents, vat_rate → vatRateBp, etc.)
+          Object.assign(item, buildCaptureItemPrices(factureItem))
+
+          return item
+        })
+        const captureFiles = []
+        for (const { form } of filledForms) {
+          if (form.images && form.images.length > 0) {
+            for (const img of form.images) {
+              if (img.uploadedUrl && img.itemId && img.file) {
+                captureFiles.push({
+                  // V1.6 AC#9 : utilise img.itemId (Graph opaque ID) — jamais URL parsing
+                  onedriveItemId: img.itemId,
+                  webUrl: img.uploadedUrl,
+                  originalFilename: img.file.name,
+                  sanitizedFilename: img.file.name,
+                  sizeBytes: img.file.size,
+                  mimeType: img.file.type || 'application/octet-stream',
+                })
+              }
+            }
+          }
+        }
         await submitSavWebhook({
-          htmlTable,
-          forms: payload,
-          facture: props.facture,
-          dossier_sav_url: folderShareLink,
+          customer: captureCustomer,
+          ...(captureInvoice ? { invoice: captureInvoice } : {}),
+          items: captureItems,
+          files: captureFiles,
+          metadata: { dossierSavUrl: folderShareLink, htmlTable },
         })
 
         filledForms.forEach(({ form }) => {
@@ -787,6 +922,7 @@ export default {
         })
 
         // Succès
+        submissionSucceeded.value = true
         uploadStatus.value = 'success'
         emit('sav-submitted')
       } catch (error) {
@@ -803,7 +939,9 @@ export default {
 
     return {
       hasFilledForms,
+      filledFormsCount,
       hasUnfinishedForms,
+      hasPendingSubmission,
       getSavForm,
       formatValue,
       currentUploadFile,
@@ -819,6 +957,9 @@ export default {
       toastMessage,
       toastType,
       globalLoading,
+      submissionSucceeded,
+      handleBeforeUnload,
+      confirmLeave,
       showToast,
       uploadModalVisible,
       uploadStatus,

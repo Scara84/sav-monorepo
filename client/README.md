@@ -59,16 +59,46 @@ npm run test:e2e
 
 ## Variables d'environnement
 
-Créez un fichier `.env` à la racine du projet avec les variables suivantes :
+Créez un fichier `.env` à la racine du projet en partant de [`.env.example`](.env.example) (référence exhaustive maintenue à jour). Variables minimales pour démarrer :
 
 ```env
-VITE_API_KEY=...                           # envoyée en X-API-Key aux routes /api/*
-VITE_WEBHOOK_URL=https://hook.make.com/... # lookup facture
-VITE_WEBHOOK_URL_DATA_SAV=https://...      # soumission SAV
+VITE_API_KEY=...                # envoyée en X-API-Key aux routes /api/*
+VITE_SUPABASE_URL=...           # projet Supabase
+VITE_SUPABASE_PUBLISHABLE_KEY=...
 ```
+
+> Note historique (Story 5.7 — cutover 2026-04-28) : les variables `VITE_WEBHOOK_URL` et `VITE_WEBHOOK_URL_DATA_SAV` ont été retirées avec la suppression du flow Make.com. Le SPA appelle désormais `/api/webhooks/capture` directement (même origine) avec un JWT capture-token.
 
 Détails complets : [docs/development-guide-client.md](../docs/development-guide-client.md) et [docs/api-contracts-vercel.md](../docs/api-contracts-vercel.md).
 
 ## Bonnes pratiques
 
 Consultez le fichier `VUE_BEST_PRACTICES.md` pour les directives de développement.
+
+## Gestion des dépendances — cas particuliers
+
+### xlsx (SheetJS) — CDN, pas npm registry
+
+**Pourquoi `xlsx` n'est pas sur npm.** SheetJS a quitté le registry npm en 2023. La version corrigée (≥0.20.3 — fermeture CVE prototype pollution GHSA-4r6h-8v6p-xvw6 et ReDoS GHSA-5pgg-2g8v-p4x9) n'est disponible que sur leur CDN officiel.
+
+`package.json` reference :
+
+```json
+"xlsx": "https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz"
+```
+
+**Pour bumper xlsx** (nouvelle version SheetJS) :
+
+```bash
+npm install https://cdn.sheetjs.com/xlsx-X.Y.Z/xlsx-X.Y.Z.tgz
+```
+
+Remplacer `X.Y.Z` par la version cible. Préférer un pin explicite (pas `xlsx-latest.tgz`) pour l'auditabilité (DN-1, PATTERN-H17-A).
+
+**CI gate** : `scripts/security/check-xlsx-version.mjs` — exit 1 si version installée < 0.20.3 ou si `package.json` ne pointe pas vers `cdn.sheetjs.com`.
+
+```bash
+node scripts/security/check-xlsx-version.mjs
+```
+
+`npm audit` n'affiche **pas** les CVE xlsx après la migration CDN (le registry npm ne connaît pas la version CDN — c'est attendu et documenté). Le gate ci-dessus est le contrôle compensatoire (story h-17, DN-3).

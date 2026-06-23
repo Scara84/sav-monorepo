@@ -3,10 +3,10 @@
 </template>
 
 <script>
-import HeroSection from '../components/HeroSection.vue';
+import HeroSection from '../components/HeroSection.vue'
 
 export default {
   name: 'Home',
-  components: { HeroSection }
+  components: { HeroSection },
 }
 </script>

@@ -1,0 +1,37 @@
+-- Story H-09 R1 — Suppression index redondant idx_sav_received_at_status
+--
+-- DROP standard (non-CONCURRENTLY) accepté : volume sav V1 négligeable,
+-- lock impact < 10ms. Si volume sav > 100k post-go-live, restaurer en CONCURRENTLY.
+--
+-- EXPLAIN ANALYZE 2026-05-13 (preview project viwgyrqpyryagzgvnfoi) :
+--
+-- Query 1 — report_top_products (WHERE s.status IN ('validated','closed')
+--           AND s.received_at >= now()-90d) :
+--   → Index Scan using idx_sav_status on sav s (cost=0.15..2.37)
+--     Index Cond: ((status = ANY ('{validated,closed}'::text[]))
+--                  AND (received_at >= (now() - '90 days'::interval)))
+--
+-- Query 2 — report_top_reasons (même filtres) :
+--   → Index Scan using idx_sav_status on sav s (cost=0.15..2.37)
+--
+-- Query 3 — report_cost_timeline (range issued_at sur credit_notes) :
+--   → Bitmap Index Scan on idx_credit_notes_issued_at (credit_notes,
+--     pas de sav join → idx_sav_received_at_status non pertinent)
+--
+-- Vérification enable_seqscan=off : le planner choisit toujours
+-- idx_sav_status pour les 3 requêtes sav-based. idx_sav_received_at_status
+-- n'est jamais sélectionné car idx_sav_status (status, received_at DESC)
+-- couvre parfaitement les predicats equality-on-status + range-on-received_at.
+--
+-- Référence : Story 5.3 migration 20260505120000 (justification d'origine :
+-- "ordre des colonnes ne couvre PAS un range filter pur sur received_at
+-- sans status") — invalidée car aucune des RPC reporting ne lance un range
+-- pur sans filtre status. DN-4(b) appliqué : forçage enable_seqscan=off
+-- confirme idx_sav_status est systématiquement préféré → Branche A.
+-- Suppression nette : réduit le write overhead sur INSERT/UPDATE sav.
+
+DROP INDEX IF EXISTS public.idx_sav_received_at_status;
+
+-- Rollback (si un futur consumer dépend d'un range received_at sans filtre status préfixe) :
+--   CREATE INDEX CONCURRENTLY IF NOT EXISTS idx_sav_received_at_status
+--     ON public.sav (received_at DESC, status);

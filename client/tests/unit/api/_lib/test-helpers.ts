@@ -1,0 +1,73 @@
+import type { ApiRequest, ApiResponse } from '../../../../api/_lib/types'
+
+export interface MockResponse extends ApiResponse {
+  statusCode: number
+  jsonBody: unknown
+  headers: Record<string, string | number | string[]>
+  ended: boolean
+  // UAT V1.8 — streaming support (PATTERN-V5 Graph proxy handlers)
+  chunks: Buffer[]
+  write: (chunk: Buffer | string) => boolean
+}
+
+export function mockRes(): MockResponse {
+  const res: MockResponse = {
+    statusCode: 200,
+    jsonBody: undefined,
+    headers: {},
+    ended: false,
+    chunks: [],
+    status(code: number) {
+      res.statusCode = code
+      return res
+    },
+    json(data: unknown) {
+      res.jsonBody = data
+      res.ended = true
+      return res
+    },
+    setHeader(name: string, value: string | number) {
+      res.headers[name.toLowerCase()] = value
+      return res
+    },
+    appendHeader(name: string, value: string | readonly string[]) {
+      const key = name.toLowerCase()
+      const prev = res.headers[key]
+      const next = Array.isArray(value) ? [...value] : [value as string]
+      if (prev === undefined) {
+        res.headers[key] = next.length === 1 ? (next[0] as string) : next
+      } else {
+        const prevArr = Array.isArray(prev) ? prev : [String(prev)]
+        res.headers[key] = [...prevArr, ...next]
+      }
+      return res
+    },
+    end(chunk?: string) {
+      if (chunk !== undefined) {
+        res.chunks.push(Buffer.from(chunk))
+      }
+      res.ended = true
+    },
+    write(chunk: Buffer | string) {
+      res.chunks.push(Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk))
+      return true
+    },
+    getHeader(name: string) {
+      const v = res.headers[name.toLowerCase()]
+      if (typeof v === 'number') return v
+      return v
+    },
+  }
+  return res
+}
+
+export function mockReq(partial: Partial<ApiRequest> = {}): ApiRequest {
+  return {
+    method: 'POST',
+    headers: {},
+    body: {},
+    cookies: {},
+    query: {},
+    ...partial,
+  }
+}

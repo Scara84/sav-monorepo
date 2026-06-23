@@ -1,0 +1,111 @@
+name: Vercel Preview Deploy
+
+# Bypass du webhook GitHub↔Vercel natif (resté bloqué après rename branche +
+# cron horaire rejeté Hobby, cf. commit 5aa138f). On déploie via CLI Vercel
+# direct dans un workflow contrôlé.
+
+on:
+  push:
+    branches-ignore:
+      - main
+
+concurrency:
+  group: vercel-preview-${{ github.ref }}
+  cancel-in-progress: true
+
+# Permissions minimales requises : `contents: read` pour checkout, et
+# `pull-requests: read` pour trouver la PR associée et `issues: write` pour
+# y poster l'URL preview.
+permissions:
+  contents: read
+  pull-requests: read
+  issues: write
+
+jobs:
+  deploy-preview:
+    name: Deploy preview to Vercel
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    # Pas de `working-directory: client` : le Root Directory est configuré au niveau
+    # du projet Vercel (prj_xxx pointe sur `client/`). Le CLI doit être invoqué
+    # depuis la racine du repo pour que Vercel résolve le Root Directory lui-même.
+
+    env:
+      VERCEL_ORG_ID: ${{ secrets.VERCEL_ORG_ID }}
+      VERCEL_PROJECT_ID: ${{ secrets.VERCEL_PROJECT_ID }}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install Vercel CLI (latest — Vercel API requires ≥ 47.2.2)
+        run: npm install --global vercel@latest
+
+      # On délègue le build à l'infra Vercel (pas de `vercel build` local +
+      # `--prebuilt`) pour éviter un bug `spawn sh ENOENT` du CLI dans l'env
+      # GitHub Actions quand il spawne les subprocess installCommand/buildCommand.
+      # Trade-off : upload du workspace complet au lieu d'un artifact prebuild.
+      - name: Deploy to Vercel (preview, remote build)
+        id: deploy
+        run: |
+          url=$(vercel deploy --yes --token=${{ secrets.VERCEL_TOKEN }})
+          echo "url=$url" >> "$GITHUB_OUTPUT"
+          echo "Preview URL: $url"
+
+      # UAT V1.8 — le webhook natif GitHub→Vercel (qui auto-aliasait
+      # `<project>-git-<branch>...vercel.app`) est désactivé pour ce projet.
+      # Sans cette étape, l'alias de branche reste sur le deploy précédent et
+      # le testeur consomme un build périmé.
+      # Pattern alias : `<project>-git-<branch>-<org-slug>.vercel.app` avec
+      # les `/` du nom de branche convertis en `-`.
+      - name: Promote to branch alias
+        if: steps.deploy.outputs.url != ''
+        run: |
+          branch_slug=$(echo "${{ github.ref_name }}" | tr '/' '-')
+          branch_alias="sav-monorepo-client-git-${branch_slug}-ants-projects-3dc3de65.vercel.app"
+          deploy_host=$(echo "${{ steps.deploy.outputs.url }}" | sed 's|https://||')
+          echo "Aliasing $deploy_host → $branch_alias"
+          vercel alias set "$deploy_host" "$branch_alias" --token=${{ secrets.VERCEL_TOKEN }}
+
+      - name: Notify pull request with preview URL (non-blocking)
+        if: steps.deploy.outputs.url != ''
+        continue-on-error: true
+        uses: actions/github-script@v7
+        env:
+          PREVIEW_URL: ${{ steps.deploy.outputs.url }}
+        with:
+          script: |
+            const url = process.env.PREVIEW_URL.trim();
+            const sha = context.sha.substring(0, 7);
+            const branch = context.ref.replace('refs/heads/', '');
+
+            try {
+              const { data: pullRequests } = await github.rest.repos.listPullRequestsAssociatedWithCommit({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                commit_sha: context.sha,
+                per_page: 100,
+              });
+              const openPullRequests = pullRequests.filter(({ state }) => state === 'open');
+              const pullRequest = openPullRequests.find(({ head }) => head.ref === branch) ?? openPullRequests[0];
+
+              if (!pullRequest) {
+                core.warning(`Preview deployed at ${url}, but no open pull request is associated with ${sha}.`);
+                return;
+              }
+
+              await github.rest.issues.createComment({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                issue_number: pullRequest.number,
+                body: `🚀 **Vercel Preview deployed**\n\n- Branch: \`${branch}\`\n- Commit: \`${sha}\`\n- URL: ${url}`,
+              });
+            } catch (error) {
+              core.warning(`Preview deployed at ${url}, but the pull request notification failed: ${error.message}`);
+            }

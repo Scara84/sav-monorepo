@@ -1,0 +1,81 @@
+import { ensureRequestId } from '../_lib/request-id'
+import { logger } from '../_lib/logger'
+import type { ApiRequest, ApiResponse } from '../_lib/types'
+import { authorizeCron } from './_authorize'
+import { runCleanupRateLimits } from '../_lib/cron-runners/cleanup-rate-limits'
+import { runPurgeTokens } from '../_lib/cron-runners/purge-tokens'
+import { runPurgeSavSubmitTokens } from '../_lib/cron-runners/purge-sav-submit-tokens'
+import { runPurgeDrafts } from '../_lib/cron-runners/purge-drafts'
+import { runThresholdAlerts } from '../_lib/cron-runners/threshold-alerts'
+import { runRetryEmails } from '../_lib/cron-runners/retry-emails'
+import { runWeeklyRecap } from '../_lib/cron-runners/weekly-recap'
+
+/**
+ * Cron unique quotidien (Story 2.3 — ajusté 2026-04-22).
+ *
+ * Pourquoi un dispatcher unique : Vercel Hobby plafonne à 2 crons ; Epic 2.3 ajoute
+ * purge-drafts, ce qui ferait 3. On centralise derrière un seul point d'entrée.
+ *
+ * Pourquoi quotidien et pas horaire : Vercel Hobby n'autorise que des crons au
+ * maximum journaliers (`0 * * * *` est rejeté au deploy avec "Hobby accounts are
+ * limited to daily cron jobs"). Trade-off accepté : `cleanupRateLimits` tourne
+ * désormais 1×/j à 03:00 UTC au lieu de chaque heure — les buckets rate_limit
+ * expirés restent un peu plus longtemps en base (max 24 h vs 1 h avant), UX
+ * marginalement dégradée sur les utilisateurs blacklistés par erreur. Acceptable
+ * V1 ; upgrade Pro reconsidérée quand le volume l'exigera.
+ *
+ * Cadence effective : les 3 jobs tournent 1×/j à 03:00 UTC (schedule `0 3 * * *`).
+ *
+ * Résilience : chaque job est try/catch isolé — un job qui plante ne bloque pas
+ * les suivants. Le dispatcher renvoie toujours 200 avec le détail par job.
+ */
+export default async function handler(req: ApiRequest, res: ApiResponse): Promise<void> {
+  const requestId = ensureRequestId(req)
+  if (!authorizeCron(req)) {
+    res
+      .status(401)
+      .json({ error: { code: 'UNAUTHENTICATED', message: 'Cron non autorisé', requestId } })
+    return
+  }
+
+  const startedAt = Date.now()
+  const results: Record<string, unknown> = {}
+
+  await safeRun(results, 'cleanupRateLimits', () => runCleanupRateLimits({ requestId }), requestId)
+  await safeRun(results, 'purgeTokens', () => runPurgeTokens({ requestId }), requestId)
+  // H-02 AC#3 : 7e runner — purge sav_submit_tokens (ordering D-10 : après purgeTokens, avant purgeDrafts)
+  await safeRun(
+    results,
+    'purgeSavSubmitTokens',
+    () => runPurgeSavSubmitTokens({ requestId }),
+    requestId
+  )
+  await safeRun(results, 'purgeDrafts', () => runPurgeDrafts({ requestId }), requestId)
+  await safeRun(results, 'thresholdAlerts', () => runThresholdAlerts({ requestId }), requestId)
+  // Story 6.6 : retry-emails APRÈS thresholdAlerts (qui enqueue) — ordre logique
+  // enqueue puis livrer dans le même tick cron quotidien.
+  await safeRun(results, 'retryEmails', () => runRetryEmails({ requestId }), requestId)
+  // Story 6.7 : weekly-recap APRÈS retryEmails — l'enqueue weekly_recap d'aujourd'hui
+  // sera livré au prochain run cron (T+1, soit demain). Acceptable car récap pas urgent.
+  // Le runner retourne early skipped='not_friday' les autres jours (guard interne).
+  await safeRun(results, 'weeklyRecap', () => runWeeklyRecap({ requestId }), requestId)
+
+  const durationMs = Date.now() - startedAt
+  logger.info('cron.dispatcher.success', { requestId, results, ms: durationMs })
+  res.status(200).json({ ok: true, results, durationMs })
+}
+
+async function safeRun(
+  results: Record<string, unknown>,
+  jobName: string,
+  fn: () => Promise<unknown>,
+  requestId: string
+): Promise<void> {
+  try {
+    results[jobName] = await fn()
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err)
+    logger.error(`cron.dispatcher.${jobName}.failed`, { requestId, error: message })
+    results[jobName] = { error: message }
+  }
+}

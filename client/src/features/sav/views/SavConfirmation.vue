@@ -5,7 +5,9 @@
       <p class="text-[color:var(--text-dark)] mb-8 text-[1.1em]">
         Votre demande a bien été prise en compte et sera traitée dans les plus brefs délais.
       </p>
-      <router-link to="/" class="btn-main w-full block text-center text-[1.1em]">Retour à l'accueil</router-link>
+      <router-link to="/" class="btn-main w-full block text-center text-[1.1em]"
+        >Retour à l'accueil</router-link
+      >
     </div>
   </div>
 </template>
