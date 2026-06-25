@@ -264,7 +264,7 @@ function adminUploadCompleteCore(): ApiHandler {
           uploaded_by_member_id: null,
           onedrive_item_id: body.onedriveItemId,
           web_url: body.webUrl,
-          file_name: body.sanitizedFilename,
+          sanitized_filename: body.sanitizedFilename,
           original_filename: body.originalFilename,
           mime_type: body.mimeType,
           size_bytes: body.sizeBytes,

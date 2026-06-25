@@ -420,6 +420,8 @@ describe('POST /api/admin/sav-files/upload-complete (Story 3.7b AC#12)', () => {
     expect(inserted['source']).toBe('operator-add')
     expect(inserted['uploaded_by_operator_id']).toBe(42)
     expect(inserted['uploaded_by_member_id'] ?? null).toBeNull()
+    expect(inserted['sanitized_filename']).toBe('photo.jpg')
+    expect(inserted).not.toHaveProperty('file_name')
   })
 
   it('TU-02b: 422 SAV_LOCKED si status=closed (race condition après upload-session)', async () => {
