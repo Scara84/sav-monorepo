@@ -53,6 +53,16 @@ function makeRouter(savId = 1) {
     history: createWebHistory(),
     routes: [
       {
+        path: '/admin/sav',
+        name: 'admin-sav-list',
+        component: { template: '<div data-testid="sav-list-page" />' },
+      },
+      {
+        path: '/admin/sav/:id',
+        name: 'admin-sav-detail',
+        component: { template: '<div data-testid="sav-detail-page" />' },
+      },
+      {
         path: '/admin/sav/:id/demande-fournisseur',
         name: 'admin-sav-demande-fournisseur',
         component: SupplierClaimView,
@@ -277,6 +287,41 @@ describe('HIST-UI-02: carte "Dernière version" affiche les metadata (AC #6k)', 
 
     const html = wrapper.html()
     expect(html).toContain(filename)
+  })
+})
+
+// ===========================================================================
+// HIST-UI-NAV — Sorties explicites vers la liste et le dossier SAV
+// ===========================================================================
+
+describe('HIST-UI-NAV: navigation de sortie depuis une demande terminée', () => {
+  it('affiche les liens vers la liste et le dossier SAV dans l’état existing-claim', async () => {
+    const { wrapper } = await mountWithHistory([makeClaimHistoryItem()], 42)
+
+    const breadcrumb = wrapper.find('nav[aria-label="Fil d’Ariane"]')
+    expect(breadcrumb.exists()).toBe(true)
+    expect(breadcrumb.find('[aria-current="page"]').text()).toBe('Demande fournisseur')
+    expect(wrapper.find('[data-testid="supplier-claim-back-list"]').text()).toBe('Liste SAV')
+    expect(wrapper.find('[data-testid="supplier-claim-back-detail"]').text()).toBe('Retour au SAV')
+  })
+
+  it('navigue vers le dossier SAV courant avec le même identifiant', async () => {
+    const { wrapper } = await mountWithHistory([makeClaimHistoryItem()], 42)
+
+    await wrapper.find('[data-testid="supplier-claim-back-detail"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.vm.$router.currentRoute.value.name).toBe('admin-sav-detail')
+    expect(wrapper.vm.$router.currentRoute.value.params.id).toBe('42')
+  })
+
+  it('navigue vers la liste des SAV', async () => {
+    const { wrapper } = await mountWithHistory([makeClaimHistoryItem()])
+
+    await wrapper.find('[data-testid="supplier-claim-back-list"]').trigger('click')
+    await flushPromises()
+
+    expect(wrapper.vm.$router.currentRoute.value.name).toBe('admin-sav-list')
   })
 })
 
