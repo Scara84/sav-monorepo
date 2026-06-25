@@ -66,9 +66,29 @@ jobs:
       # les `/` du nom de branche convertis en `-`.
       - name: Promote to branch alias
         if: steps.deploy.outputs.url != ''
+        env:
+          BRANCH_NAME: ${{ github.ref_name }}
         run: |
-          branch_slug=$(echo "${{ github.ref_name }}" | tr '/' '-')
-          branch_alias="sav-monorepo-client-git-${branch_slug}-ants-projects-3dc3de65.vercel.app"
+          alias_prefix="sav-monorepo-client-git-"
+          alias_suffix="-ants-projects-3dc3de65"
+          max_label_length=63
+          max_branch_length=$((max_label_length - ${#alias_prefix} - ${#alias_suffix}))
+
+          branch_slug=$(echo "$BRANCH_NAME" \
+            | tr '[:upper:]/_' '[:lower:]--' \
+            | sed -E 's/[^a-z0-9-]+/-/g; s/-+/-/g; s/^-|-$//g')
+
+          if [ -z "$branch_slug" ]; then
+            branch_slug="branch"
+          fi
+
+          if [ ${#branch_slug} -gt "$max_branch_length" ]; then
+            branch_hash=$(printf '%s' "$BRANCH_NAME" | sha256sum | cut -c1-8)
+            branch_prefix_length=$((max_branch_length - ${#branch_hash} - 1))
+            branch_slug="${branch_slug:0:$branch_prefix_length}-${branch_hash}"
+          fi
+
+          branch_alias="${alias_prefix}${branch_slug}${alias_suffix}.vercel.app"
           deploy_host=$(echo "${{ steps.deploy.outputs.url }}" | sed 's|https://||')
           echo "Aliasing $deploy_host → $branch_alias"
           vercel alias set "$deploy_host" "$branch_alias" --token=${{ secrets.VERCEL_TOKEN }}
