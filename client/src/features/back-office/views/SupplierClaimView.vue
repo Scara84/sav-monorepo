@@ -322,6 +322,21 @@ function formatEUR(cents: number): string {
 
 <template>
   <div class="supplier-claim-view" data-testid="supplier-claim-view" @keydown.esc="onKeydown">
+    <nav class="breadcrumb" aria-label="Fil d’Ariane">
+      <RouterLink :to="{ name: 'admin-sav-list' }" data-testid="supplier-claim-back-list">
+        Liste SAV
+      </RouterLink>
+      <span aria-hidden="true"> &gt; </span>
+      <RouterLink
+        :to="{ name: 'admin-sav-detail', params: { id: savId } }"
+        data-testid="supplier-claim-back-detail"
+      >
+        Retour au SAV
+      </RouterLink>
+      <span aria-hidden="true"> &gt; </span>
+      <span aria-current="page">Demande fournisseur</span>
+    </nav>
+
     <h1>Demande de remboursement fournisseur</h1>
 
     <!-- =====================================================================
@@ -887,6 +902,20 @@ function formatEUR(cents: number): string {
   max-width: 1200px;
   margin: 0 auto;
   padding: 1.5rem;
+}
+
+.breadcrumb {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem;
+  margin-bottom: 1rem;
+  color: #6b7280;
+  font-size: 0.875rem;
+}
+
+.breadcrumb a {
+  color: #1d4ed8;
 }
 
 .card {
