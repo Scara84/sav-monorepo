@@ -1,29 +1,16 @@
 <script setup lang="ts">
-/**
- * Story 5.8 — Page login back-office (magic link opérateur).
- *
- * Remplace le flow MSAL utilisateur (Story 1.4). L'opérateur saisit son email,
- * reçoit un lien magic-link 15 min, puis click → cookie session 8 h + redirect /admin.
- *
- * - Anti-énumération : message neutre identique trouvé/non-trouvé.
- * - Pas de champ password, pas de bouton MSAL.
- *
- * Story H-04 (W42 + W43) :
- * - Lit ?error= (expired|consumed|invalid) depuis l'URL pour afficher un banner inline
- *   (opérateur redirigé depuis verify.ts sur un lien expiré/consommé/invalide).
- * - Propagation de ?returnTo= vers /api/auth/operator/issue?returnTo=… pour deeplinks.
- */
+/** Story H-19 — Page login back-office email + mot de passe. */
 import { ref, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 
-type SubmitState = 'idle' | 'submitting' | 'sent' | 'error'
+type SubmitState = 'idle' | 'submitting' | 'error'
 
 const email = ref('')
+const password = ref('')
 const state = ref<SubmitState>('idle')
 const errorMessage = ref('')
 const emailInput = ref<HTMLInputElement | null>(null)
 
-// H-04 AC#5(b) — lecture query param ?error= (stateless, PATTERN-H04-LOGIN-VIEW-QUERY-CONTEXT)
 const route = useRoute()
 const router = useRouter()
 
@@ -38,25 +25,22 @@ const errorFromQuery = computed(() => {
 const errorBannerMessage = computed(() => {
   switch (errorFromQuery.value) {
     case 'expired':
-      return 'Ce lien de connexion a expiré (15 minutes max). Demandez-en un nouveau.'
+      return 'Votre session a expiré. Connectez-vous à nouveau.'
     case 'consumed':
-      return 'Ce lien a déjà été utilisé. Pour vous reconnecter, demandez un nouveau lien.'
+      return 'Cette session de connexion n’est plus valide.'
     case 'invalid':
-      return "Ce lien de connexion n'est plus valide. Demandez-en un nouveau."
+      return "Votre session n'est plus valide. Connectez-vous à nouveau."
     default:
       return null
   }
 })
 
-// H-04 AC#5(e) — lecture query param ?returnTo= pour propagation vers issue.ts
-// Server filters; if returnTo is invalid, login still succeeds but lands on /admin fallback (story §AC#2(d)).
 const returnToFromQuery = computed(() => {
   const raw = route.query['returnTo']
   const value = Array.isArray(raw) ? raw[0] : raw
   return typeof value === 'string' && value.length > 0 ? value : null
 })
 
-// H-04 AC#5(f) — focus le champ email + reset state (bouton "Redemander un lien")
 function focusEmailField(): void {
   state.value = 'idle'
   errorMessage.value = ''
@@ -69,7 +53,10 @@ const isValidEmail = computed(() => {
 })
 
 const canSubmit = computed(
-  () => isValidEmail.value && (state.value === 'idle' || state.value === 'error')
+  () =>
+    isValidEmail.value &&
+    password.value.length > 0 &&
+    (state.value === 'idle' || state.value === 'error')
 )
 
 async function handleSubmit(): Promise<void> {
@@ -77,25 +64,18 @@ async function handleSubmit(): Promise<void> {
   state.value = 'submitting'
   errorMessage.value = ''
   try {
-    // H-04 AC#5(e) — propager returnTo vers l'endpoint issue si présent
-    const issueUrl = returnToFromQuery.value
-      ? `/api/auth/operator/issue?returnTo=${encodeURIComponent(returnToFromQuery.value)}`
-      : '/api/auth/operator/issue'
-    const res = await fetch(issueUrl, {
+    const loginUrl = returnToFromQuery.value
+      ? `/api/auth/operator/login?returnTo=${encodeURIComponent(returnToFromQuery.value)}`
+      : '/api/auth/operator/login'
+    const res = await fetch(loginUrl, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ email: email.value.trim() }),
+      credentials: 'include',
+      body: JSON.stringify({ email: email.value.trim(), password: password.value }),
     })
-    if (res.status === 202) {
-      state.value = 'sent'
-      // L-2 : clear ?error= on success to prevent banner re-appearing on refresh
-      // IMPORTANT: preserve ?returnTo= (useful if user clicks "Redemander un lien" again)
-      if (route.query['error'] !== undefined) {
-        const queryWithoutError = Object.fromEntries(
-          Object.entries(route.query).filter(([k]) => k !== 'error')
-        )
-        void router.replace({ query: queryWithoutError })
-      }
+    if (res.ok) {
+      const body = (await res.json()) as { redirectTo?: string }
+      await router.replace(body.redirectTo || '/admin')
       return
     }
     if (res.status === 429) {
@@ -105,7 +85,12 @@ async function handleSubmit(): Promise<void> {
     }
     if (res.status === 400) {
       state.value = 'error'
-      errorMessage.value = "Format d'email invalide."
+      errorMessage.value = 'Vérifiez les champs saisis.'
+      return
+    }
+    if (res.status === 401) {
+      state.value = 'error'
+      errorMessage.value = 'Identifiants invalides.'
       return
     }
     state.value = 'error'
@@ -134,10 +119,10 @@ async function handleSubmit(): Promise<void> {
         data-testid="login-error-banner"
       >
         <p>{{ errorBannerMessage }}</p>
-        <button type="button" class="link" @click="focusEmailField">Redemander un lien</button>
+        <button type="button" class="link" @click="focusEmailField">Se reconnecter</button>
       </div>
 
-      <form v-if="state !== 'sent'" class="login-form" @submit.prevent="handleSubmit">
+      <form class="login-form" @submit.prevent="handleSubmit">
         <label for="login-email">Email professionnel</label>
         <input
           id="login-email"
@@ -150,35 +135,30 @@ async function handleSubmit(): Promise<void> {
           required
           :disabled="state === 'submitting'"
           placeholder="prenom.nom@fruitstock.eu"
-          aria-describedby="login-help"
         />
+
+        <label for="login-password">Mot de passe</label>
+        <input
+          id="login-password"
+          v-model="password"
+          type="password"
+          name="password"
+          autocomplete="current-password"
+          required
+          :disabled="state === 'submitting'"
+        />
+
         <p id="login-help" class="help">
-          Vous recevrez un lien de connexion par email. Il expire dans 15 minutes et ne peut être
-          utilisé qu'une seule fois.
+          La session reste active pendant 30 jours sur cet appareil.
         </p>
 
         <button type="submit" :disabled="!canSubmit">
-          <span v-if="state === 'submitting'">Envoi en cours…</span>
-          <span v-else>Recevoir mon lien de connexion</span>
+          <span v-if="state === 'submitting'">Connexion…</span>
+          <span v-else>Se connecter</span>
         </button>
 
         <p v-if="state === 'error'" role="alert" class="error">{{ errorMessage }}</p>
       </form>
-
-      <div v-else class="login-success" role="status" aria-live="polite">
-        <p>
-          <strong>Vérifiez votre boîte mail.</strong>
-        </p>
-        <p>
-          Si votre compte existe, un lien vient d'être envoyé à
-          <strong>{{ email }}</strong
-          >. Le lien expire dans 15 minutes.
-        </p>
-        <p class="muted">
-          Pas reçu&nbsp;? Vérifiez vos courriers indésirables, puis
-          <button type="button" class="link" @click="state = 'idle'">renvoyer un lien</button>.
-        </p>
-      </div>
     </div>
   </div>
 </template>

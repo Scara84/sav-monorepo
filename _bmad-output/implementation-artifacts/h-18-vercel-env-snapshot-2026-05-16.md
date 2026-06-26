@@ -61,7 +61,7 @@
 | `MICROSOFT_USER_EMAIL` | Pre-Story 2.4 M2M (impersonification) | 0 ref refonte | **Phase 2** — supprimer post-promote |
 | `ONEDRIVE_FOLDER` | Remplacé par `MICROSOFT_DRIVE_PATH` | 0 ref refonte | **Phase 2** — supprimer post-promote |
 
-### Vars présentes `.env.example` mais absentes Vercel (= MISSING, 12)
+### Vars présentes `.env.example` mais absentes Vercel (= MISSING, 13)
 
 | Variable | Niveau | Usage code refonte-phase-2 | Décision Phase 1 (2026-05-20) | Action Phase 2 |
 |---|---|---|---|---|
@@ -70,6 +70,7 @@
 | `APP_BASE_URL` | ⚠️ IMPORTANT | Preview seulement actuellement ; manque Prod (emails weekly-recap/retry/threshold-alerts urls cassées sans elle) | À étendre Production avant promote | OBLIGATOIRE pré-promote |
 | `SUPABASE_URL` | ⚠️ IMPORTANT | `supabase-admin.ts:15` avec fallback `VITE_SUPABASE_URL` (safe mais best practice) | Optional Phase 2 | Recommandé |
 | `HEALTH_DEBUG` | 💚 OPTIONAL | `health.ts:48` ; fallback `false` | Skip | Skip sauf debug |
+| `OPERATOR_SESSION_TTL_DAYS` | 💚 OPTIONAL | H-19 login opérateur password ; fallback 30j | Skip | Skip sauf override |
 | `OPERATOR_SESSION_TTL_HOURS` | 💚 OPTIONAL | `verify.ts:204` ; fallback 8h | Skip | Skip sauf override |
 | `PENNYLANE_API_BASE_URL` | 💚 OPTIONAL | `pennylane.ts:133` ; fallback DEFAULT_BASE_URL hardcodé | Skip | Skip sauf override |
 | `SAV_SUBMIT_TOKEN_TTL_SEC` | 💚 OPTIONAL | `submit-token-handler.ts:27` ; fallback code | Skip | Skip |

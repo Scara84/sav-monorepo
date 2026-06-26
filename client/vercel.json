@@ -87,6 +87,10 @@
       "destination": "/api/self-service/draft?op=submit-token"
     },
     {
+      "source": "/api/auth/operator/login",
+      "destination": "/api/auth/operator/issue?op=password-login"
+    },
+    {
       "source": "/api/auth/me",
       "destination": "/api/self-service/draft?op=me"
     },
