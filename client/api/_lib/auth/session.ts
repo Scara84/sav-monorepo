@@ -4,8 +4,8 @@ import type { SessionUser } from '../types'
 
 export const SESSION_COOKIE_NAME = 'sav_session'
 
-/** TTL session opérateur MSAL : 8 h (NFR-S3). */
-export const OPERATOR_SESSION_TTL_SEC = 8 * 3600
+/** Story H-19 — TTL session opérateur par défaut : 30 jours. */
+export const OPERATOR_SESSION_TTL_SEC = 30 * 24 * 3600
 /** TTL session self-service magic link : 24 h. */
 export const MEMBER_SESSION_TTL_SEC = 24 * 3600
 
@@ -36,4 +36,25 @@ export function clearSessionCookie(): string {
     sameSite: 'Strict',
     path: '/',
   })
+}
+
+/**
+ * Lit OPERATOR_SESSION_TTL_DAYS (défaut 30 jours). Bornes [1, 30].
+ * OPERATOR_SESSION_TTL_HOURS reste supporté uniquement en compat, borné à 30 jours.
+ */
+export function readOperatorSessionTtlSec(): number {
+  const rawDays = process.env['OPERATOR_SESSION_TTL_DAYS']
+  if (rawDays) {
+    const days = Number.parseInt(rawDays, 10)
+    if (Number.isFinite(days) && days >= 1 && days <= 30) return days * 24 * 3600
+    return OPERATOR_SESSION_TTL_SEC
+  }
+
+  const rawHours = process.env['OPERATOR_SESSION_TTL_HOURS']
+  if (rawHours) {
+    const hours = Number.parseInt(rawHours, 10)
+    if (Number.isFinite(hours) && hours >= 1 && hours <= 24 * 30) return hours * 3600
+  }
+
+  return OPERATOR_SESSION_TTL_SEC
 }

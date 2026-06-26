@@ -5,6 +5,7 @@ import {
   SESSION_COOKIE_NAME,
   OPERATOR_SESSION_TTL_SEC,
   MEMBER_SESSION_TTL_SEC,
+  readOperatorSessionTtlSec,
 } from '../../../../../api/_lib/auth/session'
 import { verifyJwt } from '../../../../../api/_lib/middleware/with-auth'
 
@@ -32,8 +33,24 @@ describe('issueSessionCookie', () => {
   })
 
   it('TTL member ≠ TTL operator', () => {
-    expect(OPERATOR_SESSION_TTL_SEC).toBe(8 * 3600)
+    expect(OPERATOR_SESSION_TTL_SEC).toBe(30 * 24 * 3600)
     expect(MEMBER_SESSION_TTL_SEC).toBe(24 * 3600)
+  })
+
+  it('lit OPERATOR_SESSION_TTL_DAYS avec fallback 30j si env invalide', () => {
+    const previousDays = process.env['OPERATOR_SESSION_TTL_DAYS']
+    const previousHours = process.env['OPERATOR_SESSION_TTL_HOURS']
+    process.env['OPERATOR_SESSION_TTL_DAYS'] = '7'
+    expect(readOperatorSessionTtlSec()).toBe(7 * 24 * 3600)
+    process.env['OPERATOR_SESSION_TTL_DAYS'] = '999'
+    expect(readOperatorSessionTtlSec()).toBe(30 * 24 * 3600)
+    delete process.env['OPERATOR_SESSION_TTL_DAYS']
+    process.env['OPERATOR_SESSION_TTL_HOURS'] = '720'
+    expect(readOperatorSessionTtlSec()).toBe(30 * 24 * 3600)
+    if (previousDays === undefined) delete process.env['OPERATOR_SESSION_TTL_DAYS']
+    else process.env['OPERATOR_SESSION_TTL_DAYS'] = previousDays
+    if (previousHours === undefined) delete process.env['OPERATOR_SESSION_TTL_HOURS']
+    else process.env['OPERATOR_SESSION_TTL_HOURS'] = previousHours
   })
 })
 

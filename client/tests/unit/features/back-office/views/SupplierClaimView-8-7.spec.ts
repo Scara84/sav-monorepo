@@ -43,7 +43,12 @@ function makeRouter() {
     history: createWebHistory(),
     routes: [
       { path: '/admin/sav', name: 'admin-sav-list', component: { template: '<div/>' } },
-      { path: '/admin/sav/:id/demande-fournisseur', name: 'admin-sav-supplier-claim', component: SupplierClaimView },
+      { path: '/admin/sav/:id', name: 'admin-sav-detail', component: { template: '<div/>' } },
+      {
+        path: '/admin/sav/:id/demande-fournisseur',
+        name: 'admin-sav-supplier-claim',
+        component: SupplierClaimView,
+      },
     ],
   })
 }

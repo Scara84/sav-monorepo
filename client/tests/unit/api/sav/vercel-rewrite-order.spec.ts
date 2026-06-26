@@ -106,4 +106,17 @@ describe('vercel.json rewrite ordering (Story 3.7b routing constraint)', () => {
     // Verify count remains at most 12
     expect(functionKeys.length).toBeLessThanOrEqual(12)
   })
+
+  it('VR-06: /api/auth/operator/login est consolidé sans nouveau slot function', () => {
+    const config = loadVercelJson()
+    const rewrite = config.rewrites.find((r) => r.source === '/api/auth/operator/login')
+    expect(rewrite?.destination).toBe('/api/auth/operator/issue?op=password-login')
+
+    const functionsConfig =
+      (config as unknown as { functions?: Record<string, unknown> }).functions ?? {}
+    const functionKeys = Object.keys(functionsConfig)
+    expect(functionKeys).not.toContain('api/auth/operator/login.ts')
+    expect(functionKeys).toContain('api/auth/operator/issue.ts')
+    expect(functionKeys.length).toBe(12)
+  })
 })

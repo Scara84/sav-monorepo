@@ -2,6 +2,7 @@ import { createHmac, timingSafeEqual } from 'node:crypto'
 import { sendError } from '../errors'
 import { ensureRequestId } from '../request-id'
 import { logger } from '../logger'
+import { findOperatorById } from '../auth/operator'
 import type { ApiHandler, ApiRequest, ApiResponse, SessionUser } from '../types'
 
 export interface WithAuthOptions {
@@ -15,6 +16,8 @@ export interface WithAuthOptions {
   roles?: Array<SessionUser['role']>
   /** Nom du cookie de session. Par défaut : `sav_session`. */
   cookieName?: string
+  /** Revalide is_active/role en DB pour les sessions opérateur longues. Défaut : true. */
+  revalidateOperator?: boolean
 }
 
 const DEFAULT_COOKIE = 'sav_session'
@@ -64,16 +67,56 @@ export function withAuth(options: WithAuthOptions) {
         return
       }
 
+      const freshUser = await revalidateOperatorIfNeeded(user, options, requestId, res)
+      if (!freshUser) return
+
       if (options.roles && options.roles.length > 0) {
-        if (!user.role || !options.roles.includes(user.role)) {
+        if (!freshUser.role || !options.roles.includes(freshUser.role)) {
           sendError(res, 'FORBIDDEN', 'Rôle non autorisé', requestId)
           return
         }
       }
 
-      req.user = user
+      req.user = freshUser
       return handler(req, res)
     }
+}
+
+async function revalidateOperatorIfNeeded(
+  user: SessionUser,
+  options: WithAuthOptions,
+  requestId: string,
+  res: ApiResponse
+): Promise<SessionUser | null> {
+  if (user.type !== 'operator') return user
+  if (options.revalidateOperator === false) return user
+  if (
+    process.env['NODE_ENV'] === 'test' &&
+    process.env['WITH_AUTH_REVALIDATE_OPERATORS_IN_TEST'] !== '1'
+  ) {
+    return user
+  }
+
+  try {
+    const operator = await findOperatorById(user.sub)
+    if (!operator || !operator.is_active) {
+      sendError(res, 'UNAUTHENTICATED', 'Session invalide', requestId)
+      return null
+    }
+    return {
+      ...user,
+      role: operator.role,
+      email: operator.email,
+    }
+  } catch (err) {
+    logger.error('operator session revalidation failed', {
+      requestId,
+      operatorId: user.sub,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    sendError(res, 'SERVER_ERROR', 'Validation session indisponible', requestId)
+    return null
+  }
 }
 
 // ---- helpers (exportés pour les tests) ----

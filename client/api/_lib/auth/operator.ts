@@ -10,6 +10,12 @@ export interface OperatorRow {
   is_active: boolean
 }
 
+export interface OperatorCredentialsRow extends OperatorRow {
+  password_hash: string | null
+  password_set_at: string | null
+  password_updated_at: string | null
+}
+
 /**
  * Retourne l'operator actif matchant l'azure_oid, ou null sinon.
  *
@@ -42,6 +48,21 @@ export async function findActiveOperatorByEmail(email: string): Promise<Operator
     .maybeSingle()
   if (error) throw error
   return (data as OperatorRow | null) ?? null
+}
+
+/** Story H-19 — lookup login mot de passe. Ne filtre pas is_active pour logguer une raison neutre. */
+export async function findOperatorCredentialsByEmail(
+  email: string
+): Promise<OperatorCredentialsRow | null> {
+  const { data, error } = await supabaseAdmin()
+    .from('operators')
+    .select(
+      'id, azure_oid, email, display_name, role, is_active, password_hash, password_set_at, password_updated_at'
+    )
+    .eq('email', email.normalize('NFC').toLowerCase().trim())
+    .maybeSingle()
+  if (error) throw error
+  return (data as OperatorCredentialsRow | null) ?? null
 }
 
 /** Story 5.8 — version par id (utilisé en verify pour re-vérifier is_active). */
@@ -81,6 +102,8 @@ export interface AuthEventInput {
     | 'operator_magic_link_verified'
     | 'operator_magic_link_failed'
     | 'operator_magic_link_rate_limited'
+    | 'operator_password_login_succeeded'
+    | 'operator_password_login_failed'
   operatorId?: number
   memberId?: number
   emailHash?: string

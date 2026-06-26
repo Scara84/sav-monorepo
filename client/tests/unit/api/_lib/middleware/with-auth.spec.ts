@@ -1,4 +1,27 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest'
+
+const mocks = vi.hoisted(() => ({
+  operator: {
+    id: 1,
+    azure_oid: null,
+    email: 'admin@fruitstock.eu',
+    display_name: 'Admin',
+    role: 'admin' as const,
+    is_active: true,
+  } as null | {
+    id: number
+    azure_oid: null
+    email: string
+    display_name: string
+    role: 'admin' | 'sav-operator'
+    is_active: boolean
+  },
+}))
+
+vi.mock('../../../../../api/_lib/auth/operator', () => ({
+  findOperatorById: async () => mocks.operator,
+}))
+
 import {
   withAuth,
   signJwt,
@@ -15,6 +38,15 @@ describe('withAuth', () => {
 
   beforeEach(() => {
     process.env['SESSION_COOKIE_SECRET'] = SECRET
+    delete process.env['WITH_AUTH_REVALIDATE_OPERATORS_IN_TEST']
+    mocks.operator = {
+      id: 1,
+      azure_oid: null,
+      email: 'admin@fruitstock.eu',
+      display_name: 'Admin',
+      role: 'admin',
+      is_active: true,
+    }
   })
 
   afterEach(() => {
@@ -114,6 +146,56 @@ describe('withAuth', () => {
     const res = mockRes()
     await wrapped(mockReq({ cookies: { sav_session: token } }), res)
     expect(handler).toHaveBeenCalledOnce()
+  })
+
+  it('revalide une session operator longue et refuse un opérateur désactivé', async () => {
+    process.env['WITH_AUTH_REVALIDATE_OPERATORS_IN_TEST'] = '1'
+    mocks.operator = {
+      id: 42,
+      azure_oid: null,
+      email: 'admin@fruitstock.eu',
+      display_name: 'Admin',
+      role: 'admin',
+      is_active: false,
+    }
+    const payload: SessionUser = {
+      sub: 42,
+      type: 'operator',
+      role: 'admin',
+      exp: farFuture(),
+    }
+    const token = signJwt(payload, SECRET)
+    const handler = vi.fn()
+    const wrapped = withAuth({ types: ['operator'], roles: ['admin'] })(handler)
+    const res = mockRes()
+    await wrapped(mockReq({ cookies: { sav_session: token } }), res)
+    expect(res.statusCode).toBe(401)
+    expect(handler).not.toHaveBeenCalled()
+  })
+
+  it('revalide le rôle courant en DB pour une session operator', async () => {
+    process.env['WITH_AUTH_REVALIDATE_OPERATORS_IN_TEST'] = '1'
+    mocks.operator = {
+      id: 42,
+      azure_oid: null,
+      email: 'admin@fruitstock.eu',
+      display_name: 'Admin',
+      role: 'sav-operator',
+      is_active: true,
+    }
+    const payload: SessionUser = {
+      sub: 42,
+      type: 'operator',
+      role: 'admin',
+      exp: farFuture(),
+    }
+    const token = signJwt(payload, SECRET)
+    const handler = vi.fn()
+    const wrapped = withAuth({ types: ['operator'], roles: ['admin'] })(handler)
+    const res = mockRes()
+    await wrapped(mockReq({ cookies: { sav_session: token } }), res)
+    expect(res.statusCode).toBe(403)
+    expect(handler).not.toHaveBeenCalled()
   })
 
   it('lit le cookie depuis le header Cookie si req.cookies absent', async () => {

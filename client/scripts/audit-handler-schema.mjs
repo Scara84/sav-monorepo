@@ -119,6 +119,10 @@ const SCHEMA = {
     'display_name',
     'role',
     'is_active',
+    // Migration 20260626120000_operator_password_login
+    'password_hash',
+    'password_set_at',
+    'password_updated_at',
     'created_at',
     'updated_at',
   ],
