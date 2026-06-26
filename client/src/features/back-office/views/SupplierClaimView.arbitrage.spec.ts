@@ -60,6 +60,16 @@ function makeRouter(savId = 1) {
     history: createWebHistory(),
     routes: [
       {
+        path: '/admin/sav',
+        name: 'admin-sav-list',
+        component: { template: '<div data-testid="sav-list-page" />' },
+      },
+      {
+        path: '/admin/sav/:id',
+        name: 'admin-sav-detail',
+        component: { template: '<div data-testid="sav-detail-page" />' },
+      },
+      {
         path: '/admin/sav/:id/demande-fournisseur',
         name: 'admin-sav-demande-fournisseur',
         component: SupplierClaimView,
