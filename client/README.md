@@ -67,6 +67,13 @@ VITE_SUPABASE_URL=...           # projet Supabase
 VITE_SUPABASE_PUBLISHABLE_KEY=...
 ```
 
+Remplissage automatique du fichier SAV fournisseur OneDrive :
+
+```env
+SUPPLIER_CLAIM_ONEDRIVE_SHARE_URL=...     # lien de partage du classeur cible
+SUPPLIER_CLAIM_ONEDRIVE_WORKSHEET=SUIVI_SAV
+```
+
 > Note historique (Story 5.7 — cutover 2026-04-28) : les variables `VITE_WEBHOOK_URL` et `VITE_WEBHOOK_URL_DATA_SAV` ont été retirées avec la suppression du flow Make.com. Le SPA appelle désormais `/api/webhooks/capture` directement (même origine) avec un JWT capture-token.
 
 Détails complets : [docs/development-guide-client.md](../docs/development-guide-client.md) et [docs/api-contracts-vercel.md](../docs/api-contracts-vercel.md).

@@ -318,6 +318,27 @@ function formatEUR(cents: number): string {
     currency: 'EUR',
   }).format(cents / 100)
 }
+
+const oneDriveStatusClass = computed(() => {
+  const status = generateResult.value?.onedriveStatus
+  if (status === 'success') return 'onedrive-status--success'
+  if (status === 'failed') return 'onedrive-status--warning'
+  return 'onedrive-status--muted'
+})
+
+const oneDriveStatusText = computed(() => {
+  const result = generateResult.value
+  if (result?.onedriveStatus === 'success') {
+    return result.onedriveMessage ?? 'Fichier de suivi fournisseur mis à jour dans OneDrive.'
+  }
+  if (result?.onedriveStatus === 'failed') {
+    return result.onedriveMessage ?? 'Document généré, mais le remplissage OneDrive a échoué.'
+  }
+  if (result?.onedriveStatus === 'skipped') {
+    return result.onedriveMessage ?? 'Remplissage OneDrive non configuré.'
+  }
+  return null
+})
 </script>
 
 <template>
@@ -391,6 +412,24 @@ function formatEUR(cents: number): string {
           >
             Régénérer (nouvel import)
           </button>
+        </div>
+
+        <div
+          v-if="oneDriveStatusText"
+          class="onedrive-status"
+          :class="oneDriveStatusClass"
+          data-testid="onedrive-fill-status"
+        >
+          <span>{{ oneDriveStatusText }}</span>
+          <a
+            v-if="generateResult?.onedriveWebUrl"
+            :href="generateResult.onedriveWebUrl"
+            target="_blank"
+            rel="noopener noreferrer"
+            data-testid="onedrive-fill-link"
+          >
+            Ouvrir le fichier OneDrive
+          </a>
         </div>
       </div>
 
@@ -884,6 +923,24 @@ function formatEUR(cents: number): string {
         <span v-if="generateResult?.filename"> · {{ generateResult.filename }}</span>
       </div>
 
+      <div
+        v-if="oneDriveStatusText"
+        class="onedrive-status"
+        :class="oneDriveStatusClass"
+        data-testid="onedrive-fill-status"
+      >
+        <span>{{ oneDriveStatusText }}</span>
+        <a
+          v-if="generateResult?.onedriveWebUrl"
+          :href="generateResult.onedriveWebUrl"
+          target="_blank"
+          rel="noopener noreferrer"
+          data-testid="onedrive-fill-link"
+        >
+          Ouvrir le fichier OneDrive
+        </a>
+      </div>
+
       <!-- Bouton Régénérer — retour arbitrating (8.4 AC #13e — fallback si historique non chargé) -->
       <button
         class="btn-secondary"
@@ -1049,6 +1106,41 @@ function formatEUR(cents: number): string {
 .file-info {
   font-size: 0.75rem;
   color: #9ca3af;
+}
+
+.onedrive-status {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 1rem;
+  border-radius: 6px;
+  padding: 0.75rem 1rem;
+  font-size: 0.875rem;
+}
+
+.onedrive-status a {
+  font-weight: 600;
+  color: inherit;
+  text-decoration: underline;
+}
+
+.onedrive-status--success {
+  background: #ecfdf5;
+  border: 1px solid #86efac;
+  color: #166534;
+}
+
+.onedrive-status--warning {
+  background: #fffbeb;
+  border: 1px solid #fcd34d;
+  color: #92400e;
+}
+
+.onedrive-status--muted {
+  background: #f9fafb;
+  border: 1px solid #e5e7eb;
+  color: #4b5563;
 }
 
 /* Arbitrage grid */

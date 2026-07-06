@@ -56,6 +56,22 @@ export interface ClaimWorkbookResult {
   filename: string
 }
 
+export type ClaimWorkbookRow = [
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  string,
+  number,
+  string,
+  string,
+  number,
+  string,
+  number,
+]
+
 // ---------------------------------------------------------------------------
 // Constante des 13 en-têtes SOL Y FRUTA (ordre strict, labels ES)
 // AC #5 story 8.4 — figées ici pour référence + tests
@@ -132,28 +148,7 @@ export function buildClaimWorkbook(input: ClaimWriterInput): ClaimWorkbookResult
   // Row 1 : en-têtes figées (13 colonnes)
   rows.push([...SOL_Y_FRUTA_HEADERS])
 
-  // Rows data
-  for (const line of claimLines) {
-    const peso = line.qty                 // numérique
-    const precio = centsToEuros(line.precioCents) // numérique
-    const importe = centsToEuros(line.importeCents) // numérique, valeur calculée (pas formule — DN-5=A)
-
-    rows.push([
-      dateStr,                                   // FECHA — string ISO
-      metadata.reference,                        // REFERENCE
-      metadata.fechaAlbaran,                     // FECHA ALBARAN
-      metadata.albaran,                          // ALBARAN
-      line.codigoEs,                             // CODIGO (codigoEs — FR23)
-      sanitizeForXlsx(line.productoEs),          // PRODUCTO (injection guard)
-      sanitizeForXlsx(line.origen ?? ''),        // ORIGEN (injection guard, nullable → '')
-      peso,                                      // PESO (numérique)
-      line.unidad,                               // ENVASE
-      line.causaEs,                              // CAUSA
-      precio,                                    // PRECIO (numérique)
-      sanitizeForXlsx(line.comentarios),         // COMENTARIOS (injection guard)
-      importe,                                   // IMPORTE (numérique calculé — DN-5=A)
-    ])
-  }
+  rows.push(...buildClaimWorkbookRows({ metadata, generatedAt, claimLines }))
 
   // Créer le sheet depuis AOA
   const ws = XLSX.utils.aoa_to_sheet(rows)
@@ -188,4 +183,33 @@ export function buildClaimWorkbook(input: ClaimWriterInput): ClaimWorkbookResult
   const sha256 = createHash('sha256').update(buffer).digest('hex')
 
   return { blob: buffer, sha256, filename }
+}
+
+export function buildClaimWorkbookRows(
+  input: Pick<ClaimWriterInput, 'metadata' | 'generatedAt' | 'claimLines'>
+): ClaimWorkbookRow[] {
+  const { metadata, generatedAt, claimLines } = input
+  const dateStr = toIsoDateString(generatedAt)
+
+  return claimLines.map((line) => {
+    const peso = line.qty
+    const precio = centsToEuros(line.precioCents)
+    const importe = centsToEuros(line.importeCents)
+
+    return [
+      dateStr,
+      metadata.reference,
+      metadata.fechaAlbaran,
+      metadata.albaran,
+      line.codigoEs,
+      sanitizeForXlsx(line.productoEs),
+      sanitizeForXlsx(line.origen ?? ''),
+      peso,
+      line.unidad,
+      line.causaEs,
+      precio,
+      sanitizeForXlsx(line.comentarios),
+      importe,
+    ]
+  })
 }
