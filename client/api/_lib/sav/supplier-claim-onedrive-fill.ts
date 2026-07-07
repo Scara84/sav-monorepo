@@ -1,14 +1,8 @@
-import { ResponseType } from '@microsoft/microsoft-graph-client'
-import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
 import type { ClaimWorkbookRow } from './supplier-claim-writer'
 
 const GRAPH_DRIVES_BASE = 'https://graph.microsoft.com/v1.0/drives'
 const GRAPH_SHARES_BASE = 'https://graph.microsoft.com/v1.0/shares'
 const DEFAULT_WORKSHEET_NAME = 'SUIVI_SAV'
-const TARGET_START_COL_INDEX = 2 // C, zero-based
-const TARGET_END_COL_INDEX = 14 // O, zero-based
-const MIN_DATA_ROW = 3
-const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
 const MAX_UPLOAD_ATTEMPTS = 4
 const UPLOAD_RETRY_DELAYS_MS = [300, 900, 1_800]
 const LOCKED_WORKBOOK_MESSAGE =
@@ -25,25 +19,13 @@ interface GraphDriveItemResponse {
 }
 
 interface GraphClientLike {
-  api: (path: string) => {
-    get?: () => Promise<unknown>
-    put?: (body: Buffer | Uint8Array) => Promise<GraphDriveItemResponse>
-    responseType?: (type: ResponseType) => {
-      get: () => Promise<ArrayBuffer | Buffer | Uint8Array>
-    }
-    header?: (
-      name: string,
-      value: string
-    ) => {
-      header: (
-        nextName: string,
-        nextValue: string
-      ) => {
-        put: (body: Buffer | Uint8Array) => Promise<GraphDriveItemResponse>
-      }
-      put: (body: Buffer | Uint8Array) => Promise<GraphDriveItemResponse>
-    }
-  }
+  api: (path: string) => GraphRequestLike
+}
+
+interface GraphRequestLike {
+  get?: () => Promise<unknown>
+  post?: (body?: unknown) => Promise<unknown>
+  header?: (name: string, value: string) => GraphRequestLike
 }
 
 export interface SupplierClaimOneDriveConfig {
@@ -51,6 +33,7 @@ export interface SupplierClaimOneDriveConfig {
   itemId: string | undefined
   driveId: string | undefined
   worksheetName?: string
+  tableName?: string
 }
 
 export interface SupplierClaimOneDriveResult {
@@ -67,7 +50,18 @@ interface ResolvedWorkbook {
   webUrl?: string
 }
 
-type ZipEntries = Record<string, Uint8Array>
+interface WorkbookSessionResponse {
+  id?: string
+}
+
+interface WorkbookTableResponse {
+  id?: string
+  name?: string
+}
+
+interface WorkbookTablesResponse {
+  value?: WorkbookTableResponse[]
+}
 
 export function readSupplierClaimOneDriveConfig(
   env: NodeJS.ProcessEnv = process.env
@@ -76,9 +70,10 @@ export function readSupplierClaimOneDriveConfig(
   const itemId = env['SUPPLIER_CLAIM_ONEDRIVE_ITEM_ID']?.trim()
   const driveId = env['SUPPLIER_CLAIM_ONEDRIVE_DRIVE_ID']?.trim() || env['MICROSOFT_DRIVE_ID']?.trim()
   const worksheetName = env['SUPPLIER_CLAIM_ONEDRIVE_WORKSHEET']?.trim() || DEFAULT_WORKSHEET_NAME
+  const tableName = env['SUPPLIER_CLAIM_ONEDRIVE_TABLE']?.trim()
 
   if (!shareUrl && !itemId) return null
-  return { shareUrl, itemId, driveId, worksheetName }
+  return { shareUrl, itemId, driveId, worksheetName, ...(tableName ? { tableName } : {}) }
 }
 
 export async function appendSupplierClaimRowsToOneDrive(
@@ -122,14 +117,12 @@ async function appendWithRetry(
 
   for (let attempt = 0; attempt < MAX_UPLOAD_ATTEMPTS; attempt++) {
     const workbook = await resolveWorkbook(client, config)
-    const buffer = await downloadWorkbook(client, workbook)
-    const updated = appendRowsToWorkbookBuffer(buffer, rows, config.worksheetName || DEFAULT_WORKSHEET_NAME)
 
     try {
-      await uploadWorkbook(client, workbook, updated)
+      await appendRowsWithExcelApi(client, workbook, rows, config)
       return workbook
     } catch (err) {
-      const retryable = isETagConflict(err) || isOneDriveLocked(err)
+      const retryable = isETagConflict(err) || isOneDriveLocked(err) || isGraphTimeout(err)
       if (!retryable || attempt === MAX_UPLOAD_ATTEMPTS - 1) {
         if (isOneDriveLocked(err)) {
           throw new Error(LOCKED_WORKBOOK_MESSAGE)
@@ -145,6 +138,101 @@ async function appendWithRetry(
     throw new Error(LOCKED_WORKBOOK_MESSAGE)
   }
   throw lastRetryableError instanceof Error ? lastRetryableError : new Error('Conflit OneDrive pendant la mise à jour.')
+}
+
+async function appendRowsWithExcelApi(
+  client: GraphClientLike,
+  workbook: ResolvedWorkbook,
+  rows: ClaimWorkbookRow[],
+  config: SupplierClaimOneDriveConfig
+): Promise<void> {
+  const sessionId = await createWorkbookSession(client, workbook)
+  try {
+    const table = await resolveWorkbookTable(client, workbook, config, sessionId)
+    const values = rows.map(toSupplierTrackingTableRow)
+    const request = withWorkbookSession(
+      client.api(`${workbookApiPath(workbook)}/tables/${encodeGraphPathSegment(table)}/rows/add`),
+      sessionId
+    )
+    if (!request.post) {
+      throw new Error('Client Graph invalide : méthode post absente.')
+    }
+    await request.post({ values })
+  } finally {
+    await closeWorkbookSession(client, workbook, sessionId)
+  }
+}
+
+async function createWorkbookSession(client: GraphClientLike, workbook: ResolvedWorkbook): Promise<string> {
+  const request = client.api(`${workbookApiPath(workbook)}/createSession`)
+  if (!request.post) {
+    throw new Error('Client Graph invalide : méthode post absente.')
+  }
+  const session = (await request.post({ persistChanges: true })) as WorkbookSessionResponse | undefined
+  if (!session?.id) {
+    throw new Error('Session Excel OneDrive introuvable.')
+  }
+  return session.id
+}
+
+async function closeWorkbookSession(
+  client: GraphClientLike,
+  workbook: ResolvedWorkbook,
+  sessionId: string
+): Promise<void> {
+  const request = withWorkbookSession(client.api(`${workbookApiPath(workbook)}/closeSession`), sessionId)
+  if (!request.post) return
+  try {
+    await request.post({})
+  } catch {
+    // Best-effort: persistent sessions save changes as calls are made.
+  }
+}
+
+async function resolveWorkbookTable(
+  client: GraphClientLike,
+  workbook: ResolvedWorkbook,
+  config: SupplierClaimOneDriveConfig,
+  sessionId: string
+): Promise<string> {
+  if (config.tableName) return config.tableName
+
+  const worksheetName = config.worksheetName || DEFAULT_WORKSHEET_NAME
+  const request = withWorkbookSession(
+    client.api(`${workbookApiPath(workbook)}/worksheets/${encodeGraphPathSegment(worksheetName)}/tables`),
+    sessionId
+  )
+  if (!request.get) {
+    throw new Error('Client Graph invalide : méthode get absente.')
+  }
+
+  const response = (await request.get()) as WorkbookTablesResponse | undefined
+  const tables = response?.value ?? []
+  if (tables.length === 1) {
+    const table = tables[0]!
+    const identifier = table.name || table.id
+    if (identifier) return identifier
+  }
+  if (tables.length === 0) {
+    throw new Error(`Aucun tableau Excel trouvé dans l'onglet ${worksheetName}.`)
+  }
+  throw new Error('Plusieurs tableaux Excel trouvés : définissez SUPPLIER_CLAIM_ONEDRIVE_TABLE.')
+}
+
+function toSupplierTrackingTableRow(row: ClaimWorkbookRow): unknown[] {
+  return ['', '', ...row, '', '', '', '', '', '', '', '', '']
+}
+
+function workbookApiPath(workbook: ResolvedWorkbook): string {
+  return `${GRAPH_DRIVES_BASE}/${workbook.driveId}/items/${workbook.itemId}/workbook`
+}
+
+function withWorkbookSession(request: GraphRequestLike, sessionId: string): GraphRequestLike {
+  return request.header?.('workbook-session-id', sessionId) ?? request
+}
+
+function encodeGraphPathSegment(value: string): string {
+  return encodeURIComponent(value).replace(/'/g, '%27')
 }
 
 async function resolveWorkbook(
@@ -182,330 +270,6 @@ async function resolveWorkbook(
   }
 }
 
-function appendRowsToWorkbookBuffer(
-  buffer: Buffer,
-  rows: ClaimWorkbookRow[],
-  worksheetName: string
-): Buffer {
-  const entries = unzipSync(buffer)
-  const sheetPath = resolveWorksheetPath(entries, worksheetName)
-  const sheetEntry = entries[sheetPath]
-  if (!sheetEntry) {
-    throw new Error(`Onglet OneDrive introuvable : ${worksheetName}`)
-  }
-
-  const sheetXml = strFromU8(sheetEntry)
-  const nextRow = getNextAppendRowFromSheetXml(sheetXml)
-  const finalRow = nextRow + rows.length - 1
-  const updatedSheetXml = appendRowsToSheetXml(sheetXml, rows, nextRow)
-
-  entries[sheetPath] = strToU8(updateWorksheetRefs(updatedSheetXml, finalRow))
-  updateLinkedTableRefs(entries, sheetPath, finalRow)
-
-  return Buffer.from(zipSync(entries))
-}
-
-function resolveWorksheetPath(entries: ZipEntries, worksheetName: string): string {
-  const workbookXml = readZipText(entries, 'xl/workbook.xml')
-  const workbookRelsXml = readZipText(entries, 'xl/_rels/workbook.xml.rels')
-  const sheetRe = /<sheet\b[^>]*>/g
-  let match: RegExpExecArray | null
-
-  while ((match = sheetRe.exec(workbookXml)) !== null) {
-    const tag = match[0]!
-    if (decodeXmlAttr(readAttr(tag, 'name')) !== worksheetName) continue
-
-    const relId = readAttr(tag, 'r:id') ?? readAttr(tag, 'id')
-    if (!relId) break
-
-    const rel = findRelationshipById(workbookRelsXml, relId)
-    if (!rel?.target) break
-    return normalizeZipPath('xl', rel.target)
-  }
-
-  throw new Error(`Onglet OneDrive introuvable : ${worksheetName}`)
-}
-
-function appendRowsToSheetXml(sheetXml: string, rows: ClaimWorkbookRow[], startRow: number): string {
-  const sheetDataMatch = sheetXml.match(/<sheetData\b[^>]*>[\s\S]*?<\/sheetData>/)
-  if (!sheetDataMatch?.[0]) {
-    throw new Error('Feuille Excel invalide : sheetData manquant.')
-  }
-
-  const sheetDataXml = sheetDataMatch[0]
-  const openTag = sheetDataXml.match(/^<sheetData\b[^>]*>/)?.[0] ?? '<sheetData>'
-  const inner = sheetDataXml.slice(openTag.length, -'</sheetData>'.length)
-  const rowMap = new Map<number, string>()
-  const rowOrder: number[] = []
-  const rowRe = /<row\b[^>]*(?:>[\s\S]*?<\/row>|\/>)/g
-  let match: RegExpExecArray | null
-
-  while ((match = rowRe.exec(inner)) !== null) {
-    const rowXml = match[0]!
-    const rowNumber = Number(readAttr(rowXml, 'r'))
-    if (!Number.isInteger(rowNumber)) continue
-    rowMap.set(rowNumber, rowXml)
-    rowOrder.push(rowNumber)
-  }
-
-  for (let offset = 0; offset < rows.length; offset++) {
-    const rowNumber = startRow + offset
-    const styleMap = getStyleMapForRow(sheetXml, rowNumber - 1)
-    const cells = buildCellsForRow(rows[offset]!, rowNumber, styleMap)
-    rowMap.set(rowNumber, mergeCellsIntoRow(rowMap.get(rowNumber), rowNumber, cells))
-    if (!rowOrder.includes(rowNumber)) rowOrder.push(rowNumber)
-  }
-
-  rowOrder.sort((a, b) => a - b)
-  const updatedSheetData = `${openTag}${rowOrder.map((row) => rowMap.get(row) ?? '').join('')}</sheetData>`
-  return sheetXml.replace(sheetDataXml, updatedSheetData)
-}
-
-function getNextAppendRowFromSheetXml(sheetXml: string): number {
-  const cellRe = /<c\b[^>]*\br="([A-Z]+)(\d+)"[^>]*(?:>[\s\S]*?<\/c>|\/>)/g
-  let lastDataRow = MIN_DATA_ROW - 1
-  let match: RegExpExecArray | null
-
-  while ((match = cellRe.exec(sheetXml)) !== null) {
-    const col = columnNameToIndex(match[1]!)
-    if (col < TARGET_START_COL_INDEX || col > TARGET_END_COL_INDEX) continue
-    const row = Number(match[2])
-    if (!Number.isInteger(row) || row < MIN_DATA_ROW) continue
-    const cellXml = match[0]!
-    if (cellHasValue(cellXml)) {
-      lastDataRow = Math.max(lastDataRow, row)
-    }
-  }
-
-  return Math.max(MIN_DATA_ROW, lastDataRow + 1)
-}
-
-function buildCellsForRow(
-  values: ClaimWorkbookRow,
-  rowNumber: number,
-  styleMap: Map<number, string>
-): string[] {
-  return values.map((value, offset) => {
-    const colIndex = TARGET_START_COL_INDEX + offset
-    const colName = columnIndexToName(colIndex)
-    const ref = `${colName}${rowNumber}`
-    const style = styleMap.get(colIndex)
-    const styleAttr = style ? ` s="${escapeXmlAttr(style)}"` : ''
-
-    if (typeof value === 'number') {
-      return `<c r="${ref}"${styleAttr}><v>${String(value)}</v></c>`
-    }
-    if (value === '') {
-      return `<c r="${ref}"${styleAttr}/>`
-    }
-    return `<c r="${ref}"${styleAttr} t="inlineStr"><is><t>${escapeXmlText(value)}</t></is></c>`
-  })
-}
-
-function mergeCellsIntoRow(existingRowXml: string | undefined, rowNumber: number, newCells: string[]): string {
-  const baseRowXml = existingRowXml ?? `<row r="${rowNumber}"></row>`
-  const rowTagMatch = baseRowXml.match(/^<row\b[^>]*\/?>/)
-  const rowTag = rowTagMatch?.[0]?.replace(/\/>$/, '>') ?? `<row r="${rowNumber}">`
-  const existingCells: string[] = []
-  const cellRe = /<c\b[^>]*\br="([A-Z]+)\d+"[^>]*(?:>[\s\S]*?<\/c>|\/>)/g
-  let match: RegExpExecArray | null
-
-  while ((match = cellRe.exec(baseRowXml)) !== null) {
-    const colIndex = columnNameToIndex(match[1]!)
-    if (colIndex < TARGET_START_COL_INDEX || colIndex > TARGET_END_COL_INDEX) {
-      existingCells.push(match[0]!)
-    }
-  }
-
-  const cells = [...existingCells, ...newCells]
-  cells.sort((a, b) => {
-    const aRef = readAttr(a, 'r') ?? 'A1'
-    const bRef = readAttr(b, 'r') ?? 'A1'
-    return columnNameToIndex(aRef.replace(/\d+$/, '')) - columnNameToIndex(bRef.replace(/\d+$/, ''))
-  })
-
-  return `${rowTag}${cells.join('')}</row>`
-}
-
-function getStyleMapForRow(sheetXml: string, rowNumber: number): Map<number, string> {
-  const styles = new Map<number, string>()
-  if (rowNumber < MIN_DATA_ROW) return styles
-
-  const rowRe = new RegExp(`<row\\b[^>]*\\br="${rowNumber}"[^>]*(?:>[\\s\\S]*?<\\/row>|\\/>)`)
-  const rowXml = sheetXml.match(rowRe)?.[0]
-  if (!rowXml) return styles
-
-  const cellRe = /<c\b[^>]*\br="([A-Z]+)\d+"[^>]*>/g
-  let match: RegExpExecArray | null
-  while ((match = cellRe.exec(rowXml)) !== null) {
-    const colIndex = columnNameToIndex(match[1]!)
-    const style = readAttr(match[0]!, 's')
-    if (style) styles.set(colIndex, style)
-  }
-  return styles
-}
-
-function updateWorksheetRefs(sheetXml: string, finalRow: number): string {
-  let updated = updateFirstRefAttr(sheetXml, 'dimension', finalRow)
-  updated = updateFirstRefAttr(updated, 'autoFilter', finalRow)
-  return updated
-}
-
-function updateLinkedTableRefs(entries: ZipEntries, sheetPath: string, finalRow: number): void {
-  const relsPath = sheetPath.replace(/^(.*\/)([^/]+)$/, '$1_rels/$2.rels')
-  const relsEntry = entries[relsPath]
-  if (!relsEntry) return
-
-  const relsXml = strFromU8(relsEntry)
-  const relRe = /<Relationship\b[^>]*>/g
-  let match: RegExpExecArray | null
-
-  while ((match = relRe.exec(relsXml)) !== null) {
-    const relTag = match[0]!
-    const type = readAttr(relTag, 'Type') ?? ''
-    if (!type.endsWith('/table')) continue
-
-    const target = readAttr(relTag, 'Target')
-    if (!target) continue
-    const tablePath = normalizeZipPath(pathDir(sheetPath), target)
-    const tableEntry = entries[tablePath]
-    if (!tableEntry) continue
-
-    const tableXml = strFromU8(tableEntry)
-    entries[tablePath] = strToU8(updateFirstRefAttr(updateFirstRefAttr(tableXml, 'table', finalRow), 'autoFilter', finalRow))
-  }
-}
-
-function updateFirstRefAttr(xml: string, tagName: string, finalRow: number): string {
-  const tagRe = new RegExp(`<${tagName}\\b[^>]*\\bref="([^"]+)"[^>]*>`)
-  const match = xml.match(tagRe)
-  if (!match?.[0] || !match[1]) return xml
-  const nextRef = extendRefRows(match[1], finalRow)
-  if (nextRef === match[1]) return xml
-  return xml.replace(match[0], match[0].replace(`ref="${match[1]}"`, `ref="${nextRef}"`))
-}
-
-function extendRefRows(ref: string, finalRow: number): string {
-  const match = ref.match(/^([A-Z]+)(\d+):([A-Z]+)(\d+)$/)
-  if (!match) return ref
-  const endRow = Math.max(Number(match[4]), finalRow)
-  return `${match[1]}${match[2]}:${match[3]}${endRow}`
-}
-
-function findRelationshipById(xml: string, id: string): { target: string } | null {
-  const relRe = /<Relationship\b[^>]*>/g
-  let match: RegExpExecArray | null
-  while ((match = relRe.exec(xml)) !== null) {
-    const tag = match[0]!
-    if (readAttr(tag, 'Id') === id) {
-      const target = readAttr(tag, 'Target')
-      return target ? { target } : null
-    }
-  }
-  return null
-}
-
-function readZipText(entries: ZipEntries, path: string): string {
-  const entry = entries[path]
-  if (!entry) throw new Error(`Fichier XLSX invalide : ${path} manquant.`)
-  return strFromU8(entry)
-}
-
-function readAttr(tag: string, attr: string): string | null {
-  const escaped = attr.replace(/[-/\\^$*+?.()|[\]{}]/g, '\\$&')
-  return tag.match(new RegExp(`\\b${escaped}="([^"]*)"`))?.[1] ?? null
-}
-
-function cellHasValue(cellXml: string): boolean {
-  const value = cellXml.match(/<v>([\s\S]*?)<\/v>/)?.[1]
-  if (value !== undefined) return value.trim() !== ''
-  const inlineText = cellXml.match(/<is>[\s\S]*?<t[^>]*>([\s\S]*?)<\/t>[\s\S]*?<\/is>/)?.[1]
-  if (inlineText !== undefined) return inlineText.trim() !== ''
-  if (/<f\b[^>]*>[\s\S]*?<\/f>/.test(cellXml)) return true
-  return false
-}
-
-function normalizeZipPath(base: string, target: string): string {
-  const raw = target.startsWith('/') ? target.slice(1) : `${base}/${target}`
-  const parts: string[] = []
-  for (const part of raw.split('/')) {
-    if (!part || part === '.') continue
-    if (part === '..') parts.pop()
-    else parts.push(part)
-  }
-  return parts.join('/')
-}
-
-function pathDir(path: string): string {
-  return path.slice(0, path.lastIndexOf('/'))
-}
-
-function columnIndexToName(index: number): string {
-  let n = index + 1
-  let name = ''
-  while (n > 0) {
-    const rem = (n - 1) % 26
-    name = String.fromCharCode(65 + rem) + name
-    n = Math.floor((n - 1) / 26)
-  }
-  return name
-}
-
-function columnNameToIndex(name: string): number {
-  let n = 0
-  for (const char of name) {
-    n = n * 26 + char.charCodeAt(0) - 64
-  }
-  return n - 1
-}
-
-function escapeXmlText(value: string): string {
-  return value
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-}
-
-function escapeXmlAttr(value: string): string {
-  return escapeXmlText(value).replace(/"/g, '&quot;')
-}
-
-function decodeXmlAttr(value: string | null): string | null {
-  if (value === null) return null
-  return value
-    .replace(/&quot;/g, '"')
-    .replace(/&apos;/g, "'")
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&amp;/g, '&')
-}
-
-async function downloadWorkbook(client: GraphClientLike, workbook: ResolvedWorkbook): Promise<Buffer> {
-  const request = client.api(`${GRAPH_DRIVES_BASE}/${workbook.driveId}/items/${workbook.itemId}/content`)
-  if (!request.responseType) {
-    throw new Error('Client Graph invalide : méthode responseType absente.')
-  }
-  const body = await request.responseType(ResponseType.ARRAYBUFFER).get()
-  if (Buffer.isBuffer(body)) return body
-  if (body instanceof Uint8Array) return Buffer.from(body)
-  return Buffer.from(body)
-}
-
-async function uploadWorkbook(
-  client: GraphClientLike,
-  workbook: ResolvedWorkbook,
-  buffer: Buffer
-): Promise<void> {
-  const request = client.api(`${GRAPH_DRIVES_BASE}/${workbook.driveId}/items/${workbook.itemId}/content`)
-  if (!request.header) {
-    throw new Error('Client Graph invalide : méthode header absente.')
-  }
-  await request
-    .header('Content-Type', XLSX_MIME)
-    .header('If-Match', workbook.eTag)
-    .put(buffer)
-}
-
 export function toGraphShareId(shareUrl: string): string {
   const base64 = Buffer.from(shareUrl, 'utf8').toString('base64')
   return `u!${base64.replace(/=+$/g, '').replace(/\//g, '_').replace(/\+/g, '-')}`
@@ -535,6 +299,11 @@ function isOneDriveLocked(err: unknown): boolean {
     message.includes('resourcelocked') ||
     message.includes('resource you are attempting to access is locked')
   )
+}
+
+function isGraphTimeout(err: unknown): boolean {
+  const e = err as { statusCode?: number; status?: number } | null
+  return e?.statusCode === 504 || e?.status === 504
 }
 
 async function sleep(ms: number): Promise<void> {
