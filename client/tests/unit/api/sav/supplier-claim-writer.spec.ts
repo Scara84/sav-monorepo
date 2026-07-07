@@ -593,7 +593,7 @@ describe('WRITER-08: round-trip read — cellule injectée = pas .f, pas .v malv
 // ---------------------------------------------------------------------------
 
 describe('WRITER-09: FECHA = date génération (pas date livraison) (AC #5)', () => {
-  it('WRITER-09a: FECHA (col A) row 2 = date de generatedAt passée au writer (YYYY-MM-DD)', () => {
+  it('WRITER-09a: FECHA (col A) row 2 = date de generatedAt passée au writer (DD/MM/YYYY)', () => {
     const generatedAt = new Date('2026-06-05T14:30:00Z')
     const input = makeWriterInput({ generatedAt })
     const { blob } = buildClaimWorkbook(input)
@@ -602,20 +602,7 @@ describe('WRITER-09: FECHA = date génération (pas date livraison) (AC #5)', ()
 
     // A2 = FECHA
     const fechaCell = sheet['A2']
-    // Peut être stocké comme string ISO ou comme numérique date Excel
-    // Le writer DOIT écrire la date au format YYYY-MM-DD (texte ou date serial)
-    const fechaVal = fechaCell?.v
-    // On accepte string '2026-06-05' ou un serial xlsx date
-    if (typeof fechaVal === 'string') {
-      expect(fechaVal).toContain('2026-06-05')
-    } else if (typeof fechaVal === 'number') {
-      // Date serial xlxs : 2026-06-05 = 46278 (approximatif)
-      // On vérifie juste que la valeur est un nombre plausible (>45000 = après 2023)
-      expect(fechaVal).toBeGreaterThan(45000)
-    } else {
-      // La valeur doit être string ou number — jamais undefined
-      expect(fechaVal).not.toBeUndefined()
-    }
+    expect(fechaCell?.v).toBe('05/06/2026')
   })
 
   it('WRITER-09b: FECHA identique sur toutes les lignes (date réclamation uniforme)', () => {
@@ -657,7 +644,7 @@ describe('WRITER-09: FECHA = date génération (pas date livraison) (AC #5)', ()
     const fecha3 = sheet['A3']?.v
     // Les deux doivent être égales (même date de génération)
     expect(fecha2).toEqual(fecha3)
-    expect(fecha2).toBeDefined()
+    expect(fecha2).toBe('05/06/2026')
   })
 })
 

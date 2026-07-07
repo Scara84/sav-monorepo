@@ -36,8 +36,9 @@ import { ensureRequestId } from '../request-id'
 import { supabaseAdmin } from '../clients/supabase-admin'
 import { logger } from '../logger'
 import { recordAudit } from '../audit/record'
-import { buildClaimWorkbook } from './supplier-claim-writer'
+import { buildClaimWorkbook, buildClaimWorkbookRows } from './supplier-claim-writer'
 import type { ClaimLineWriterInput } from './supplier-claim-writer'
+import { appendSupplierClaimRowsToOneDrive } from './supplier-claim-onedrive-fill'
 import type { ApiHandler, ApiRequest, ApiResponse } from '../types'
 
 // ---------------------------------------------------------------------------
@@ -68,6 +69,10 @@ interface ArbitratedClaimPayload {
   creditNoteId: number | null
   claimLines: ClaimLinePayload[]
 }
+
+type OneDriveAppendStatus = 'success' | 'skipped' | 'failed'
+type OneDriveAppendResult = { status: OneDriveAppendStatus; webUrl?: string; message?: string }
+const ONEDRIVE_APPEND_TIMEOUT_MS = 8_000
 
 // ---------------------------------------------------------------------------
 // RBAC — check group scope (réutilise pattern reconcile-supplier-claim-handler.ts)
@@ -189,6 +194,37 @@ function validatePayload(
   }
 
   return { valid: true, payload }
+}
+
+function setOneDriveHeaders(
+  res: ApiResponse,
+  result: OneDriveAppendResult
+): void {
+  res.setHeader('X-Supplier-Claim-Onedrive-Status', result.status)
+  if (result.webUrl) {
+    res.setHeader('X-Supplier-Claim-Onedrive-Web-Url', sanitizeHeaderValue(result.webUrl))
+  }
+  if (result.message) {
+    res.setHeader('X-Supplier-Claim-Onedrive-Message', encodeURIComponent(sanitizeHeaderValue(result.message)))
+  }
+}
+
+function sanitizeHeaderValue(value: string): string {
+  return value.replace(/[\r\n]/g, ' ').slice(0, 500)
+}
+
+async function withTimeout<T>(promise: Promise<T>, ms: number, fallback: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined
+  try {
+    return await Promise.race([
+      promise,
+      new Promise<T>((resolve) => {
+        timer = setTimeout(() => resolve(fallback), ms)
+      }),
+    ])
+  } finally {
+    if (timer) clearTimeout(timer)
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -408,6 +444,11 @@ function generateSupplierClaimCore(savId: number): ApiHandler {
       claimLines: writerInput,
       regenerationIndex,
     })
+    const workbookRows = buildClaimWorkbookRows({
+      metadata: payload.metadata,
+      generatedAt,
+      claimLines: writerInput,
+    })
 
     // --- Persistance atomique via RPC (DN-7=B LOCKED) ---
     // Note : les champs numériques sont passés comme strings dans le JSONB
@@ -496,11 +537,25 @@ function generateSupplierClaimCore(savId: number): ApiHandler {
       })
     }
 
+    const oneDriveAppendResult = await withTimeout<OneDriveAppendResult>(
+      appendSupplierClaimRowsToOneDrive(workbookRows),
+      ONEDRIVE_APPEND_TIMEOUT_MS,
+      { status: 'failed', message: 'Timeout OneDrive pendant le remplissage automatique.' }
+    )
+    if (oneDriveAppendResult.status === 'failed') {
+      logger.warn('sav.generate-supplier-claim.onedrive_append_failed', {
+        requestId,
+        claimId,
+        message: oneDriveAppendResult.message,
+      })
+    }
+
     // --- Réponse 200 : blob xlsx + headers AC #8 ---
     res.status(200)
     res.setHeader('Content-Type', 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet')
     res.setHeader('Content-Disposition', `attachment; filename="${filename}"`)
     res.setHeader('Content-Length', String(blob.length))
+    setOneDriveHeaders(res, oneDriveAppendResult)
     // Cast to node-compatible response to support Buffer in end() (pattern file-download-handler.ts)
     const nodeRes = res as unknown as { end: (chunk?: Buffer | string) => void }
     nodeRes.end(blob)

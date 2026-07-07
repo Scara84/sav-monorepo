@@ -74,6 +74,12 @@ const db = vi.hoisted(() => ({
   auditCaptured: null as unknown,
   // writer mock result (contrôlé dans buildClaimWorkbook mock)
   writerResult: null as null | { blob: Buffer; sha256: string; filename: string },
+  oneDriveResult: { status: 'skipped', message: 'Configuration OneDrive fournisseur absente.' } as {
+    status: 'success' | 'skipped' | 'failed'
+    webUrl?: string
+    message?: string
+  },
+  oneDriveRows: null as unknown,
 }))
 
 function resetDb(): void {
@@ -86,6 +92,8 @@ function resetDb(): void {
   db.existingClaimsForSav = []
   db.auditCaptured = null
   db.writerResult = null
+  db.oneDriveResult = { status: 'skipped', message: 'Configuration OneDrive fournisseur absente.' }
+  db.oneDriveRows = null
 }
 
 // ---------------------------------------------------------------------------
@@ -212,6 +220,16 @@ vi.mock('../../../../api/_lib/sav/supplier-claim-writer', () => ({
     const suffix = input.regenerationIndex !== null ? `_v${input.regenerationIndex}` : ''
     const filename = `RECLAMACION_SOL_Y_FRUTA_${input.savReference}_${dateStr}${suffix}.xlsx`
     return { blob, sha256, filename }
+  },
+  buildClaimWorkbookRows: () => [
+    ['2026-06-05', '278_26S21_11', '2026-05-26', '3127', '1022', 'Aguacate', 'Málaga', 5, 'Kilos', 'estropeado', 5.29, '', 26.45],
+  ],
+}))
+
+vi.mock('../../../../api/_lib/sav/supplier-claim-onedrive-fill', () => ({
+  appendSupplierClaimRowsToOneDrive: async (rows: unknown) => {
+    db.oneDriveRows = rows
+    return db.oneDriveResult
   },
 }))
 
@@ -377,6 +395,74 @@ describe('GEN-01: happy path — 200 + Content-Type xlsx (AC #11a)', () => {
     await generateSupplierClaimHandler(1)(req, res)
 
     expect(res.statusCode).toBe(200)
+  })
+})
+
+describe('GEN-ONEDRIVE: append OneDrive fail-soft', () => {
+  it('GEN-OD-01: append success → headers status + webUrl et rows passées au helper', async () => {
+    db.oneDriveResult = {
+      status: 'success',
+      webUrl: 'https://onedrive.test/suivi.xlsx',
+      message: '1 ligne(s) ajoutée(s) dans OneDrive.',
+    }
+    const req = mockReq({
+      method: 'POST',
+      headers: {},
+      query: { id: '1' },
+      body: makeValidPayload(),
+      user: makeOperatorUser(10),
+    })
+    const res = mockRes()
+
+    await generateSupplierClaimHandler(1)(req, res)
+
+    expect(res.statusCode).toBe(200)
+    expect(res.headers['x-supplier-claim-onedrive-status']).toBe('success')
+    expect(res.headers['x-supplier-claim-onedrive-web-url']).toBe('https://onedrive.test/suivi.xlsx')
+    expect(decodeURIComponent(String(res.headers['x-supplier-claim-onedrive-message']))).toContain('OneDrive')
+    expect(db.oneDriveRows).toEqual([
+      ['2026-06-05', '278_26S21_11', '2026-05-26', '3127', '1022', 'Aguacate', 'Málaga', 5, 'Kilos', 'estropeado', 5.29, '', 26.45],
+    ])
+  })
+
+  it('GEN-OD-02: append failed → téléchargement conservé + header failed', async () => {
+    db.oneDriveResult = { status: 'failed', message: 'Graph 403' }
+    const req = mockReq({
+      method: 'POST',
+      headers: {},
+      query: { id: '1' },
+      body: makeValidPayload(),
+      user: makeOperatorUser(10),
+    })
+    const res = mockRes()
+
+    await generateSupplierClaimHandler(1)(req, res)
+
+    expect(res.statusCode).toBe(200)
+    expect(res.headers['content-type']).toBe(
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+    expect(res.headers['x-supplier-claim-onedrive-status']).toBe('failed')
+    expect(decodeURIComponent(String(res.headers['x-supplier-claim-onedrive-message']))).toBe('Graph 403')
+    expect(Buffer.concat(res.chunks).length).toBeGreaterThan(0)
+  })
+
+  it('GEN-OD-03: config absente → header skipped + téléchargement conservé', async () => {
+    db.oneDriveResult = { status: 'skipped', message: 'Configuration OneDrive fournisseur absente.' }
+    const req = mockReq({
+      method: 'POST',
+      headers: {},
+      query: { id: '1' },
+      body: makeValidPayload(),
+      user: makeOperatorUser(10),
+    })
+    const res = mockRes()
+
+    await generateSupplierClaimHandler(1)(req, res)
+
+    expect(res.statusCode).toBe(200)
+    expect(res.headers['x-supplier-claim-onedrive-status']).toBe('skipped')
+    expect(Buffer.concat(res.chunks).length).toBeGreaterThan(0)
   })
 })
 

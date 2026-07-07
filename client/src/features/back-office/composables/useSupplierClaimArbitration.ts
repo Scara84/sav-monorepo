@@ -100,6 +100,9 @@ export interface GenerateResult {
   totalImporteCents?: number
   lineCount?: number
   filename?: string
+  onedriveStatus?: 'success' | 'skipped' | 'failed'
+  onedriveWebUrl?: string
+  onedriveMessage?: string
 }
 
 // ---------------------------------------------------------------------------
@@ -621,6 +624,13 @@ export function useSupplierClaimArbitration(
       const contentDisposition = res.headers.get('content-disposition') ?? ''
       const filenameMatch = contentDisposition.match(/filename="([^"]+)"/)
       const dlFilename = filenameMatch?.[1] ?? 'RECLAMACION_SOL_Y_FRUTA.xlsx'
+      const onedriveStatus = parseOneDriveStatus(
+        res.headers.get('x-supplier-claim-onedrive-status')
+      )
+      const onedriveWebUrl = res.headers.get('x-supplier-claim-onedrive-web-url') ?? undefined
+      const onedriveMessage = decodeHeaderValue(
+        res.headers.get('x-supplier-claim-onedrive-message')
+      )
 
       const a = document.createElement('a')
       a.href = url
@@ -628,7 +638,13 @@ export function useSupplierClaimArbitration(
       a.click()
       URL.revokeObjectURL(url)
 
-      generateResult.value = { filename: dlFilename, lineCount: payloadLines.filter((l) => !l.excluded).length }
+      generateResult.value = {
+        filename: dlFilename,
+        lineCount: payloadLines.filter((l) => !l.excluded).length,
+        ...(onedriveStatus ? { onedriveStatus } : {}),
+        ...(onedriveWebUrl ? { onedriveWebUrl } : {}),
+        ...(onedriveMessage ? { onedriveMessage } : {}),
+      }
       generateState.value = 'generated'
     } catch (err) {
       generateError.value = err instanceof Error ? err.message : 'Erreur réseau — génération impossible'
@@ -763,5 +779,19 @@ export function useSupplierClaimArbitration(
 
     // Formatter (for template use)
     formatImporte,
+  }
+}
+
+function parseOneDriveStatus(value: string | null): GenerateResult['onedriveStatus'] {
+  if (value === 'success' || value === 'skipped' || value === 'failed') return value
+  return undefined
+}
+
+function decodeHeaderValue(value: string | null): string | undefined {
+  if (!value) return undefined
+  try {
+    return decodeURIComponent(value)
+  } catch {
+    return value
   }
 }
