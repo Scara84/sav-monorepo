@@ -5,6 +5,7 @@ import {
   toGraphShareId,
 } from '../../../../api/_lib/sav/supplier-claim-onedrive-fill'
 import type { ClaimWorkbookRow } from '../../../../api/_lib/sav/supplier-claim-writer'
+import { strFromU8, strToU8, unzipSync, zipSync } from 'fflate'
 import * as XLSX from 'xlsx'
 
 function makeRows(): ClaimWorkbookRow[] {
@@ -36,7 +37,29 @@ function makeWorkbookBuffer(): Buffer {
     ['A4', 'B4', '', ''],
   ])
   XLSX.utils.book_append_sheet(workbook, worksheet, 'SUIVI_SAV')
-  return Buffer.from(XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }))
+  const buffer = Buffer.from(XLSX.write(workbook, { type: 'buffer', bookType: 'xlsx' }))
+  const entries = unzipSync(buffer)
+  const sheetPath = 'xl/worksheets/sheet1.xml'
+  const sheetXml = strFromU8(entries[sheetPath]!)
+  const sheetWithTablePart = sheetXml
+    .replace('<worksheet ', '<worksheet xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships" ')
+    .replace('</worksheet>', '<tableParts count="1"><tablePart r:id="rIdTable1"/></tableParts></worksheet>')
+
+  entries[sheetPath] = strToU8(sheetWithTablePart)
+  entries['xl/worksheets/_rels/sheet1.xml.rels'] = strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+  <Relationship Id="rIdTable1" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/table" Target="../tables/table1.xml"/>
+</Relationships>`)
+  entries['xl/tables/table1.xml'] = strToU8(`<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<table xmlns="http://schemas.openxmlformats.org/spreadsheetml/2006/main" id="1" name="Table1" displayName="Table1" ref="A2:X3" totalsRowShown="0">
+  <autoFilter ref="A2:X3"/>
+  <tableColumns count="24">
+    ${Array.from({ length: 24 }, (_, index) => `<tableColumn id="${index + 1}" name="Col${index + 1}"/>`).join('')}
+  </tableColumns>
+  <tableStyleInfo name="TableStyleMedium2" showFirstColumn="0" showLastColumn="0" showRowStripes="1" showColumnStripes="0"/>
+</table>`)
+
+  return Buffer.from(zipSync(entries))
 }
 
 interface UploadRequestMock {
@@ -118,6 +141,13 @@ describe('supplier-claim-onedrive-fill', () => {
     expect(worksheet['C4']?.v).toBe('2026-07-06')
     expect(worksheet['D4']?.v).toBe('337_26S27_64')
     expect(worksheet['O4']?.v).toBe(0.58)
+
+    const uploadedEntries = unzipSync(uploaded!)
+    const tableXml = strFromU8(uploadedEntries['xl/tables/table1.xml']!)
+    const sheetXml = strFromU8(uploadedEntries['xl/worksheets/sheet1.xml']!)
+    expect(tableXml).toContain('ref="A2:X4"')
+    expect(tableXml).toContain('TableStyleMedium2')
+    expect(sheetXml).toContain('<tableParts count="1"><tablePart r:id="rIdTable1"/></tableParts>')
   })
 
   it('ODF-02b: conflit eTag → relit et retente une fois', async () => {
