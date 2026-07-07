@@ -198,6 +198,103 @@ describe('supplier-claim-onedrive-fill', () => {
     expect(headerMock).toHaveBeenCalledWith('If-Match', '"ETAG-2"')
   })
 
+  it('ODF-02c: fichier OneDrive verrouillé temporairement → retente puis succès', async () => {
+    const put = vi
+      .fn()
+      .mockRejectedValueOnce({
+        statusCode: 423,
+        code: 'resourceLocked',
+        message: 'The resource you are attempting to access is locked',
+      })
+      .mockResolvedValueOnce({ id: 'ITEM-1', webUrl: 'https://onedrive.test/workbook.xlsx' })
+    const { request: uploadRequest } = makeUploadRequest(put)
+    let eTagRead = 0
+    const graphClient = {
+      api: vi.fn((url: string) => {
+        if (url.includes('/shares/')) {
+          eTagRead += 1
+          return {
+            get: () =>
+              Promise.resolve({
+                id: 'ITEM-1',
+                eTag: `"ETAG-${eTagRead}"`,
+                webUrl: 'https://onedrive.test/workbook.xlsx',
+                parentReference: { driveId: 'DRIVE-1' },
+              }),
+          }
+        }
+        if (url.endsWith('/content')) {
+          return {
+            responseType: () => ({ get: () => Promise.resolve(makeWorkbookBuffer()) }),
+            header: uploadRequest.header,
+          }
+        }
+        return {}
+      }),
+    }
+
+    const result = await appendSupplierClaimRowsToOneDrive(
+      makeRows(),
+      {
+        shareUrl: 'https://1drv.ms/x/test',
+        itemId: undefined,
+        driveId: undefined,
+        worksheetName: 'SUIVI_SAV',
+      },
+      { graphClient: graphClient as never, retryDelayMs: 0 }
+    )
+
+    expect(result.status).toBe('success')
+    expect(put).toHaveBeenCalledTimes(2)
+  })
+
+  it('ODF-02d: fichier OneDrive verrouillé persistant → message actionnable', async () => {
+    const put = vi.fn().mockRejectedValue({
+      statusCode: 423,
+      message: 'The resource you are attempting to access is locked',
+    })
+    const { request: uploadRequest } = makeUploadRequest(put)
+    const graphClient = {
+      api: vi.fn((url: string) => {
+        if (url.includes('/shares/')) {
+          return {
+            get: () =>
+              Promise.resolve({
+                id: 'ITEM-1',
+                eTag: '"ETAG-1"',
+                webUrl: 'https://onedrive.test/workbook.xlsx',
+                parentReference: { driveId: 'DRIVE-1' },
+              }),
+          }
+        }
+        if (url.endsWith('/content')) {
+          return {
+            responseType: () => ({ get: () => Promise.resolve(makeWorkbookBuffer()) }),
+            header: uploadRequest.header,
+          }
+        }
+        return {}
+      }),
+    }
+
+    const result = await appendSupplierClaimRowsToOneDrive(
+      makeRows(),
+      {
+        shareUrl: 'https://1drv.ms/x/test',
+        itemId: undefined,
+        driveId: undefined,
+        worksheetName: 'SUIVI_SAV',
+      },
+      { graphClient: graphClient as never, retryDelayMs: 0 }
+    )
+
+    expect(result.status).toBe('failed')
+    expect(result.message).toBe(
+      'Le fichier OneDrive fournisseur est verrouillé. Fermez le classeur Excel/OneDrive, attendez quelques secondes, puis réessayez.'
+    )
+    expect(put).toHaveBeenCalledTimes(4)
+  })
+
   it('ODF-03: erreur Graph → failed non throw', async () => {
     const graphClient = {
       api: vi.fn(() => ({

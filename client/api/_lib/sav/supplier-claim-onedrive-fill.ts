@@ -9,7 +9,10 @@ const TARGET_START_COL_INDEX = 2 // C, zero-based
 const TARGET_END_COL_INDEX = 14 // O, zero-based
 const MIN_DATA_ROW = 3
 const XLSX_MIME = 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
-const MAX_UPLOAD_ATTEMPTS = 2
+const MAX_UPLOAD_ATTEMPTS = 4
+const UPLOAD_RETRY_DELAYS_MS = [300, 900, 1_800]
+const LOCKED_WORKBOOK_MESSAGE =
+  'Le fichier OneDrive fournisseur est verrouillé. Fermez le classeur Excel/OneDrive, attendez quelques secondes, puis réessayez.'
 
 interface GraphDriveItemResponse {
   id?: string
@@ -81,7 +84,7 @@ export function readSupplierClaimOneDriveConfig(
 export async function appendSupplierClaimRowsToOneDrive(
   rows: ClaimWorkbookRow[],
   config: SupplierClaimOneDriveConfig | null = readSupplierClaimOneDriveConfig(),
-  deps: { graphClient?: GraphClientLike } = {}
+  deps: { graphClient?: GraphClientLike; retryDelayMs?: number } = {}
 ): Promise<SupplierClaimOneDriveResult> {
   if (rows.length === 0) {
     return { status: 'skipped', message: 'Aucune ligne à ajouter dans OneDrive.' }
@@ -93,7 +96,7 @@ export async function appendSupplierClaimRowsToOneDrive(
 
   try {
     const client = deps.graphClient ?? getDefaultGraphClient()
-    const workbook = await appendWithRetry(client, config, rows)
+    const workbook = await appendWithRetry(client, config, rows, deps.retryDelayMs)
 
     return {
       status: 'success',
@@ -112,9 +115,10 @@ export async function appendSupplierClaimRowsToOneDrive(
 async function appendWithRetry(
   client: GraphClientLike,
   config: SupplierClaimOneDriveConfig,
-  rows: ClaimWorkbookRow[]
+  rows: ClaimWorkbookRow[],
+  retryDelayMs: number | undefined
 ): Promise<ResolvedWorkbook> {
-  let lastConflict: unknown = null
+  let lastRetryableError: unknown = null
 
   for (let attempt = 0; attempt < MAX_UPLOAD_ATTEMPTS; attempt++) {
     const workbook = await resolveWorkbook(client, config)
@@ -125,14 +129,22 @@ async function appendWithRetry(
       await uploadWorkbook(client, workbook, updated)
       return workbook
     } catch (err) {
-      if (!isETagConflict(err) || attempt === MAX_UPLOAD_ATTEMPTS - 1) {
+      const retryable = isETagConflict(err) || isOneDriveLocked(err)
+      if (!retryable || attempt === MAX_UPLOAD_ATTEMPTS - 1) {
+        if (isOneDriveLocked(err)) {
+          throw new Error(LOCKED_WORKBOOK_MESSAGE)
+        }
         throw err
       }
-      lastConflict = err
+      lastRetryableError = err
+      await sleep(retryDelayMs ?? UPLOAD_RETRY_DELAYS_MS[attempt] ?? 0)
     }
   }
 
-  throw lastConflict instanceof Error ? lastConflict : new Error('Conflit OneDrive pendant la mise à jour.')
+  if (isOneDriveLocked(lastRetryableError)) {
+    throw new Error(LOCKED_WORKBOOK_MESSAGE)
+  }
+  throw lastRetryableError instanceof Error ? lastRetryableError : new Error('Conflit OneDrive pendant la mise à jour.')
 }
 
 async function resolveWorkbook(
@@ -510,6 +522,24 @@ function getETag(item: GraphDriveItemResponse | undefined): string {
 function isETagConflict(err: unknown): boolean {
   const e = err as { statusCode?: number; status?: number; code?: string } | null
   return e?.statusCode === 412 || e?.status === 412 || e?.code === 'preconditionFailed'
+}
+
+function isOneDriveLocked(err: unknown): boolean {
+  const e = err as { statusCode?: number; status?: number; code?: string; message?: string; body?: unknown } | null
+  const body = typeof e?.body === 'string' ? e.body : ''
+  const message = `${e?.code ?? ''} ${e?.message ?? ''} ${body}`.toLowerCase()
+  return (
+    e?.statusCode === 423 ||
+    e?.status === 423 ||
+    e?.code === 'resourceLocked' ||
+    message.includes('resourcelocked') ||
+    message.includes('resource you are attempting to access is locked')
+  )
+}
+
+async function sleep(ms: number): Promise<void> {
+  if (ms <= 0) return
+  await new Promise((resolve) => setTimeout(resolve, ms))
 }
 
 function getDefaultGraphClient(): GraphClientLike {
