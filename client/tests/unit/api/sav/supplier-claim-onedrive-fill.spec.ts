@@ -11,7 +11,7 @@ import * as XLSX from 'xlsx'
 function makeRows(): ClaimWorkbookRow[] {
   return [
     [
-      '2026-07-06',
+      '06/07/2026',
       '337_26S27_64',
       '2026-06-29',
       '3749',
@@ -138,7 +138,7 @@ describe('supplier-claim-onedrive-fill', () => {
 
     const workbook = XLSX.read(uploaded, { type: 'buffer' })
     const worksheet = workbook.Sheets['SUIVI_SAV']!
-    expect(worksheet['C4']?.v).toBe('2026-07-06')
+    expect(worksheet['C4']?.v).toBe('06/07/2026')
     expect(worksheet['D4']?.v).toBe('337_26S27_64')
     expect(worksheet['O4']?.v).toBe(0.58)
 

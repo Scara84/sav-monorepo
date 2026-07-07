@@ -118,7 +118,7 @@ function centsToEuros(cents: number): number {
 }
 
 // ---------------------------------------------------------------------------
-// Date ISO YYYY-MM-DD helper
+// Date helpers
 // ---------------------------------------------------------------------------
 
 function toIsoDateString(date: Date): string {
@@ -126,6 +126,13 @@ function toIsoDateString(date: Date): string {
   const m = String(date.getUTCMonth() + 1).padStart(2, '0')
   const d = String(date.getUTCDate()).padStart(2, '0')
   return `${y}-${m}-${d}`
+}
+
+function toSupplierDisplayDateString(date: Date): string {
+  const y = date.getUTCFullYear()
+  const m = String(date.getUTCMonth() + 1).padStart(2, '0')
+  const d = String(date.getUTCDate()).padStart(2, '0')
+  return `${d}/${m}/${y}`
 }
 
 // ---------------------------------------------------------------------------
@@ -189,7 +196,7 @@ export function buildClaimWorkbookRows(
   input: Pick<ClaimWriterInput, 'metadata' | 'generatedAt' | 'claimLines'>
 ): ClaimWorkbookRow[] {
   const { metadata, generatedAt, claimLines } = input
-  const dateStr = toIsoDateString(generatedAt)
+  const dateStr = toSupplierDisplayDateString(generatedAt)
 
   return claimLines.map((line) => {
     const peso = line.qty
