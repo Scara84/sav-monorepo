@@ -61,6 +61,7 @@ const SECRET = 'test-secret-at-least-32-bytes-longxxx'
 const db = vi.hoisted(() => ({
   // Simulation de l'état DB pour les tests
   savGroupId: 1 as number,
+  savMetadata: { dossierSavUrl: 'https://1drv.ms/f/photos-sav' } as Record<string, unknown> | null,
   operatorGroupIds: [1] as number[],
   rateLimitAllowed: true as boolean,
   // credit_notes row lookup
@@ -80,10 +81,12 @@ const db = vi.hoisted(() => ({
     message?: string
   },
   oneDriveRows: null as unknown,
+  oneDriveDeps: null as unknown,
 }))
 
 function resetDb(): void {
   db.savGroupId = 1
+  db.savMetadata = { dossierSavUrl: 'https://1drv.ms/f/photos-sav' }
   db.operatorGroupIds = [1]
   db.rateLimitAllowed = true
   db.creditNoteRow = null
@@ -94,6 +97,7 @@ function resetDb(): void {
   db.writerResult = null
   db.oneDriveResult = { status: 'skipped', message: 'Configuration OneDrive fournisseur absente.' }
   db.oneDriveRows = null
+  db.oneDriveDeps = null
 }
 
 // ---------------------------------------------------------------------------
@@ -109,7 +113,7 @@ vi.mock('../../../../api/_lib/clients/supabase-admin', () => {
             eq: () => ({
               maybeSingle: () =>
                 Promise.resolve({
-                  data: { id: 1, group_id: db.savGroupId, reference: 'SAV-2026-00001' },
+                  data: { id: 1, group_id: db.savGroupId, reference: 'SAV-2026-00001', metadata: db.savMetadata },
                   error: null,
                 }),
             }),
@@ -227,8 +231,9 @@ vi.mock('../../../../api/_lib/sav/supplier-claim-writer', () => ({
 }))
 
 vi.mock('../../../../api/_lib/sav/supplier-claim-onedrive-fill', () => ({
-  appendSupplierClaimRowsToOneDrive: async (rows: unknown) => {
+  appendSupplierClaimRowsToOneDrive: async (rows: unknown, _config: unknown, deps: unknown) => {
     db.oneDriveRows = rows
+    db.oneDriveDeps = deps
     return db.oneDriveResult
   },
 }))
@@ -423,6 +428,7 @@ describe('GEN-ONEDRIVE: append OneDrive fail-soft', () => {
     expect(db.oneDriveRows).toEqual([
       ['2026-06-05', '278_26S21_11', '2026-05-26', '3127', '1022', 'Aguacate', 'Málaga', 5, 'Kilos', 'estropeado', 5.29, '', 26.45],
     ])
+    expect(db.oneDriveDeps).toEqual({ photoFolderUrl: 'https://1drv.ms/f/photos-sav' })
   })
 
   it('GEN-OD-02: append failed → téléchargement conservé + header failed', async () => {
@@ -463,6 +469,23 @@ describe('GEN-ONEDRIVE: append OneDrive fail-soft', () => {
     expect(res.statusCode).toBe(200)
     expect(res.headers['x-supplier-claim-onedrive-status']).toBe('skipped')
     expect(Buffer.concat(res.chunks).length).toBeGreaterThan(0)
+  })
+
+  it('GEN-OD-04: dossierSavUrl absent → transmet photoFolderUrl null', async () => {
+    db.savMetadata = {}
+    const req = mockReq({
+      method: 'POST',
+      headers: {},
+      query: { id: '1' },
+      body: makeValidPayload(),
+      user: makeOperatorUser(10),
+    })
+    const res = mockRes()
+
+    await generateSupplierClaimHandler(1)(req, res)
+
+    expect(res.statusCode).toBe(200)
+    expect(db.oneDriveDeps).toEqual({ photoFolderUrl: null })
   })
 })
 
