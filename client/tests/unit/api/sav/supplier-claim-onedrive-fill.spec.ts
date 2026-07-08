@@ -147,7 +147,7 @@ describe('supplier-claim-onedrive-fill', () => {
     expect(graphClient.api).not.toHaveBeenCalledWith(expect.stringContaining('/content'))
   })
 
-  it('ODF-02a: lien photos SAV fourni → renseigne FOTOS en colonne P', async () => {
+  it('ODF-02a: lien photos SAV fourni → renseigne uniquement la colonne P des lignes ajoutées', async () => {
     const { graphClient, addRows } = makeExcelGraphClient({
       addRows: () => Promise.resolve({ index: 3, values: [] }),
     })
@@ -168,7 +168,7 @@ describe('supplier-claim-onedrive-fill', () => {
 
     expect(result.status).toBe('success')
     const body = addRows.mock.calls[0]?.[0] as { values: unknown[][] }
-    expect(body.values[0]?.[15]).toBe('=HYPERLINK("https://1drv.ms/f/photos-sav","FOTOS")')
+    expect(body.values[0]?.[15]).toBe('https://1drv.ms/f/photos-sav')
     expect(body.values[0]?.slice(2, 15)).toEqual(makeRows()[0])
   })
 

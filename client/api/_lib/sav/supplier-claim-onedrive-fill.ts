@@ -5,7 +5,6 @@ const GRAPH_SHARES_BASE = 'https://graph.microsoft.com/v1.0/shares'
 const DEFAULT_WORKSHEET_NAME = 'SUIVI_SAV'
 const MAX_UPLOAD_ATTEMPTS = 4
 const UPLOAD_RETRY_DELAYS_MS = [300, 900, 1_800]
-const PHOTO_LINK_LABEL = 'FOTOS'
 const LOCKED_WORKBOOK_MESSAGE =
   'Le fichier OneDrive fournisseur est verrouillé. Fermez le classeur Excel/OneDrive, attendez quelques secondes, puis réessayez.'
 
@@ -229,12 +228,7 @@ async function resolveWorkbookTable(
 }
 
 function toSupplierTrackingTableRow(row: ClaimWorkbookRow, photoFolderUrl: string | null): unknown[] {
-  return ['', '', ...row, toHyperlinkFormula(photoFolderUrl), '', '', '', '', '', '', '', '']
-}
-
-function toHyperlinkFormula(url: string | null): string {
-  if (!url) return ''
-  return `=HYPERLINK("${url.replace(/"/g, '""')}","${PHOTO_LINK_LABEL}")`
+  return ['', '', ...row, photoFolderUrl ?? '', '', '', '', '', '', '', '', '']
 }
 
 function workbookApiPath(workbook: ResolvedWorkbook): string {

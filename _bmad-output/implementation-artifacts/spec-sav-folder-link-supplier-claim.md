@@ -23,6 +23,8 @@ context: []
 
 **Never:** utiliser les endpoints internes `/api/sav/files/:id/thumbnail` ou `/download` comme lien fournisseur; rendre publics les endpoints applicatifs; hard-coder un lien OneDrive; modifier le XLSX local téléchargé sauf si nécessaire aux tests existants.
 
+**Preview fix 2026-07-08:** ne pas écrire `=HYPERLINK(...)` dans `P`. Dans un tableau Excel, cette formule est propagée comme colonne calculée et modifie les lignes existantes. La cellule `P` des lignes ajoutées reçoit donc l'URL brute du dossier photos.
+
 ## I/O & Edge-Case Matrix
 
 | Scenario | Input / State | Expected Output / Behavior | Error Handling |
@@ -74,7 +76,7 @@ context: []
 - Le helper accepte le lien photos comme dépendance optionnelle.
   [`supplier-claim-onedrive-fill.ts:47`](../../client/api/_lib/sav/supplier-claim-onedrive-fill.ts#L47)
 
-- La ligne Graph conserve `C:O` et écrit `P` via formule cliquable.
+- La ligne Graph conserve `C:O` et écrit l'URL brute en `P`.
   [`supplier-claim-onedrive-fill.ts:231`](../../client/api/_lib/sav/supplier-claim-onedrive-fill.ts#L231)
 
 **Tests**
@@ -82,5 +84,5 @@ context: []
 - Le handler prouve que le lien metadata est transmis au helper.
   [`generate-supplier-claim.spec.ts:424`](../../client/tests/unit/api/sav/generate-supplier-claim.spec.ts#L424)
 
-- Le helper prouve que `P` contient `HYPERLINK(...,"FOTOS")`.
+- Le helper prouve que `P` contient l'URL brute, sans formule propagée.
   [`supplier-claim-onedrive-fill.spec.ts:150`](../../client/tests/unit/api/sav/supplier-claim-onedrive-fill.spec.ts#L150)
