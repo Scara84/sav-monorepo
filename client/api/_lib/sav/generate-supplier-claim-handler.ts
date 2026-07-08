@@ -83,6 +83,7 @@ interface GroupCheckResult {
   reason?: string
   /** Référence SAV (ex. 'SAV-2026-00012') — MEDIUM-1 : lue depuis DB, pas interpolée */
   savReference?: string
+  photoFolderUrl?: string | null
 }
 
 async function checkGroupScope(
@@ -92,12 +93,12 @@ async function checkGroupScope(
 ): Promise<GroupCheckResult> {
   const admin = supabaseAdmin()
 
-  // SELECT id + group_id + reference en une seule query (MEDIUM-1 : vraie référence SAV)
+  // SELECT id + group_id + reference + metadata en une seule query (MEDIUM-1 : vraie référence SAV)
   const { data: savRow, error: savError } = await admin
     .from('sav')
-    .select('id, group_id, reference')
+    .select('id, group_id, reference, metadata')
     .eq('id', savId)
-    .maybeSingle<{ id: number; group_id: number; reference: string | null }>()
+    .maybeSingle<{ id: number; group_id: number; reference: string | null; metadata: Record<string, unknown> | null }>()
 
   if (savError) {
     return { status: 'not_found', reason: 'Erreur lecture SAV' }
@@ -108,9 +109,10 @@ async function checkGroupScope(
   }
 
   const savReference = savRow.reference ?? `SAV-${savId}`
+  const photoFolderUrl = safeHttpUrlFromMetadata(savRow.metadata, 'dossierSavUrl')
 
   if (operatorRole === 'admin') {
-    return { status: 'allowed', savReference }
+    return { status: 'allowed', savReference, photoFolderUrl }
   }
 
   const { data: opGroups, error: opGroupsError } = await admin
@@ -128,7 +130,19 @@ async function checkGroupScope(
     return { status: 'forbidden', reason: 'SAV hors scope groupe opérateur' }
   }
 
-  return { status: 'allowed', savReference }
+  return { status: 'allowed', savReference, photoFolderUrl }
+}
+
+function safeHttpUrlFromMetadata(metadata: Record<string, unknown> | null, key: string): string | null {
+  const value = metadata?.[key]
+  if (typeof value !== 'string' || value.length === 0) return null
+  try {
+    const url = new URL(value)
+    if (url.protocol !== 'http:' && url.protocol !== 'https:') return null
+    return value
+  } catch {
+    return null
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -281,6 +295,7 @@ function generateSupplierClaimCore(savId: number): ApiHandler {
 
     // --- RBAC : check group scope + lecture référence SAV (AC #3, MEDIUM-1) ---
     let savReference = `SAV-${savId}` // fallback si groupCheck échoue inopinément
+    let photoFolderUrl: string | null = null
     try {
       const groupCheck = await checkGroupScope(savId, user.sub, user.role)
       if (groupCheck.status === 'not_found') {
@@ -295,6 +310,7 @@ function generateSupplierClaimCore(savId: number): ApiHandler {
       if (groupCheck.savReference) {
         savReference = groupCheck.savReference
       }
+      photoFolderUrl = groupCheck.photoFolderUrl ?? null
     } catch (err) {
       logger.error('sav.generate-supplier-claim.group_check_error', {
         requestId, savId, error: err instanceof Error ? err.message : String(err),
@@ -538,7 +554,7 @@ function generateSupplierClaimCore(savId: number): ApiHandler {
     }
 
     const oneDriveAppendResult = await withTimeout<OneDriveAppendResult>(
-      appendSupplierClaimRowsToOneDrive(workbookRows),
+      appendSupplierClaimRowsToOneDrive(workbookRows, undefined, { photoFolderUrl }),
       ONEDRIVE_APPEND_TIMEOUT_MS,
       { status: 'failed', message: 'Timeout OneDrive pendant le remplissage automatique.' }
     )

@@ -147,6 +147,31 @@ describe('supplier-claim-onedrive-fill', () => {
     expect(graphClient.api).not.toHaveBeenCalledWith(expect.stringContaining('/content'))
   })
 
+  it('ODF-02a: lien photos SAV fourni → renseigne uniquement la colonne P des lignes ajoutées', async () => {
+    const { graphClient, addRows } = makeExcelGraphClient({
+      addRows: () => Promise.resolve({ index: 3, values: [] }),
+    })
+
+    const result = await appendSupplierClaimRowsToOneDrive(
+      makeRows(),
+      {
+        shareUrl: 'https://1drv.ms/x/test',
+        itemId: undefined,
+        driveId: undefined,
+        worksheetName: 'SUIVI_SAV',
+      },
+      {
+        graphClient: graphClient as never,
+        photoFolderUrl: 'https://1drv.ms/f/photos-sav',
+      }
+    )
+
+    expect(result.status).toBe('success')
+    const body = addRows.mock.calls[0]?.[0] as { values: unknown[][] }
+    expect(body.values[0]?.[15]).toBe('https://1drv.ms/f/photos-sav')
+    expect(body.values[0]?.slice(2, 15)).toEqual(makeRows()[0])
+  })
+
   it('ODF-02b: conflit Graph → relit et retente une fois', async () => {
     const addRows = vi
       .fn()

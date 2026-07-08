@@ -43,6 +43,12 @@ export interface SupplierClaimOneDriveResult {
   appendedRows?: number
 }
 
+interface SupplierClaimOneDriveDeps {
+  graphClient?: GraphClientLike
+  retryDelayMs?: number
+  photoFolderUrl?: string | null
+}
+
 interface ResolvedWorkbook {
   driveId: string
   itemId: string
@@ -79,7 +85,7 @@ export function readSupplierClaimOneDriveConfig(
 export async function appendSupplierClaimRowsToOneDrive(
   rows: ClaimWorkbookRow[],
   config: SupplierClaimOneDriveConfig | null = readSupplierClaimOneDriveConfig(),
-  deps: { graphClient?: GraphClientLike; retryDelayMs?: number } = {}
+  deps: SupplierClaimOneDriveDeps = {}
 ): Promise<SupplierClaimOneDriveResult> {
   if (rows.length === 0) {
     return { status: 'skipped', message: 'Aucune ligne à ajouter dans OneDrive.' }
@@ -91,7 +97,7 @@ export async function appendSupplierClaimRowsToOneDrive(
 
   try {
     const client = deps.graphClient ?? getDefaultGraphClient()
-    const workbook = await appendWithRetry(client, config, rows, deps.retryDelayMs)
+    const workbook = await appendWithRetry(client, config, rows, deps.retryDelayMs, deps.photoFolderUrl ?? null)
 
     return {
       status: 'success',
@@ -111,7 +117,8 @@ async function appendWithRetry(
   client: GraphClientLike,
   config: SupplierClaimOneDriveConfig,
   rows: ClaimWorkbookRow[],
-  retryDelayMs: number | undefined
+  retryDelayMs: number | undefined,
+  photoFolderUrl: string | null
 ): Promise<ResolvedWorkbook> {
   let lastRetryableError: unknown = null
 
@@ -119,7 +126,7 @@ async function appendWithRetry(
     const workbook = await resolveWorkbook(client, config)
 
     try {
-      await appendRowsWithExcelApi(client, workbook, rows, config)
+      await appendRowsWithExcelApi(client, workbook, rows, config, photoFolderUrl)
       return workbook
     } catch (err) {
       const retryable = isETagConflict(err) || isOneDriveLocked(err) || isGraphTimeout(err)
@@ -144,12 +151,13 @@ async function appendRowsWithExcelApi(
   client: GraphClientLike,
   workbook: ResolvedWorkbook,
   rows: ClaimWorkbookRow[],
-  config: SupplierClaimOneDriveConfig
+  config: SupplierClaimOneDriveConfig,
+  photoFolderUrl: string | null
 ): Promise<void> {
   const sessionId = await createWorkbookSession(client, workbook)
   try {
     const table = await resolveWorkbookTable(client, workbook, config, sessionId)
-    const values = rows.map(toSupplierTrackingTableRow)
+    const values = rows.map((row) => toSupplierTrackingTableRow(row, photoFolderUrl))
     const request = withWorkbookSession(
       client.api(`${workbookApiPath(workbook)}/tables/${encodeGraphPathSegment(table)}/rows/add`),
       sessionId
@@ -219,8 +227,8 @@ async function resolveWorkbookTable(
   throw new Error('Plusieurs tableaux Excel trouvés : définissez SUPPLIER_CLAIM_ONEDRIVE_TABLE.')
 }
 
-function toSupplierTrackingTableRow(row: ClaimWorkbookRow): unknown[] {
-  return ['', '', ...row, '', '', '', '', '', '', '', '', '']
+function toSupplierTrackingTableRow(row: ClaimWorkbookRow, photoFolderUrl: string | null): unknown[] {
+  return ['', '', ...row, photoFolderUrl ?? '', '', '', '', '', '', '', '', '']
 }
 
 function workbookApiPath(workbook: ResolvedWorkbook): string {
