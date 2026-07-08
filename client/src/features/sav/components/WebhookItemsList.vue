@@ -518,7 +518,6 @@ import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useSavForms } from '../composables/useSavForms.js'
 import { useImageUpload } from '../composables/useImageUpload.js'
 import { useApiClient } from '../composables/useApiClient.js'
-import { useExcelGenerator } from '../composables/useExcelGenerator.js'
 import { buildSavHtmlTable } from '../lib/buildSavHtmlTable.js'
 import { buildCaptureItemPrices } from '../lib/buildCaptureItemPrices.js'
 import { extractProductCode } from '../lib/extractProductCode.js'
@@ -559,7 +558,6 @@ export default {
       getFolderShareLink,
       submitSavWebhook,
     } = useApiClient()
-    const { generateExcelFile } = useExcelGenerator()
     const toastMessage = ref('')
 
     // États pour les progress bars
@@ -757,7 +755,7 @@ export default {
           }
         }
 
-        totalFiles.value = allFiles.length + 1 // +1 pour le fichier Excel
+        totalFiles.value = allFiles.length
         uploadedFiles.value = 0
 
         // Upload en parallèle via le backend
@@ -802,36 +800,10 @@ export default {
         // builder Vue), le serveur utilise les templates natifs.
         const htmlTable = buildSavHtmlTable(filledForms, props.items)
 
-        // ÉTAPE 3 : Upload du fichier Excel via le backend
-        const excelBase64 = generateExcelFile(filledForms, props.items, props.facture)
-        const excelFile = {
-          content: excelBase64,
-          filename: `${sanitizedSpecialMention}_${timestamp}.xlsx`,
-        }
-
-        currentUploadFile.value = excelFile.filename
-
-        // AC#3 M2 — try/catch local Excel cohérent avec le pattern image upload (lignes 722-736)
-        // AC#3 M3 — Le retour { webUrl, itemId } est volontairement discarded :
-        // captureWebhookSchema.files[] ne trace que les images (cf. capture-webhook.ts:56-68).
-        // L'Excel est uploadé sur OneDrive pour archivage dossier uniquement (visible via
-        // folderShareLink ligne 772). DN-2 V1.6.1 = ne PAS persister Excel onedriveItemId
-        // côté backend (pas de changement schema requis).
-        try {
-          await uploadToBackend(excelFile, savDossier, true)
-          uploadedFiles.value++
-        } catch (e) {
-          uploadStatus.value = 'error'
-          uploadErrorMessage.value = `Échec de l'upload du fichier Excel (${excelFile.filename}) : ${e.message || 'Erreur inconnue'}`
-          globalLoading.value = false
-          console.error(`Erreur upload Excel ${excelFile.filename}:`, e)
-          return // AC#3 — early-exit intentionnel (return discard, pattern lignes 752-753)
-        }
-
-        // ÉTAPE 4 : Obtenir le lien de partage pour le dossier global
+        // ÉTAPE 3 : Obtenir le lien de partage pour le dossier global
         const folderShareLink = await getFolderShareLink(savDossier)
 
-        // ÉTAPE 5 : Envoi au backend `/api/webhooks/capture` (Story 5.7).
+        // ÉTAPE 4 : Envoi au backend `/api/webhooks/capture` (Story 5.7).
         // Le payload doit matcher `captureWebhookSchema` (cf. AC #4 + AC #7) :
         // { customer, invoice, items, files, metadata }.
         const captureCustomer = {
