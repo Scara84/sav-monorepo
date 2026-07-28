@@ -12,12 +12,12 @@
  *   AC#2 (M1) — uploadError reset propre sur retry
  *     Test 5 — Retry après échec partiel : uploadError reset à false sur 2e tentative
  *
- *   AC#3 (M2/M3) — Excel upload try/catch local + early exit sur erreur Excel
- *     Test 6 — Excel GRAPH_ITEM_ID_INVALID : uploadStatus='error' + message Excel + submitSavWebhook non appelé
+ *   AC#3 — Retrait de l'upload Excel client
+ *     Test 6 — Aucun XLSX client généré/uploadé ; le webhook reste envoyé après upload photo
  *
  * DN tranchés :
  *   DN-1 : @vue/test-utils@^2.4.0 + happy-dom déjà installés
- *   DN-2 : Excel onedriveItemId non persisté backend (discard intentionnel)
+ *   DN-2 : Excel client supprimé du dossier OneDrive partagé fournisseur
  *   DN-3 : uploadFilesParallel deprecated (0 appelant prod)
  *   DN-4 : Tests AC#2 + AC#3 dans cette même spec
  *   DN-5 : TODO V1.7+ refactor errorCode AC#4(g) tracé
@@ -30,9 +30,7 @@
  *
  * Red phase attendue :
  *   - Test 5 (AC#2 retry reset) : RED — uploadError=true stale sans le reset M1
- *   - Test 6 (AC#3 Excel catch) : RED — sans try/catch local, le catch global (ligne 859)
- *     attrape mais uploadStatus='error' sera mis — potentiellement GREEN si le catch
- *     global suffit ; mais le message ne mentionnera pas "Excel" → RED sur l'assert message
+ *   - Test 6 : protège le retrait du call-site Excel client dans WebhookItemsList.vue
  *   - Tests 1-4 (AC#1) : certains peuvent être GREEN si V1.6 a bien posé itemId + regex
  */
 
@@ -93,10 +91,8 @@ vi.mock('xlsx', () => ({
   writeFile: vi.fn(),
 }))
 
-// Mock useExcelGenerator pour éviter que generateExcelFile plante
-// sur le mock xlsx incomplet (json_to_sheet → {} mais !cols write fails
-// dans le namespace `import * as XLSX`). Strategy : mock le composable
-// directement, retourner une base64 stub valide.
+// Garde-fou legacy : si WebhookItemsList réimporte le générateur Excel client,
+// le test final échouera parce que generateExcelFile aura été appelé.
 const mockGenerateExcelFile = vi.fn(() => 'bW9ja2Jhc2U2NA==') // 'mockbase64' en base64
 
 vi.mock('@/features/sav/composables/useExcelGenerator', () => ({
@@ -274,12 +270,6 @@ describe('WebhookItemsList.vue — H-05 Upload OneDrive flow (AC#1 / AC#2 / AC#3
         webUrl: 'https://mock-sharepoint.local/img-success.jpg',
         itemId: MOCK_GRAPH_ID_1,
       })
-      // 2e appel = Excel upload
-      mockUploadToBackend.mockResolvedValueOnce({
-        webUrl: 'https://mock-sharepoint.local/excel.xlsx',
-        itemId: MOCK_GRAPH_ID_2,
-      })
-
       prepareFillledForm(wrapper.vm, 0, mockFile)
       await wrapper.vm.$nextTick()
 
@@ -295,6 +285,7 @@ describe('WebhookItemsList.vue — H-05 Upload OneDrive flow (AC#1 / AC#2 / AC#3
       // Assert : imgObj.itemId doit contenir le Graph ID retourné
       const imgObj = wrapper.vm.getSavForm(0).images[0]
       expect(imgObj.itemId).toBe(MOCK_GRAPH_ID_1)
+      expect(mockUploadToBackend).toHaveBeenCalledTimes(1)
 
       // Critère bloquant anti-régression : si le code réintroduit img.uploadedUrl.split('/').pop()
       expect(imgObj.itemId).not.toMatch(/\.jpg$/)
@@ -353,12 +344,6 @@ describe('WebhookItemsList.vue — H-05 Upload OneDrive flow (AC#1 / AC#2 / AC#3
         webUrl: 'https://mock-sharepoint.local/img-payload.jpg',
         itemId: MOCK_GRAPH_ID_2,
       })
-      // Mock uploadToBackend : Excel upload
-      mockUploadToBackend.mockResolvedValueOnce({
-        webUrl: 'https://mock-sharepoint.local/excel.xlsx',
-        itemId: '01EXCELIDGRAPHID000000000000001C',
-      })
-
       prepareFillledForm(wrapper.vm, 0, mockFile)
       await wrapper.vm.$nextTick()
 
@@ -369,6 +354,7 @@ describe('WebhookItemsList.vue — H-05 Upload OneDrive flow (AC#1 / AC#2 / AC#3
 
       // Assert submitSavWebhook appelé exactement 1 fois
       expect(mockSubmitSavWebhook).toHaveBeenCalledTimes(1)
+      expect(mockUploadToBackend).toHaveBeenCalledTimes(1)
 
       const callPayload = mockSubmitSavWebhook.mock.calls[0][0]
       expect(callPayload.files).toBeDefined()
@@ -447,20 +433,11 @@ describe('WebhookItemsList.vue — H-05 Upload OneDrive flow (AC#1 / AC#2 / AC#3
       form.images[0].uploadedUrl = ''
       form.images[0].itemId = ''
 
-      // 2e submit : les deux uploads réussissent
-      mockUploadToBackend
-        .mockResolvedValueOnce({
-          webUrl: 'https://mock.local/img0-retry.jpg',
-          itemId: MOCK_GRAPH_ID_1,
-        })
-        .mockResolvedValueOnce({
-          // img1 déjà uploadé (itemId + uploadedUrl définis) → skip, pas re-uploadé
-          // En réalité la condition ligne 709 check (!imgObj.uploadedUrl || !imgObj.itemId)
-          // img1 a uploadedUrl + itemId → ne sera PAS re-uploadé
-          // Donc seulement 1 call pour img0
-          webUrl: 'https://mock.local/excel.xlsx',
-          itemId: '01EXCELIDGRAPHID000000000000001C',
-        })
+      // 2e submit : seul img0 est re-uploadé ; img1 a déjà uploadedUrl + itemId.
+      mockUploadToBackend.mockResolvedValueOnce({
+        webUrl: 'https://mock.local/img0-retry.jpg',
+        itemId: MOCK_GRAPH_ID_1,
+      })
 
       wrapper.vm.submitAllForms()
       await flushPromises()
@@ -475,22 +452,21 @@ describe('WebhookItemsList.vue — H-05 Upload OneDrive flow (AC#1 / AC#2 / AC#3
   })
 
   // =========================================================================
-  // AC#3 — Test 6 : Excel try/catch local + early exit (M2/M3)
-  // RED phase : sans try/catch local Excel, le catch global (ligne 859) attrape
-  // mais le message ne mentionne pas "Excel" ou le filename → assert message RED
+  // AC#3 — Test 6 : retrait de l'upload Excel client
   // =========================================================================
 
-  describe('AC#3 — Test 6 : Excel try/catch local + message contextualisé (M2/M3)', () => {
-    it('message erreur Excel contient "Echec" + filename xlsx + submitSavWebhook non appelé', async () => {
+  describe("AC#3 — Test 6 : aucun XLSX client n'est uploadé", () => {
+    it('soumet le webhook après upload photo sans générer ni uploader de fichier xlsx client', async () => {
       wrapper = createWrapper()
-      const mockFile = createMockImageFile('img-excel-test.jpg')
+      const mockFile = createMockImageFile('img-no-excel-test.jpg')
 
       // Image upload réussit
       mockUploadToBackend.mockResolvedValueOnce({
-        webUrl: 'https://mock.local/img-excel-test.jpg',
+        webUrl: 'https://mock.local/img-no-excel-test.jpg',
         itemId: MOCK_GRAPH_ID_1,
       })
-      // Excel upload échoue — GRAPH_ITEM_ID_INVALID
+      // Garde-fou : cet échec ne doit jamais être consommé, car l'upload Excel client
+      // n'existe plus dans le flow de soumission SAV.
       mockUploadToBackend.mockRejectedValueOnce(
         new Error(
           'GRAPH_ITEM_ID_INVALID: driveItem.id "excel.xlsx" ne matche pas le pattern Graph ID attendu'
@@ -505,25 +481,18 @@ describe('WebhookItemsList.vue — H-05 Upload OneDrive flow (AC#1 / AC#2 / AC#3
       vi.advanceTimersByTime(2000)
       await flushPromises()
 
-      // uploadStatus doit être 'error'
-      expect(wrapper.vm.uploadStatus).toBe('error')
+      expect(mockGenerateExcelFile).not.toHaveBeenCalled()
+      expect(mockUploadToBackend).toHaveBeenCalledTimes(1)
+      expect(mockUploadToBackend.mock.calls[0][0].name).toBe(mockFile.name)
+      expect(mockUploadToBackend.mock.calls[0][0].type).toBe(mockFile.type)
+      expect(mockUploadToBackend.mock.calls[0][2]).toMatchObject({ isBase64: false })
+      expect(mockSubmitSavWebhook).toHaveBeenCalledTimes(1)
+      expect(wrapper.vm.uploadStatus).toBe('success')
 
-      // AC#3 M2 : le message d'erreur Excel doit suivre le template local try/catch :
-      // "Echec de l'upload du fichier Excel (${excelFile.filename}) : ..."
-      // → contient à la fois "Echec" (ou "Échec") ET le filename .xlsx
-      // Sans try/catch local, le global catch (ligne 859) set uploadErrorMessage = error.message
-      // qui est "GRAPH_ITEM_ID_INVALID: driveItem.id..." — ne contient PAS "Echec" + filename
-      // combinés dans un message utilisateur formaté → RED sans le patch AC#3
-      const errMsg = wrapper.vm.uploadErrorMessage
-      const hasFormattedExcelMsg =
-        (errMsg.toLowerCase().includes('echec') || errMsg.toLowerCase().includes('échec')) &&
-        errMsg.includes('.xlsx')
-      // RED sans AC#3 : le global catch ne produit pas ce format
-      expect(hasFormattedExcelMsg).toBe(true)
-      expect(errMsg).toContain('Échec') // L-CR1 — verrouille la version accentuée (M-CR1 fix anti-régression)
-
-      // submitSavWebhook ne doit PAS avoir été appelé (early return AC#3)
-      expect(mockSubmitSavWebhook).not.toHaveBeenCalled()
+      const callPayload = mockSubmitSavWebhook.mock.calls[0][0]
+      expect(callPayload.files).toHaveLength(1)
+      expect(callPayload.files[0].originalFilename).toBe('img-no-excel-test.jpg')
+      expect(callPayload.files[0].originalFilename).not.toMatch(/\.xlsx$/)
     })
   })
 })
