@@ -27,12 +27,19 @@ function readPilotage(): string {
   return readFileSync(PILOTAGE_PATH, 'utf8')
 }
 
+function readSetLiteral(source: string, name: 'ALLOWED_OPS' | 'ADMIN_ONLY_OPS'): string {
+  const match = source.match(new RegExp(`const ${name} = new Set\\(\\[([\\s\\S]*?)\\]\\)`))
+  if (!match?.[1]) throw new Error(`${name} introuvable`)
+  return match[1]
+}
+
 describe('pilotage.ts — Story 7-3a extensions (AC #4)', () => {
   it('ALLOWED_OPS contient les 3 nouvelles ops admin-operators-*', () => {
     const src = readPilotage()
     expect(src).toMatch(/ALLOWED_OPS\s*=\s*new Set\(\[[\s\S]*?'admin-operators-list'/m)
     expect(src).toContain("'admin-operator-create'")
     expect(src).toContain("'admin-operator-update'")
+    expect(readSetLiteral(src, 'ALLOWED_OPS')).toContain("'admin-operator-password-update'")
   })
 
   it('Set ADMIN_ONLY_OPS déclaré et inclut Story 5.5 + Story 7-3a', () => {
@@ -45,6 +52,7 @@ describe('pilotage.ts — Story 7-3a extensions (AC #4)', () => {
     expect(src).toMatch(/ADMIN_ONLY_OPS[\s\S]*?'admin-operators-list'/m)
     expect(src).toMatch(/ADMIN_ONLY_OPS[\s\S]*?'admin-operator-create'/m)
     expect(src).toMatch(/ADMIN_ONLY_OPS[\s\S]*?'admin-operator-update'/m)
+    expect(readSetLiteral(src, 'ADMIN_ONLY_OPS')).toContain("'admin-operator-password-update'")
   })
 
   it('helper requireAdminRole déclaré dans pilotage.ts', () => {
@@ -65,6 +73,7 @@ describe('pilotage.ts — Story 7-3a extensions (AC #4)', () => {
     expect(src).toMatch(/adminOperatorsListHandler|operators-list-handler/)
     expect(src).toMatch(/adminOperatorCreateHandler|operator-create-handler/)
     expect(src).toMatch(/adminOperatorUpdateHandler|operator-update-handler/)
+    expect(src).toMatch(/adminOperatorPasswordUpdateHandler|operator-password-update-handler/)
   })
 
   it('vercel.json — 3 rewrites ajoutés et functions count reste = 12', () => {
@@ -78,5 +87,9 @@ describe('pilotage.ts — Story 7-3a extensions (AC #4)', () => {
     expect(sources).toContain('/api/admin/operators')
     // PATCH /:id rewrite
     expect(sources).toContain('/api/admin/operators/:id')
+    expect(cfg.rewrites).toContainEqual({
+      source: '/api/admin/operators/:id/password',
+      destination: '/api/pilotage?op=admin-operator-password-update&id=:id',
+    })
   })
 })

@@ -7,17 +7,28 @@ Un opérateur se connecte au back-office avec son email professionnel et un mot 
 
 ## TL;DR
 
-1. Insérer une ligne dans la table `operators` via SQL Studio Supabase.
-2. Générer le hash du mot de passe avec le script local dédié.
-3. Appliquer le `UPDATE` SQL généré pour renseigner `password_hash`.
-4. Communiquer l'URL `https://app.fruitstock.eu/admin/login` à l'opérateur.
-5. Il saisit son email + mot de passe → cookie session 30 jours sur `/admin`.
+1. Dans Admin → Opérateurs, créer l'opérateur.
+2. Sur sa ligne, choisir « Définir le mot de passe » et saisir deux fois le mot de passe.
+3. Communiquer l'URL `https://app.fruitstock.eu/admin/login` à l'opérateur.
+4. Il saisit son email + mot de passe → cookie session 30 jours sur `/admin`.
 
 ---
 
 ## Ajouter un opérateur
 
-**Pré-requis** : accès admin au SQL Studio Supabase.
+**Pré-requis** : session back-office avec le rôle `admin`.
+
+Ouvrir Admin → Opérateurs, remplir le formulaire « Nouvel opérateur », puis valider.
+Sur la ligne créée, cliquer sur « Définir le mot de passe ». Le mot de passe doit contenir
+entre 12 et 128 caractères, ne peut pas être uniquement composé d'espaces et doit être saisi
+deux fois. Un administrateur ne peut pas utiliser cette action sur son propre compte.
+
+Le mot de passe en clair et son hash ne sont jamais affichés ni inscrits dans l'audit.
+
+### Secours ops via SQL
+
+Si l'interface admin est indisponible, un opérateur disposant de l'accès au SQL Studio
+Supabase peut utiliser le parcours de secours suivant :
 
 ```sql
 INSERT INTO public.operators (email, display_name, role, is_active)
@@ -77,18 +88,22 @@ Note : le changement d'email n'invalide pas le cookie en lui-même, mais le proc
 
 ## Variables d'environnement
 
-| Var                          | Défaut | Effet                                                                |
-| ---------------------------- | ------ | -------------------------------------------------------------------- |
-| `OPERATOR_SESSION_TTL_DAYS`  | `30`   | Durée de la session opérateur (cookie `sav_session`). Bornes [1,30]. |
-| `OPERATOR_SESSION_TTL_HOURS` | —      | Compat legacy si `OPERATOR_SESSION_TTL_DAYS` absent. Bornes [1,720]. |
-| `MAGIC_LINK_SECRET`          | —      | Secret HS256 conservé pour les flows adhérents `/monespace`.         |
-| `SESSION_COOKIE_SECRET`      | —      | Secret HS256 pour signer le cookie `sav_session`.                    |
+| Var                          | Défaut | Effet                                                                        |
+| ---------------------------- | ------ | ---------------------------------------------------------------------------- |
+| `OPERATOR_SESSION_TTL_DAYS`  | `30`   | Durée de la session opérateur (cookie `sav_session`). Bornes [1,30].         |
+| `OPERATOR_SESSION_TTL_HOURS` | —      | Compat legacy si `OPERATOR_SESSION_TTL_DAYS` absent. Bornes [1,720].         |
+| `MAGIC_LINK_SECRET`          | —      | Secret HS256 conservé pour les flows adhérents `/monespace`.                 |
+| `SESSION_COOKIE_SECRET`      | —      | Secret HS256 pour signer le cookie `sav_session`.                            |
 | `SMTP_*`                     | —      | Envoi des emails transactionnels via Infomaniak (cf. `client/.env.example`). |
-| `APP_BASE_URL`               | —      | Origine canonique acceptée par le formulaire de login.               |
+| `APP_BASE_URL`               | —      | Origine canonique acceptée par le formulaire de login.                       |
 
 ## Page UI dédiée (Admin → Opérateurs)
 
-Reportée à un futur Epic. En attendant l'accès SQL Studio Supabase est suffisant pour le volume actuel d'opérateurs Fruitstock (< 10 personnes).
+Cette page permet aux administrateurs de créer, désactiver ou réactiver les opérateurs et
+de définir le mot de passe des autres comptes. Le remplacement d'un mot de passe ne révoque
+pas les sessions déjà ouvertes. Si deux administrateurs soumettent simultanément un nouveau
+mot de passe pour le même compte, la dernière écriture réussie prévaut tandis que
+`password_set_at` conserve la date de la première définition.
 
 ## Audit
 

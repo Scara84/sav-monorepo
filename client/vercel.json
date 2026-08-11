@@ -179,6 +179,10 @@
       "destination": "/api/pilotage?op=admin-settings-list"
     },
     {
+      "source": "/api/admin/operators/:id/password",
+      "destination": "/api/pilotage?op=admin-operator-password-update&id=:id"
+    },
+    {
       "source": "/api/admin/operators/:id",
       "destination": "/api/pilotage?op=admin-operator-update&id=:id"
     },

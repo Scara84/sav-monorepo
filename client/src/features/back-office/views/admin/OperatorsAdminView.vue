@@ -1,6 +1,7 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useAdminCrud } from '../../composables/useAdminCrud'
+import { useCurrentUser } from '../../../../shared/composables/useCurrentUser'
 
 /**
  * Story 7-3a AC #1/2/3/5 — Écran admin opérateurs.
@@ -36,6 +37,7 @@ interface OperatorUpdate {
 }
 
 const crud = useAdminCrud<Operator, OperatorCreate, OperatorUpdate>('operators')
+const { user: currentUser } = useCurrentUser()
 
 const form = ref<OperatorCreate>({
   email: '',
@@ -48,6 +50,17 @@ const search = ref('')
 const roleFilter = ref<'' | 'admin' | 'sav-operator'>('')
 const toast = ref<{ kind: 'success' | 'error'; message: string } | null>(null)
 const pendingDeactivateId = ref<number | null>(null)
+const passwordTarget = ref<Operator | null>(null)
+const password = ref('')
+const passwordConfirmation = ref('')
+const passwordError = ref<string | null>(null)
+const passwordSubmitting = ref(false)
+const passwordDialogRef = ref<HTMLElement | null>(null)
+const passwordInputRef = ref<HTMLInputElement | null>(null)
+let passwordTrigger: HTMLElement | null = null
+let passwordAbortController: AbortController | null = null
+let passwordTimeout: number | null = null
+const PASSWORD_REQUEST_TIMEOUT_MS = 15_000
 
 function showToast(kind: 'success' | 'error', message: string): void {
   toast.value = { kind, message }
@@ -131,6 +144,119 @@ async function reactivate(id: number): Promise<void> {
   }
 }
 
+function clearPasswordForm(): void {
+  password.value = ''
+  passwordConfirmation.value = ''
+  passwordError.value = null
+}
+
+async function openPasswordDialog(operator: Operator, event: MouseEvent): Promise<void> {
+  clearPasswordForm()
+  passwordTrigger = event.currentTarget instanceof HTMLElement ? event.currentTarget : null
+  passwordTarget.value = operator
+  await nextTick()
+  passwordInputRef.value?.focus()
+}
+
+function clearPasswordTimeout(): void {
+  if (passwordTimeout !== null) window.clearTimeout(passwordTimeout)
+  passwordTimeout = null
+}
+
+function restorePasswordTriggerFocus(): void {
+  const trigger = passwordTrigger
+  passwordTrigger = null
+  void nextTick(() => trigger?.focus())
+}
+
+function closePasswordDialog(): void {
+  passwordAbortController?.abort()
+  passwordAbortController = null
+  clearPasswordTimeout()
+  passwordSubmitting.value = false
+  passwordTarget.value = null
+  clearPasswordForm()
+  restorePasswordTriggerFocus()
+}
+
+function onPasswordDialogKeydown(event: KeyboardEvent): void {
+  if (event.key === 'Escape') {
+    event.preventDefault()
+    closePasswordDialog()
+    return
+  }
+  if (event.key !== 'Tab') return
+  const dialog = passwordDialogRef.value
+  if (!dialog) return
+  const focusable = Array.from(
+    dialog.querySelectorAll<HTMLElement>('input:not(:disabled), button:not(:disabled)')
+  )
+  if (focusable.length === 0) return
+  const first = focusable[0]!
+  const last = focusable[focusable.length - 1]!
+  if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault()
+    last.focus()
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault()
+    first.focus()
+  }
+}
+
+async function submitPassword(): Promise<void> {
+  const target = passwordTarget.value
+  if (target === null || passwordSubmitting.value) return
+  passwordError.value = null
+  if (password.value.length < 12 || password.value.length > 128 || password.value.trim() === '') {
+    passwordError.value = 'Le mot de passe doit contenir entre 12 et 128 caractères.'
+    return
+  }
+  if (password.value !== passwordConfirmation.value) {
+    passwordError.value = 'Les mots de passe ne correspondent pas.'
+    return
+  }
+
+  const controller = new AbortController()
+  let timedOut = false
+  passwordAbortController = controller
+  passwordSubmitting.value = true
+  const timeoutId = window.setTimeout(() => {
+    timedOut = true
+    controller.abort()
+  }, PASSWORD_REQUEST_TIMEOUT_MS)
+  passwordTimeout = timeoutId
+  try {
+    const response = await fetch(`/api/admin/operators/${target.id}/password`, {
+      method: 'PUT',
+      credentials: 'include',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ password: password.value }),
+      signal: controller.signal,
+    })
+    if (!response.ok) throw new Error('password_update_failed')
+    if (passwordAbortController !== controller) return
+    passwordTarget.value = null
+    clearPasswordForm()
+    restorePasswordTriggerFocus()
+    showToast('success', 'Mot de passe mis à jour.')
+  } catch {
+    if (passwordAbortController === controller && passwordTarget.value === target) {
+      clearPasswordForm()
+      passwordError.value = timedOut
+        ? 'La requête a expiré. Le résultat est incertain : vérifiez avant de réessayer.'
+        : 'La mise à jour du mot de passe a échoué.'
+      await nextTick()
+      passwordInputRef.value?.focus()
+    }
+  } finally {
+    if (passwordAbortController === controller) {
+      passwordAbortController = null
+      if (passwordTimeout === timeoutId) clearPasswordTimeout()
+      passwordSubmitting.value = false
+    }
+  }
+}
+
 function shortOid(oid: string | null): string {
   if (oid === null || oid.length === 0) return '—'
   return oid.slice(0, 8)
@@ -156,6 +282,12 @@ function formatDate(iso: string | null | undefined): string {
 
 onMounted(() => {
   void refresh()
+})
+
+onBeforeUnmount(() => {
+  passwordAbortController?.abort()
+  clearPasswordTimeout()
+  clearPasswordForm()
 })
 </script>
 
@@ -272,6 +404,17 @@ onMounted(() => {
             <td class="muted">{{ shortOid(op.azure_oid) }}</td>
             <td>{{ formatDate(op.created_at) }}</td>
             <td class="actions-cell">
+              <button
+                v-if="currentUser && op.id !== currentUser.sub"
+                type="button"
+                :data-test="`operator-password-${op.id}`"
+                :aria-label="`Définir le mot de passe de ${op.email}`"
+                class="btn small"
+                :disabled="passwordSubmitting"
+                @click="openPasswordDialog(op, $event)"
+              >
+                Définir le mot de passe
+              </button>
               <!-- Hardening W-7-3a-5 (CR E7) : disabled si une requête CRUD
                    est en cours, évite double-click → 2 PATCH simultanés. -->
               <button
@@ -330,6 +473,78 @@ onMounted(() => {
           </button>
         </div>
       </div>
+    </div>
+
+    <div
+      v-if="passwordTarget !== null"
+      class="dialog-overlay"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="password-dialog-title"
+      aria-describedby="password-dialog-target"
+    >
+      <form
+        ref="passwordDialogRef"
+        class="dialog password-dialog"
+        novalidate
+        @submit.prevent="submitPassword"
+        @keydown="onPasswordDialogKeydown"
+      >
+        <h3 id="password-dialog-title">Définir le mot de passe</h3>
+        <p id="password-dialog-target">Compte : {{ passwordTarget.email }}</p>
+        <div class="field">
+          <label for="operator-password">Nouveau mot de passe</label>
+          <input
+            id="operator-password"
+            ref="passwordInputRef"
+            v-model="password"
+            data-test="operator-password-input"
+            type="password"
+            minlength="12"
+            maxlength="128"
+            autocomplete="new-password"
+            required
+            :aria-describedby="passwordError ? 'operator-password-error' : undefined"
+            @input="passwordError = null"
+          />
+        </div>
+        <div class="field">
+          <label for="operator-password-confirmation">Confirmer le mot de passe</label>
+          <input
+            id="operator-password-confirmation"
+            v-model="passwordConfirmation"
+            data-test="operator-password-confirmation"
+            type="password"
+            minlength="12"
+            maxlength="128"
+            autocomplete="new-password"
+            required
+            :aria-describedby="passwordError ? 'operator-password-error' : undefined"
+            @input="passwordError = null"
+          />
+        </div>
+        <p v-if="passwordError" id="operator-password-error" class="form-error" role="alert">
+          {{ passwordError }}
+        </p>
+        <div class="dialog-actions">
+          <button
+            type="button"
+            data-test="operator-password-cancel"
+            class="btn"
+            @click="closePasswordDialog"
+          >
+            Annuler
+          </button>
+          <button
+            type="submit"
+            data-test="operator-password-submit"
+            class="btn primary"
+            :disabled="passwordSubmitting"
+          >
+            {{ passwordSubmitting ? 'Mise à jour…' : 'Définir' }}
+          </button>
+        </div>
+      </form>
     </div>
 
     <transition name="toast">
@@ -449,6 +664,9 @@ onMounted(() => {
 .actions-cell {
   white-space: nowrap;
 }
+.actions-cell .btn + .btn {
+  margin-left: 0.4rem;
+}
 .badge {
   display: inline-block;
   padding: 0.15rem 0.5rem;
@@ -505,6 +723,16 @@ onMounted(() => {
   justify-content: flex-end;
   gap: 0.75rem;
   margin-top: 1rem;
+}
+.password-dialog {
+  width: min(480px, calc(100vw - 2rem));
+}
+.password-dialog .field + .field {
+  margin-top: 0.75rem;
+}
+.form-error {
+  color: #c62828;
+  margin: 0.75rem 0 0;
 }
 .toast {
   position: fixed;
