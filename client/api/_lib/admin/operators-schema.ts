@@ -61,6 +61,17 @@ export const operatorUpdateSchema = z
   )
 export type OperatorUpdateBody = z.infer<typeof operatorUpdateSchema>
 
+export const operatorPasswordUpdateSchema = z
+  .object({
+    password: z
+      .string()
+      .min(12)
+      .max(128)
+      .refine((password) => password.trim().length > 0, 'Le mot de passe est requis'),
+  })
+  .strict()
+export type OperatorPasswordUpdateBody = z.infer<typeof operatorPasswordUpdateSchema>
+
 export interface OperatorRow {
   id: number
   email: string

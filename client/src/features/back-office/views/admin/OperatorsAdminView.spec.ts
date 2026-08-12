@@ -1,6 +1,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createRouter, createMemoryHistory } from 'vue-router'
+import { invalidateCurrentUser } from '../../../../shared/composables/useCurrentUser'
 
 /**
  * Story 7-3a AC #5 — RED-PHASE tests pour `OperatorsAdminView.vue`.
@@ -46,8 +47,11 @@ function buildRouter() {
 describe('OperatorsAdminView (UI smoke)', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
+    vi.useRealTimers()
+    invalidateCurrentUser()
   })
   afterEach(() => {
+    vi.useRealTimers()
     globalThis.fetch = originalFetch
   })
 
@@ -288,5 +292,276 @@ describe('OperatorsAdminView (UI smoke)', () => {
     await flushPromises()
 
     expect(patchBody).toMatchObject({ is_active: false })
+  })
+
+  it('masque self et fournit focus initial, trap Tab, Échap, restauration et libellé cible', async () => {
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes('/api/auth/me')) {
+        return jsonResponse(200, { user: { sub: 9, type: 'operator', role: 'admin' } })
+      }
+      return jsonResponse(200, {
+        data: {
+          items: [
+            {
+              id: 9,
+              email: 'self@x',
+              display_name: 'Self',
+              role: 'admin',
+              is_active: true,
+              azure_oid: null,
+              created_at: '2026-04-20T10:00:00Z',
+            },
+            {
+              id: 12,
+              email: 'other@x',
+              display_name: 'Other',
+              role: 'sav-operator',
+              is_active: true,
+              azure_oid: null,
+              created_at: '2026-04-20T10:00:00Z',
+            },
+          ],
+          total: 2,
+          hasMore: false,
+        },
+      })
+    }) as unknown as typeof fetch
+
+    const router = buildRouter()
+    await router.push('/admin/operators')
+    const wrapper = mount(OperatorsAdminView, {
+      attachTo: document.body,
+      global: { plugins: [router] },
+    })
+    await flushPromises()
+
+    expect(wrapper.find('[data-test="operator-password-9"]').exists()).toBe(false)
+    const trigger = wrapper.get('[data-test="operator-password-12"]')
+    expect(trigger.attributes('aria-label')).toContain('other@x')
+    await trigger.trigger('click')
+    await flushPromises()
+
+    const dialog = wrapper.get('[role="dialog"]')
+    const passwordInput = wrapper.get<HTMLInputElement>('[data-test="operator-password-input"]')
+    const submit = wrapper.get<HTMLButtonElement>('[data-test="operator-password-submit"]')
+    expect(dialog.attributes('aria-describedby')).toBe('password-dialog-target')
+    expect(wrapper.get('#password-dialog-target').text()).toContain('other@x')
+    expect(document.activeElement).toBe(passwordInput.element)
+
+    submit.element.focus()
+    await submit.trigger('keydown', { key: 'Tab' })
+    expect(document.activeElement).toBe(passwordInput.element)
+    passwordInput.element.focus()
+    await passwordInput.trigger('keydown', { key: 'Tab', shiftKey: true })
+    expect(document.activeElement).toBe(submit.element)
+
+    await passwordInput.trigger('keydown', { key: 'Escape' })
+    await flushPromises()
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+    expect(document.activeElement).toBe(trigger.element)
+    wrapper.unmount()
+  })
+
+  it('rejette blanc et confirmation différente sans appel réseau PUT', async () => {
+    let putCalls = 0
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes('/api/auth/me')) {
+        return jsonResponse(200, { user: { sub: 9, type: 'operator', role: 'admin' } })
+      }
+      if (init?.method === 'PUT') putCalls += 1
+      return jsonResponse(200, {
+        data: {
+          items: [
+            {
+              id: 12,
+              email: 'other@x',
+              display_name: 'Other',
+              role: 'sav-operator',
+              is_active: true,
+              azure_oid: null,
+              created_at: '2026-04-20T10:00:00Z',
+            },
+          ],
+          total: 1,
+          hasMore: false,
+        },
+      })
+    }) as unknown as typeof fetch
+    const router = buildRouter()
+    await router.push('/admin/operators')
+    const wrapper = mount(OperatorsAdminView, { global: { plugins: [router] } })
+    await flushPromises()
+    await wrapper.get('[data-test="operator-password-12"]').trigger('click')
+
+    const form = wrapper.get<HTMLFormElement>('form.password-dialog')
+    expect(form.attributes('novalidate')).toBeDefined()
+    form.element.requestSubmit()
+    await flushPromises()
+    expect(putCalls).toBe(0)
+    expect(wrapper.get('[role="alert"]').text()).toContain('12 et 128')
+
+    await wrapper.get('[data-test="operator-password-input"]').setValue('            ')
+    await wrapper.get('[data-test="operator-password-confirmation"]').setValue('            ')
+    form.element.requestSubmit()
+    await flushPromises()
+    expect(putCalls).toBe(0)
+
+    await wrapper.get('[data-test="operator-password-input"]').setValue('long-password')
+    await wrapper.get('[data-test="operator-password-confirmation"]').setValue('different-one')
+    form.element.requestSubmit()
+    await flushPromises()
+    expect(putCalls).toBe(0)
+    expect(wrapper.get('[role="alert"]').text()).toContain('ne correspondent pas')
+  })
+
+  it('empêche double PUT puis nettoie les secrets après succès', async () => {
+    let putCalls = 0
+    let resolvePut: ((response: Response) => void) | null = null
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes('/api/auth/me')) {
+        return jsonResponse(200, { user: { sub: 9, type: 'operator', role: 'admin' } })
+      }
+      if (init?.method === 'PUT') {
+        putCalls += 1
+        return new Promise<Response>((resolve) => {
+          resolvePut = resolve
+        })
+      }
+      return jsonResponse(200, {
+        data: {
+          items: [
+            {
+              id: 12,
+              email: 'other@x',
+              display_name: 'Other',
+              role: 'sav-operator',
+              is_active: true,
+              azure_oid: null,
+              created_at: '2026-04-20T10:00:00Z',
+            },
+          ],
+          total: 1,
+          hasMore: false,
+        },
+      })
+    }) as unknown as typeof fetch
+    const router = buildRouter()
+    await router.push('/admin/operators')
+    const wrapper = mount(OperatorsAdminView, { global: { plugins: [router] } })
+    await flushPromises()
+    await wrapper.get('[data-test="operator-password-12"]').trigger('click')
+    await wrapper.get('[data-test="operator-password-input"]').setValue('long-password')
+    await wrapper.get('[data-test="operator-password-confirmation"]').setValue('long-password')
+    const submit = wrapper.get('[data-test="operator-password-submit"]')
+    await submit.trigger('submit')
+    await submit.trigger('submit')
+    await flushPromises()
+    expect(putCalls).toBe(1)
+    expect(submit.attributes('disabled')).toBeDefined()
+    ;(resolvePut as unknown as (response: Response) => void)(
+      jsonResponse(200, { data: { passwordUpdatedAt: '2026-08-10T12:00:00Z' } })
+    )
+    await flushPromises()
+    expect(wrapper.find('[data-test="operator-password-input"]').exists()).toBe(false)
+    expect(wrapper.text()).toContain('Mot de passe mis à jour.')
+  })
+
+  it('annulation interrompt la requête et nettoie immédiatement les secrets', async () => {
+    let aborted = false
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes('/api/auth/me')) {
+        return jsonResponse(200, { user: { sub: 9, type: 'operator', role: 'admin' } })
+      }
+      if (init?.method === 'PUT') {
+        return new Promise<Response>((_resolve, reject) => {
+          init.signal?.addEventListener('abort', () => {
+            aborted = true
+            reject(new DOMException('Aborted', 'AbortError'))
+          })
+        })
+      }
+      return jsonResponse(200, {
+        data: {
+          items: [
+            {
+              id: 12,
+              email: 'other@x',
+              display_name: 'Other',
+              role: 'sav-operator',
+              is_active: true,
+              azure_oid: null,
+              created_at: '2026-04-20T10:00:00Z',
+            },
+          ],
+          total: 1,
+          hasMore: false,
+        },
+      })
+    }) as unknown as typeof fetch
+    const router = buildRouter()
+    await router.push('/admin/operators')
+    const wrapper = mount(OperatorsAdminView, { global: { plugins: [router] } })
+    await flushPromises()
+    await wrapper.get('[data-test="operator-password-12"]').trigger('click')
+    await wrapper.get('[data-test="operator-password-input"]').setValue('long-password')
+    await wrapper.get('[data-test="operator-password-confirmation"]').setValue('long-password')
+    await wrapper.get('[data-test="operator-password-submit"]').trigger('submit')
+    await wrapper.get('[data-test="operator-password-cancel"]').trigger('click')
+    await flushPromises()
+    expect(aborted).toBe(true)
+    expect(wrapper.find('[role="dialog"]').exists()).toBe(false)
+    await wrapper.get('[data-test="operator-password-12"]').trigger('click')
+    expect(
+      wrapper.get<HTMLInputElement>('[data-test="operator-password-input"]').element.value
+    ).toBe('')
+  })
+
+  it('timeout interrompt la requête, vide les secrets et affiche une erreur neutre', async () => {
+    vi.useFakeTimers()
+    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes('/api/auth/me')) {
+        return jsonResponse(200, { user: { sub: 9, type: 'operator', role: 'admin' } })
+      }
+      if (init?.method === 'PUT') {
+        return new Promise<Response>((_resolve, reject) => {
+          init.signal?.addEventListener('abort', () =>
+            reject(new DOMException('Aborted', 'AbortError'))
+          )
+        })
+      }
+      return jsonResponse(200, {
+        data: {
+          items: [
+            {
+              id: 12,
+              email: 'other@x',
+              display_name: 'Other',
+              role: 'sav-operator',
+              is_active: true,
+              azure_oid: null,
+              created_at: '2026-04-20T10:00:00Z',
+            },
+          ],
+          total: 1,
+          hasMore: false,
+        },
+      })
+    }) as unknown as typeof fetch
+    const router = buildRouter()
+    await router.push('/admin/operators')
+    const wrapper = mount(OperatorsAdminView, { global: { plugins: [router] } })
+    await flushPromises()
+    await wrapper.get('[data-test="operator-password-12"]').trigger('click')
+    await wrapper.get('[data-test="operator-password-input"]').setValue('long-password')
+    await wrapper.get('[data-test="operator-password-confirmation"]').setValue('long-password')
+    await wrapper.get('[data-test="operator-password-submit"]').trigger('submit')
+    await vi.advanceTimersByTimeAsync(15_000)
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toContain('expiré')
+    expect(wrapper.get('[role="alert"]').text()).toContain('résultat est incertain')
+    expect(wrapper.get('[role="alert"]').text()).toContain('vérifiez avant de réessayer')
+    expect(
+      wrapper.get<HTMLInputElement>('[data-test="operator-password-input"]').element.value
+    ).toBe('')
   })
 })

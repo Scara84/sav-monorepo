@@ -15,6 +15,7 @@ import { adminSettingsThresholdHistoryHandler } from './_lib/admin/settings-thre
 import { adminOperatorsListHandler } from './_lib/admin/operators-list-handler'
 import { adminOperatorCreateHandler } from './_lib/admin/operator-create-handler'
 import { adminOperatorUpdateHandler } from './_lib/admin/operator-update-handler'
+import { adminOperatorPasswordUpdateHandler } from './_lib/admin/operator-password-update-handler'
 import { adminProductsListHandler } from './_lib/admin/products-list-handler'
 import { adminProductCreateHandler } from './_lib/admin/product-create-handler'
 import { adminProductUpdateHandler } from './_lib/admin/product-update-handler'
@@ -75,6 +76,7 @@ const ALLOWED_OPS = new Set([
   'admin-operators-list',
   'admin-operator-create',
   'admin-operator-update',
+  'admin-operator-password-update',
   // Story 7-3b — admin products CRUD
   'admin-products-list',
   'admin-product-create',
@@ -118,6 +120,7 @@ const ADMIN_ONLY_OPS = new Set([
   'admin-operators-list',
   'admin-operator-create',
   'admin-operator-update',
+  'admin-operator-password-update',
   // Story 7-3b
   'admin-products-list',
   'admin-product-create',
@@ -367,6 +370,15 @@ const dispatch: ApiHandler = async (req, res) => {
       return
     }
     return adminOperatorUpdateHandler(req, res)
+  }
+
+  if (op === 'admin-operator-password-update') {
+    if (method !== 'PUT') {
+      res.setHeader('Allow', 'PUT')
+      sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
+      return
+    }
+    return adminOperatorPasswordUpdateHandler(req, res)
   }
 
   // Story 7-3b — admin products CRUD (list / create / update / soft-delete).
