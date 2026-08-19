@@ -109,9 +109,18 @@ async function getShareLinkForFolderPath(path, deps = {}) {
     folder = await client.api(`${GRAPH_BASE}/${driveId}/root:/${encodeURIComponent(path)}`).get()
   } catch (error) {
     if (error.statusCode === 404) {
-      throw new Error(`Dossier non trouvé au chemin : ${path}`)
+      await ensureFolderExists(path, { graphClient: client, driveId })
+      try {
+        folder = await client.api(`${GRAPH_BASE}/${driveId}/root:/${encodeURIComponent(path)}`).get()
+      } catch (retryError) {
+        if (retryError.statusCode === 404) {
+          throw new Error(`Dossier non trouvé au chemin : ${path}`)
+        }
+        throw retryError
+      }
+    } else {
+      throw error
     }
-    throw error
   }
 
   if (!folder || !folder.id) {
