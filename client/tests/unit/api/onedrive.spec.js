@@ -163,13 +163,62 @@ describe('getShareLinkForFolderPath', () => {
     expect(result.link.webUrl).toBe('https://share/x')
   })
 
-  it('rejette avec message clair si dossier introuvable (404)', async () => {
+  it('crée le dossier au 404 puis réessaie (auto-réparation)', async () => {
+    let folderGetCount = 0
     const client = {
-      api: () => ({ get: () => Promise.reject({ statusCode: 404 }) }),
+      api: vi.fn((url) => {
+        if (url.includes(':/SAV_Images%2FSAV_TEST')) {
+          folderGetCount++
+          if (folderGetCount === 1) return { get: () => Promise.reject({ statusCode: 404 }) }
+          return { get: () => Promise.resolve({ id: 'FOLDER-1' }) }
+        }
+        if (url.includes('/items/root/children') || url.includes('/children')) {
+          return { post: () => Promise.resolve({ id: 'FOLDER-NEW' }) }
+        }
+        if (url.includes(':/SAV_Images') && !url.includes('%2F')) {
+          return { get: () => Promise.resolve({ id: 'id-SAV_Images' }) }
+        }
+        if (url.includes(':/SAV_TEST') && !url.includes('%2F')) {
+          return { get: () => Promise.resolve({ id: 'id-SAV_TEST' }) }
+        }
+        if (url.includes('/items/FOLDER-1/createLink')) {
+          return { post: () => Promise.resolve({ link: { webUrl: 'https://share/x' } }) }
+        }
+        return {
+          get: () => Promise.reject({ statusCode: 500 }),
+          post: () => Promise.reject({ statusCode: 500 }),
+        }
+      }),
     }
-    await expect(getShareLinkForFolderPath('SAV_Images/INEXISTANT', deps(client))).rejects.toThrow(
-      /Dossier non trouvé/
-    )
+    const result = await getShareLinkForFolderPath('SAV_Images/SAV_TEST', deps(client))
+    expect(result.link.webUrl).toBe('https://share/x')
+    expect(folderGetCount).toBe(2)
+  })
+
+  it('rejette si le 404 persiste après création', async () => {
+    const client = {
+      api: vi.fn((url) => {
+        if (url.includes(':/SAV_Images%2FINEXISTANT')) {
+          return { get: () => Promise.reject({ statusCode: 404 }) }
+        }
+        if (url.includes(':/SAV_Images') && !url.includes('%2F')) {
+          return { get: () => Promise.resolve({ id: 'id-SAV_Images' }) }
+        }
+        if (url.includes(':/INEXISTANT') && !url.includes('%2F')) {
+          return { get: () => Promise.reject({ statusCode: 404 }) }
+        }
+        if (url.includes('/children')) {
+          return { post: () => Promise.resolve({ id: 'FOLDER-NEW' }) }
+        }
+        return {
+          get: () => Promise.reject({ statusCode: 500 }),
+          post: () => Promise.reject({ statusCode: 500 }),
+        }
+      }),
+    }
+    await expect(
+      getShareLinkForFolderPath('SAV_Images/INEXISTANT', deps(client))
+    ).rejects.toThrow(/Dossier non trouvé/)
   })
 
   it('rejette si path vide', async () => {
