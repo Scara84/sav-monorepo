@@ -20,6 +20,10 @@ export const createUploadSession: (args: {
   }
 ).createUploadSession
 
+export const resolveSharedFolderId: (shareUrl: string) => Promise<string> = (
+  legacy as { resolveSharedFolderId: (shareUrl: string) => Promise<string> }
+).resolveSharedFolderId
+
 // ==============================================================
 // Story 4.5 — upload PDF bon SAV (buffer direct, < 4 MB)
 // ==============================================================

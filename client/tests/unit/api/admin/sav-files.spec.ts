@@ -6,7 +6,7 @@ import { mockReq, mockRes } from '../_lib/test-helpers'
 /**
  * Story 3.7b — AC #12 — upload opérateur back-office
  *
- * TU-01: 200 session OK — Graph createUploadSession appelé avec path operator-adds/
+ * TU-01: 200 session OK — Graph createUploadSession cible le dossier de dossierSavUrl
  * TU-02: 422 SAV_LOCKED si status='cancelled' (session)
  * TU-02b: 422 SAV_LOCKED si status='closed' (complete — race condition)
  * TU-03: 404 SAV inexistant (session)
@@ -18,19 +18,26 @@ import { mockReq, mockRes } from '../_lib/test-helpers'
  */
 
 const SECRET = 'test-secret-at-least-32-bytes-longxxx'
+const DOSSIER_SAV_URL = 'https://fruitstock.sharepoint.com/:f:/g/photos-sav'
 
 // ---------------------------------------------------------------------------
 // Hoisted state — shared across mock factories
 // ---------------------------------------------------------------------------
 const state = vi.hoisted(() => ({
   // SAV lookup
-  savRow: null as null | { id: number; reference: string; status: string; member_id: number },
+  savRow: null as null | {
+    id: number
+    reference: string
+    status: string
+    member_id: number
+    metadata: Record<string, unknown> | null
+  },
   savLookupError: null as null | { message: string },
 
   // Graph mocks
-  ensureCalls: [] as string[],
+  resolveCalls: [] as string[],
   createSessionArgs: null as { parentFolderId: string; filename: string } | null,
-  ensureError: null as Error | null,
+  resolveError: null as Error | null,
   sessionError: null as Error | null,
 
   // sav_upload_sessions binding store (in-memory for tests)
@@ -51,10 +58,10 @@ const state = vi.hoisted(() => ({
 // Mocks
 // ---------------------------------------------------------------------------
 vi.mock('../../../../api/_lib/onedrive-ts', () => ({
-  ensureFolderExists: (path: string) => {
-    state.ensureCalls.push(path)
-    if (state.ensureError) throw state.ensureError
-    return Promise.resolve('folder-id-mock')
+  resolveSharedFolderId: (shareUrl: string) => {
+    state.resolveCalls.push(shareUrl)
+    if (state.resolveError) throw state.resolveError
+    return Promise.resolve('shared-folder-id-mock')
   },
   createUploadSession: (args: { parentFolderId: string; filename: string }) => {
     state.createSessionArgs = args
@@ -67,10 +74,10 @@ vi.mock('../../../../api/_lib/onedrive-ts', () => ({
 }))
 
 vi.mock('../../../../api/_lib/onedrive.js', () => ({
-  ensureFolderExists: (path: string) => {
-    state.ensureCalls.push(path)
-    if (state.ensureError) throw state.ensureError
-    return Promise.resolve('folder-id-mock')
+  resolveSharedFolderId: (shareUrl: string) => {
+    state.resolveCalls.push(shareUrl)
+    if (state.resolveError) throw state.resolveError
+    return Promise.resolve('shared-folder-id-mock')
   },
   createUploadSession: (args: { parentFolderId: string; filename: string }) => {
     state.createSessionArgs = args
@@ -259,9 +266,9 @@ beforeEach(() => {
 
   state.savRow = null
   state.savLookupError = null
-  state.ensureCalls = []
+  state.resolveCalls = []
   state.createSessionArgs = null
-  state.ensureError = null
+  state.resolveError = null
   state.sessionError = null
   state.sessionBindings.clear()
   state.bindingInserted = null
@@ -279,8 +286,14 @@ afterEach(() => {
 // Tests — upload-session
 // ---------------------------------------------------------------------------
 describe('POST /api/admin/sav-files/upload-session (Story 3.7b AC#12)', () => {
-  it('TU-01: 200 session OK — Graph createUploadSession appelé avec path operator-adds/', async () => {
-    state.savRow = { id: 1, reference: 'SAV-2026-00001', status: 'in_progress', member_id: 7 }
+  it('TU-01: 200 session OK — Graph createUploadSession cible le dossier de dossierSavUrl', async () => {
+    state.savRow = {
+      id: 1,
+      reference: 'SAV-2026-00001',
+      status: 'in_progress',
+      member_id: 7,
+      metadata: { dossierSavUrl: DOSSIER_SAV_URL },
+    }
     const { adminUploadSessionHandler } = await importHandlers()
     const res = mockRes()
     await adminUploadSessionHandler(
@@ -302,15 +315,25 @@ describe('POST /api/admin/sav-files/upload-session (Story 3.7b AC#12)', () => {
     }
     expect(body.data.uploadUrl).toBe('https://graph.microsoft.com/upload-url-mock')
     expect(body.data.uploadSessionId).toBeTruthy()
-    // Path must contain operator-adds/
-    expect(state.ensureCalls[0]).toMatch(/operator-adds/)
+    expect(state.resolveCalls).toEqual([DOSSIER_SAV_URL])
+    expect(state.createSessionArgs).toEqual({
+      parentFolderId: 'shared-folder-id-mock',
+      filename: 'photo.jpg',
+    })
+    expect(body.data.storagePath).not.toContain('operator-adds')
     // Binding must be persisted
     expect(state.bindingInserted).toBeTruthy()
     expect((state.bindingInserted as Record<string, unknown>)['sav_id']).toBe(1)
   })
 
   it('TU-02: 422 SAV_LOCKED si status=cancelled (session)', async () => {
-    state.savRow = { id: 1, reference: 'SAV-2026-00001', status: 'cancelled', member_id: 7 }
+    state.savRow = {
+      id: 1,
+      reference: 'SAV-2026-00001',
+      status: 'cancelled',
+      member_id: 7,
+      metadata: { dossierSavUrl: DOSSIER_SAV_URL },
+    }
     const { adminUploadSessionHandler } = await importHandlers()
     const res = mockRes()
     await adminUploadSessionHandler(
@@ -340,6 +363,91 @@ describe('POST /api/admin/sav-files/upload-session (Story 3.7b AC#12)', () => {
       res
     )
     expect(res.statusCode).toBe(404)
+  })
+
+  it('refuse avant upload si dossierSavUrl est absent', async () => {
+    state.savRow = {
+      id: 1,
+      reference: 'SAV-2026-00001',
+      status: 'in_progress',
+      member_id: 7,
+      metadata: {},
+    }
+    const { adminUploadSessionHandler } = await importHandlers()
+    const res = mockRes()
+    await adminUploadSessionHandler(
+      mockReq({
+        method: 'POST',
+        headers: { cookie: opCookie() },
+        body: { savId: 1, filename: 'photo.jpg', mimeType: 'image/jpeg', size: 12345 },
+      }),
+      res
+    )
+
+    expect(res.statusCode).toBe(503)
+    expect((res.jsonBody as { error: { details: { code: string } } }).error.details.code).toBe(
+      'SAV_FOLDER_URL_MISSING'
+    )
+    expect(state.resolveCalls).toEqual([])
+    expect(state.createSessionArgs).toBeNull()
+    expect(state.bindingInserted).toBeNull()
+  })
+
+  it('refuse avant upload si dossierSavUrl est invalide', async () => {
+    state.savRow = {
+      id: 1,
+      reference: 'SAV-2026-00001',
+      status: 'in_progress',
+      member_id: 7,
+      metadata: { dossierSavUrl: 'javascript:alert(1)' },
+    }
+    state.resolveError = new Error('Lien dossier OneDrive invalide')
+    const { adminUploadSessionHandler } = await importHandlers()
+    const res = mockRes()
+    await adminUploadSessionHandler(
+      mockReq({
+        method: 'POST',
+        headers: { cookie: opCookie() },
+        body: { savId: 1, filename: 'photo.jpg', mimeType: 'image/jpeg', size: 12345 },
+      }),
+      res
+    )
+
+    expect(res.statusCode).toBe(503)
+    expect((res.jsonBody as { error: { details: { code: string } } }).error.details.code).toBe(
+      'SAV_FOLDER_UNAVAILABLE'
+    )
+    expect(state.resolveCalls).toEqual(['javascript:alert(1)'])
+    expect(state.createSessionArgs).toBeNull()
+    expect(state.bindingInserted).toBeNull()
+  })
+
+  it('refuse avant upload si le dossier partagé est inaccessible', async () => {
+    state.savRow = {
+      id: 1,
+      reference: 'SAV-2026-00001',
+      status: 'in_progress',
+      member_id: 7,
+      metadata: { dossierSavUrl: DOSSIER_SAV_URL },
+    }
+    state.resolveError = new Error('Dossier OneDrive introuvable ou inaccessible')
+    const { adminUploadSessionHandler } = await importHandlers()
+    const res = mockRes()
+    await adminUploadSessionHandler(
+      mockReq({
+        method: 'POST',
+        headers: { cookie: opCookie() },
+        body: { savId: 1, filename: 'photo.jpg', mimeType: 'image/jpeg', size: 12345 },
+      }),
+      res
+    )
+
+    expect(res.statusCode).toBe(503)
+    expect((res.jsonBody as { error: { details: { code: string } } }).error.details.code).toBe(
+      'SAV_FOLDER_UNAVAILABLE'
+    )
+    expect(state.createSessionArgs).toBeNull()
+    expect(state.bindingInserted).toBeNull()
   })
 
   it('TU-06: 429 rate limit (31e session/min)', async () => {
@@ -394,7 +502,13 @@ describe('POST /api/admin/sav-files/upload-complete (Story 3.7b AC#12)', () => {
   }
 
   it('TU-04: 201 complete OK — INSERT sav_files avec source=operator-add et uploaded_by_operator_id', async () => {
-    state.savRow = { id: 1, reference: 'SAV-2026-00001', status: 'in_progress', member_id: 7 }
+    state.savRow = {
+      id: 1,
+      reference: 'SAV-2026-00001',
+      status: 'in_progress',
+      member_id: 7,
+      metadata: { dossierSavUrl: DOSSIER_SAV_URL },
+    }
     // Pre-seed a valid binding for operator 42 → sav 1
     state.sessionBindings.set('sess-valid-1', {
       sav_id: 1,
@@ -426,7 +540,13 @@ describe('POST /api/admin/sav-files/upload-complete (Story 3.7b AC#12)', () => {
 
   it('TU-02b: 422 SAV_LOCKED si status=closed (race condition après upload-session)', async () => {
     // Binding valid, but SAV is now closed
-    state.savRow = { id: 1, reference: 'SAV-2026-00001', status: 'closed', member_id: 7 }
+    state.savRow = {
+      id: 1,
+      reference: 'SAV-2026-00001',
+      status: 'closed',
+      member_id: 7,
+      metadata: { dossierSavUrl: DOSSIER_SAV_URL },
+    }
     state.sessionBindings.set('sess-race-1', {
       sav_id: 1,
       operator_id: 42,
@@ -449,7 +569,13 @@ describe('POST /api/admin/sav-files/upload-complete (Story 3.7b AC#12)', () => {
   })
 
   it('TU-05: 400 webUrl hors whitelist — WEBURL_NOT_TRUSTED', async () => {
-    state.savRow = { id: 1, reference: 'SAV-2026-00001', status: 'in_progress', member_id: 7 }
+    state.savRow = {
+      id: 1,
+      reference: 'SAV-2026-00001',
+      status: 'in_progress',
+      member_id: 7,
+      metadata: { dossierSavUrl: DOSSIER_SAV_URL },
+    }
     state.sessionBindings.set('sess-whitelist-test', {
       sav_id: 1,
       operator_id: 42,
@@ -481,7 +607,13 @@ describe('POST /api/admin/sav-files/upload-complete (Story 3.7b AC#12)', () => {
       expires_at: new Date(Date.now() + 3_600_000),
     })
     // SAV-B = id 2 exists and is active
-    state.savRow = { id: 2, reference: 'SAV-2026-00002', status: 'in_progress', member_id: 7 }
+    state.savRow = {
+      id: 2,
+      reference: 'SAV-2026-00002',
+      status: 'in_progress',
+      member_id: 7,
+      metadata: { dossierSavUrl: DOSSIER_SAV_URL },
+    }
     const { adminUploadCompleteHandler } = await importHandlers()
     const res = mockRes()
     await adminUploadCompleteHandler(

@@ -2,6 +2,7 @@ import { describe, it, expect, vi } from 'vitest'
 import {
   ensureFolderExists,
   createUploadSession,
+  resolveSharedFolderId,
   createShareLink,
   getShareLinkForFolderPath,
 } from '../../../api/_lib/onedrive.js'
@@ -119,6 +120,95 @@ describe('createUploadSession', () => {
     await expect(
       createUploadSession({ parentFolderId: 'P', filename: 'f.jpg' }, deps(client))
     ).rejects.toThrow(/uploadUrl manquant/)
+  })
+})
+
+describe('resolveSharedFolderId', () => {
+  const shareUrl = 'https://fruitstock.sharepoint.com/:f:/g/photos-sav'
+
+  it('résout un lien de partage vers un dossier du drive configuré', async () => {
+    const expectedShareId = `u!${Buffer.from(shareUrl, 'utf8')
+      .toString('base64')
+      .replace(/=+$/g, '')
+      .replace(/\//g, '_')
+      .replace(/\+/g, '-')}`
+    const client = makeGraphClient(({ method, url }) => {
+      expect(method).toBe('GET')
+      expect(url).toBe(`https://graph.microsoft.com/v1.0/shares/${expectedShareId}/driveItem`)
+      return Promise.resolve({
+        id: 'FOLDER-SAV-1',
+        folder: { childCount: 0 },
+        parentReference: { driveId: 'DRIVE-1' },
+      })
+    })
+
+    await expect(resolveSharedFolderId(shareUrl, deps(client))).resolves.toBe('FOLDER-SAV-1')
+  })
+
+  it('rejette une réponse Graph qui ne représente pas un dossier', async () => {
+    const client = makeGraphClient(() =>
+      Promise.resolve({
+        id: 'FILE-1',
+        file: { mimeType: 'image/jpeg' },
+        parentReference: { driveId: 'DRIVE-1' },
+      })
+    )
+
+    await expect(resolveSharedFolderId(shareUrl, deps(client))).rejects.toThrow(
+      /ne pointe pas vers un dossier/
+    )
+  })
+
+  it('traduit un 404 Graph en dossier introuvable ou inaccessible', async () => {
+    const graphError = { statusCode: 404, requestId: 'graph-request-1' }
+    const client = makeGraphClient(() => Promise.reject(graphError))
+
+    await expect(resolveSharedFolderId(shareUrl, deps(client))).rejects.toMatchObject({
+      message: expect.stringMatching(/introuvable ou inaccessible/),
+      cause: graphError,
+    })
+  })
+
+  it('propage les autres erreurs Graph', async () => {
+    const graphError = { statusCode: 503, code: 'serviceNotAvailable' }
+    const client = makeGraphClient(() => Promise.reject(graphError))
+
+    await expect(resolveSharedFolderId(shareUrl, deps(client))).rejects.toBe(graphError)
+  })
+
+  it.each([
+    ['', /manquant/],
+    ['pas-une-url', /invalide/],
+    ['http://fruitstock.sharepoint.com/:f:/g/photos-sav', /non approuvé/],
+    ['https://evil.example/:f:/g/photos-sav', /non approuvé/],
+    ['https://user:secret@fruitstock.sharepoint.com/:f:/g/photos-sav', /non approuvé/],
+    ['https://fruitstock.sharepoint.com:444/:f:/g/photos-sav', /non approuvé/],
+    ['https://fruitstock.sharepoint.com/:f:/g/photos-sav#fragment', /non approuvé/],
+  ])('rejette le lien non approuvé %s avant tout appel Graph', async (invalidUrl, message) => {
+    const client = makeGraphClient(() => Promise.reject(new Error('Graph ne doit pas être appelé')))
+
+    await expect(resolveSharedFolderId(invalidUrl, deps(client))).rejects.toThrow(message)
+    expect(client.api).not.toHaveBeenCalled()
+  })
+
+  it("rejette un dossier qui n'appartient pas au drive configuré", async () => {
+    const client = makeGraphClient(() =>
+      Promise.resolve({
+        id: 'FOLDER-OTHER-DRIVE',
+        folder: { childCount: 0 },
+        parentReference: { driveId: 'DRIVE-2' },
+      })
+    )
+
+    await expect(resolveSharedFolderId(shareUrl, deps(client))).rejects.toThrow(
+      /drive non configuré/
+    )
+  })
+
+  it('propage un rejet Graph non objet sans masquer la cause', async () => {
+    const client = makeGraphClient(() => Promise.reject(null))
+
+    await expect(resolveSharedFolderId(shareUrl, deps(client))).rejects.toBeNull()
   })
 })
 
