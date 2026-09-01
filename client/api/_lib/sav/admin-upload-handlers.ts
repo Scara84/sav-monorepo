@@ -24,7 +24,7 @@ import { ensureRequestId } from '../request-id'
 import { sendError } from '../errors'
 import { logger } from '../logger'
 import { supabaseAdmin } from '../clients/supabase-admin'
-import { ensureFolderExists, createUploadSession } from '../onedrive-ts'
+import { createUploadSession, resolveSharedFolderId } from '../onedrive-ts'
 import { isOneDriveWebUrlTrusted } from '../../../src/shared/utils/onedrive-whitelist'
 import { verifyUploadSessionBinding } from './upload-session-store'
 import type { ApiHandler, ApiRequest, ApiResponse } from '../types'
@@ -99,12 +99,13 @@ interface SavRow {
   reference: string
   status: string
   member_id: number
+  metadata: Record<string, unknown> | null
 }
 
 async function lookupSav(savId: number): Promise<SavRow | null> {
   const { data, error } = await supabaseAdmin()
     .from('sav')
-    .select('id, reference, status, member_id')
+    .select('id, reference, status, member_id, metadata')
     .eq('id', savId)
     .maybeSingle<SavRow>()
 
@@ -154,11 +155,34 @@ function adminUploadSessionCore(): ApiHandler {
         return
       }
 
-      // 4. Créer le dossier OneDrive + upload-session Graph
+      // 4. Résoudre le dossier OneDrive partagé existant + upload-session Graph
       const sanitized = sanitizeFilename(body.filename)
-      const drivePath = process.env['MICROSOFT_DRIVE_PATH'] ?? 'SAV_Images'
-      const folderPath = `${drivePath}/${sanitizeFilename(savRow.reference)}/operator-adds`
-      const parentFolderId = await ensureFolderExists(folderPath)
+      const dossierSavUrl = savRow.metadata?.['dossierSavUrl']
+      if (typeof dossierSavUrl !== 'string' || dossierSavUrl.trim() === '') {
+        logger.error('sav.admin_upload.folder_resolution_error', {
+          requestId,
+          savId: body.savId,
+          error: 'Lien dossier OneDrive manquant dans metadata.dossierSavUrl',
+        })
+        sendError(res, 'DEPENDENCY_DOWN', 'Dossier OneDrive SAV indisponible', requestId, {
+          code: 'SAV_FOLDER_URL_MISSING',
+        })
+        return
+      }
+      let parentFolderId: string
+      try {
+        parentFolderId = await resolveSharedFolderId(dossierSavUrl)
+      } catch (folderError) {
+        logger.error('sav.admin_upload.folder_resolution_error', {
+          requestId,
+          savId: body.savId,
+          error: folderError instanceof Error ? folderError.message : String(folderError),
+        })
+        sendError(res, 'DEPENDENCY_DOWN', 'Dossier OneDrive SAV indisponible', requestId, {
+          code: 'SAV_FOLDER_UNAVAILABLE',
+        })
+        return
+      }
       const graphSession = await createUploadSession({ parentFolderId, filename: sanitized })
 
       // 5. Générer uploadSessionId + persister le binding (PATTERN-D)
@@ -183,7 +207,7 @@ function adminUploadSessionCore(): ApiHandler {
         data: {
           uploadUrl: graphSession.uploadUrl,
           sanitizedFilename: sanitized,
-          storagePath: `${folderPath}/${sanitized}`,
+          storagePath: `${parentFolderId}/${sanitized}`,
           uploadSessionId,
         },
       })

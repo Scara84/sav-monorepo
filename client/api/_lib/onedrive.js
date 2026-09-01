@@ -1,6 +1,44 @@
 const { getGraphClient } = require('./graph.js')
 
 const GRAPH_BASE = 'https://graph.microsoft.com/v1.0/drives'
+const GRAPH_SHARES_BASE = 'https://graph.microsoft.com/v1.0/shares'
+
+function toGraphShareId(shareUrl) {
+  const base64 = Buffer.from(shareUrl, 'utf8').toString('base64')
+  return `u!${base64.replace(/=+$/g, '').replace(/\//g, '_').replace(/\+/g, '-')}`
+}
+
+function validateOneDriveShareUrl(rawUrl) {
+  if (typeof rawUrl !== 'string' || rawUrl.trim() === '') {
+    throw new Error('Lien dossier OneDrive manquant dans metadata.dossierSavUrl')
+  }
+
+  let url
+  try {
+    url = new URL(rawUrl)
+  } catch {
+    throw new Error('Lien dossier OneDrive invalide dans metadata.dossierSavUrl')
+  }
+
+  const hostname = url.hostname.toLowerCase()
+  const trustedHost =
+    hostname === 'onedrive.live.com' ||
+    hostname === '1drv.ms' ||
+    /^[a-z0-9-]+\.sharepoint\.(com|us)$/.test(hostname)
+
+  if (
+    url.protocol !== 'https:' ||
+    !trustedHost ||
+    url.username !== '' ||
+    url.password !== '' ||
+    url.port !== '' ||
+    url.hash !== ''
+  ) {
+    throw new Error('Lien dossier OneDrive non approuvé dans metadata.dossierSavUrl')
+  }
+
+  return rawUrl.trim()
+}
 
 function getDriveId() {
   const id = process.env.MICROSOFT_DRIVE_ID
@@ -76,6 +114,35 @@ async function createUploadSession({ parentFolderId, filename }, deps = {}) {
   }
 }
 
+async function resolveSharedFolderId(shareUrl, deps = {}) {
+  const validatedUrl = validateOneDriveShareUrl(shareUrl)
+  const client = deps.graphClient || getGraphClient()
+  const driveId = deps.driveId || getDriveId()
+  const shareId = toGraphShareId(validatedUrl)
+
+  let item
+  try {
+    item = await client.api(`${GRAPH_SHARES_BASE}/${shareId}/driveItem`).get()
+  } catch (error) {
+    if (error && typeof error === 'object' && error.statusCode === 404) {
+      throw new Error(
+        'Dossier OneDrive introuvable ou inaccessible depuis metadata.dossierSavUrl',
+        { cause: error }
+      )
+    }
+    throw error
+  }
+
+  if (!item || !item.id || !item.folder) {
+    throw new Error('Le lien metadata.dossierSavUrl ne pointe pas vers un dossier OneDrive')
+  }
+  if (!item.parentReference || item.parentReference.driveId !== driveId) {
+    throw new Error('Le dossier OneDrive résolu appartient à un drive non configuré')
+  }
+
+  return item.id
+}
+
 async function createShareLink(itemId, options = {}, deps = {}) {
   const client = deps.graphClient || getGraphClient()
   const driveId = deps.driveId || getDriveId()
@@ -133,6 +200,7 @@ async function getShareLinkForFolderPath(path, deps = {}) {
 module.exports = {
   ensureFolderExists,
   createUploadSession,
+  resolveSharedFolderId,
   createShareLink,
   getShareLinkForFolderPath,
 }
