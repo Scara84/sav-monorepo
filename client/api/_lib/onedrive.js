@@ -136,7 +136,22 @@ async function resolveSharedFolderId(shareUrl, deps = {}) {
   if (!item || !item.id || !item.folder) {
     throw new Error('Le lien metadata.dossierSavUrl ne pointe pas vers un dossier OneDrive')
   }
-  if (!item.parentReference || item.parentReference.driveId !== driveId) {
+  const resolvedDriveId = item.parentReference && item.parentReference.driveId
+  if (!resolvedDriveId) {
+    throw new Error('Le dossier OneDrive résolu appartient à un drive non configuré')
+  }
+
+  // Graph accepte aussi certains alias de drive (par ex. le GUID SharePoint),
+  // mais parentReference.driveId renvoie toujours l'identifiant canonique `b!...`.
+  // Canonicaliser uniquement en cas de différence évite un appel Graph superflu
+  // quand MICROSOFT_DRIVE_ID contient déjà l'identifiant canonique.
+  let configuredCanonicalDriveId = driveId
+  if (resolvedDriveId !== driveId) {
+    const configuredDrive = await client.api(`${GRAPH_BASE}/${driveId}`).get()
+    configuredCanonicalDriveId = configuredDrive && configuredDrive.id
+  }
+
+  if (!configuredCanonicalDriveId || resolvedDriveId !== configuredCanonicalDriveId) {
     throw new Error('Le dossier OneDrive résolu appartient à un drive non configuré')
   }
 

@@ -143,6 +143,30 @@ describe('resolveSharedFolderId', () => {
     })
 
     await expect(resolveSharedFolderId(shareUrl, deps(client))).resolves.toBe('FOLDER-SAV-1')
+    expect(client.api).toHaveBeenCalledTimes(1)
+  })
+
+  it("canonicalise un alias GUID configuré avant de comparer l'identifiant Graph", async () => {
+    const configuredAlias = '85142d71-1111-2222-3333-123456789abc'
+    const canonicalDriveId = 'b!canonical-sharepoint-drive-id'
+    const client = makeGraphClient(({ url }) => {
+      if (url.includes('/shares/')) {
+        return Promise.resolve({
+          id: 'FOLDER-SAV-ALIAS',
+          folder: { childCount: 0 },
+          parentReference: { driveId: canonicalDriveId },
+        })
+      }
+      if (url === `https://graph.microsoft.com/v1.0/drives/${configuredAlias}`) {
+        return Promise.resolve({ id: canonicalDriveId })
+      }
+      return Promise.reject(new Error(`URL Graph inattendue: ${url}`))
+    })
+
+    await expect(
+      resolveSharedFolderId(shareUrl, { graphClient: client, driveId: configuredAlias })
+    ).resolves.toBe('FOLDER-SAV-ALIAS')
+    expect(client.api).toHaveBeenCalledTimes(2)
   })
 
   it('rejette une réponse Graph qui ne représente pas un dossier', async () => {
@@ -192,13 +216,19 @@ describe('resolveSharedFolderId', () => {
   })
 
   it("rejette un dossier qui n'appartient pas au drive configuré", async () => {
-    const client = makeGraphClient(() =>
-      Promise.resolve({
-        id: 'FOLDER-OTHER-DRIVE',
-        folder: { childCount: 0 },
-        parentReference: { driveId: 'DRIVE-2' },
-      })
-    )
+    const client = makeGraphClient(({ url }) => {
+      if (url.includes('/shares/')) {
+        return Promise.resolve({
+          id: 'FOLDER-OTHER-DRIVE',
+          folder: { childCount: 0 },
+          parentReference: { driveId: 'DRIVE-2' },
+        })
+      }
+      if (url === 'https://graph.microsoft.com/v1.0/drives/DRIVE-1') {
+        return Promise.resolve({ id: 'DRIVE-1' })
+      }
+      return Promise.reject(new Error(`URL Graph inattendue: ${url}`))
+    })
 
     await expect(resolveSharedFolderId(shareUrl, deps(client))).rejects.toThrow(
       /drive non configuré/
