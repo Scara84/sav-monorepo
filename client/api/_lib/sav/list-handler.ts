@@ -99,7 +99,8 @@ const HAS_5_DIGITS = /\d{5,}/
  * Regex stricte pour `cursor.rec` — double ceinture au-dessus de Zod `datetime()`.
  * L'injection de métacaractères PostgREST (`,()`) dans un `.or()` raw literal
  * est le vecteur d'attaque ; on force ici un format canonique ISO UTC sans
- * offset hors `Z`. Review F5 (CR Epic 3 2026-04-23).
+ * offset hors `Z`, après normalisation de l'UTC Supabase `+00:00`.
+ * Review F5 (CR Epic 3 2026-04-23).
  */
 const CURSOR_REC_REGEX = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d{1,6})?Z$/
 
@@ -107,6 +108,10 @@ function decodeCursor(raw: string): ListSavCursor | null {
   try {
     const json = Buffer.from(raw, 'base64url').toString('utf8')
     const parsed = JSON.parse(json) as unknown
+    if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null
+    if (!('rec' in parsed) || typeof parsed.rec !== 'string') return null
+    // Ne convertir que le suffixe UTC : Date.toISOString() perdrait les microsecondes.
+    parsed.rec = parsed.rec.replace(/\+00:00$/, 'Z')
     const check = listSavCursorShape.safeParse(parsed)
     if (!check.success) return null
     if (!CURSOR_REC_REGEX.test(check.data.rec)) return null
