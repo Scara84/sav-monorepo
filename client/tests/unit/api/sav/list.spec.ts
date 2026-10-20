@@ -269,6 +269,96 @@ describe('GET /api/sav (Story 3.2 — list SAV)', () => {
     expect(body.error.code).toBe('RATE_LIMITED')
   })
 
+  it('accepte le curseur exact signalé en production sans perdre les microsecondes', async () => {
+    const cursor = 'eyJyZWMiOiIyMDI2LTA4LTMwVDE3OjU4OjI3LjEzMzExNyswMDowMCIsImlkIjo3MH0'
+    const res = mockRes()
+    await handler(listReq({ cursor }), res)
+    expect(res.statusCode).toBe(200)
+    expect(db.calls.or).toEqual([
+      'received_at.lt.2026-08-30T17:58:27.133117Z,and(received_at.eq.2026-08-30T17:58:27.133117Z,id.lt.70)',
+    ])
+  })
+
+  it('réutilise le curseur Supabase émis pour la page suivante et termine sans curseur', async () => {
+    const rec = '2026-08-30T17:58:27.133117+00:00'
+    const row = {
+      id: 70,
+      reference: 'SAV-2026-00070',
+      status: 'received',
+      received_at: rec,
+      invoice_ref: '',
+      total_amount_cents: 0,
+      tags: [],
+      taken_at: null,
+      validated_at: null,
+      closed_at: null,
+      cancelled_at: null,
+      version: 0,
+      member: null,
+      group: null,
+      assignee: null,
+    }
+    db.rows = [row, { ...row, id: 69 }]
+    db.count = 2
+    const first = mockRes()
+    await handler(listReq({ limit: '1' }), first)
+    expect(first.statusCode).toBe(200)
+    const body = first.jsonBody as { data: { id: number }[]; meta: { cursor: string } }
+    expect(body.data.map((item) => item.id)).toEqual([70])
+    expect(JSON.parse(Buffer.from(body.meta.cursor, 'base64url').toString('utf8'))).toEqual({
+      rec,
+      id: 70,
+    })
+
+    resetDb()
+    db.rows = [{ ...row, id: 69 }]
+    db.count = 1
+    const second = mockRes()
+    await handler(listReq({ limit: '1', cursor: body.meta.cursor }), second)
+    expect(second.statusCode).toBe(200)
+    expect(db.calls.or).toEqual([
+      'received_at.lt.2026-08-30T17:58:27.133117Z,and(received_at.eq.2026-08-30T17:58:27.133117Z,id.lt.70)',
+    ])
+    expect(db.calls.order).toEqual([
+      ['received_at', { ascending: false }],
+      ['id', { ascending: false }],
+    ])
+    expect(second.jsonBody).toMatchObject({
+      data: [{ id: 69 }],
+      meta: { cursor: null, count: 1, limit: 1 },
+    })
+  })
+
+  it.each([
+    null,
+    [],
+    'cursor',
+    42,
+    {},
+    { id: 1 },
+    { rec: null, id: 1 },
+    { rec: 42, id: 1 },
+    { rec: [], id: 1 },
+    ...[0, -1, 1.5, '70'].map((id) => ({ rec: '2026-08-30T17:58:27+00:00', id })),
+    ...[
+      '2026-02-30T17:58:27+00:00',
+      '2026-08-30T25:58:27+00:00',
+      '2026-08-30T17:58:27',
+      '2026-08-30T17:58:27+01:00',
+      '2026-08-30T17:58:27.1331179+00:00',
+      '2026-08-30T17:58:27+00:00suffix',
+      '2026-08-30T17:58:27Z),id.gt.0+00:00',
+    ].map((rec) => ({ rec, id: 70 })),
+  ])('rejette le curseur invalide %j avant la pagination', async (payload) => {
+    const cursor = Buffer.from(JSON.stringify(payload)).toString('base64url')
+    const res = mockRes()
+    await handler(listReq({ cursor }), res)
+    expect(res.statusCode).toBe(400)
+    expect(res.jsonBody).toMatchObject({ error: { code: 'VALIDATION_FAILED' } })
+    expect(db.calls.or).toEqual([])
+    expect(db.calls.order).toEqual([])
+  })
+
   it("TS-16: SQL injection safe — q='; DROP TABLE sav; --' passe verbatim à textSearch", async () => {
     const res = mockRes()
     const payload = "'; DROP TABLE sav; --"
@@ -294,6 +384,19 @@ describe('GET /api/sav (Story 3.2 — list SAV)', () => {
 })
 
 describe('Helpers list-handler', () => {
+  it.each(['', '.1', '.12', '.133', '.1331', '.13311', '.133117'])(
+    'préserve la précision %s avec les deux représentations UTC',
+    (fraction) => {
+      const rec = `2026-08-30T17:58:27${fraction}Z`
+      for (const suffix of ['Z', '+00:00']) {
+        const cursor = __testables.encodeCursor({
+          received_at: `2026-08-30T17:58:27${fraction}${suffix}`,
+          id: 70,
+        })
+        expect(__testables.decodeCursor(cursor)).toEqual({ rec, id: 70 })
+      }
+    }
+  )
   it('encodeCursor / decodeCursor round-trip', () => {
     const row = { received_at: '2026-03-01T12:34:56.000Z', id: 42 }
     const c = __testables.encodeCursor(row)
