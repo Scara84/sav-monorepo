@@ -39,9 +39,29 @@ interface RawSavRow {
   closed_at: string | null
   cancelled_at: string | null
   version: number
-  member: { id: number; first_name: string | null; last_name: string; email: string } | null
-  group: { id: number; name: string } | null
-  assignee: { id: number; display_name: string } | null
+  invoice_special_mention: string | null
+  member_first_name: string | null
+  member_last_name: string
+  member_email: string
+  group_name: string | null
+  assignee_display_name: string | null
+  exact_count: number
+}
+
+interface SearchSavRpcArgs {
+  p_status: string[] | null
+  p_from: string | null
+  p_to: string | null
+  p_invoice_ref: string | null
+  p_member_id: number | null
+  p_group_id: number | null
+  p_assigned_to: number | null
+  p_unassigned: boolean
+  p_tag: string | null
+  p_q: string | null
+  p_cursor_received_at: string | null
+  p_cursor_id: number | null
+  p_limit: number
 }
 
 export interface SavListItem {
@@ -55,6 +75,7 @@ export interface SavListItem {
   cancelledAt: string | null
   version: number
   invoiceRef: string
+  invoiceSpecialMention: string | null
   totalAmountCents: number
   tags: string[]
   member: {
@@ -75,25 +96,6 @@ export interface SavListResponse {
     limit: number
   }
 }
-
-// Note : hint FK `!sav_assigned_to_fkey` explicite sur operators — le rename
-// de la migration 20260422130000 garantit que ce nom existe. Sur members,
-// `!inner` force un INNER JOIN (un SAV sans member est exclu — théoriquement
-// impossible grâce à la FK NOT NULL, défense-en-profondeur).
-const SELECT_EXPR = `
-  id, reference, status, member_id, group_id, invoice_ref,
-  total_amount_cents, tags, assigned_to, received_at, taken_at,
-  validated_at, closed_at, cancelled_at, version,
-  member:members!inner ( id, first_name, last_name, email ),
-  group:groups ( id, name ),
-  assignee:operators!sav_assigned_to_fkey ( id, display_name )
-`.trim()
-
-/** Regex référence SAV (format `SAV-YYYY-NNNNN`) pour fallback `.or(reference.ilike)`. */
-const SAV_REF_REGEX = /^SAV-\d{4}-\d{5}$/
-
-/** Un `q` contenant ≥5 chiffres consécutifs est probablement un fragment de référence. */
-const HAS_5_DIGITS = /\d{5,}/
 
 /**
  * Regex stricte pour `cursor.rec` — double ceinture au-dessus de Zod `datetime()`.
@@ -138,85 +140,31 @@ function projectSavRow(row: RawSavRow): SavListItem {
     cancelledAt: row.cancelled_at,
     version: row.version,
     invoiceRef: row.invoice_ref,
+    invoiceSpecialMention: row.invoice_special_mention,
     totalAmountCents: row.total_amount_cents,
     tags: row.tags ?? [],
-    member: row.member
-      ? {
-          id: row.member.id,
-          firstName: row.member.first_name,
-          lastName: row.member.last_name,
-          email: row.member.email,
-        }
-      : null,
-    group: row.group,
-    assignee: row.assignee ? { id: row.assignee.id, displayName: row.assignee.display_name } : null,
+    member: {
+      id: row.member_id,
+      firstName: row.member_first_name,
+      lastName: row.member_last_name,
+      email: row.member_email,
+    },
+    group:
+      row.group_id !== null && row.group_name !== null
+        ? { id: row.group_id, name: row.group_name }
+        : null,
+    assignee:
+      row.assigned_to !== null && row.assignee_display_name !== null
+        ? { id: row.assigned_to, displayName: row.assignee_display_name }
+        : null,
   }
 }
 
-interface SavQueryBuilder {
-  eq: (col: string, val: unknown) => SavQueryBuilder
-  in: (col: string, val: unknown[]) => SavQueryBuilder
-  gte: (col: string, val: unknown) => SavQueryBuilder
-  lte: (col: string, val: unknown) => SavQueryBuilder
-  ilike: (col: string, val: string) => SavQueryBuilder
-  is: (col: string, val: null) => SavQueryBuilder
-  contains: (col: string, val: unknown[]) => SavQueryBuilder
-  textSearch: (
-    col: string,
-    query: string,
-    options?: { type?: string; config?: string }
-  ) => SavQueryBuilder
-  or: (filter: string) => SavQueryBuilder
-  order: (col: string, opts?: { ascending?: boolean }) => SavQueryBuilder
-  limit: (n: number) => SavQueryBuilder
-  then?: Promise<unknown>['then']
-}
-
-function applyFilters(builder: SavQueryBuilder, q: ListSavQuery): SavQueryBuilder {
-  let b = builder
-  if (q.status !== undefined) {
-    if (Array.isArray(q.status)) b = b.in('status', q.status)
-    else b = b.eq('status', q.status)
+function readExactCount(row: Pick<RawSavRow, 'exact_count'>): number {
+  if (!Number.isSafeInteger(row.exact_count) || row.exact_count < 0) {
+    throw new Error('search_sav_list returned an invalid exact_count')
   }
-  if (q.from !== undefined) b = b.gte('received_at', q.from)
-  if (q.to !== undefined) b = b.lte('received_at', q.to)
-  if (q.invoiceRef !== undefined) {
-    // F9 (CR Epic 3) : escape `%`/`_`/`\` avant injection dans ilike pour que
-    // le filtre matche sur la sous-chaîne littérale saisie par l'opérateur.
-    const safe = q.invoiceRef.replace(/[\\%_]/g, '\\$&')
-    b = b.ilike('invoice_ref', `%${safe}%`)
-  }
-  if (q.memberId !== undefined) b = b.eq('member_id', q.memberId)
-  if (q.groupId !== undefined) b = b.eq('group_id', q.groupId)
-  if (q.assignedTo !== undefined) {
-    if (q.assignedTo === 'unassigned') b = b.is('assigned_to', null)
-    else b = b.eq('assigned_to', q.assignedTo)
-  }
-  if (q.tag !== undefined) b = b.contains('tags', [q.tag])
-  if (q.q !== undefined && q.q.length > 0) {
-    const term = q.q // Zod a déjà trim() et vérifié min(1)
-    if (SAV_REF_REGEX.test(term) || HAS_5_DIGITS.test(term)) {
-      // `q` ressemble à une référence SAV → combine full-text ET fragment reference
-      // dans un **unique** OR group PostgREST (`(wfts OU ilike) AND autres filtres`).
-      // Échappement strict : virgule/parenthèses = séparateurs `.or()`, `:` =
-      // modifier PostgREST, `"` `\` `.` peuvent casser le parser ou wfts config.
-      // Review F8 (CR Epic 3 2026-04-23) — ancienne whitelist trop laxe.
-      const safe = term
-        .replace(/[,():"\\.]/g, ' ')
-        .replace(/\s+/g, ' ')
-        .trim()
-      if (safe.length === 0) {
-        // Le `q` ne contient QUE des métacaractères → fall back textSearch pur
-        // (websearch_to_tsquery tolère une chaîne vide, retournera 0 rows).
-        b = b.textSearch('search', term, { type: 'websearch', config: 'french' })
-      } else {
-        b = b.or(`search.wfts(french).${encodeURIComponent(safe)},reference.ilike.%${safe}%`)
-      }
-    } else {
-      b = b.textSearch('search', term, { type: 'websearch', config: 'french' })
-    }
-  }
-  return b
+  return row.exact_count
 }
 
 const coreHandler: ApiHandler = async (req: ApiRequest, res: ApiResponse) => {
@@ -268,29 +216,25 @@ const coreHandler: ApiHandler = async (req: ApiRequest, res: ApiResponse) => {
 
   try {
     const admin = supabaseAdmin()
-    const base = admin.from('sav').select(SELECT_EXPR, { count: 'exact' })
-    let query = applyFilters(base as unknown as SavQueryBuilder, q)
-
-    // Cursor tuple-compare : rows strictement après le cursor (received_at DESC, id DESC).
-    if (cursor !== null) {
-      query = query.or(
-        `received_at.lt.${cursor.rec},and(received_at.eq.${cursor.rec},id.lt.${cursor.id})`
-      )
+    const status = q.status === undefined ? null : Array.isArray(q.status) ? q.status : [q.status]
+    const rpcArgs: SearchSavRpcArgs = {
+      p_status: status,
+      p_from: q.from ?? null,
+      p_to: q.to ?? null,
+      p_invoice_ref: q.invoiceRef ?? null,
+      p_member_id: q.memberId ?? null,
+      p_group_id: q.groupId ?? null,
+      p_assigned_to: typeof q.assignedTo === 'number' ? q.assignedTo : null,
+      p_unassigned: q.assignedTo === 'unassigned',
+      p_tag: q.tag ?? null,
+      p_q: q.q ?? null,
+      p_cursor_received_at: cursor?.rec ?? null,
+      p_cursor_id: cursor?.id ?? null,
+      p_limit: q.limit,
     }
-
-    query = query
-      .order('received_at', { ascending: false })
-      .order('id', { ascending: false })
-      .limit(q.limit + 1)
-
-    const result = (await (query as unknown as PromiseLike<{
+    const result = (await admin.rpc('search_sav_list', rpcArgs)) as {
       data: RawSavRow[] | null
       error: { message: string } | null
-      count: number | null
-    }>)) as {
-      data: RawSavRow[] | null
-      error: { message: string } | null
-      count: number | null
     }
 
     if (result.error) {
@@ -300,6 +244,23 @@ const coreHandler: ApiHandler = async (req: ApiRequest, res: ApiResponse) => {
     }
 
     const rows = result.data ?? []
+    let exactCount = rows.length > 0 ? readExactCount(rows[0] as RawSavRow) : 0
+    if (rows.length === 0 && cursor !== null) {
+      const countResult = (await admin.rpc('search_sav_list', {
+        ...rpcArgs,
+        p_cursor_received_at: null,
+        p_cursor_id: null,
+        p_limit: 1,
+      })) as {
+        data: RawSavRow[] | null
+        error: { message: string } | null
+      }
+      if (countResult.error) {
+        throw new Error(`search_sav_list count lookup failed: ${countResult.error.message}`)
+      }
+      const countRows = countResult.data ?? []
+      exactCount = countRows.length > 0 ? readExactCount(countRows[0] as RawSavRow) : 0
+    }
     const hasMore = rows.length > q.limit
     const trimmed = hasMore ? rows.slice(0, q.limit) : rows
     const nextCursor =
@@ -314,7 +275,7 @@ const coreHandler: ApiHandler = async (req: ApiRequest, res: ApiResponse) => {
       data: trimmed.map(projectSavRow),
       meta: {
         cursor: nextCursor,
-        count: result.count ?? 0,
+        count: exactCount,
         limit: q.limit,
       },
     }
@@ -325,7 +286,7 @@ const coreHandler: ApiHandler = async (req: ApiRequest, res: ApiResponse) => {
     }
     logger.info('sav.list.success', {
       requestId,
-      count: result.count ?? 0,
+      count: exactCount,
       rows: trimmed.length,
       durationMs,
     })
@@ -365,6 +326,5 @@ export const __testables = {
   decodeCursor,
   encodeCursor,
   projectSavRow,
-  applyFilters,
   coreHandler,
 }

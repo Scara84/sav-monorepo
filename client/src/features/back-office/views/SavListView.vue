@@ -400,7 +400,7 @@ async function runExport(format: ExportFormat): Promise<void> {
           type="search"
           v-model="list.filters.q"
           aria-label="Rechercher dans les SAV"
-          placeholder="Référence, facture, client, tag..."
+          placeholder="Référence, facture, adhérent, commande groupe, tag..."
           :aria-busy="list.loading.value"
         />
       </label>
@@ -525,7 +525,7 @@ async function runExport(format: ExportFormat): Promise<void> {
               </span>
             </td>
             <td>{{ fullName(row.member) }}</td>
-            <td>{{ row.group?.name ?? '—' }}</td>
+            <td>{{ row.invoiceSpecialMention?.trim() || '—' }}</td>
             <td>{{ row.invoiceRef || '—' }}</td>
             <td>{{ formatDate(row.receivedAt) }}</td>
             <td>{{ row.assignee?.displayName ?? '—' }}</td>

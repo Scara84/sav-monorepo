@@ -8,65 +8,37 @@ const SECRET = 'test-secret-at-least-32-bytes-longxxx'
 // ---- Supabase mock ---------------------------------------------------------
 const db = vi.hoisted(() => ({
   rows: [] as Array<Record<string, unknown>>,
-  count: 0 as number,
   error: null as null | { message: string },
+  searchResponses: [] as Array<{
+    data: Array<Record<string, unknown>> | null
+    error: null | { message: string }
+  }>,
   rateLimitAllowed: true as boolean,
-  // capture des appels chaînés pour assertions par-filtre
-  calls: {
-    eq: [] as Array<[string, unknown]>,
-    in: [] as Array<[string, unknown[]]>,
-    gte: [] as Array<[string, unknown]>,
-    lte: [] as Array<[string, unknown]>,
-    ilike: [] as Array<[string, string]>,
-    is: [] as Array<[string, null]>,
-    contains: [] as Array<[string, unknown[]]>,
-    textSearch: [] as Array<[string, string, unknown]>,
-    or: [] as string[],
-    order: [] as Array<[string, unknown]>,
-    limit: [] as number[],
-  },
+  rpcCalls: [] as Array<[string, Record<string, unknown> | undefined]>,
 }))
 
 function resetDb(): void {
   db.rows = []
-  db.count = 0
   db.error = null
+  db.searchResponses = []
   db.rateLimitAllowed = true
-  for (const key of Object.keys(db.calls)) {
-    ;(db.calls as unknown as Record<string, unknown[]>)[key] = []
-  }
+  db.rpcCalls = []
 }
 
 vi.mock('../../../../api/_lib/clients/supabase-admin', () => {
-  const builder: Record<string, unknown> = {}
-  const chain = new Proxy(builder, {
-    get(_target, prop: string) {
-      if (prop === 'then') {
-        // Terminer la chaîne comme une promise résolvant { data, error, count }
-        return (resolve: (v: unknown) => void) => {
-          resolve({ data: db.error ? null : db.rows, error: db.error, count: db.count })
-        }
-      }
-      return (...args: unknown[]) => {
-        if (prop in db.calls) {
-          ;(db.calls as unknown as Record<string, unknown[]>)[prop]?.push(
-            args.length === 1 ? args[0] : args
-          )
-        }
-        return chain
-      }
-    },
-  })
   const client = {
-    from: (_table: string) => ({
-      select: (_cols: string, _opts?: { count?: string }) => chain,
-    }),
-    rpc: (fn: string) => {
+    rpc: (fn: string, args?: Record<string, unknown>) => {
+      db.rpcCalls.push([fn, args])
       if (fn === 'increment_rate_limit') {
         return Promise.resolve({
           data: [{ allowed: db.rateLimitAllowed, retry_after: 1 }],
           error: null,
         })
+      }
+      if (fn === 'search_sav_list') {
+        const queued = db.searchResponses.shift()
+        if (queued) return Promise.resolve(queued)
+        return Promise.resolve({ data: db.error ? null : db.rows, error: db.error })
       }
       return Promise.resolve({ data: null, error: null })
     },
@@ -108,6 +80,12 @@ function listReq(query: Record<string, unknown> = {}, cookie = `sav_session=${op
   })
 }
 
+function searchRpcArgs(): Record<string, unknown> {
+  const call = db.rpcCalls.find(([fn]) => fn === 'search_sav_list')
+  expect(call).toBeDefined()
+  return call?.[1] ?? {}
+}
+
 beforeEach(() => {
   vi.stubEnv('SESSION_COOKIE_SECRET', SECRET)
   vi.stubEnv('SUPABASE_URL', 'http://localhost')
@@ -130,74 +108,96 @@ describe('GET /api/sav (Story 3.2 — list SAV)', () => {
     expect(res.statusCode).toBe(403)
   })
 
-  it('TS-03: 200 avec status=received → .eq(status,received)', async () => {
-    const res = mockRes()
-    await handler(listReq({ status: 'received' }), res)
-    expect(res.statusCode).toBe(200)
-    expect(db.calls.eq).toContainEqual(['status', 'received'])
-  })
-
-  it('TS-04: 200 avec status=received,in_progress → .in normalisé', async () => {
-    const res = mockRes()
-    await handler(listReq({ status: 'received,in_progress' }), res)
-    expect(res.statusCode).toBe(200)
-    expect(db.calls.in).toContainEqual(['status', ['received', 'in_progress']])
-  })
-
-  it('TS-05: 200 avec from + to → .gte + .lte sur received_at', async () => {
-    const res = mockRes()
+  it('mappe tous les filtres validés vers la RPC search_sav_list', async () => {
     const from = '2026-01-01T00:00:00.000Z'
     const to = '2026-04-01T00:00:00.000Z'
-    await handler(listReq({ from, to }), res)
-    expect(res.statusCode).toBe(200)
-    expect(db.calls.gte).toContainEqual(['received_at', from])
-    expect(db.calls.lte).toContainEqual(['received_at', to])
-  })
-
-  it('TS-06: 200 avec invoiceRef → .ilike pattern %...%', async () => {
     const res = mockRes()
-    await handler(listReq({ invoiceRef: 'FAC-123' }), res)
+    await handler(
+      listReq({
+        status: 'received,in_progress',
+        from,
+        to,
+        invoiceRef: 'FAC_100%',
+        memberId: '12',
+        groupId: '7',
+        assignedTo: '42',
+        tag: 'à rappeler',
+        q: '479_26S41_64_2',
+        limit: '25',
+      }),
+      res
+    )
     expect(res.statusCode).toBe(200)
-    expect(db.calls.ilike).toContainEqual(['invoice_ref', '%FAC-123%'])
+    expect(searchRpcArgs()).toEqual({
+      p_status: ['received', 'in_progress'],
+      p_from: from,
+      p_to: to,
+      p_invoice_ref: 'FAC_100%',
+      p_member_id: 12,
+      p_group_id: 7,
+      p_assigned_to: 42,
+      p_unassigned: false,
+      p_tag: 'à rappeler',
+      p_q: '479_26S41_64_2',
+      p_cursor_received_at: null,
+      p_cursor_id: null,
+      p_limit: 25,
+    })
   })
 
-  it('TS-07: 200 avec assignedTo=unassigned → .is(assigned_to, null)', async () => {
+  it('mappe assignedTo=unassigned sans identifiant opérateur', async () => {
     const res = mockRes()
     await handler(listReq({ assignedTo: 'unassigned' }), res)
     expect(res.statusCode).toBe(200)
-    expect(db.calls.is).toContainEqual(['assigned_to', null])
+    expect(searchRpcArgs()).toMatchObject({ p_assigned_to: null, p_unassigned: true })
   })
 
-  it('TS-08: 200 avec tag → .contains(tags, [tag])', async () => {
+  it('normalise un statut scalaire en tableau pour la RPC', async () => {
     const res = mockRes()
-    await handler(listReq({ tag: 'à rappeler' }), res)
+    await handler(listReq({ status: 'received' }), res)
     expect(res.statusCode).toBe(200)
-    expect(db.calls.contains).toContainEqual(['tags', ['à rappeler']])
+    expect(searchRpcArgs()).toMatchObject({ p_status: ['received'] })
   })
 
-  it('TS-09: 200 avec q=Dubois → .textSearch(search, q, websearch french)', async () => {
+  it('retourne une liste vide et count=0 sans exposer de résultat partiel', async () => {
     const res = mockRes()
-    await handler(listReq({ q: 'Dubois' }), res)
+    await handler(listReq({ q: 'Nathan' }), res)
     expect(res.statusCode).toBe(200)
-    const ts = db.calls.textSearch.find((c) => c[0] === 'search')
-    expect(ts).toBeDefined()
-    expect(ts?.[1]).toBe('Dubois')
-    expect(ts?.[2]).toMatchObject({ type: 'websearch', config: 'french' })
+    expect(res.jsonBody).toEqual({ data: [], meta: { cursor: null, count: 0, limit: 50 } })
   })
 
-  it('TS-10: 200 avec q=SAV-2026-00042 → OR unique combinant wfts + reference.ilike', async () => {
+  it('récupère exact_count sans cursor si une page cursored est vide', async () => {
+    db.searchResponses = [
+      { data: [], error: null },
+      { data: [{ exact_count: 7 }], error: null },
+    ]
+    const cursor = Buffer.from(
+      JSON.stringify({ rec: '2026-03-01T12:00:00.000Z', id: 123 })
+    ).toString('base64url')
     const res = mockRes()
-    await handler(listReq({ q: 'SAV-2026-00042' }), res)
+    await handler(listReq({ cursor, limit: '25' }), res)
+
     expect(res.statusCode).toBe(200)
-    // Une seule .or() appelée pour `q` (wfts OR reference.ilike) → évite le AND buggy
-    // où textSearch + .or(reference.ilike) séparément donnaient ET au lieu d'OU.
-    const qOr = db.calls.or.find(
-      (f) => f.includes('search.wfts') && f.includes('reference.ilike.%SAV-2026-00042%')
-    )
-    expect(qOr).toBeDefined()
-    // textSearch NE doit PAS être appelé quand on prend le chemin `.or()` combiné.
-    expect(db.calls.textSearch.some((c) => c[0] === 'search')).toBe(false)
+    expect(res.jsonBody).toEqual({ data: [], meta: { cursor: null, count: 7, limit: 25 } })
+    const searchCalls = db.rpcCalls.filter(([fn]) => fn === 'search_sav_list')
+    expect(searchCalls).toHaveLength(2)
+    expect(searchCalls[1]?.[1]).toMatchObject({
+      p_cursor_received_at: null,
+      p_cursor_id: null,
+      p_limit: 1,
+    })
   })
+
+  it.each([-1, 1.5, Number.MAX_SAFE_INTEGER + 1, Number.NaN])(
+    'retourne 500 si exact_count est invalide (%s)',
+    async (exactCount) => {
+      db.rows = [{ exact_count: exactCount }]
+      const res = mockRes()
+      await handler(listReq(), res)
+      expect(res.statusCode).toBe(500)
+      expect(res.jsonBody).toMatchObject({ error: { code: 'SERVER_ERROR' } })
+    }
+  )
 
   it("TS-11: 400 si from n'est pas un datetime ISO", async () => {
     const res = mockRes()
@@ -214,7 +214,6 @@ describe('GET /api/sav (Story 3.2 — list SAV)', () => {
   })
 
   it('TS-13: 200 avec 51 rows + limit=50 → meta.cursor non-null, data.length=50', async () => {
-    db.count = 51
     db.rows = Array.from({ length: 51 }, (_, i) => ({
       id: i + 1,
       reference: `SAV-2026-${String(i + 1).padStart(5, '0')}`,
@@ -231,33 +230,37 @@ describe('GET /api/sav (Story 3.2 — list SAV)', () => {
       closed_at: null,
       cancelled_at: null,
       version: 0,
-      member: { id: 1, first_name: null, last_name: 'Test', email: 't@example.com' },
-      group: null,
-      assignee: null,
+      invoice_special_mention: null,
+      member_first_name: null,
+      member_last_name: 'Test',
+      member_email: 't@example.com',
+      group_name: null,
+      assignee_display_name: null,
+      exact_count: 51,
     }))
     const res = mockRes()
     await handler(listReq({ limit: '50' }), res)
     expect(res.statusCode).toBe(200)
-    const body = res.jsonBody as { data: unknown[]; meta: { cursor: string | null } }
+    const body = res.jsonBody as {
+      data: unknown[]
+      meta: { cursor: string | null; count: number }
+    }
     expect(body.data).toHaveLength(50)
     expect(body.meta.cursor).not.toBeNull()
+    expect(body.meta.count).toBe(51)
   })
 
-  it('TS-14: 200 avec cursor valide → .or() tuple-compare appelé', async () => {
+  it('TS-14: 200 avec cursor valide → paramètres cursor transmis à la RPC', async () => {
     const cursor = Buffer.from(
       JSON.stringify({ rec: '2026-03-01T12:00:00.000Z', id: 123 })
     ).toString('base64url')
     const res = mockRes()
     await handler(listReq({ cursor }), res)
     expect(res.statusCode).toBe(200)
-    expect(
-      db.calls.or.some(
-        (f) =>
-          f.includes('received_at.lt.2026-03-01T12:00:00.000Z') &&
-          f.includes('received_at.eq.2026-03-01T12:00:00.000Z') &&
-          f.includes('id.lt.123')
-      )
-    ).toBe(true)
+    expect(searchRpcArgs()).toMatchObject({
+      p_cursor_received_at: '2026-03-01T12:00:00.000Z',
+      p_cursor_id: 123,
+    })
   })
 
   it('TS-15: 429 si rate-limit épuisé', async () => {
@@ -274,9 +277,10 @@ describe('GET /api/sav (Story 3.2 — list SAV)', () => {
     const res = mockRes()
     await handler(listReq({ cursor }), res)
     expect(res.statusCode).toBe(200)
-    expect(db.calls.or).toEqual([
-      'received_at.lt.2026-08-30T17:58:27.133117Z,and(received_at.eq.2026-08-30T17:58:27.133117Z,id.lt.70)',
-    ])
+    expect(searchRpcArgs()).toMatchObject({
+      p_cursor_received_at: '2026-08-30T17:58:27.133117Z',
+      p_cursor_id: 70,
+    })
   })
 
   it('réutilise le curseur Supabase émis pour la page suivante et termine sans curseur', async () => {
@@ -294,12 +298,18 @@ describe('GET /api/sav (Story 3.2 — list SAV)', () => {
       closed_at: null,
       cancelled_at: null,
       version: 0,
-      member: null,
-      group: null,
-      assignee: null,
+      invoice_special_mention: null,
+      member_id: 1,
+      group_id: 5,
+      assigned_to: 2,
+      member_first_name: null,
+      member_last_name: 'Test',
+      member_email: 'test@example.com',
+      group_name: 'Groupe Test',
+      assignee_display_name: 'Op Test',
+      exact_count: 2,
     }
     db.rows = [row, { ...row, id: 69 }]
-    db.count = 2
     const first = mockRes()
     await handler(listReq({ limit: '1' }), first)
     expect(first.statusCode).toBe(200)
@@ -312,20 +322,16 @@ describe('GET /api/sav (Story 3.2 — list SAV)', () => {
 
     resetDb()
     db.rows = [{ ...row, id: 69 }]
-    db.count = 1
     const second = mockRes()
     await handler(listReq({ limit: '1', cursor: body.meta.cursor }), second)
     expect(second.statusCode).toBe(200)
-    expect(db.calls.or).toEqual([
-      'received_at.lt.2026-08-30T17:58:27.133117Z,and(received_at.eq.2026-08-30T17:58:27.133117Z,id.lt.70)',
-    ])
-    expect(db.calls.order).toEqual([
-      ['received_at', { ascending: false }],
-      ['id', { ascending: false }],
-    ])
+    expect(searchRpcArgs()).toMatchObject({
+      p_cursor_received_at: '2026-08-30T17:58:27.133117Z',
+      p_cursor_id: 70,
+    })
     expect(second.jsonBody).toMatchObject({
       data: [{ id: 69 }],
-      meta: { cursor: null, count: 1, limit: 1 },
+      meta: { cursor: null, count: 2, limit: 1 },
     })
   })
 
@@ -355,17 +361,23 @@ describe('GET /api/sav (Story 3.2 — list SAV)', () => {
     await handler(listReq({ cursor }), res)
     expect(res.statusCode).toBe(400)
     expect(res.jsonBody).toMatchObject({ error: { code: 'VALIDATION_FAILED' } })
-    expect(db.calls.or).toEqual([])
-    expect(db.calls.order).toEqual([])
+    expect(db.rpcCalls.some(([fn]) => fn === 'search_sav_list')).toBe(false)
   })
 
-  it("TS-16: SQL injection safe — q='; DROP TABLE sav; --' passe verbatim à textSearch", async () => {
+  it("TS-16: q='; DROP TABLE sav; --' reste un paramètre RPC littéral", async () => {
     const res = mockRes()
     const payload = "'; DROP TABLE sav; --"
     await handler(listReq({ q: payload }), res)
     expect(res.statusCode).toBe(200)
-    const ts = db.calls.textSearch.find((c) => c[0] === 'search')
-    expect(ts?.[1]).toBe(payload) // chaîne littérale, pas d'échappement SQL-spécifique (Supabase paramètre)
+    expect(searchRpcArgs()['p_q']).toBe(payload)
+  })
+
+  it('retourne 500 sans résultat partiel si la RPC échoue', async () => {
+    db.error = { message: 'rpc unavailable' }
+    const res = mockRes()
+    await handler(listReq({ q: 'Nathan' }), res)
+    expect(res.statusCode).toBe(500)
+    expect(res.jsonBody).toMatchObject({ error: { code: 'SERVER_ERROR' } })
   })
 
   it('400 si q est whitespace-only (Zod .trim().min(1))', async () => {
@@ -421,20 +433,24 @@ describe('Helpers list-handler', () => {
       reference: 'SAV-2026-00001',
       status: 'received',
       member_id: 10,
-      group_id: null,
+      group_id: 5,
       invoice_ref: 'FAC-1',
       total_amount_cents: 1500,
       tags: ['urgent'],
-      assigned_to: null,
+      assigned_to: 2,
       received_at: '2026-03-01T00:00:00.000Z',
       taken_at: null,
       validated_at: null,
       closed_at: null,
       cancelled_at: null,
       version: 1,
-      member: { id: 10, first_name: 'Jean', last_name: 'Dubois', email: 'j@d.com' },
-      group: null,
-      assignee: null,
+      invoice_special_mention: '479_26S41_64_2',
+      member_first_name: 'Jean',
+      member_last_name: 'Dubois',
+      member_email: 'j@d.com',
+      group_name: 'Groupe Test',
+      assignee_display_name: 'Op Test',
+      exact_count: 1,
     }
     const projected = __testables.projectSavRow(raw as never)
     expect(projected).toMatchObject({
@@ -442,8 +458,41 @@ describe('Helpers list-handler', () => {
       reference: 'SAV-2026-00001',
       receivedAt: '2026-03-01T00:00:00.000Z',
       totalAmountCents: 1500,
+      invoiceSpecialMention: '479_26S41_64_2',
       tags: ['urgent'],
       member: { firstName: 'Jean', lastName: 'Dubois' },
+      group: { id: 5, name: 'Groupe Test' },
+      assignee: { id: 2, displayName: 'Op Test' },
     })
+    expect(projected).not.toHaveProperty('metadata')
+  })
+
+  it('projectSavRow conserve les relations groupe/assigné nulles', () => {
+    const projected = __testables.projectSavRow({
+      id: 1,
+      reference: 'SAV-2026-00001',
+      status: 'received',
+      member_id: 10,
+      group_id: null,
+      invoice_ref: 'FAC-1',
+      total_amount_cents: 0,
+      tags: [],
+      assigned_to: null,
+      received_at: '2026-03-01T00:00:00.000Z',
+      taken_at: null,
+      validated_at: null,
+      closed_at: null,
+      cancelled_at: null,
+      version: 1,
+      invoice_special_mention: null,
+      member_first_name: null,
+      member_last_name: 'Dubois',
+      member_email: 'j@d.com',
+      group_name: null,
+      assignee_display_name: null,
+      exact_count: 1,
+    })
+    expect(projected.group).toBeNull()
+    expect(projected.assignee).toBeNull()
   })
 })

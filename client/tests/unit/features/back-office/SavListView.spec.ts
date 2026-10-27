@@ -54,6 +54,7 @@ const RESPONSE_1ROW = {
       cancelledAt: null,
       version: 1,
       invoiceRef: 'FAC-1',
+      invoiceSpecialMention: '479_26S41_64_2',
       totalAmountCents: 1500,
       tags: [],
       member: { id: 10, firstName: 'Jean', lastName: 'Dubois', email: 'j@d.com' },
@@ -81,6 +82,28 @@ describe('SavListView (Story 3.3)', () => {
     expect(w.find('input[type="search"]').exists()).toBe(true)
     expect(w.find('table').exists()).toBe(true)
     expect(w.find('[aria-label="Filtres"]').exists()).toBe(true)
+    expect(w.find('input[type="search"]').attributes('placeholder')).toContain('commande groupe')
+    expect(w.findAll('tbody td')[3]?.text()).toBe('479_26S41_64_2')
+  })
+
+  it('affiche un tiret si la commande groupe est absente', async () => {
+    mockFetch({
+      ...RESPONSE_1ROW,
+      data: [{ ...RESPONSE_1ROW.data[0], invoiceSpecialMention: null }],
+    })
+    const w = await mountView()
+    await flushPromises()
+    expect(w.findAll('tbody td')[3]?.text()).toBe('—')
+  })
+
+  it('affiche un tiret si la commande groupe ne contient que des espaces', async () => {
+    mockFetch({
+      ...RESPONSE_1ROW,
+      data: [{ ...RESPONSE_1ROW.data[0], invoiceSpecialMention: '   ' }],
+    })
+    const w = await mountView()
+    await flushPromises()
+    expect(w.findAll('tbody td')[3]?.text()).toBe('—')
   })
 
   it('TC-04: clic sur chip statut active aria-pressed', async () => {

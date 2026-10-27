@@ -20,6 +20,7 @@ export interface SavListItem {
   cancelledAt: string | null
   version: number
   invoiceRef: string
+  invoiceSpecialMention: string | null
   totalAmountCents: number
   tags: string[]
   member: {
