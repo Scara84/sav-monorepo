@@ -206,7 +206,8 @@ vi.mock('../../../../api/_lib/audit/record', () => ({
 }))
 
 // Mock du writer — retourne un blob xlsx minimal parseable
-vi.mock('../../../../api/_lib/sav/supplier-claim-writer', () => ({
+vi.mock('../../../../api/_lib/sav/supplier-claim-writer', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../../../api/_lib/sav/supplier-claim-writer')>(),
   buildClaimWorkbook: (input: { generatedAt: Date; savReference: string; regenerationIndex: number | null }) => {
     if (db.writerResult) return db.writerResult
     // Créer un vrai classeur SheetJS minimal (évite les faux-verts par fixture dégénérée)
@@ -225,9 +226,6 @@ vi.mock('../../../../api/_lib/sav/supplier-claim-writer', () => ({
     const filename = `RECLAMACION_SOL_Y_FRUTA_${input.savReference}_${dateStr}${suffix}.xlsx`
     return { blob, sha256, filename }
   },
-  buildClaimWorkbookRows: () => [
-    ['2026-06-05', '278_26S21_11', '2026-05-26', '3127', '1022', 'Aguacate', 'Málaga', 5, 'Kilos', 'estropeado', 5.29, '', 26.45],
-  ],
 }))
 
 vi.mock('../../../../api/_lib/sav/supplier-claim-onedrive-fill', () => ({
@@ -419,14 +417,21 @@ describe('GEN-ONEDRIVE: append OneDrive fail-soft', () => {
     })
     const res = mockRes()
 
-    await generateSupplierClaimHandler(1)(req, res)
+    vi.useFakeTimers({ toFake: ['Date'] })
+    try {
+      vi.setSystemTime(new Date('2026-06-05T12:00:00Z'))
+      await generateSupplierClaimHandler(1)(req, res)
+    } finally {
+      vi.useRealTimers()
+    }
 
     expect(res.statusCode).toBe(200)
     expect(res.headers['x-supplier-claim-onedrive-status']).toBe('success')
     expect(res.headers['x-supplier-claim-onedrive-web-url']).toBe('https://onedrive.test/suivi.xlsx')
     expect(decodeURIComponent(String(res.headers['x-supplier-claim-onedrive-message']))).toContain('OneDrive')
     expect(db.oneDriveRows).toEqual([
-      ['2026-06-05', '278_26S21_11', '2026-05-26', '3127', '1022', 'Aguacate', 'Málaga', 5, 'Kilos', 'estropeado', 5.29, '', 26.45],
+      ['2026-06-05', '278_26S21_11', '2026-05-26', '3127', '1022', 'Aguacate Hass BIO', 'Málaga', 5, 'Kilos', 'estropeado', 5.29, '', 26.45],
+      ['2026-06-05', '278_26S21_11', '2026-05-26', '3127', '3301', 'Tomate', 'Almería', 10, 'Kilos', 'podrido', 3.20, '', 32],
     ])
     expect(db.oneDriveDeps).toEqual({ photoFolderUrl: 'https://1drv.ms/f/photos-sav' })
   })
