@@ -460,11 +460,10 @@ function generateSupplierClaimCore(savId: number): ApiHandler {
       claimLines: writerInput,
       regenerationIndex,
     })
-    const workbookRows = buildClaimWorkbookRows({
-      metadata: payload.metadata,
-      generatedAt,
-      claimLines: writerInput,
-    })
+    const workbookRows = buildClaimWorkbookRows(
+      { metadata: payload.metadata, generatedAt, claimLines: writerInput },
+      'iso'
+    )
 
     // --- Persistance atomique via RPC (DN-7=B LOCKED) ---
     // Note : les champs numériques sont passés comme strings dans le JSONB

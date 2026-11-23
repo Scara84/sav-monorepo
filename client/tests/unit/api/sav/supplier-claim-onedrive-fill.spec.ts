@@ -4,26 +4,17 @@ import {
   readSupplierClaimOneDriveConfig,
   toGraphShareId,
 } from '../../../../api/_lib/sav/supplier-claim-onedrive-fill'
-import type { ClaimWorkbookRow } from '../../../../api/_lib/sav/supplier-claim-writer'
+import { buildClaimWorkbookRows, type ClaimWorkbookRow } from '../../../../api/_lib/sav/supplier-claim-writer'
 
 function makeRows(): ClaimWorkbookRow[] {
-  return [
-    [
-      '06/07/2026',
-      '337_26S27_64',
-      '2026-06-29',
-      '3749',
-      '1181',
-      'Pomelo',
-      'Málaga',
-      0.37944,
-      'Kilos',
-      'estropeado',
-      1.54,
-      '',
-      0.58,
-    ],
-  ]
+  return buildClaimWorkbookRows({
+    metadata: { reference: '337_26S27_64', fechaAlbaran: '2026-06-29', albaran: '3749' },
+    generatedAt: new Date('2026-06-05T12:00:00Z'),
+    claimLines: [{
+      position: 1, codigoEs: '1181', productoEs: 'Pomelo', origen: 'Málaga', qty: 0.37944,
+      unidad: 'Kilos', causaEs: 'estropeado', precioCents: 154, comentarios: '', importeCents: 58,
+    }],
+  }, 'iso')
 }
 
 function makeGraphRequest(methods: {
@@ -119,7 +110,7 @@ describe('supplier-claim-onedrive-fill', () => {
         [
           '',
           '',
-          '06/07/2026',
+          '2026-06-05',
           '337_26S27_64',
           '2026-06-29',
           '3749',

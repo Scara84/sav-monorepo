@@ -193,10 +193,11 @@ export function buildClaimWorkbook(input: ClaimWriterInput): ClaimWorkbookResult
 }
 
 export function buildClaimWorkbookRows(
-  input: Pick<ClaimWriterInput, 'metadata' | 'generatedAt' | 'claimLines'>
+  input: Pick<ClaimWriterInput, 'metadata' | 'generatedAt' | 'claimLines'>,
+  dateFormat: 'display' | 'iso' = 'display'
 ): ClaimWorkbookRow[] {
   const { metadata, generatedAt, claimLines } = input
-  const dateStr = toSupplierDisplayDateString(generatedAt)
+  const dateStr = dateFormat === 'iso' ? toIsoDateString(generatedAt) : toSupplierDisplayDateString(generatedAt)
 
   return claimLines.map((line) => {
     const peso = line.qty
