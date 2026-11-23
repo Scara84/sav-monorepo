@@ -61,6 +61,7 @@ const SECRET = 'test-secret-at-least-32-bytes-longxxx'
 const db = vi.hoisted(() => ({
   // Simulation de l'état DB pour les tests
   savGroupId: 1 as number,
+  receivedAt: null as string | null,
   savMetadata: { dossierSavUrl: 'https://1drv.ms/f/photos-sav' } as Record<string, unknown> | null,
   operatorGroupIds: [1] as number[],
   rateLimitAllowed: true as boolean,
@@ -86,6 +87,7 @@ const db = vi.hoisted(() => ({
 
 function resetDb(): void {
   db.savGroupId = 1
+  db.receivedAt = null
   db.savMetadata = { dossierSavUrl: 'https://1drv.ms/f/photos-sav' }
   db.operatorGroupIds = [1]
   db.rateLimitAllowed = true
@@ -113,7 +115,7 @@ vi.mock('../../../../api/_lib/clients/supabase-admin', () => {
             eq: () => ({
               maybeSingle: () =>
                 Promise.resolve({
-                  data: { id: 1, group_id: db.savGroupId, reference: 'SAV-2026-00001', metadata: db.savMetadata },
+                  data: { id: 1, group_id: db.savGroupId, reference: 'SAV-2026-00001', metadata: db.savMetadata, received_at: db.receivedAt },
                   error: null,
                 }),
             }),
@@ -402,7 +404,10 @@ describe('GEN-01: happy path — 200 + Content-Type xlsx (AC #11a)', () => {
 })
 
 describe('GEN-ONEDRIVE: append OneDrive fail-soft', () => {
-  it('GEN-OD-01: append success → headers status + webUrl et rows passées au helper', async () => {
+  it.each([
+    ['2026-06-01T22:30:00Z', '2026-06-02'], // 2 juin à Paris
+    [null, ''],
+  ] as const)('GEN-OD-01: réception %s → Fecha %s sur chaque ligne', async (receivedAt, fecha) => {
     db.oneDriveResult = {
       status: 'success',
       webUrl: 'https://onedrive.test/suivi.xlsx',
@@ -417,6 +422,7 @@ describe('GEN-ONEDRIVE: append OneDrive fail-soft', () => {
     })
     const res = mockRes()
 
+    db.receivedAt = receivedAt
     vi.useFakeTimers({ toFake: ['Date'] })
     try {
       vi.setSystemTime(new Date('2026-06-05T12:00:00Z'))
@@ -430,8 +436,8 @@ describe('GEN-ONEDRIVE: append OneDrive fail-soft', () => {
     expect(res.headers['x-supplier-claim-onedrive-web-url']).toBe('https://onedrive.test/suivi.xlsx')
     expect(decodeURIComponent(String(res.headers['x-supplier-claim-onedrive-message']))).toContain('OneDrive')
     expect(db.oneDriveRows).toEqual([
-      ['2026-06-05', '278_26S21_11', '2026-05-26', '3127', '1022', 'Aguacate Hass BIO', 'Málaga', 5, 'Kilos', 'estropeado', 5.29, '', 26.45],
-      ['2026-06-05', '278_26S21_11', '2026-05-26', '3127', '3301', 'Tomate', 'Almería', 10, 'Kilos', 'podrido', 3.20, '', 32],
+      [fecha, '278_26S21_11', '2026-05-26', '3127', '1022', 'Aguacate Hass BIO', 'Málaga', 5, 'Kilos', 'estropeado', 5.29, '', 26.45],
+      [fecha, '278_26S21_11', '2026-05-26', '3127', '3301', 'Tomate', 'Almería', 10, 'Kilos', 'podrido', 3.20, '', 32],
     ])
     expect(db.oneDriveDeps).toEqual({ photoFolderUrl: 'https://1drv.ms/f/photos-sav' })
   })

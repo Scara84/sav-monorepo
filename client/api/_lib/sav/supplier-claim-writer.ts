@@ -155,7 +155,7 @@ export function buildClaimWorkbook(input: ClaimWriterInput): ClaimWorkbookResult
   // Row 1 : en-têtes figées (13 colonnes)
   rows.push([...SOL_Y_FRUTA_HEADERS])
 
-  rows.push(...buildClaimWorkbookRows({ metadata, generatedAt, claimLines }))
+  rows.push(...buildClaimWorkbookRows({ metadata, claimLines }, toSupplierDisplayDateString(generatedAt)))
 
   // Créer le sheet depuis AOA
   const ws = XLSX.utils.aoa_to_sheet(rows)
@@ -193,11 +193,10 @@ export function buildClaimWorkbook(input: ClaimWriterInput): ClaimWorkbookResult
 }
 
 export function buildClaimWorkbookRows(
-  input: Pick<ClaimWriterInput, 'metadata' | 'generatedAt' | 'claimLines'>,
-  dateFormat: 'display' | 'iso' = 'display'
+  input: Pick<ClaimWriterInput, 'metadata' | 'claimLines'>,
+  fecha: string
 ): ClaimWorkbookRow[] {
-  const { metadata, generatedAt, claimLines } = input
-  const dateStr = dateFormat === 'iso' ? toIsoDateString(generatedAt) : toSupplierDisplayDateString(generatedAt)
+  const { metadata, claimLines } = input
 
   return claimLines.map((line) => {
     const peso = line.qty
@@ -205,7 +204,7 @@ export function buildClaimWorkbookRows(
     const importe = centsToEuros(line.importeCents)
 
     return [
-      dateStr,
+      fecha,
       metadata.reference,
       metadata.fechaAlbaran,
       metadata.albaran,

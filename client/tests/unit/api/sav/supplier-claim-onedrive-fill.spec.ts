@@ -9,12 +9,11 @@ import { buildClaimWorkbookRows, type ClaimWorkbookRow } from '../../../../api/_
 function makeRows(): ClaimWorkbookRow[] {
   return buildClaimWorkbookRows({
     metadata: { reference: '337_26S27_64', fechaAlbaran: '2026-06-29', albaran: '3749' },
-    generatedAt: new Date('2026-06-05T12:00:00Z'),
     claimLines: [{
       position: 1, codigoEs: '1181', productoEs: 'Pomelo', origen: 'Málaga', qty: 0.37944,
       unidad: 'Kilos', causaEs: 'estropeado', precioCents: 154, comentarios: '', importeCents: 58,
     }],
-  }, 'iso')
+  }, '2026-06-05')
 }
 
 function makeGraphRequest(methods: {
