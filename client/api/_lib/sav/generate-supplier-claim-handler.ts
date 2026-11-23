@@ -83,6 +83,7 @@ interface GroupCheckResult {
   reason?: string
   /** Référence SAV (ex. 'SAV-2026-00012') — MEDIUM-1 : lue depuis DB, pas interpolée */
   savReference?: string
+  receivedAt?: string | null
   photoFolderUrl?: string | null
 }
 
@@ -96,9 +97,9 @@ async function checkGroupScope(
   // SELECT id + group_id + reference + metadata en une seule query (MEDIUM-1 : vraie référence SAV)
   const { data: savRow, error: savError } = await admin
     .from('sav')
-    .select('id, group_id, reference, metadata')
+    .select('id, group_id, reference, metadata, received_at')
     .eq('id', savId)
-    .maybeSingle<{ id: number; group_id: number; reference: string | null; metadata: Record<string, unknown> | null }>()
+    .maybeSingle<{ id: number; group_id: number; received_at: string | null; reference: string | null; metadata: Record<string, unknown> | null }>()
 
   if (savError) {
     return { status: 'not_found', reason: 'Erreur lecture SAV' }
@@ -112,7 +113,7 @@ async function checkGroupScope(
   const photoFolderUrl = safeHttpUrlFromMetadata(savRow.metadata, 'dossierSavUrl')
 
   if (operatorRole === 'admin') {
-    return { status: 'allowed', savReference, photoFolderUrl }
+    return { status: 'allowed', savReference, photoFolderUrl, receivedAt: savRow.received_at }
   }
 
   const { data: opGroups, error: opGroupsError } = await admin
@@ -130,7 +131,7 @@ async function checkGroupScope(
     return { status: 'forbidden', reason: 'SAV hors scope groupe opérateur' }
   }
 
-  return { status: 'allowed', savReference, photoFolderUrl }
+  return { status: 'allowed', savReference, photoFolderUrl, receivedAt: savRow.received_at }
 }
 
 function safeHttpUrlFromMetadata(metadata: Record<string, unknown> | null, key: string): string | null {
@@ -295,6 +296,7 @@ function generateSupplierClaimCore(savId: number): ApiHandler {
 
     // --- RBAC : check group scope + lecture référence SAV (AC #3, MEDIUM-1) ---
     let savReference = `SAV-${savId}` // fallback si groupCheck échoue inopinément
+    let receivedAt: string | null = null
     let photoFolderUrl: string | null = null
     try {
       const groupCheck = await checkGroupScope(savId, user.sub, user.role)
@@ -310,6 +312,7 @@ function generateSupplierClaimCore(savId: number): ApiHandler {
       if (groupCheck.savReference) {
         savReference = groupCheck.savReference
       }
+      receivedAt = groupCheck.receivedAt ?? null
       photoFolderUrl = groupCheck.photoFolderUrl ?? null
     } catch (err) {
       logger.error('sav.generate-supplier-claim.group_check_error', {
@@ -460,10 +463,11 @@ function generateSupplierClaimCore(savId: number): ApiHandler {
       claimLines: writerInput,
       regenerationIndex,
     })
-    const workbookRows = buildClaimWorkbookRows(
-      { metadata: payload.metadata, generatedAt, claimLines: writerInput },
-      'iso'
-    )
+    // Même jour civil que « Reçu le » sur la fiche SAV, au format ISO pour Excel.
+    const fecha = receivedAt
+      ? new Intl.DateTimeFormat('sv-SE', { timeZone: 'Europe/Paris' }).format(new Date(receivedAt))
+      : ''
+    const workbookRows = buildClaimWorkbookRows({ metadata: payload.metadata, claimLines: writerInput }, fecha)
 
     // --- Persistance atomique via RPC (DN-7=B LOCKED) ---
     // Note : les champs numériques sont passés comme strings dans le JSONB
