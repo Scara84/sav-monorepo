@@ -1,31 +1,32 @@
 <template>
   <section class="member-sav-files-list border rounded p-4 bg-white" data-testid="sav-files-list">
     <div class="flex items-center justify-between mb-3">
-      <h3 class="text-lg font-semibold">Fichiers joints</h3>
+      <h2 class="text-lg font-semibold">Fichiers joints</h2>
       <button
         type="button"
         data-testid="file-upload-button"
         class="text-sm px-3 py-1.5 rounded bg-orange-500 text-white hover:bg-orange-600 disabled:opacity-50"
-        :disabled="uploading"
+        :disabled="uploading || needsVerification"
         @click="onClickUpload"
       >
         {{ uploading ? 'Envoi…' : 'Joindre un fichier' }}
       </button>
-      <input
-        ref="fileInput"
-        type="file"
-        :accept="ACCEPT.join(',')"
-        class="sr-only"
-        @change="onChange"
-      />
+      <input ref="fileInput" type="file" :accept="ACCEPT.join(',')" hidden @change="onChange" />
     </div>
 
     <p v-if="uploadError" role="alert" class="mb-2 text-sm text-red-700">{{ uploadError }}</p>
+    <button v-if="retryFile && !uploading" type="button" @click="handleUpload(retryFile)">
+      Réessayer l’envoi de {{ retryFile.name }}
+    </button>
+    <button v-if="needsVerification && !uploading" type="button" @click="emit('verify')">
+      Actualiser la liste des pièces
+    </button>
     <p v-if="uploading && uploadingPercent !== null" class="mb-2 text-sm text-gray-600">
       <span class="inline-block w-32 h-1.5 bg-gray-200 rounded">
         <span
           class="block h-full bg-orange-500 rounded"
           :style="{ width: `${uploadingPercent}%` }"
+          aria-label="Envoi de la pièce jointe"
           role="progressbar"
           :aria-valuenow="uploadingPercent"
           aria-valuemin="0"
@@ -40,14 +41,14 @@
       <li
         v-for="f in files"
         :key="f.id"
-        class="flex items-center gap-3 text-sm"
+        class="flex flex-wrap items-center gap-3 text-sm"
         :data-testid="`file-item-${f.id}`"
       >
         <a
           :href="f.oneDriveWebUrl"
           target="_blank"
           rel="noopener noreferrer"
-          class="text-orange-700 underline truncate"
+          class="text-orange-700 underline break-all"
           data-testid="file-link"
           >{{ f.filename }}</a
         >
@@ -69,13 +70,17 @@ import type { MemberSavFile } from '../composables/useMemberSavDetail'
 import fileLimits from '@shared/file-limits.json'
 
 const props = defineProps<{ files: MemberSavFile[]; savReference: string }>()
-const emit = defineEmits<{ uploaded: [] }>()
+const emit = defineEmits<{ uploaded: []; verify: [] }>()
 
 const ACCEPT = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf']
 
 const fileInput = ref<HTMLInputElement | null>(null)
 const uploading = ref(false)
 const uploadingPercent = ref<number | null>(null)
+const retryFile = ref<File | null>(null)
+const needsVerification = ref(false)
+const unknownRegistration =
+  'Enregistrement non confirmé. Actualisez la liste pour vérifier la présence de la pièce.'
 const uploadError = ref<string | null>(null)
 
 function formatSize(bytes: number): string {
@@ -98,6 +103,7 @@ async function onChange(ev: Event): Promise<void> {
 }
 
 async function handleUpload(file: File): Promise<void> {
+  retryFile.value = null
   uploadError.value = null
   if (file.size > fileLimits.maxFileSizeBytes) {
     uploadError.value = `Fichier trop volumineux (> ${fileLimits.maxFileSizeMb} Mo).`
@@ -108,6 +114,7 @@ async function handleUpload(file: File): Promise<void> {
     return
   }
 
+  retryFile.value = file
   uploading.value = true
   uploadingPercent.value = 0
   try {
@@ -141,6 +148,8 @@ async function handleUpload(file: File): Promise<void> {
     }
 
     // 3) upload-complete avec savReference → INSERT sav_files (handler Story 2.4 étendu)
+    retryFile.value = null
+    needsVerification.value = true
     const completeRes = await fetch('/api/self-service/upload-complete', {
       method: 'POST',
       credentials: 'include',
@@ -156,10 +165,15 @@ async function handleUpload(file: File): Promise<void> {
       }),
     })
     if (!completeRes.ok) {
-      uploadError.value = 'Finalisation échouée.'
+      uploadError.value = unknownRegistration
       return
     }
+    needsVerification.value = false
     emit('uploaded')
+  } catch {
+    uploadError.value = needsVerification.value
+      ? unknownRegistration
+      : 'Connexion impossible. Réessayez l’envoi.'
   } finally {
     uploading.value = false
     uploadingPercent.value = null

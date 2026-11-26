@@ -31,7 +31,8 @@ export interface MemberSavLine {
   description: string
   qty: number
   qtyUnit: string
-  motif: string | null
+  requestReason?: string | null
+  motif?: string | null
   validationStatus: string
   validationStatusLabel: string
   validationMessage: string | null
@@ -103,8 +104,8 @@ export function useMemberSavDetail(): UseMemberSavDetailReturn {
   let pollTimer: ReturnType<typeof setInterval> | null = null
   let pollAttempts = 0
 
-  // HIGH-3: disposed flag — set by reset() to prevent ghost-writes after unmount
-  let disposed = false
+  // Ignore les réponses d’un chargement remplacé ou d’une fiche démontée.
+  let loadVersion = 0
 
   // -------------------------------------------------------------------------
   // H-11 PATTERN-H11-A — Polling stop
@@ -122,6 +123,7 @@ export function useMemberSavDetail(): UseMemberSavDetailReturn {
   // -------------------------------------------------------------------------
   async function pollOnce(): Promise<void> {
     if (lastSavId.value === null) return
+    const version = loadVersion
     try {
       const res = await fetch(`/api/self-service/sav/${lastSavId.value}`, {
         method: 'GET',
@@ -130,8 +132,7 @@ export function useMemberSavDetail(): UseMemberSavDetailReturn {
       })
       if (!res.ok) return // silent fail — retentera dans 30s
       const body = (await res.json()) as { data: MemberSavDetail }
-      // HIGH-3: guard against ghost-write after reset() (disposed instance)
-      if (disposed) return
+      if (version !== loadVersion) return
       data.value = body.data // remplace en place — pas de loading flicker
       const cn = body.data.creditNote
       if (!cn || cn.hasPdf === true) {
@@ -162,6 +163,7 @@ export function useMemberSavDetail(): UseMemberSavDetailReturn {
   }
 
   async function load(savId: number): Promise<void> {
+    const version = ++loadVersion
     stopPolling() // AC #1 (h) — stoppe l'ancien polling avant nouveau fetch
     lastSavId.value = savId
     loading.value = true
@@ -172,7 +174,8 @@ export function useMemberSavDetail(): UseMemberSavDetailReturn {
         credentials: 'include',
         headers: { Accept: 'application/json' },
       })
-      if (res.status === 404) {
+      if (version !== loadVersion) return
+      if (res.status === 404 || res.status === 403) {
         error.value = 'not_found'
         data.value = null
         return
@@ -184,14 +187,15 @@ export function useMemberSavDetail(): UseMemberSavDetailReturn {
       }
       const body = (await res.json()) as { data: MemberSavDetail }
       // HIGH-3 / MEDIUM-5: guard against ghost-write if reset() called while in-flight
-      if (disposed) return
+      if (version !== loadVersion) return
       data.value = body.data
       startPollingIfNeeded() // AC #1 (f) — démarre le polling si creditNote pending
     } catch {
+      if (version !== loadVersion) return
       error.value = 'generic'
       data.value = null
     } finally {
-      loading.value = false
+      if (version === loadVersion) loading.value = false
     }
   }
 
@@ -203,9 +207,7 @@ export function useMemberSavDetail(): UseMemberSavDetailReturn {
   // H-11 AC #2 (a) — reset() exposé publiquement (PATTERN-H08-A)
   // -------------------------------------------------------------------------
   function reset(): void {
-    // HIGH-3: mark instance as disposed BEFORE stopPolling so any in-flight
-    // pollOnce() or load() that resolves after reset() won't ghost-write data.
-    disposed = true
+    ++loadVersion
     stopPolling()
     data.value = null
     error.value = null
@@ -214,6 +216,7 @@ export function useMemberSavDetail(): UseMemberSavDetailReturn {
   }
 
   async function addComment(body: string): Promise<{ ok: true } | { ok: false; reason: string }> {
+    const version = loadVersion
     const savId = lastSavId.value
     if (savId === null) return { ok: false, reason: 'no_sav_loaded' }
     const trimmed = body.trim()
@@ -242,7 +245,7 @@ export function useMemberSavDetail(): UseMemberSavDetailReturn {
       })
       if (!res.ok) {
         // Rollback optimistic.
-        if (data.value) {
+        if (version === loadVersion && data.value) {
           data.value = {
             ...data.value,
             comments: before,
@@ -255,13 +258,13 @@ export function useMemberSavDetail(): UseMemberSavDetailReturn {
       }
       const body2 = (await res.json()) as { data: MemberSavComment }
       // Replace optimistic by real row.
-      if (data.value) {
+      if (version === loadVersion && data.value) {
         const next = [body2.data, ...before]
         data.value = { ...data.value, comments: next }
       }
       return { ok: true }
     } catch {
-      if (data.value) {
+      if (version === loadVersion && data.value) {
         data.value = { ...data.value, comments: before }
       }
       return { ok: false, reason: 'network_error' }

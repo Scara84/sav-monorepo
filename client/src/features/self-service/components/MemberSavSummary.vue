@@ -1,9 +1,9 @@
 <template>
   <section class="member-sav-summary border rounded p-4 bg-white" data-testid="sav-summary">
-    <div class="flex items-baseline justify-between gap-4">
-      <h3 class="text-xl font-semibold">SAV {{ detail.reference }}</h3>
-      <span class="text-sm">
-        <span :title="statusLabel(detail.status)">{{ statusIcon(detail.status) }}</span>
+    <div class="flex flex-wrap items-baseline justify-between gap-4">
+      <h1 class="text-2xl font-semibold">{{ detail.reference }}</h1>
+      <span class="rounded-full bg-amber-100 px-3 py-1 text-sm text-amber-950">
+        <span aria-hidden="true">{{ statusIcon(detail.status) }}</span>
         <span class="ml-1">{{ statusLabel(detail.status) }}</span>
       </span>
     </div>

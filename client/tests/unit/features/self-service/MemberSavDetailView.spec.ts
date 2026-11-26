@@ -53,7 +53,7 @@ const DETAIL_RESPONSE = {
         description: 'Pomme Bio',
         qty: 5,
         qtyUnit: 'kg',
-        motif: 'Non conforme',
+        requestReason: 'abime',
         validationStatus: 'ok',
         validationStatusLabel: 'Vérifié OK',
         validationMessage: null,
@@ -188,7 +188,7 @@ describe('MemberSavDetailView (Story 6.3)', () => {
     await flushPromises()
     const lines = wrapper.find('[data-testid="sav-lines"]')
     expect(lines.text()).toContain('Pomme Bio')
-    expect(lines.text()).toContain('Non conforme')
+    expect(lines.text()).toContain('Abîmé')
     expect(lines.text()).toContain('Vérifié OK')
   })
 
@@ -344,6 +344,130 @@ describe('MemberSavDetailView (Story 6.3)', () => {
     await wrapper.find('[data-testid="comment-form"]').trigger('submit.prevent')
     await flushPromises()
     expect(wrapper.find('[data-testid="comment-error"]').exists()).toBe(true)
+  })
+
+  it('conserve le commentaire après un échec et permet son renvoi', async () => {
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(200, DETAIL_RESPONSE))
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce(
+        jsonResponse(201, { data: { ...DETAIL_RESPONSE.data.comments[0], body: 'Ma précision' } })
+      )
+    const wrapper = await mountAt('123')
+    await flushPromises()
+    const input = wrapper.get<HTMLTextAreaElement>('[data-testid="comment-body-input"]')
+    await input.setValue('Ma précision')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(input.element.value).toBe('Ma précision')
+    expect(wrapper.get('[data-testid="comment-submit"]').text()).toBe('Réessayer')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(input.element.value).toBe('')
+    expect(wrapper.get('[data-testid="comment-item-1"]').text()).toContain('Ma précision')
+  })
+
+  it('propose une reprise avec la même pièce après une coupure réseau', async () => {
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(200, DETAIL_RESPONSE))
+      .mockRejectedValue(new Error('offline'))
+    globalThis.fetch = fetchMock
+    const wrapper = await mountAt('123')
+    await flushPromises()
+    const input = wrapper.get('input[type=file]')
+    Object.defineProperty(input.element, 'files', {
+      value: [new File(['test'], 'piece.pdf', { type: 'application/pdf' })],
+    })
+    await input.trigger('change')
+    await flushPromises()
+    const retry = wrapper
+      .get('[data-testid="sav-files-list"]')
+      .findAll('button')
+      .find((button) => button.text().includes('piece.pdf'))!
+    await retry.trigger('click')
+    await flushPromises()
+    expect(fetchMock.mock.calls[2]).toEqual(fetchMock.mock.calls[1])
+    expect(wrapper.get('[data-testid="sav-files-list"] [role=alert]').text()).toContain('Réessayez')
+  })
+
+  it('vérifie une finalisation incertaine et conserve le brouillon uniquement sur la même fiche', async () => {
+    class SuccessfulPut {
+      upload = {}
+      status = 201
+      responseText = JSON.stringify({ id: 'item', webUrl: 'https://example.com/item' })
+      onload = () => {}
+      open() {}
+      setRequestHeader() {}
+      send() {
+        this.onload()
+      }
+    }
+    vi.stubGlobal('XMLHttpRequest', SuccessfulPut)
+    try {
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse(200, DETAIL_RESPONSE))
+        .mockResolvedValueOnce(
+          jsonResponse(200, {
+            data: { uploadUrl: 'https://example.com/upload', sanitizedFilename: 'piece.pdf' },
+          })
+        )
+        .mockRejectedValueOnce(new Error('offline'))
+        .mockResolvedValueOnce(jsonResponse(200, DETAIL_RESPONSE))
+        .mockResolvedValueOnce(jsonResponse(200, { data: { ...DETAIL_RESPONSE.data, id: 456 } }))
+      globalThis.fetch = fetchMock
+      const wrapper = await mountAt('123')
+      await flushPromises()
+      const draft = () => wrapper.get<HTMLTextAreaElement>('[data-testid="comment-body-input"]')
+      await draft().setValue('Mon brouillon')
+      const input = wrapper.get('input[type=file]')
+      Object.defineProperty(input.element, 'files', {
+        value: [new File(['test'], 'piece.pdf', { type: 'application/pdf' })],
+      })
+      await input.trigger('change')
+      await flushPromises()
+      const fileSection = wrapper.get('[data-testid="sav-files-list"]')
+      expect(fileSection.text()).not.toContain('Réessayer')
+      await fileSection
+        .findAll('button')
+        .find((b) => b.text().includes('Actualiser'))!
+        .trigger('click')
+      await flushPromises()
+      expect(fetchMock.mock.calls.map((c) => c[0])).toEqual([
+        '/api/self-service/sav/123',
+        '/api/self-service/upload-session',
+        '/api/self-service/upload-complete',
+        '/api/self-service/sav/123',
+      ])
+      expect(draft().element.value).toBe('Mon brouillon')
+      await wrapper.vm.$router.push('/monespace/sav/456')
+      await flushPromises()
+      expect(draft().element.value).toBe('')
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
+  it('ignore les réponses tardives après un changement de dossier', async () => {
+    let resolveFirst!: (value: Response) => void
+    globalThis.fetch = vi
+      .fn()
+      .mockReturnValueOnce(
+        new Promise<Response>((resolve) => {
+          resolveFirst = resolve
+        })
+      )
+      .mockResolvedValueOnce(jsonResponse(403, {}))
+    const wrapper = await mountAt('123')
+    await wrapper.vm.$router.push('/monespace/sav/456')
+    await flushPromises()
+    resolveFirst(jsonResponse(200, DETAIL_RESPONSE))
+    await flushPromises()
+    expect(wrapper.get('[data-testid="error-404"]').text()).toContain('introuvable')
+    expect(wrapper.find('[data-testid="sav-summary"]').exists()).toBe(false)
+    expect(wrapper.get('a').attributes('href')).toBe('/monespace')
   })
 
   it('AC#8 form rejette body vide côté client', async () => {

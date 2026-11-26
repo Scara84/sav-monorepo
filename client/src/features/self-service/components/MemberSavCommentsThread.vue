@@ -3,7 +3,7 @@
     class="member-sav-comments-thread border rounded p-4 bg-white"
     data-testid="sav-comments-thread"
   >
-    <h3 class="text-lg font-semibold mb-3">Commentaires</h3>
+    <h2 class="text-lg font-semibold mb-3">Échanges</h2>
 
     <form class="mb-4 space-y-2" data-testid="comment-form" @submit.prevent="onSubmit">
       <textarea
@@ -24,7 +24,7 @@
           data-testid="comment-submit"
           :disabled="!canSubmit"
         >
-          {{ submitting ? 'Envoi…' : 'Ajouter' }}
+          {{ submitting ? 'Envoi…' : errorMsg ? 'Réessayer' : 'Ajouter un commentaire' }}
         </button>
       </div>
       <p v-if="errorMsg" data-testid="comment-error" role="alert" class="text-sm text-red-700">
@@ -61,7 +61,7 @@ const emit = defineEmits<{
   submit: [body: string, done: (ok: boolean, reason?: string) => void]
 }>()
 
-const bodyInput = ref('')
+const bodyInput = defineModel<string>({ default: '' })
 const submitting = ref(false)
 const errorMsg = ref<string | null>(null)
 
@@ -110,7 +110,7 @@ function onSubmit(): void {
 function labelFromReason(reason?: string): string {
   switch (reason) {
     case 'rate_limited':
-      return 'Trop de commentaires. Merci de patienter.'
+      return 'Trop de commentaires. Merci de patienter avant de réessayer.'
     case 'validation_failed':
       return 'Commentaire invalide.'
     case 'not_found':
@@ -118,7 +118,7 @@ function labelFromReason(reason?: string): string {
     case 'network_error':
       return 'Connexion impossible. Réessayez.'
     default:
-      return "Erreur lors de l'envoi du commentaire."
+      return 'Envoi impossible. Votre texte est conservé. Réessayez.'
   }
 }
 

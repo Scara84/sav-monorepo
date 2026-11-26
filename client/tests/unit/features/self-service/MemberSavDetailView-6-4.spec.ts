@@ -109,7 +109,7 @@ describe('MemberSavDetailView — bouton Télécharger PDF (Story 6.4)', () => {
     expect(btn.text()).toMatch(/Télécharger bon SAV/i)
   })
 
-  it('AC#1 (b) creditNote présent mais hasPdf=false → état "PDF en cours de génération", PAS le bouton', async () => {
+  it('AC#1 (b) creditNote présent mais hasPdf=false → état "PDF indisponible", PAS le bouton', async () => {
     const detail = {
       ...BASE_DETAIL,
       creditNote: {
@@ -127,7 +127,23 @@ describe('MemberSavDetailView — bouton Télécharger PDF (Story 6.4)', () => {
     expect(wrapper.find('[data-testid="download-credit-note-pdf"]').exists()).toBe(false)
     const pending = wrapper.find('[data-testid="credit-note-pdf-pending"]')
     expect(pending.exists()).toBe(true)
-    expect(pending.text()).toMatch(/en cours de génération/i)
+    expect(pending.text()).toBe('Avoir N° AV-2026-00042 · PDF indisponible.')
+  })
+
+  it("affiche le numéro de l'avoir de groupe sans lien de téléchargement", async () => {
+    globalThis.fetch = vi.fn().mockResolvedValue(
+      jsonResponse(200, {
+        data: {
+          ...BASE_DETAIL,
+          member: { firstName: 'Marie', lastName: null },
+          creditNote: { number: 'AV-2026-00042', hasPdf: true },
+        },
+      })
+    )
+    const wrapper = await mountAt('123')
+    await flushPromises()
+    expect(wrapper.text()).toContain('AV-2026-00042')
+    expect(wrapper.find('[data-testid="download-credit-note-pdf"]').exists()).toBe(false)
   })
 
   it('AC#1 (c) creditNote=null → aucun bouton ni état "en cours"', async () => {

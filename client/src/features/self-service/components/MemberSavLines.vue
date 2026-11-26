@@ -1,35 +1,31 @@
 <template>
   <section class="member-sav-lines border rounded p-4 bg-white" data-testid="sav-lines">
-    <h3 class="text-lg font-semibold mb-3">Articles concernés</h3>
+    <h2 class="text-lg font-semibold mb-3">Articles concernés</h2>
     <p v-if="lines.length === 0" class="text-sm text-gray-500">Aucun article.</p>
-    <table v-else class="w-full text-sm">
-      <thead class="text-left text-gray-600 border-b">
-        <tr>
-          <th class="py-1">Article</th>
-          <th class="py-1 text-right">Qté</th>
-          <th class="py-1">Motif</th>
-          <th class="py-1">Statut</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="line in lines" :key="line.id" class="border-b" :data-testid="`line-${line.id}`">
-          <td class="py-1">{{ line.description }}</td>
-          <td class="py-1 text-right">
-            {{ formatQty(line.qty) }}
-            <span class="text-xs text-gray-500">{{ formatUnit(line.qtyUnit) }}</span>
-          </td>
-          <td class="py-1">{{ line.motif ?? '—' }}</td>
-          <td class="py-1">
-            <span class="px-2 py-0.5 rounded text-xs" :class="statusClass(line.validationStatus)">{{
-              line.validationStatusLabel
-            }}</span>
-            <span v-if="line.validationMessage" class="block text-xs text-gray-500 mt-1">
-              {{ line.validationMessage }}
-            </span>
-          </td>
-        </tr>
-      </tbody>
-    </table>
+    <ul v-else class="divide-y">
+      <li v-for="line in lines" :key="line.id" class="py-3" :data-testid="`line-${line.id}`">
+        <h3 class="font-semibold">{{ line.description }}</h3>
+        <dl class="mt-2 grid gap-2 text-sm sm:grid-cols-3">
+          <div>
+            <dt>Quantité</dt>
+            <dd>{{ formatQty(line.qty) }}{{ formatUnit(line.qtyUnit) }}</dd>
+          </div>
+          <div>
+            <dt>Motif</dt>
+            <dd>{{ reasonLabel(line.requestReason || line.motif) }}</dd>
+          </div>
+          <div>
+            <dt>Statut</dt>
+            <dd>
+              <span class="rounded px-2" :class="statusClass(line.validationStatus)">{{
+                line.validationStatusLabel
+              }}</span>
+              <span v-if="line.validationMessage" class="block">{{ line.validationMessage }}</span>
+            </dd>
+          </div>
+        </dl>
+      </li>
+    </ul>
   </section>
 </template>
 
@@ -37,6 +33,16 @@
 import type { MemberSavLine } from '../composables/useMemberSavDetail'
 
 defineProps<{ lines: MemberSavLine[] }>()
+
+const reasons = new Map([
+  ['abime', 'Abîmé'],
+  ['manquant', 'Manquant'],
+  ['autre', 'Autre'],
+])
+function reasonLabel(reason?: string | null): string {
+  const value = reason?.trim()
+  return value ? (reasons.get(value) ?? value) : '—'
+}
 
 function formatQty(qty: number): string {
   if (!Number.isFinite(qty)) return '—'
