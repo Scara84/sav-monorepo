@@ -198,7 +198,7 @@ describe('H-08: Filtres recherche self-service (MemberSavListView)', () => {
     await flushPromises()
     const input = wrapper.find('[data-test="group-search"]')
     await input.setValue('Martin')
-    await wrapper.find('[data-test="group-search-submit"]').trigger('click')
+    await wrapper.get('form').trigger('submit')
     await flushPromises()
 
     // Vérifier que "Martin" a bien été envoyé dans un fetch group
@@ -209,6 +209,8 @@ describe('H-08: Filtres recherche self-service (MemberSavListView)', () => {
     // Étape 2: switch vers self — le reset doit vider groupQ UI ET l'état interne
     await wrapper.find('[data-test="tab-self"]').trigger('click')
     await flushPromises()
+
+    expect(wrapper.get('[data-test="tab-group"]').text()).toBe('Mon groupe')
 
     // Étape 3: re-switcher vers group
     // Après reset(), meta.value === null → lazy-load refait un fetch propre
@@ -353,7 +355,7 @@ describe('H-08: Filtres recherche self-service (MemberSavListView)', () => {
     // Submit "Dupont"
     const input = wrapper.find('[data-test="group-search"]')
     await input.setValue('Dupont')
-    await wrapper.find('[data-test="group-search-submit"]').trigger('click')
+    await wrapper.get('form').trigger('submit')
     await flushPromises()
 
     // Mémoriser le nombre de calls avant le changement de filtre
@@ -486,7 +488,7 @@ describe('H-08: Filtres recherche self-service (MemberSavListView)', () => {
     // Submit "Martin" (déclenche un autre fetch group bloqué)
     const input = wrapper.find('[data-test="group-search"]')
     await input.setValue('Martin')
-    await wrapper.find('[data-test="group-search-submit"]').trigger('click')
+    await wrapper.get('form').trigger('submit')
     // Toujours pas de flush — le fetch reste en vol
 
     // Switch vers self — doit abort le fetch group inflight

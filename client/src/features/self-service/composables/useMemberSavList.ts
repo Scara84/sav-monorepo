@@ -53,7 +53,7 @@ export function useMemberSavList(scope: MemberSavScope = 'self'): UseMemberSavLi
   const meta = ref<MemberSavListMeta | null>(null)
   // Default to true so `loading` is visible from the very first render before
   // `load()` runs. AC #14c-(a) — spinner visible avant résolution fetch.
-  const loading = ref<boolean>(true)
+  const loading = ref(scope === 'self')
   const error = ref<string | null>(null)
   const lastStatusFilter = ref<'open' | 'closed' | 'all'>('all')
   // CR P5 — `lastQ` mémorisé pour que `loadMore` préserve le filtre.
@@ -68,6 +68,7 @@ export function useMemberSavList(scope: MemberSavScope = 'self'): UseMemberSavLi
       inflightController.abort()
       inflightController = null
     }
+    loading.value = false
   }
 
   // H-08 PATTERN-H08-A — clear state interne sans déclencher de fetch.

@@ -1,117 +1,88 @@
 <template>
   <section class="member-sav-list">
-    <div class="flex items-center justify-between mb-4">
-      <h2 class="text-2xl font-bold">Mes demandes de SAV</h2>
-      <label class="text-sm">
-        Filtre :
-        <select
-          v-model="filter"
-          data-test="status-filter"
-          class="ml-2 border rounded px-2 py-1"
-          @change="onFilterChange"
-        >
+    <header class="list-heading">
+      <h2>{{ activeTab === 'group' ? 'Demandes de mon groupe' : 'Mes demandes de SAV' }}</h2>
+      <label
+        >Statut
+        <select v-model="filter" data-test="status-filter" @change="onFilterChange">
           <option value="all">Tous</option>
           <option value="open">Ouverts</option>
           <option value="closed">Fermés</option>
         </select>
       </label>
-    </div>
+    </header>
 
-    <!-- Story 6.5 AC #1 / #8 — onglets « Mes SAV » / « Mon groupe »
-         conditionnel sur isGroupManager. Member normal → pas de tabs. -->
     <div
       v-if="isGroupManager"
       data-test="member-sav-tabs"
-      class="flex border-b mb-4"
       role="tablist"
+      aria-label="Demandes à consulter"
+      class="scope-tabs"
+      @keydown="onTabKey"
     >
       <button
+        v-for="tab in ['self', 'group'] as const"
+        :key="tab"
+        :id="`sav-tab-${tab}`"
         type="button"
         role="tab"
-        :aria-selected="activeTab === 'self'"
-        data-test="tab-self"
-        class="px-4 py-2 -mb-px border-b-2 text-sm font-medium"
-        :class="
-          activeTab === 'self'
-            ? 'border-[color:var(--main-orange,#f97316)] text-[color:var(--main-orange,#f97316)]'
-            : 'border-transparent text-gray-600 hover:text-gray-800'
-        "
-        @click="onTabClick('self')"
+        :data-test="`tab-${tab}`"
+        :aria-selected="activeTab === tab"
+        :tabindex="activeTab === tab ? 0 : -1"
+        aria-controls="sav-results"
+        @click="onTabClick(tab)"
       >
-        Mes SAV<span v-if="selfCount !== null" class="ml-1 text-gray-500">({{ selfCount }})</span>
-      </button>
-      <button
-        type="button"
-        role="tab"
-        :aria-selected="activeTab === 'group'"
-        data-test="tab-group"
-        class="px-4 py-2 -mb-px border-b-2 text-sm font-medium"
-        :class="
-          activeTab === 'group'
-            ? 'border-[color:var(--main-orange,#f97316)] text-[color:var(--main-orange,#f97316)]'
-            : 'border-transparent text-gray-600 hover:text-gray-800'
-        "
-        @click="onTabClick('group')"
-      >
-        Mon groupe<span v-if="groupCount !== null" class="ml-1 text-gray-500"
-          >({{ groupCount }})</span
+        {{ tab === 'self' ? 'Mes SAV' : 'Mon groupe' }}
+        <span v-if="(tab === 'self' ? selfCount : groupCount) !== null"
+          >({{ tab === 'self' ? selfCount : groupCount }})</span
         >
       </button>
     </div>
 
-    <!-- Filtre `q` (last_name) sur l'onglet groupe uniquement. -->
-    <div v-if="isGroupManager && activeTab === 'group'" class="mb-3 flex items-center gap-3">
-      <label class="text-sm">
-        Recherche par nom :
-        <input
-          v-model="groupQ"
-          type="text"
-          data-test="group-search"
-          maxlength="100"
-          class="ml-2 border rounded px-2 py-1"
-          placeholder="ex. Martin"
-          @keyup.enter="onSearchSubmit"
-        />
-      </label>
-      <button
-        type="button"
-        data-test="group-search-submit"
-        class="px-3 py-1 border rounded hover:bg-gray-50 text-sm"
-        @click="onSearchSubmit"
-      >
-        Filtrer
-      </button>
-    </div>
-
-    <div v-if="loading" data-test="loading" aria-busy="true" class="py-8 text-center">
-      <span
-        class="inline-block w-8 h-8 border-4 border-gray-200 border-t-[color:var(--main-orange,#f97316)] rounded-full animate-spin"
-      />
-      <p class="mt-2 text-sm text-gray-600">Chargement…</p>
-    </div>
-
     <div
-      v-else-if="error"
-      role="alert"
-      class="p-4 bg-red-50 border border-red-200 rounded text-red-700"
+      id="sav-results"
+      :role="isGroupManager ? 'tabpanel' : undefined"
+      :aria-labelledby="isGroupManager ? `sav-tab-${activeTab}` : undefined"
     >
-      Une erreur est survenue. Merci de réessayer.
-    </div>
+      <form
+        v-if="isGroupManager && activeTab === 'group'"
+        class="group-search"
+        @submit.prevent="onSearchSubmit"
+      >
+        <label
+          >Nom de l’adhérent
+          <input
+            v-model="groupQ"
+            type="search"
+            data-test="group-search"
+            maxlength="100"
+            placeholder="Ex. Martin"
+          />
+        </label>
+        <button type="submit" data-test="group-search-submit">Rechercher</button>
+      </form>
 
-    <div v-else-if="visibleRows.length === 0" class="p-8 text-center text-gray-600">
-      <span v-if="activeTab === 'group'">Aucun SAV dans votre groupe pour cette recherche.</span>
-      <span v-else>Vous n'avez pas encore de SAV.</span>
-    </div>
-
-    <div v-else>
-      <table class="w-full text-left border-collapse">
+      <p v-if="loading" role="status" data-test="loading" aria-busy="true" class="state">
+        <progress aria-label="Chargement des demandes"></progress> Chargement…
+      </p>
+      <p v-else-if="error" role="alert" class="state">{{ error }}</p>
+      <p v-else-if="!visibleRows.length" role="status" class="state">
+        <template v-if="activeTab === 'group'"
+          >Aucun SAV dans votre groupe pour cette recherche.</template
+        >
+        <template v-else-if="filter !== 'all'"
+          >Aucune demande ne correspond au statut sélectionné parmi les dossiers chargés.</template
+        >
+        <template v-else>Vous n'avez pas encore de SAV.</template>
+      </p>
+      <table v-else>
         <thead>
-          <tr class="border-b text-sm text-gray-600">
-            <th v-if="activeTab === 'group'" class="py-2 px-2">Adhérent</th>
-            <th class="py-2 px-2">Référence</th>
-            <th class="py-2 px-2">Reçu le</th>
-            <th class="py-2 px-2">Statut</th>
-            <th class="py-2 px-2 text-right">Total</th>
+          <tr>
+            <th v-if="activeTab === 'group'" scope="col">Adhérent</th>
+            <th scope="col">Référence</th>
+            <th scope="col">Reçu le</th>
+            <th scope="col">Statut</th>
+            <th scope="col">Total</th>
           </tr>
         </thead>
         <tbody>
@@ -119,40 +90,42 @@
             v-for="row in visibleRows"
             :key="row.id"
             data-test="member-sav-row"
-            class="border-b cursor-pointer hover:bg-gray-50"
             @click="goToDetail(row.id)"
           >
-            <td v-if="activeTab === 'group'" class="py-2 px-2 text-sm">
-              {{ memberShortName(row) }}
+            <td v-if="activeTab === 'group'" data-label="Adhérent">{{ memberShortName(row) }}</td>
+            <td data-label="Référence">
+              <RouterLink :to="{ name: 'member-sav-detail', params: { id: row.id } }" @click.stop>{{
+                row.reference
+              }}</RouterLink>
             </td>
-            <td class="py-2 px-2 font-medium">{{ row.reference }}</td>
-            <td class="py-2 px-2">{{ formatDate(row.receivedAt) }}</td>
-            <td class="py-2 px-2">
-              <span :title="statusLabel(row.status)">{{ statusIcon(row.status) }}</span>
-              <span class="ml-2">{{ statusLabel(row.status) }}</span>
+            <td data-label="Reçu le">{{ formatDate(row.receivedAt) }}</td>
+            <td data-label="Statut">
+              <span class="status"
+                ><span aria-hidden="true">{{ statusIcon(row.status) }}</span>
+                {{ statusLabel(row.status) }}</span
+              >
             </td>
-            <td class="py-2 px-2 text-right">{{ formatEur(row.totalAmountCents) }}</td>
+            <td data-label="Total">{{ formatEur(row.totalAmountCents) }}</td>
           </tr>
         </tbody>
       </table>
-
-      <div v-if="meta && meta.cursor" class="mt-4 text-center">
-        <button
-          data-test="load-more"
-          class="px-4 py-2 border rounded hover:bg-gray-50"
-          :disabled="loading"
-          @click="onLoadMore"
-        >
-          Charger plus
-        </button>
-      </div>
+      <button
+        v-if="meta?.cursor"
+        type="button"
+        class="load-more"
+        data-test="load-more"
+        :disabled="loading"
+        @click="onLoadMore"
+      >
+        Charger plus
+      </button>
     </div>
   </section>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { computed, onMounted, ref } from 'vue'
+import { RouterLink, useRouter } from 'vue-router'
 import {
   statusIcon,
   statusLabel,
@@ -185,13 +158,13 @@ const isGroupManager = ref<boolean | null>(null)
 const activeTab = ref<MemberSavScope>('self')
 const filter = ref<'all' | 'open' | 'closed'>('all')
 const groupQ = ref<string>('')
-const selfCount = ref<number | null>(null)
-const groupCount = ref<number | null>(null)
 
 // Story 6.5 — deux instances du composable, une par scope. On bascule entre
 // elles via `activeTab`. Évite un re-fetch full sur switch (cache léger).
 const selfList = useMemberSavList('self')
 const groupList = useMemberSavList('group')
+const selfCount = computed(() => selfList.meta.value?.count ?? null)
+const groupCount = computed(() => groupList.meta.value?.count ?? null)
 
 const data = computed(() =>
   activeTab.value === 'group' ? groupList.data.value : selfList.data.value
@@ -250,15 +223,15 @@ function onFilterChange(): void {
   // pas de pagination cursor active).
   if (activeTab.value === 'group') {
     void groupList.load({ statusFilter: filter.value, q: groupQ.value })
+  } else {
+    groupList.reset()
   }
 }
 
 function onTabClick(tab: MemberSavScope): void {
+  if (activeTab.value === tab) return
   activeTab.value = tab
-  // CR P4 (2026-04-29) — abort tout fetch inflight de l'onglet abandonné
-  // pour éviter les races (le composable abort() est idempotent).
   if (tab === 'group') {
-    selfList.abort()
     // H-08 AC#2 — lazy-load groupList la première fois qu'on ouvre l'onglet.
     // Utilise filter.value (et non 'all' hardcodé) pour aligner backend et UI.
     if (groupList.meta.value === null && !groupList.loading.value) {
@@ -273,6 +246,18 @@ function onTabClick(tab: MemberSavScope): void {
   }
 }
 
+function onTabKey(event: KeyboardEvent): void {
+  let target: MemberSavScope
+  if (event.key === 'Home') target = 'self'
+  else if (event.key === 'End') target = 'group'
+  else if (event.key === 'ArrowRight' || event.key === 'ArrowLeft') {
+    target = activeTab.value === 'self' ? 'group' : 'self'
+  } else return
+  event.preventDefault()
+  onTabClick(target)
+  document.getElementById(`sav-tab-${target}`)?.focus()
+}
+
 function onSearchSubmit(): void {
   // CR P5 (2026-04-29) — utilise le composable q-aware au lieu d'un fetch direct.
   // Le composable abort le précédent et préserve `q` pour les loadMore suivants.
@@ -283,20 +268,6 @@ function onLoadMore(): void {
   if (activeTab.value === 'group') void groupList.loadMore()
   else void selfList.loadMore()
 }
-
-// Synchronise le compteur `groupCount` à chaque changement de `groupList.meta`.
-watch(
-  () => groupList.meta.value,
-  (m) => {
-    if (m) groupCount.value = m.count
-  }
-)
-watch(
-  () => selfList.meta.value,
-  (m) => {
-    if (m) selfCount.value = m.count
-  }
-)
 
 async function loadMe(): Promise<void> {
   try {
@@ -329,9 +300,157 @@ onMounted(async () => {
   }
 
   // Si manager : pré-fetch group count en arrière-plan (1 seul appel léger,
-  // les watch ci-dessus mettent à jour selfCount/groupCount automatiquement).
-  if (isGroupManager.value === true) {
-    await groupList.load({ statusFilter: 'all' })
+  // les compteurs suivent les métadonnées de chaque liste).
+  if (isGroupManager.value === true && activeTab.value === 'self') {
+    await groupList.load({ statusFilter: filter.value })
   }
 })
 </script>
+
+<style scoped>
+.member-sav-list {
+  color: #302b25;
+}
+.list-heading,
+.group-search,
+.scope-tabs {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 0.75rem;
+  margin-bottom: 1.25rem;
+}
+.list-heading {
+  justify-content: space-between;
+  align-items: center;
+}
+h2 {
+  font-size: clamp(1.6rem, 4vw, 2.4rem);
+  line-height: 1.15;
+  font-weight: 750;
+}
+label {
+  display: grid;
+  gap: 0.25rem;
+  font-size: 0.9rem;
+  font-weight: 600;
+}
+button,
+input,
+select {
+  color: inherit;
+  background: #fff;
+  border: 1px solid #978779;
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.85rem;
+  min-height: 44px;
+}
+button {
+  font-weight: 600;
+  cursor: pointer;
+}
+.scope-tabs {
+  gap: 0.5rem;
+}
+[aria-selected='true'],
+.group-search button {
+  background: #e88a23;
+  border-color: #995513;
+}
+table {
+  width: 100%;
+  background: #fff;
+  border-collapse: collapse;
+  text-align: left;
+}
+th,
+td {
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid #e2d8cd;
+}
+th {
+  background: #f4ecdf;
+  font-size: 0.9rem;
+}
+td:last-child,
+th:last-child {
+  text-align: right;
+}
+tbody tr {
+  cursor: pointer;
+}
+tbody tr:hover,
+tbody tr:focus-within {
+  background: #fffaef;
+}
+td a {
+  color: #804308;
+  font-weight: 700;
+  text-decoration: underline;
+  text-underline-offset: 0.18em;
+}
+.status {
+  white-space: normal;
+}
+.state {
+  padding: 1.25rem;
+  background: white;
+  border: 1px solid #e2d8cd;
+  border-radius: 0.75rem;
+}
+[role='alert'] {
+  color: #8d2626;
+}
+progress {
+  width: 3rem;
+  margin-right: 0.5rem;
+  accent-color: #804308;
+}
+.load-more {
+  margin-top: 1rem;
+}
+:focus-visible {
+  outline: 3px solid #754006;
+  outline-offset: 3px;
+}
+@media (max-width: 640px) {
+  thead {
+    position: absolute;
+    clip-path: inset(50%);
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+  }
+  table,
+  tbody {
+    display: block;
+    background: transparent;
+  }
+  tbody tr {
+    display: grid;
+    border: 1px solid #dfd3c4;
+    border-radius: 0.75rem;
+    background: white;
+    margin-bottom: 0.75rem;
+    padding: 0.5rem 0.85rem;
+  }
+  td,
+  td:last-child {
+    display: grid;
+    grid-template-columns: 5.5rem minmax(0, 1fr);
+    gap: 0.5rem;
+    padding: 0.45rem 0;
+    border: 0;
+    overflow-wrap: anywhere;
+    text-align: left;
+  }
+  td::before {
+    content: attr(data-label);
+    color: #62564c;
+    font-size: 0.9rem;
+  }
+  .group-search input {
+    max-width: 100%;
+  }
+}
+</style>

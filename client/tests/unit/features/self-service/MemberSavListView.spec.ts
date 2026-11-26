@@ -150,10 +150,35 @@ describe('MemberSavListView (Story 6.2 + Story 6.5)', () => {
     const router = makeRouter()
     await router.push('/monespace')
     const wrapper = mount(MemberSavListView, { global: { plugins: [router] } })
-    expect(wrapper.find('[data-test="loading"]').exists()).toBe(true)
+    expect(wrapper.get('[data-test="loading"] progress').attributes('aria-label')).toBe(
+      'Chargement des demandes'
+    )
     resolveFn(jsonResponse(200, RESPONSE_EMPTY))
     await flushPromises()
     expect(wrapper.find('[data-test="loading"]').exists()).toBe(false)
+  })
+
+  it('réutilise le préchargement du groupe lors de l’ouverture du même filtre', async () => {
+    const fallback = makeFetchMock({ meBody: { user: { isGroupManager: true } } })
+    let resolveGroup!: (response: Response) => void
+    const groupRequest = vi.fn(
+      () =>
+        new Promise<Response>((resolve) => {
+          resolveGroup = resolve
+        })
+    )
+    globalThis.fetch = (url, init) =>
+      String(url).includes('scope=group') ? groupRequest() : fallback(url, init)
+    const router = makeRouter()
+    await router.push('/monespace')
+    const wrapper = mount(MemberSavListView, { global: { plugins: [router] } })
+    await flushPromises()
+    expect(groupRequest).toHaveBeenCalledTimes(1)
+    await wrapper.get('[data-test="tab-group"]').trigger('click')
+    expect(groupRequest).toHaveBeenCalledTimes(1)
+    resolveGroup(jsonResponse(200, RESPONSE_GROUP_2ROWS))
+    await flushPromises()
+    expect(wrapper.get('tbody').text()).toContain('Jean Martin')
   })
 
   it('AC#14c (b) data.length === 0 → empty state "Vous n\'avez pas encore de SAV." (jamais d\'erreur)', async () => {
@@ -225,8 +250,60 @@ describe('MemberSavListView (Story 6.2 + Story 6.5)', () => {
     const wrapper = mount(MemberSavListView, { global: { plugins: [router] } })
     await flushPromises()
     const firstRow = wrapper.findAll('[data-test="member-sav-row"]')[0]!
+    expect(firstRow.get('a').attributes('href')).toBe('/monespace/sav/1')
     await firstRow.trigger('click')
     expect(pushSpy).toHaveBeenCalledWith({ name: 'member-sav-detail', params: { id: 1 } })
+  })
+
+  it('permet de charger le dossier fermé suivant depuis une page filtrée vide', async () => {
+    const firstPage = makeFetchMock({
+      selfBody: { data: [RESPONSE_3ROWS.data[0]], meta: { cursor: 'suite', count: 2, limit: 1 } },
+    })
+    globalThis.fetch = (url, init) =>
+      String(url).includes('cursor=suite')
+        ? Promise.resolve(
+            jsonResponse(200, {
+              data: [RESPONSE_3ROWS.data[1]],
+              meta: { cursor: null, count: 2, limit: 1 },
+            })
+          )
+        : firstPage(url, init)
+    const router = makeRouter()
+    await router.push('/monespace')
+    const wrapper = mount(MemberSavListView, { global: { plugins: [router] } })
+    await flushPromises()
+    await wrapper.get('select').setValue('closed')
+    expect(wrapper.get('[role="status"]').text()).toContain('dossiers chargés')
+    await wrapper.get('[data-test="load-more"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('tbody a').text()).toBe('SAV-2026-00010')
+    expect(wrapper.find('[data-test="load-more"]').exists()).toBe(false)
+  })
+
+  it('active les onglets au clavier et déplace le focus', async () => {
+    globalThis.fetch = makeFetchMock({ meBody: { user: { isGroupManager: true } } })
+    const router = makeRouter()
+    await router.push('/monespace')
+    const wrapper = mount(MemberSavListView, {
+      attachTo: document.body,
+      global: { plugins: [router] },
+    })
+    try {
+      await flushPromises()
+      const personal = wrapper.get('[data-test="tab-self"]')
+      const group = wrapper.get('[data-test="tab-group"]')
+      await personal.trigger('keydown', { key: 'ArrowRight' })
+      expect(document.activeElement).toBe(group.element)
+      expect(group.attributes('aria-selected')).toBe('true')
+      expect(wrapper.get('[role="tabpanel"]').attributes('aria-labelledby')).toBe(
+        group.attributes('id')
+      )
+      await group.trigger('keydown', { key: 'Home' })
+      expect(document.activeElement).toBe(personal.element)
+      expect(group.attributes('tabindex')).toBe('-1')
+    } finally {
+      wrapper.unmount()
+    }
   })
 
   it('AC#6 meta.cursor non-null → bouton "Charger plus" appelle GET /api/self-service/sav?cursor=...', async () => {
@@ -367,7 +444,7 @@ describe('MemberSavListView (Story 6.2 + Story 6.5)', () => {
     await flushPromises()
     const input = wrapper.find('[data-test="group-search"]')
     await input.setValue('Martin')
-    await wrapper.find('[data-test="group-search-submit"]').trigger('click')
+    await wrapper.get('form').trigger('submit')
     await flushPromises()
     const calls = fetchMock.mock.calls.map((c) => String(c[0]))
     expect(calls.some((u) => u.includes('scope=group') && u.includes('q=Martin'))).toBe(true)
