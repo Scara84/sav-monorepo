@@ -7,7 +7,7 @@ import { describe, it, expect } from 'vitest'
  * AUCUNE nouvelle rewrite Vercel. Les tests vérifient que le baseline 7-6 est
  * préservé EXACT :
  *   1. vercel.json functions count == 12 EXACT (snapshot baseline 7-6).
- *   2. pilotage.ts ALLOWED_OPS count inchangé vs baseline 7-6 (30 ops total).
+ *   2. pilotage.ts ALLOWED_OPS 29 ops historiques et mise à jour du mot de passe opérateur.
  *   3. Régression complète : toutes les ops Stories 5.5/7-3a/b/c/7-4/7-5/7-6
  *      restent présentes (iso-fact preservation).
  *
@@ -45,7 +45,7 @@ describe('pilotage.ts + vercel.json — Story 7-7 iso-fact preservation (AC #6)'
     expect(Object.keys(cfg.functions)).toHaveLength(12)
   })
 
-  it('GREEN guard — pilotage.ts ALLOWED_OPS count == 29 EXACT (baseline 7-6, unchanged by 7-7)', () => {
+  it('GREEN guard — pilotage.ts ALLOWED_OPS contains 29 historical operations plus operator password update', () => {
     const src = readPilotage()
     // Count single-quoted op strings inside ALLOWED_OPS set literal.
     // The ALLOWED_OPS Set contains exactly 29 string entries as of Story 7-6:
@@ -65,9 +65,9 @@ describe('pilotage.ts + vercel.json — Story 7-7 iso-fact preservation (AC #6)'
     const opsBlock = allowedOpsMatch![1]!
     // Count 'op-name' entries (single-quoted identifiers, excluding comments)
     const opEntries = opsBlock.match(/'[a-z][a-z0-9-]*'/g) ?? []
-    // Baseline 7-6 = 29 ops.
-    // If this count changes, story 7-7 has accidentally modified pilotage.ts
-    expect(opEntries.length).toBe(29)
+    // Commit 1386255 added one named operation after the historical baseline.
+    expect(opEntries).toContain("'admin-operator-password-update'")
+    expect(opEntries).toHaveLength(30)
   })
 
   it('GREEN guard — all Story 7-6 ops still present (regression check)', () => {

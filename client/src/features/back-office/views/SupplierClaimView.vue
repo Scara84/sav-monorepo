@@ -75,6 +75,11 @@ async function fetchHistory(prepareIfEmpty = false): Promise<boolean> {
   }
 }
 
+function retryHistory() {
+  viewState.value = 'loading'
+  void fetchHistory()
+}
+
 function openClaim() {
   if (route.name !== claimRouteName || !Number.isSafeInteger(savId.value)) return
   const navigation = window.history.state
@@ -532,7 +537,7 @@ const oneDriveStatusText = computed(() => {
       data-testid="awaiting-upload-state"
     >
       <p v-if="historyError" role="alert">{{ historyError }}</p>
-      <button v-if="historyError && viewState === 'awaiting-upload'" class="btn-secondary" @click="viewState = 'loading'; fetchHistory()">
+      <button v-if="historyError && viewState === 'awaiting-upload'" class="btn-secondary" @click="retryHistory">
         Relire l’historique
       </button>
       <button v-if="!historyError && viewState === 'awaiting-upload'" type="button" class="btn-primary"
