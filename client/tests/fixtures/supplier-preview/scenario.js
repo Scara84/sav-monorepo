@@ -24,18 +24,62 @@ const preview = {
   fileMeta: { filename: 'data.xlsx', sizeBytes: 1234, sheetsDetected: ['FACTURE_GROUPE', 'BDD'], parser: 'xlsx-cdn-0.20.3' },
 }
 let attempts = 0
-window.fetch = async input => {
+const counter = document.createElement('p')
+counter.textContent = 'Préparations simulées : 0'
+document.body.append(counter)
+
+let waitForFirst
+if (scenario === 'late-order') {
+  let releaseFirst
+  const release = document.createElement('button')
+  release.textContent = 'Livrer la réponse de la première commande'
+  release.disabled = true
+  release.onclick = () => {
+    releaseFirst()
+    release.disabled = true
+  }
+  document.body.append(release)
+  waitForFirst = () => new Promise(resolve => {
+    releaseFirst = resolve
+    release.disabled = false
+  })
+}
+// Empreinte de tests/fixtures/supplier-claim-data.xlsx, sélectionnée pour la reprise.
+const fixtureHash = '0a451af6940257976233ef9801d88c052a4e0d5e3a070ce5395f261f96286bde'
+window.fetch = async (input, init) => {
   const url = new URL(input, location.origin)
   if (url.pathname === '/api/sav/1') return Response.json(detail)
   switch (url.searchParams.get('op')) {
     case 'get-supplier-claim-history':
       return scenario === 'history-error' ? Response.json({}, { status: 503 })
         : Response.json({ savId: 1, claims: scenario === 'history' ? [claim] : [] })
-    case 'prepare-supplier-file':
+    case 'prepare-supplier-file': {
+      const attempt = ++attempts
+      counter.textContent = 'Préparations simulées : ' + attempts
+      const reference = detail.data.sav.invoiceSpecialMention
+      const { expectedOrder } = JSON.parse(init.body)
+      if ((scenario === 'late-order' || expectedOrder !== undefined) && expectedOrder !== reference) {
+        return Response.json({ error: { code: 'ORDER_CHANGED' } }, { status: 409 })
+      }
+      if (scenario === 'late-order' && attempt === 1) {
+        detail.data.sav.invoiceSpecialMention = '46_26S5_94_1'
+        await waitForFirst()
+      }
       await new Promise(resolve => setTimeout(resolve, 1200))
-      if (scenario === 'retry' && ++attempts === 1) return Response.json({}, { status: 422 })
+      if (scenario === 'retry' && attempt === 1) return Response.json({}, { status: 422 })
+      if (scenario === 'late-order' && attempt === 1) {
+        counter.append(' — réponse initiale livrée')
+      }
+      return Response.json({ ...preview, metadata: { ...preview.metadata, reference } })
+    }
+    case 'parse-supplier-file': {
+      const { fileBuffer } = JSON.parse(init.body)
+      const bytes = Uint8Array.from(atob(fileBuffer || ''), char => char.charCodeAt(0))
+      const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))
+      const hex = Array.from(hash, byte => byte.toString(16).padStart(2, '0')).join('')
+      if (hex !== fixtureHash) return Response.json({}, { status: 422 })
       return Response.json(preview)
-    case 'parse-supplier-file': return Response.json(preview)
+    }
     case 'reconcile-supplier-claim':
       return Response.json({ claimLines: [], unmatchedSavLines: [], unusedSupplierLines: [], savLines: [] })
     default: return Response.json({}, { status: 404 })

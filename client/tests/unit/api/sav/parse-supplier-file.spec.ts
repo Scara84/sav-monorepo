@@ -957,7 +957,13 @@ describe('Préparation kDrive sur la commande du SAV', () => {
     const auto = await prepare(opCookie(), { reference: 'autre commande' })
     const manual = mockRes()
     await handler(parseReq(1, buffer), manual)
+    expect(manual.statusCode).toBe(200)
     expect(auto.statusCode).toBe(200)
+    expect(manual.jsonBody).toMatchObject({
+      metadata: { reference: db.mention, albaran: 3127, fechaAlbaran: '2026-05-20', warnings: [] },
+      factureGroupe: { rows: expect.objectContaining({ length: 3 }), warnings: expect.objectContaining({ length: 1 }), skippedRows: 5 },
+      bdd: { rows: expect.objectContaining({ length: 3 }), warnings: [], skippedRows: 1 },
+    })
     expect(auto.jsonBody).toEqual(manual.jsonBody)
     expect(readWorkbook).toHaveBeenCalledWith(db.mention, process.env)
     expect(db.mentionReads).toBe(2)

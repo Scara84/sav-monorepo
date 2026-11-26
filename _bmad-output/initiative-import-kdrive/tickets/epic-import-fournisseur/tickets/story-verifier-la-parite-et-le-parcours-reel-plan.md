@@ -1,0 +1,67 @@
+---
+title: Vérifier la parité et le parcours réel
+type: chore
+ticket: 5
+created: '2026-11-26'
+status: blocked
+baseline_revision: 744167f163916dd93e48bf771ef4eef86d494255
+route: oneshot
+route_source: auto
+risk: high
+review: quick
+review_source: pinned
+lenses_ran: [quick]
+review_loop_iteration: 0
+followup_review_recommended: false
+context: []
+warnings: []
+deferred: []
+blocked_at: "2026-11-26"
+blocked_reason: "Recette réelle en attente de l’accord explicite, du SAV et de la commande S05 confirmés, et d’une copie ou empreinte indépendante de data.xlsx."
+---
+
+<intent-contract>
+
+## Intent
+
+Vérifier les deux aperçus du même SAV avec le même classeur, puis le parcours opérateur. La recette réelle exige un accord distinct désignant le SAV, sa commande S05, le classeur direct et une copie ou empreinte indépendante. Les seules opérations admissibles sont les lectures du parcours normal. Arrêter au refus de redirection. Toute génération ou écriture en production est hors périmètre.
+
+</intent-contract>
+
+## Liste unique de recette
+
+| Critère | Preuve antérieure | Résultat 1.5 et reste à vérifier |
+|---|---|---|
+| AC-01 à 03, diagnostic | Observé sur compte réel en 1.1 avec KDRIVE_ORGANIZATION=1 : drive, espace commun, FRANCAIS ID 52. Le CSV S48 de 502 octets a nécessité une lecture complémentaire après le refus du 302 par le diagnostic. | Vérifié en simulation : suite du diagnostic verte. Commande isolée sans configuration : « KDRIVE_TOKEN manquant ». Après accord, diagnostiquer le chemin actuel du XLSX. |
+| AC-04 à 10, commande et dossier | Vérifié en simulation : S5 devient S05, la clé garde sa graphie. La décision opérateur valide le dossier définitif unique dans la branche après pagination complète. Doublon et mention contradictoire bloquent. | Vérifié en simulation : résolution, refus des doublons et contrôle du groupe, admin inclus. Vérifier année/S05 et dossier définitif sur compte autorisé. |
+| AC-11 à 14, fichier | Vérifié en simulation : fichier direct unique, parent et droits revérifiés, octets de la fixture, refus des redirections, limite de transfert 4 Mio, décompression 64 Mio. | Vérifié en simulation : accès, déplacement, redirection, format et tailles refusés. Sur compte autorisé, vérifier unicité, droits et empreinte avant de conclure sur le contenu. |
+| AC-15, parité | Vérifié en simulation en 1.4 : les deux réponses du serveur sont comparées intégralement. | Vérifié en simulation : réponses complètes identiques pour le SAV 1 et supplier-claim-data.xlsx (24 819 octets). Référence 278_26S21_11, albarán 3127, date 2026-05-20, aucun avertissement de métadonnées. FACTURE_GROUPE : 3 lignes, 1 avertissement, 5 ignorées. BDD : 3 lignes, 0 avertissement, 1 ignorée. |
+| AC-16/17/20, concurrence | Vérifié en simulation sur une instance : verrou serveur et rejet des réponses obsolètes. | Vérifié en simulation dans le navigateur intégré : double clic → compteur 1. Retour au même SAV, nouvelle commande 46_26S5_94_1, préparation → compteur 2. Après livraison tardive de la réponse 278_26S21_11, le nouvel aperçu reste affiché. Vitest vérifie aussi le retour de la commande à sa valeur initiale. Reste à vérifier : concurrence entre processus, aucun essai multi-instance. |
+| AC-18/19/21, parcours | Vérifié en simulation : préparation explicite, consultation passive, confirmation et reprise. Navigateur intégré 1.4 : aperçu et reprise clavier. | Vérifié en simulation dans le navigateur intégré : consultation v1, compteur 0 ; confirmation au clavier, chargement et aperçu. Historique illisible (503) signalé. Après refus de préparation (422), nouvel essai au clavier accepté ; sur une autre tentative refusée, dépôt de la fixture via le sélecteur, aperçu affiché et compteur automatique resté à 1. Réponses API simulées dans le navigateur ; le comparatif XLSX ci-dessus utilise le parseur serveur. En cas de refus réel, vérifier le recours manuel. |
+| AC-22, accessibilité | Vérifié en simulation : états exposés et reprise clavier. | Vérifié en simulation : état de chargement, bouton désactivé, erreur exposée avec le rôle alert, confirmation, nouvel essai et ouverture du sélecteur au clavier. Reste à vérifier : restitution vocale effective avec un lecteur d’écran. |
+
+## Implementation Notes
+
+Route courte car les vues, les scénarios et la comparaison des réponses existent déjà. Examiner les tests parse-supplier-file et le scénario client/tests/fixtures/supplier-preview ; compléter uniquement les preuves ou contrôles manquants.
+
+## Plan Change Log
+
+## Review Triage Log
+
+Revue rapide indépendante, trois constats corrigés.
+
+- [medium] [patch] Le simulateur acceptait une ancienne référence. Le scénario de changement de commande exige désormais la référence reçue pour le SAV affiché.
+- [low] [patch] Le refus de la première tentative dépendait du compteur après attente. Chaque appel conserve son numéro dès son arrivée.
+- [medium] [patch] Le simulateur acceptait le dépôt manuel sans vérifier son contenu. Il compare désormais le SHA-256 des octets reçus à celui de la fixture avant de rendre l’aperçu. Reprise et réponse tardive revérifiées dans le navigateur intégré.
+
+## Verification
+
+Depuis client, rejouer les suites Vitest kdrive, parse-supplier-file, supplier-file-parser, SupplierClaimView, SavDetailView, useSupplierClaimUpload et reconcile-supplier-claim. Exercer la fixture Vite dans le navigateur intégré. Terminer après revue et consignation séparée des observations locales et réelles, ou sauvegarder en attente de l’accord et du témoin.
+
+Résultat local : 693 tests réussis dans 31 fichiers. Huit tests de rapprochement conditionnés à une base Supabase de test et ignorés (5 dans reconcile-supplier-claim et 3 dans reconcile-supplier-claim-8-7). La comparaison de parité et les suites kDrive ont été exécutées.
+
+## Auto Run Result
+
+La recette locale est sauvegardée. Le test parse-supplier-file fixe les résultats attendus de la fixture et compare les réponses complètes. Le scénario supplier-preview compte les préparations, retient la première réponse à la demande et contrôle les octets reçus du sélecteur. Aucun changement applicatif. Revue locale achevée, trois corrections vérifiées. La revue du parcours authentifié reste nécessaire pour établir le comportement du compte.
+
+Pour reprendre, confirmer le SAV réel et sa commande. Le chemin proposé par l’epic est FRANCAIS/2026/S05/fact_46_26S5_94_RUNGIS/data.xlsx pour la référence illustrative 46_26S5_94_1. Demander le chemin d’une copie indépendante ou son SHA-256 de référence et l’accord explicite pour lire le SAV, son groupe et son historique, le diagnostic du drive, les parents, les enfants directs paginés de la branche, les droits et les octets du seul fichier retenu. La fixture de parité S21 et le CSV S48 ont des usages distincts du témoin S05. En cas de redirection refusée, consigner le refus du parcours standard, laisser l’égalité des octets ouverte et vérifier la reprise manuelle avec la copie autorisée.
