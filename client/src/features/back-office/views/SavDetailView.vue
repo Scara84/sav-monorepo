@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
+import { isTransitionAllowed, type SavStatus } from '../../../../api/_lib/business/sav-status-machine'
 import { useSavDetail, type SavDetailLine } from '../composables/useSavDetail'
 import { useSavLinePreview } from '../composables/useSavLinePreview'
 import { useSavLineEdit } from '../composables/useSavLineEdit'
@@ -390,7 +391,10 @@ const canValidate = computed<boolean>(() => {
   const lines = sav.value?.lines ?? []
   return lines.length > 0 && lines.every((l) => l.validationStatus === 'ok')
 })
-const showValidateButton = computed<boolean>(() => sav.value?.status === 'in_progress')
+function allowsTransition(to: SavStatus): boolean {
+  return !!sav.value && isTransitionAllowed(sav.value.status as SavStatus, to)
+}
+const showValidateButton = computed(() => allowsTransition('validated'))
 const validating = ref(false)
 
 // Story V1.13 AC#8 (D-1=a, D-5) — gate « Valider » :
@@ -404,7 +408,10 @@ const validateDisabled = computed<boolean>(
   () => !canValidate.value || !validateGateAllowsPdf.value || validating.value
 )
 const validateTitle = computed<string>(() => {
+  if (!sav.value?.lines.length) return 'Ajoutez une ligne avant de valider'
   if (!canValidate.value) return 'Corrige les lignes en erreur avant de valider'
+  if (creditNoteDegraded.value) return 'Rechargez la fiche pour vérifier le bon SAV'
+  if (creditNote.value && !hasCreditNotePdf.value) return 'Le PDF du bon SAV doit être disponible avant la validation'
   if (!validateGateAllowsPdf.value) return "Générez d'abord le bon SAV"
   return 'Valider le SAV'
 })
@@ -420,7 +427,6 @@ async function validateSav(): Promise<void> {
 // `transition_sav_status`) reste source de vérité — l'UI propose juste les
 // transitions actuellement valides via `currentAllowedTransitions`.
 const transitioning = ref<SavStatus | null>(null)
-type SavStatus = 'draft' | 'received' | 'in_progress' | 'validated' | 'closed' | 'cancelled'
 
 interface TransitionOptions {
   note?: string
@@ -538,11 +544,9 @@ function isTransitioning(s: SavStatus): boolean {
 
 // Boutons header — lisibilité Vue.
 const showReceiveButton = computed<boolean>(() => sav.value?.status === 'draft')
-const showStartButton = computed<boolean>(() => sav.value?.status === 'received')
-const showCloseButton = computed<boolean>(() => sav.value?.status === 'validated')
-const showCancelButton = computed<boolean>(() =>
-  ['draft', 'received', 'in_progress', 'validated'].includes(sav.value?.status ?? '')
-)
+const showStartButton = computed(() => allowsTransition('in_progress'))
+const showCloseButton = computed(() => allowsTransition('closed'))
+const showCancelButton = computed(() => allowsTransition('cancelled'))
 
 async function receiveSav(): Promise<void> {
   await transitionStatus('received')
@@ -1209,6 +1213,11 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
           <span :class="['status-badge', STATUS_COLOR[sav.status] ?? 'bg-gray']">
             {{ STATUS_LABEL[sav.status] ?? sav.status }}
           </span>
+        </div>
+        <h2 class="action-title">Suite du dossier</h2>
+        <p v-if="sav.status === 'closed' || sav.status === 'cancelled'">Ce statut est définitif.</p>
+        <template v-else>
+          <p v-if="showValidateButton && validateDisabled" id="validation-help">{{ validateTitle }}</p>
           <div class="workflow-actions" role="group" aria-label="Actions workflow SAV">
             <button
               v-if="showReceiveButton"
@@ -1236,6 +1245,7 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
               class="workflow-btn workflow-btn--primary validate-btn"
               :disabled="validateDisabled"
               :title="validateTitle"
+              :aria-describedby="validateDisabled ? 'validation-help' : undefined"
               data-testid="sav-validate-btn"
               @click="validateSav"
             >
@@ -1277,7 +1287,7 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
               {{ isTransitioning('cancelled') ? 'Annulation…' : 'Annuler le SAV' }}
             </button>
           </div>
-        </div>
+        </template>
         <dl class="metadata">
           <div>
             <dt>Adhérent</dt>
@@ -1378,6 +1388,7 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
       <!-- Lignes -->
       <section class="card" aria-labelledby="lines-title">
         <h2 id="lines-title">Lignes du SAV</h2>
+        <div class="lines-scroll" role="region" aria-label="Lignes du dossier" tabindex="0">
         <table class="lines-table" role="table">
           <thead>
             <tr>
@@ -1702,6 +1713,7 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
             </tr>
           </tbody>
         </table>
+        </div>
 
         <!-- Story 4.8 — Footer marge totale HT estimée (AC #5) -->
         <div
@@ -2144,7 +2156,7 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
 .breadcrumb a:focus-visible,
 button:focus-visible,
 a:focus-visible {
-  outline: 2px solid #0066cc;
+  outline: 2px solid #80400b;
   outline-offset: 2px;
 }
 .card {
@@ -2538,6 +2550,11 @@ a:focus-visible {
 }
 
 /* Story 3.6b — édition inline + bouton Valider */
+.header.card { border-top: 5px solid var(--main-orange, #e88a23); }
+.header h1 { color: #30200e; overflow-wrap: anywhere; }
+.header .action-title { margin: 1rem 0 .5rem; }
+.lines-scroll { overflow-x: auto; }
+.lines-scroll:focus-visible { outline: 2px solid #80400b; }
 .header-title-row {
   display: flex;
   align-items: center;
@@ -2559,18 +2576,18 @@ a:focus-visible {
   border: 1px solid transparent;
 }
 .workflow-btn--primary {
-  background: #16a34a;
-  color: white;
-  border-color: #15803d;
+  background: var(--main-orange, #e88a23);
+  color: #30200e;
+  border-color: #af6820;
 }
 .workflow-btn--primary:hover:not(:disabled) {
-  background: #15803d;
+  background: #ed983a;
 }
 .workflow-btn--primary:disabled {
   opacity: 0.5;
   cursor: not-allowed;
-  background: #86efac;
-  border-color: #86efac;
+  background: #ece6df;
+  border-color: #84796d;
 }
 .workflow-btn--ghost {
   background: white;
@@ -2744,7 +2761,7 @@ a:focus-visible {
 }
 .cell-input:focus-visible,
 .cell-select:focus-visible {
-  outline: 2px solid #0066cc;
+  outline: 2px solid #80400b;
   outline-offset: 1px;
 }
 .actions-cell {
