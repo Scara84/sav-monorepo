@@ -1,32 +1,31 @@
 <template>
-  <div class="magic-link-landing min-h-screen flex items-center justify-center bg-white p-4">
-    <div class="max-w-md w-full text-center" role="status" :aria-busy="state === 'loading'">
+  <main class="magic-link-landing min-h-screen flex items-center justify-center bg-[#faf7f1] p-4 text-[#33281d]">
+    <div class="max-w-md w-full rounded-2xl border border-[#ded5c8] bg-white p-6 sm:p-8" role="status" :aria-busy="state === 'loading'">
       <template v-if="state === 'loading'">
         <div class="loader" aria-hidden="true" />
         <p class="mt-4 text-lg font-semibold">Connexion en cours…</p>
       </template>
       <template v-else-if="state === 'error'">
-        <h1 class="text-2xl font-bold text-[color:var(--main-orange)] mb-4">
+        <h1 class="text-2xl font-bold text-[#33281d] mb-4">
           Lien expiré ou déjà utilisé
         </h1>
         <p class="mb-6">
-          Pour des raisons de sécurité, ce lien n'est plus valide. Demandez un nouveau lien depuis
-          la page d'accueil.
+          Un lien de connexion ne fonctionne qu’une fois. Demandez-en un nouveau pour accéder à votre espace.
         </p>
         <RouterLink
           :to="newLinkTarget"
           data-test="cta-new-link"
-          class="inline-block px-6 py-3 rounded-3xl bg-[color:var(--main-orange)] text-white font-semibold hover:bg-[#c6711d] transition"
+          class="inline-block px-6 py-3 rounded-3xl bg-[#e88a23] text-[#33281d] font-semibold hover:bg-[#efa044] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-[#33281d]"
         >
           Demander un nouveau lien
         </RouterLink>
       </template>
     </div>
-  </div>
+  </main>
 </template>
 
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, onUnmounted, ref } from 'vue'
 import { useRoute, useRouter, RouterLink } from 'vue-router'
 import { safeMemberRedirect } from '@/shared/utils/member-redirect.js'
 
@@ -69,7 +68,16 @@ function readTokenFromHash(): string | undefined {
   return t && t.length > 0 ? t : undefined
 }
 
+function retryChangedLink() {
+  if (readTokenFromHash()) {
+    window.location.reload()
+  }
+}
+
+onUnmounted(() => window.removeEventListener('hashchange', retryChangedLink))
+
 onMounted(async () => {
+  window.addEventListener('hashchange', retryChangedLink)
   // Performance NFR-P6 — mark dès le mount pour mesurer landing → list.
   if (typeof performance !== 'undefined' && typeof performance.mark === 'function') {
     try {
@@ -131,14 +139,16 @@ onMounted(async () => {
   width: 48px;
   height: 48px;
   border: 4px solid #e5e7eb;
-  border-top-color: var(--main-orange, #f97316);
+  border-top-color: #e88a23;
   border-radius: 50%;
-  margin: 0 auto;
   animation: spin 1s linear infinite;
 }
 @keyframes spin {
   to {
     transform: rotate(360deg);
   }
+}
+@media (prefers-reduced-motion: reduce) {
+  .loader { animation: none; }
 }
 </style>
