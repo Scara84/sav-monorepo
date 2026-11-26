@@ -3,7 +3,7 @@ title: Vérifier la parité et le parcours réel
 type: chore
 ticket: 5
 created: '2026-11-26'
-status: blocked
+status: done
 baseline_revision: 744167f163916dd93e48bf771ef4eef86d494255
 route: oneshot
 route_source: auto
@@ -16,8 +16,6 @@ followup_review_recommended: false
 context: []
 warnings: []
 deferred: []
-blocked_at: "2026-11-26"
-blocked_reason: "Recette réelle en attente de l’accord explicite, du SAV et de la commande S05 confirmés, et d’une copie ou empreinte indépendante de data.xlsx."
 ---
 
 <intent-contract>
@@ -85,3 +83,5 @@ Recette du SAV 150 en preview (51be3ee) : après l’essai utilisateur, le navig
 Précision de recette SAV 150 : l’utilisateur rapporte être revenu à la fiche SAV puis avoir cliqué sur « Préparer la demande fournisseur ». Ce clic sur un SAV validé déclenche la préparation kDrive à l’ouverture si l’historique est vide, sans second clic. Le parcours rapporté correspond à l’aperçu observé ; le clic initial n’a pas été observé directement.
 
 Bilan après réception du témoin : égalité des octets validée sur le SAV 150 en S45. Le ticket demande également une observation réelle en S05. La reprise manuelle après refus a été vérifiée en simulation.
+
+Décision de clôture : l’opérateur valide le SAV 150 (2026/S45) comme cas réel de référence pour la story 1.5. L’essai réel S05 est remplacé par S45. La reprise manuelle a été vérifiée en simulation ; les essais multi-instance et avec lecteur d’écran restent hors des vérifications réalisées.
