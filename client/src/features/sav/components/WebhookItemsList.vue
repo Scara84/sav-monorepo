@@ -185,17 +185,12 @@
       </transition>
     </Teleport>
 
-    <!-- Encart d'aide process SAV -->
-    <div class="mb-4 p-4 bg-blue-50 border-l-4 border-blue-400 text-blue-900 rounded">
-      <strong>Comment faire une réclamation&nbsp;?</strong><br />
-      <span class="block mt-1"><b>1.</b> Ajoutez chaque produit concerné à votre demande.</span>
-      <span class="block"><b>2.</b> Utilisez ensuite «&nbsp;Envoyer ma demande SAV&nbsp;».</span>
-    </div>
-    <ul class="space-y-6">
-      <li v-for="(item, index) in items" :key="index" class="bg-white p-4 rounded-lg shadow">
+    <h2 class="section-title">Articles de la facture</h2>
+    <ul class="space-y-6" :inert="globalLoading">
+      <li v-for="(item, index) in items" :key="keyAt(index)" class="line-card">
         <!-- Nom du produit sur toute la largeur -->
-        <h3 class="text-xl mb-4">
-          {{ item.label }}
+        <h3 class="text-xl mb-4 text-slate-900">
+          {{ item.label || item.product_name }}
         </h3>
 
         <!-- Autres propriétés alignées sur une ligne -->
@@ -210,9 +205,7 @@
           </div>
           <div class="flex flex-col">
             <span class="text-sm font-medium text-gray-500">Prix Unitaire</span>
-            <span class="text-gray-900">{{
-              formatValue('amount', item.amount / item.quantity)
-            }}</span>
+            <span class="text-gray-900">{{ unitPrice(item) }}</span>
           </div>
           <div class="flex flex-col">
             <span class="text-sm font-medium text-gray-500">Prix Total</span>
@@ -224,23 +217,39 @@
         <div class="mt-4">
           <button
             @click="toggleSavForm(index)"
-            class="btn-main min-w-[200px] text-base"
+            v-if="!getSavForm(index).filled"
+            :id="`signal-${index}`"
+            class="btn-main sav-primary line-action"
             :class="{ 'btn-main--danger': getSavForm(index).showForm }"
           >
             {{ getSavForm(index).showForm ? 'Annuler la réclamation' : 'Signaler un problème' }}
           </button>
         </div>
 
+        <p
+          v-if="getSavForm(index).filled && getSavForm(index).showForm"
+          class="text-sm font-semibold"
+        >
+          Ajoutée à votre demande — pas encore envoyée
+        </p>
+
         <!-- Formulaire SAV -->
-        <div v-if="getSavForm(index).showForm" class="mt-4 p-4 bg-gray-50 rounded-2xl">
+        <div
+          v-if="getSavForm(index).showForm && !getSavForm(index).filled"
+          class="mt-4 p-4 bg-gray-50 rounded-2xl"
+        >
           <form
+            novalidate
             class="space-y-4"
             :class="{ 'opacity-75': getSavForm(index).filled }"
             @submit.prevent="validateItemForm(index)"
           >
-            <div class="grid grid-cols-3 gap-4">
+            <div class="grid gap-4 sm:grid-cols-3">
               <div>
-                <label class="block text-[color:var(--text-dark)] font-semibold text-base">
+                <label
+                  :for="`quantity-${index}`"
+                  class="block text-[color:var(--text-dark)] font-semibold text-base"
+                >
                   Quantité
                 </label>
                 <input
@@ -251,24 +260,40 @@
                   inputmode="decimal"
                   :data-test="`sav-form-quantity-${index}`"
                   placeholder="ex: 1.5"
+                  :id="`quantity-${index}`"
+                  :aria-invalid="!!getSavForm(index).errors.quantity"
+                  :aria-describedby="
+                    getSavForm(index).errors.quantity ? `error-quantity-${index}` : undefined
+                  "
                   v-model="getSavForm(index).quantity"
                   :disabled="getSavForm(index).filled"
-                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 disabled:bg-gray-100"
+                  class="sav-field mt-1"
                   :class="{ 'border-red-500': getSavForm(index).errors.quantity }"
                   required
                 />
-                <p v-if="getSavForm(index).errors.quantity" class="mt-1 text-sm text-red-600">
+                <p
+                  :id="`error-quantity-${index}`"
+                  v-if="getSavForm(index).errors.quantity"
+                  class="mt-1 text-sm text-red-600"
+                >
                   {{ getSavForm(index).errors.quantity }}
                 </p>
               </div>
               <div>
-                <label class="block text-[color:var(--text-dark)] font-semibold text-base"
+                <label
+                  :for="`unit-${index}`"
+                  class="block text-[color:var(--text-dark)] font-semibold text-base"
                   >Unité</label
                 >
                 <select
+                  :id="`unit-${index}`"
+                  :aria-invalid="!!getSavForm(index).errors.unit"
+                  :aria-describedby="
+                    getSavForm(index).errors.unit ? `error-unit-${index}` : undefined
+                  "
                   v-model="getSavForm(index).unit"
                   :disabled="getSavForm(index).filled"
-                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 disabled:bg-gray-100"
+                  class="sav-field mt-1"
                   :class="{ 'border-red-500': getSavForm(index).errors.unit }"
                   required
                 >
@@ -277,27 +302,42 @@
                   <option value="kg">kg</option>
                   <option value="g">g</option>
                 </select>
-                <p v-if="getSavForm(index).errors.unit" class="mt-1 text-sm text-red-600">
+                <p
+                  :id="`error-unit-${index}`"
+                  v-if="getSavForm(index).errors.unit"
+                  class="mt-1 text-sm text-red-600"
+                >
                   {{ getSavForm(index).errors.unit }}
                 </p>
               </div>
               <div>
-                <label class="block text-[color:var(--text-dark)] font-semibold text-base"
+                <label
+                  :for="`reason-${index}`"
+                  class="block text-[color:var(--text-dark)] font-semibold text-base"
                   >Motif</label
                 >
                 <select
+                  :id="`reason-${index}`"
+                  :aria-invalid="!!getSavForm(index).errors.reason"
+                  :aria-describedby="
+                    getSavForm(index).errors.reason ? `error-reason-${index}` : undefined
+                  "
                   v-model="getSavForm(index).reason"
                   :disabled="getSavForm(index).filled"
-                  class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 disabled:bg-gray-100"
+                  class="sav-field mt-1"
                   :class="{ 'border-red-500': getSavForm(index).errors.reason }"
                   required
                 >
                   <option value="">Choisir un motif</option>
-                  <option value="abime">Abimé</option>
+                  <option value="abime">Abîmé</option>
                   <option value="manquant">Manquant</option>
                   <option value="autre">Autre</option>
                 </select>
-                <p v-if="getSavForm(index).errors.reason" class="mt-1 text-sm text-red-600">
+                <p
+                  :id="`error-reason-${index}`"
+                  v-if="getSavForm(index).errors.reason"
+                  class="mt-1 text-sm text-red-600"
+                >
                   {{ getSavForm(index).errors.reason }}
                 </p>
               </div>
@@ -305,15 +345,19 @@
 
             <!-- Champ commentaire optionnel -->
             <div class="mt-4">
-              <label class="block text-[color:var(--text-dark)] font-semibold text-base">
+              <label
+                :for="`comment-${index}`"
+                class="block text-[color:var(--text-dark)] font-semibold text-base"
+              >
                 Commentaire
                 <span class="text-xs text-gray-500">(optionnel)</span>
               </label>
               <textarea
+                :id="`comment-${index}`"
                 v-model="getSavForm(index).comment"
                 :disabled="getSavForm(index).filled"
                 rows="3"
-                class="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500 disabled:bg-gray-100"
+                class="sav-field mt-1"
                 placeholder="Ajoutez un commentaire si nécessaire..."
               ></textarea>
             </div>
@@ -327,7 +371,10 @@
               "
               class="mt-4"
             >
-              <label class="block text-[color:var(--text-dark)] font-semibold text-base mb-2">
+              <label
+                :for="`images-${index}`"
+                class="block text-[color:var(--text-dark)] font-semibold text-base mb-2"
+              >
                 Photos
                 <span class="text-xs text-gray-500"
                   >({{ getSavForm(index).reason === 'abime' ? 'obligatoire' : 'optionnel' }} -
@@ -343,7 +390,6 @@
                   { 'upload-drop-zone-active': getSavForm(index).isDragging },
                   { 'upload-drop-zone-disabled': getSavForm(index).filled },
                 ]"
-                @click="!getSavForm(index).filled && $refs['fileInput' + index][0].click()"
                 @dragover.prevent="
                   !getSavForm(index).filled && (getSavForm(index).isDragging = true)
                 "
@@ -351,42 +397,20 @@
                 @drop.prevent="handleDrop($event, index)"
               >
                 <input
-                  :ref="'fileInput' + index"
+                  :id="`images-${index}`"
+                  :aria-invalid="!!getSavForm(index).errors.images"
+                  :aria-describedby="
+                    getSavForm(index).errors.images ? `error-images-${index}` : undefined
+                  "
                   type="file"
                   multiple
                   accept="image/jpeg,image/png,image/gif,image/webp,image/svg+xml,image/heic,image/heif"
                   @change="handleImageUpload($event, index)"
                   :disabled="getSavForm(index).filled"
-                  class="hidden"
+                  class="sav-field cursor-pointer"
                 />
 
-                <div class="flex flex-col items-center justify-center py-8 px-4">
-                  <!-- Icône d'upload -->
-                  <svg
-                    class="w-12 h-12 mb-3 text-gray-400"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                    xmlns="http://www.w3.org/2000/svg"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
-                    ></path>
-                  </svg>
-
-                  <!-- Texte principal -->
-                  <p class="mb-2 text-sm text-gray-700">
-                    <span class="font-semibold">Cliquez pour sélectionner</span> ou glissez-déposez
-                  </p>
-
-                  <!-- Texte secondaire -->
-                  <p class="text-xs text-gray-500">
-                    JPEG, PNG, GIF, WebP, SVG, HEIC (max {{ maxFileSizeMb }}Mo)
-                  </p>
-                </div>
+                <p class="p-2 text-sm">Vous pouvez aussi déposer vos photos ici.</p>
               </div>
               <!-- Prévisualisation des images -->
               <div
@@ -432,6 +456,7 @@
                   </div>
                   <button
                     v-if="!getSavForm(index).filled"
+                    :aria-label="`Retirer la photo ${image.name || imageIndex + 1}`"
                     @click="removeImage(index, imageIndex)"
                     class="absolute -top-2 -right-2 bg-red-500 text-white rounded-full w-6 h-6 flex items-center justify-center hover:bg-red-600"
                     type="button"
@@ -440,37 +465,19 @@
                   </button>
                 </div>
               </div>
-              <p v-if="getSavForm(index).errors.images" class="mt-1 text-sm text-red-600">
+              <p
+                :id="`error-images-${index}`"
+                v-if="getSavForm(index).errors.images"
+                class="mt-1 text-sm text-red-600"
+              >
                 {{ getSavForm(index).errors.images }}
               </p>
             </div>
 
             <div class="flex justify-end space-x-2">
-              <template v-if="!getSavForm(index).filled">
-                <button
-                  type="button"
-                  @click="validateItemForm(index)"
-                  class="px-4 py-2 text-sm font-medium text-white bg-orange-600 rounded-md hover:bg-orange-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-orange-500"
-                  :disabled="getSavForm(index).loading"
-                >
-                  <span v-if="getSavForm(index).loading">Envoi...</span>
-                  <span v-else>Ajouter à ma demande SAV</span>
-                </button>
-              </template>
-              <template v-else>
-                <div class="flex flex-col items-end gap-2 sm:flex-row sm:items-center">
-                  <p class="text-sm font-semibold text-amber-800">
-                    Ajoutée à votre demande — pas encore envoyée
-                  </p>
-                  <button
-                    type="button"
-                    @click="editItemForm(index)"
-                    class="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded-md hover:bg-blue-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-blue-500"
-                  >
-                    Modifier la réclamation
-                  </button>
-                </div>
-              </template>
+              <button type="submit" class="sav-primary line-action">
+                Ajouter à ma demande SAV
+              </button>
             </div>
           </form>
         </div>
@@ -478,10 +485,37 @@
     </ul>
     <p v-if="items.length === 0" class="text-gray-500 text-center py-4">Aucun élément à afficher</p>
 
+    <section
+      v-if="hasFilledForms"
+      class="mt-8"
+      :inert="globalLoading"
+      aria-labelledby="summary-title"
+    >
+      <h2 id="summary-title" class="section-title">Relire ma demande</h2>
+      <ul class="space-y-3">
+        <li v-for="{ item, form, index } in getFilledForms()" :key="keyAt(index)" class="line-card">
+          <h3 class="text-lg text-gray-900">{{ item.label || item.product_name }}</h3>
+          <p>
+            {{ reasons[form.reason] }} · {{ form.quantity }}
+            {{ form.unit === 'piece' ? (form.quantity > 1 ? 'pièces' : 'pièce') : form.unit }}
+          </p>
+          <p v-if="form.comment">{{ form.comment }}</p>
+          <p v-if="form.images.length">
+            {{ form.images.map((image) => image.name || image.file?.name).join(', ') }}
+          </p>
+          <div class="flex flex-wrap gap-4 mt-3">
+            <button :id="`edit-${index}`" class="secondary" @click="editItemForm(index)">
+              Modifier
+            </button>
+            <button class="secondary" @click="removeLine(index)">Retirer</button>
+          </div>
+        </li>
+      </ul>
+    </section>
     <!-- Action d'envoi finale, persistante pendant le défilement -->
     <div
       v-if="hasFilledForms || hasUnfinishedForms"
-      class="sticky bottom-4 z-30 mt-6 rounded-xl border border-green-200 bg-white p-4 shadow-xl"
+      class="sticky bottom-0 z-30 mt-6 rounded-xl border border-orange-200 bg-white p-4 shadow-xl"
       data-test="sav-submit-bar"
     >
       <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
@@ -499,7 +533,7 @@
         <button
           type="button"
           @click="submitAllForms"
-          class="w-full px-6 py-3 text-base font-medium text-white bg-green-600 rounded-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 disabled:cursor-not-allowed disabled:bg-gray-400 sm:w-auto"
+          class="sav-primary line-action disabled:opacity-60"
           :disabled="globalLoading || hasUnfinishedForms || !hasFilledForms"
         >
           <span v-if="globalLoading">Envoi...</span>
@@ -514,7 +548,7 @@
 </template>
 
 <script>
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useSavForms } from '../composables/useSavForms.js'
 import { useImageUpload } from '../composables/useImageUpload.js'
 import { useApiClient } from '../composables/useApiClient.js'
@@ -537,16 +571,18 @@ export default {
   },
   setup(props, { emit }) {
     const {
+      keyAt,
       getSavForm,
       hasFilledForms,
       filledFormsCount,
       hasUnfinishedForms,
       hasDirtyForms,
       toggleSavForm,
+      deleteItemForm,
       validateItemForm: validateSavItemForm,
       editItemForm: editSavItemForm,
       getFilledForms,
-    } = useSavForms()
+    } = useSavForms(() => props.items)
     const {
       handleImageUpload: handleImageUploadBase,
       handleDrop: handleDropBase,
@@ -629,13 +665,38 @@ export default {
       }
     })
 
-    const validateItemForm = (index) => validateSavItemForm(index, showToast)
-    const editItemForm = (index) => editSavItemForm(index, showToast)
+    const focusField = async (field, index) => {
+      await nextTick()
+      document.getElementById(`${field}-${index}`)?.focus()
+    }
+    const validateItemForm = async (index) => {
+      await validateSavItemForm(index, showToast)
+      const form = getSavForm(index)
+      const field = Object.keys(form.errors).find((key) => form.errors[key])
+      await focusField(field || 'edit', index)
+    }
+    const editItemForm = (index) => {
+      if (globalLoading.value) return
+      editSavItemForm(index, showToast)
+      return focusField('quantity', index)
+    }
+    const removeLine = (index) => {
+      if (globalLoading.value) return
+      deleteItemForm(index)
+      return focusField('signal', index)
+    }
+    const unitPrice = (item) => {
+      if (String(item.unit_amount ?? item.amount ?? '').trim() === '') return '—'
+      const cents = buildCaptureItemPrices(item).unitPriceTtcCents
+      return cents == null ? '—' : formatValue('amount', cents / 100)
+    }
     const getSpecialMention = () =>
       props.facture?.special_mention || props.facture?.specialMention || ''
 
     const formatValue = (key, value) => {
       if (key === 'amount') {
+        if (value == null || String(value).trim() === '' || !Number.isFinite(Number(value)))
+          return '—'
         return new Intl.NumberFormat('fr-FR', {
           style: 'currency',
           currency: 'EUR',
@@ -706,6 +767,7 @@ export default {
           return
         }
 
+        const invoiceLines = [...props.items]
         const filledForms = getFilledForms()
 
         if (filledForms.length === 0) {
@@ -798,7 +860,7 @@ export default {
 
         // Story 5.7 — htmlTable conservé en metadata (rétrocompat amont
         // builder Vue), le serveur utilise les templates natifs.
-        const htmlTable = buildSavHtmlTable(filledForms, props.items)
+        const htmlTable = buildSavHtmlTable(filledForms, invoiceLines)
 
         // ÉTAPE 3 : Obtenir le lien de partage pour le dossier global
         const folderShareLink = await getFolderShareLink(savDossier)
@@ -834,8 +896,7 @@ export default {
               ...(props.facture.label ? { label: String(props.facture.label) } : {}),
             }
           : undefined
-        const captureItems = filledForms.map(({ form, index }) => {
-          const factureItem = props.items[index] || {}
+        const captureItems = filledForms.map(({ form, item: factureItem }) => {
           const productName = factureItem.label || factureItem.product_name || 'Article inconnu'
           // Story V1.12 AC#1 — priorité INCHANGÉE :
           //   product_id (Pennylane) > code (Pennylane) > extractProductCode(label) > slice(0,32) (fallback)
@@ -914,8 +975,13 @@ export default {
       filledFormsCount,
       hasUnfinishedForms,
       hasPendingSubmission,
+      keyAt,
       getSavForm,
       formatValue,
+      unitPrice,
+      getFilledForms,
+      removeLine,
+      reasons: { abime: 'Abîmé', manquant: 'Manquant', autre: 'Autre' },
       currentUploadFile,
       totalFiles,
       uploadedFiles,
@@ -944,16 +1010,38 @@ export default {
 </script>
 
 <style scoped>
+.section-title {
+  @apply mb-4 text-2xl text-gray-900;
+}
+.line-card {
+  @apply rounded-xl border bg-white p-4 sm:p-5;
+  overflow-wrap: anywhere;
+}
+.line-action {
+  width: auto;
+  margin: 0;
+  text-transform: none;
+}
+.secondary {
+  color: #733a09;
+  text-decoration: underline;
+  min-height: 2.75rem;
+  font-weight: 600;
+}
+.webhook-items :focus-visible {
+  outline: 3px solid #80400b;
+  outline-offset: 3px;
+}
 .webhook-items {
   @apply w-full;
 }
 
 .btn-main.btn-main--danger {
-  background: #e23a3a;
+  background: #fff1df;
 }
 
 .btn-main.btn-main--danger:hover {
-  background: #c53030;
+  background: #ffe2bd;
 }
 
 /* Animation pour le toast (existante) */
@@ -969,7 +1057,7 @@ export default {
 
 /* Styles pour la zone de drag & drop */
 .upload-drop-zone {
-  @apply border-2 border-dashed border-gray-300 rounded-lg cursor-pointer transition-all duration-200;
+  @apply border-2 border-dashed border-gray-300 rounded-lg transition-all duration-200;
   background-color: #fafafa;
 }
 

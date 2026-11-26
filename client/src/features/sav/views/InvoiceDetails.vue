@@ -1,9 +1,9 @@
 <template>
-  <div class="min-h-screen flex items-center justify-center bg-[color:var(--bg-white)]">
-    <div class="bg-white p-8 rounded-lg shadow-md w-full max-w-4xl">
-      <h1 class="text-4xl text-center mb-6">Détail de la facture</h1>
+  <div class="min-h-screen bg-stone-50 py-6 sm:py-12">
+    <div class="mx-auto bg-white p-4 sm:p-8 rounded-xl border w-full max-w-4xl">
+      <h1 class="text-3xl text-gray-900 mb-6">Détail de la facture</h1>
       <div class="mb-4 p-4 bg-gray-50 rounded-2xl">
-        <h2 class="text-xl font-extrabold mb-2">Informations Facture</h2>
+        <h2 class="text-xl text-gray-900 font-extrabold mb-2">Informations Facture</h2>
         <p class="text-[color:var(--text-dark)] mb-1">
           <span class="font-semibold">Client:</span> {{ customerName }}
         </p>
@@ -44,9 +44,7 @@
           @sav-submitted="handleSavSubmission"
         />
       </div>
-      <router-link to="/" class="btn-main w-full block text-center text-[1.1em] mt-8"
-        >Retour</router-link
-      >
+      <router-link to="/" class="sav-field text-center mt-8">Retour</router-link>
     </div>
   </div>
 </template>
@@ -114,14 +112,16 @@ export default {
         this.email = this.$route.query.email || invoiceData.customer?.emails?.[0] || ''
 
         if (invoiceData && invoiceData.line_items) {
-          const filteredItems = invoiceData.line_items.filter(
-            (item) =>
-              !item.label.includes('Participation préparation commande') &&
-              !item.label.includes('Remise commande précédente') &&
-              !item.label.includes('Remise responsable') &&
-              !item.label.includes('Remise préparation commande')
-          )
-          this.invoiceItems = filteredItems
+          const excludedLabels = [
+            'Participation préparation commande',
+            'Remise commande précédente',
+            'Remise responsable',
+            'Remise préparation commande',
+          ]
+          this.invoiceItems = invoiceData.line_items.filter((item) => {
+            const label = item?.label || item?.product_name
+            return label && !excludedLabels.some((excluded) => label.includes(excluded))
+          })
         } else {
           console.error('line_items not found in the parsed response:', invoiceData)
           this.invoiceItems = []

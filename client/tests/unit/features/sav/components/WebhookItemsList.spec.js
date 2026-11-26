@@ -33,6 +33,7 @@ describe('WebhookItemsList.vue', () => {
       unit: 'pcs',
       vat_rate: 20,
       amount: 100,
+      unit_amount: 42,
     },
     {
       id: '2',
@@ -149,7 +150,7 @@ describe('WebhookItemsList.vue', () => {
     const values = valueElements.map((el) => el.text())
     expect(values.some((v) => v.includes('2'))).toBe(true) // Quantité
     expect(values.some((v) => v.includes('pcs'))).toBe(true) // Unité
-    expect(values.some((v) => v.includes('50'))).toBe(true) // Prix unitaire (100/2)
+    expect(firstItem.get('.grid').findAll('div.flex-col')[2].text()).toMatch(/Prix Unitaire42,00/)
     expect(values.some((v) => v.includes('100'))).toBe(true) // Prix total
   })
 

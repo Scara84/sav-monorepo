@@ -4,15 +4,28 @@ import { ref, computed } from 'vue'
  * Composable pour gérer les formulaires SAV
  * Extrait la logique de gestion des formulaires de WebhookItemsList
  */
-export function useSavForms() {
-  const savForms = ref({})
+export function useSavForms(getItems) {
+  const savForms = ref(new Map())
+  // Une ligne historique sans identifiant conserve son objet comme clé locale.
+  const lineKeys = computed(() => {
+    const items = getItems?.() ?? []
+    const seen = new Set()
+    const duplicates = new Set()
+    for (const item of items) {
+      if (seen.has(item.id)) duplicates.add(item.id)
+      seen.add(item.id)
+    }
+    return items.map((item) => (item.id != null && !duplicates.has(item.id) ? item.id : item))
+  })
+  const keyAt = (index) => (getItems ? lineKeys.value[index] : index)
 
   /**
    * Récupère ou crée un formulaire SAV pour un index donné
    */
   const getSavForm = (index) => {
-    if (!savForms.value[index]) {
-      savForms.value[index] = {
+    const key = keyAt(index)
+    if (!savForms.value.has(key)) {
+      savForms.value.set(key, {
         showForm: false,
         filled: false,
         quantity: '',
@@ -28,33 +41,35 @@ export function useSavForms() {
           reason: '',
           images: '',
         },
-      }
+      })
     }
-    return savForms.value[index]
+    return savForms.value.get(key)
   }
 
   /**
    * Vérifie si au moins un formulaire est rempli
    */
-  const hasFilledForms = computed(() => {
-    return Object.values(savForms.value).some((form) => form.filled && form.showForm)
+  const entries = computed(() => {
+    const items = getItems ? getItems() : [...savForms.value.keys()]
+    return items.flatMap((item, position) => {
+      const form = savForms.value.get(getItems ? keyAt(position) : item)
+      return form?.showForm ? [{ form, index: getItems ? position : item, item }] : []
+    })
   })
-
-  const filledFormsCount = computed(() => {
-    return Object.values(savForms.value).filter((form) => form.filled && form.showForm).length
-  })
+  const getFilledForms = () => entries.value.filter(({ form }) => form.filled)
+  const filledFormsCount = computed(() => getFilledForms().length)
+  const hasFilledForms = computed(() => filledFormsCount.value > 0)
 
   /**
    * Vérifie s'il y a des formulaires non terminés
    */
   const hasUnfinishedForms = computed(() => {
-    return Object.values(savForms.value).some((form) => form.showForm && !form.filled)
+    return entries.value.some(({ form }) => !form.filled)
   })
 
   const hasDirtyForms = computed(() => {
-    return Object.values(savForms.value).some(
-      (form) =>
-        form.showForm &&
+    return entries.value.some(
+      ({ form }) =>
         !form.filled &&
         (form.quantity !== '' ||
           form.unit !== '' ||
@@ -86,6 +101,16 @@ export function useSavForms() {
       isValid = false
     }
 
+    const quantity = Number(form.quantity)
+    if (
+      isValid &&
+      (!Number.isFinite(quantity) || quantity > 9999.99 || quantity !== Number(quantity.toFixed(2)))
+    ) {
+      form.errors.quantity =
+        'Saisissez une quantité de 0,01 à 9 999,99 avec deux décimales maximum.'
+      isValid = false
+    }
+
     // Validation de l'unité
     if (!form.unit) {
       form.errors.unit = 'Veuillez sélectionner une unité'
@@ -100,7 +125,7 @@ export function useSavForms() {
 
     // Validation des images pour le motif "abimé"
     if (form.reason === 'abime' && (!form.images || form.images.length === 0)) {
-      form.errors.images = 'Veuillez ajouter au moins une photo du produit abimé'
+      form.errors.images = 'Veuillez ajouter au moins une photo du produit abîmé'
       isValid = false
     }
 
@@ -127,7 +152,7 @@ export function useSavForms() {
    * Valide un formulaire d'item
    */
   const validateItemForm = async (index, showToast) => {
-    const form = savForms.value[index]
+    const form = getSavForm(index)
     if (form.loading) return
 
     form.loading = true
@@ -180,17 +205,9 @@ export function useSavForms() {
     }
   }
 
-  /**
-   * Récupère tous les formulaires remplis
-   */
-  const getFilledForms = () => {
-    return Object.entries(savForms.value)
-      .filter(([, form]) => form.filled && form.showForm)
-      .map(([index, form]) => ({ form, index: parseInt(index) }))
-  }
-
   return {
     savForms,
+    keyAt,
     getSavForm,
     hasFilledForms,
     filledFormsCount,

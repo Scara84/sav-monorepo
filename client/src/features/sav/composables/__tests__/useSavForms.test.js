@@ -63,6 +63,16 @@ describe('useSavForms', () => {
       expect(form.errors.quantity).toBe('La quantité doit être supérieure à 0')
     })
 
+    it.each([
+      [10000, false],
+      [0.001, false],
+      [9999.99, true],
+      [0.01, true],
+    ])('checks quantity %s', (quantity, valid) => {
+      const form = Object.assign(forms.getSavForm(0), { quantity, unit: 'kg', reason: 'manquant' })
+      expect(forms.validateForm(form)).toBe(valid)
+    })
+
     it('should fail validation when unit is missing', () => {
       const form = forms.getSavForm(0)
       form.quantity = 10
@@ -92,7 +102,7 @@ describe('useSavForms', () => {
 
       const isValid = forms.validateForm(form)
       expect(isValid).toBe(false)
-      expect(form.errors.images).toBe('Veuillez ajouter au moins une photo du produit abimé')
+      expect(form.errors.images).toBe('Veuillez ajouter au moins une photo du produit abîmé')
     })
 
     it('should pass validation when reason is "abime" and images are provided', () => {

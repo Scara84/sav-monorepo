@@ -153,8 +153,9 @@ const mockFacture = {
 // Helper createWrapper (pattern identique aux 2 specs existants)
 // ---------------------------------------------------------------------------
 
-const createWrapper = (props = {}) =>
+const createWrapper = (props = {}, attachTo?: HTMLElement) =>
   mount(WebhookItemsList, {
+    attachTo,
     props: {
       items: [...mockItems],
       facture: { ...mockFacture },
@@ -224,6 +225,78 @@ describe('WebhookItemsList.vue — H-05 Upload OneDrive flow (AC#1 / AC#2 / AC#3
     if (wrapper) wrapper.unmount()
     vi.useRealTimers()
   })
+
+  it.each([true, false])(
+    'préserve les identifiants après correction, retrait=%s',
+    async (removeOther) => {
+      const apple = { ...mockItems[0], product_id: 512 }
+      const lemon = {
+        id: 'L9',
+        product_id: 805,
+        label: 'Citrons',
+        quantity: 4,
+        unit: 'piece',
+        amount: 8,
+      }
+      wrapper = createWrapper({ items: [apple, lemon] }, document.body)
+      mockUploadToBackend.mockResolvedValue({
+        webUrl: 'https://test.invalid/photo',
+        itemId: MOCK_GRAPH_ID_1,
+      })
+      await wrapper.get('#signal-0').trigger('click')
+      await wrapper.get('#quantity-0').setValue('1')
+      await wrapper.get('#unit-0').setValue('kg')
+      await wrapper.get('#reason-0').setValue('abime')
+      await wrapper.get('form').trigger('submit')
+      expect(wrapper.get('#error-images-0').text()).toContain('photo')
+      expect(wrapper.find('section').exists()).toBe(false)
+      const input = wrapper.get('#images-0')
+      expect(document.activeElement).toBe(input.element)
+      const file = createMockImageFile()
+      Object.defineProperty(input.element, 'files', { value: [file] })
+      await input.trigger('change')
+      await vi.waitFor(() => expect(wrapper.find('img[alt="Aperçu"]').exists()).toBe(true))
+      await wrapper.get('form').trigger('submit')
+      expect(document.activeElement).toBe(wrapper.get('#edit-0').element)
+      expect(wrapper.get('section').text()).toContain(file.name)
+      await wrapper.get('#signal-1').trigger('click')
+      expect(
+        wrapper.get('[data-test="sav-submit-bar"] button').attributes('disabled')
+      ).toBeDefined()
+      await wrapper.get('#quantity-1').setValue('2')
+      await wrapper.get('#unit-1').setValue('piece')
+      await wrapper.get('#reason-1').setValue('manquant')
+      await wrapper.get('form').trigger('submit')
+      await wrapper.setProps({ items: [{ ...lemon }, { ...apple }] })
+      const summary = () => wrapper.get('section').findAll('li')
+      expect(summary().map((row) => row.get('h3').text())).toEqual(['Citrons', 'Pommes Bio'])
+      await summary()[1].get('button').trigger('click')
+      await wrapper.get('#quantity-1').setValue('3')
+      await wrapper.get('form').trigger('submit')
+      expect(summary()[1].text()).toContain('3 kg')
+      if (removeOther) await summary()[0].findAll('button')[1].trigger('click')
+      expect(summary().length).toBe(removeOther ? 1 : 2)
+      const pending = wrapper.vm.submitAllForms()
+      await wrapper.vm.$nextTick()
+      expect(wrapper.get('section').attributes('inert')).toBeDefined()
+      wrapper.vm.removeLine(1)
+      await vi.advanceTimersByTimeAsync(2000)
+      await pending
+      const items = mockSubmitSavWebhook.mock.calls[0][0].items
+      expect(
+        items.map(({ invoiceLineId, productCode, qtyRequested, cause, unitPriceTtcCents }) => [
+          invoiceLineId,
+          productCode,
+          qtyRequested,
+          cause,
+          unitPriceTtcCents,
+        ])
+      ).toEqual([
+        ...(removeOther ? [] : [['L9', '805', 2, 'manquant', 200]]),
+        ['1', '512', 3, 'abime', 2400],
+      ])
+    }
+  )
 
   // =========================================================================
   // AC#1 — Test 1 : Mount happy path
