@@ -1,10 +1,7 @@
 <template>
-  <div>
-    <HeroSection class="sticky-header" />
-    <div
-      class="sav-form-wrapper min-h-screen flex items-center justify-center bg-[color:var(--bg-white)]"
-    >
-      <div class="sav-form bg-white p-8 rounded-lg shadow-md w-full max-w-md">
+  <main class="lookup-page">
+    <div class="lookup-layout">
+      <div class="lookup-card">
         <section v-if="showAccessForm" class="mb-8" data-test="member-access-form">
           <h2 class="text-2xl font-extrabold mb-3 text-center text-[color:var(--main-orange)]">
             Accéder à mon suivi SAV
@@ -24,7 +21,7 @@
               autocomplete="email"
               class="w-full px-4 py-3 border-2 border-[color:var(--main-orange)] rounded-3xl"
             />
-            <button type="submit" class="btn-main w-full" :disabled="accessLinkSubmitting">
+            <button type="submit" class="sav-primary" :disabled="accessLinkSubmitting">
               {{ accessLinkSubmitting ? 'Envoi en cours…' : 'Recevoir mon lien de connexion' }}
             </button>
           </form>
@@ -32,9 +29,7 @@
             {{ accessLinkMessage }}
           </p>
         </section>
-        <h2 class="text-2xl font-extrabold mb-6 text-center text-[color:var(--main-orange)]">
-          Demande de Service Après-Vente
-        </h2>
+        <h1>Retrouver ma facture</h1>
         <!-- H-10 W95 — Toast inline non-bloquant (remplace les alert() de Story 5.7). -->
         <!-- role="alert" + aria-live="assertive" : annonce immédiate pour screen readers. -->
         <div v-if="toast" role="alert" aria-live="assertive" :class="`toast toast-${toast.kind}`">
@@ -49,20 +44,20 @@
               for="invoiceNumber"
               class="block font-bold text-[color:var(--text-dark)] text-[1.08em] mb-1"
             >
-              Numéro de facture (format <strong>F-AAAA-NNNNN</strong>) :
+              Numéro de facture
             </label>
-            <p class="text-sm text-gray-500 italic mb-2 ml-0.5">
-              Vous trouverez le numéro de facture en haut à droite de votre PDF Pennylane (ex.
-              <strong>F-2025-37039</strong>).
+            <p id="invoice-hint" class="lookup-hint">
+              En haut à droite du PDF Pennylane. Exemple : F-2025-37039 (année puis 1 à 8 chiffres).
             </p>
             <input
               type="text"
               id="invoiceNumber"
+              aria-describedby="invoice-hint"
               v-model="invoiceNumber"
               required
               maxlength="32"
               placeholder="Ex : F-2025-37039"
-              class="w-full px-4 py-3 border-2 border-[color:var(--main-orange)] rounded-3xl text-[color:var(--text-dark)] outline-none transition focus:border-[#c6711d] focus:ring-2 focus:ring-[#c6711d] focus:ring-offset-0"
+              class="sav-field"
             />
           </div>
 
@@ -71,28 +66,34 @@
               for="email"
               class="block font-bold text-[color:var(--text-dark)] text-[1.08em] mb-1"
             >
-              Adresse e-mail :
+              Adresse e-mail de facturation
             </label>
-            <p class="text-sm text-gray-500 italic mb-2 ml-0.5">
+            <p id="email-hint" class="lookup-hint">
               Il s'agit de l'adresse mail indiquée sur votre facture.
             </p>
             <input
               type="email"
               id="email"
+              aria-describedby="email-hint"
+              autocomplete="email"
               v-model="email"
               required
               placeholder="Ex : monadresse@email.com"
-              class="w-full px-4 py-3 border-2 border-[color:var(--main-orange)] rounded-3xl text-[color:var(--text-dark)] outline-none transition focus:border-[#c6711d] focus:ring-2 focus:ring-[#c6711d] focus:ring-offset-0"
+              class="sav-field"
             />
           </div>
 
-          <button type="submit" class="btn-main w-full text-[1.1em]">
-            Faire une demande de SAV
+          <button type="submit" class="sav-primary">
+            Retrouver ma commande
           </button>
         </form>
       </div>
+      <aside class="lookup-card lookup-context">
+        <h2>Service après-vente</h2>
+        <p>Déclarez un article manquant ou abîmé dans votre commande Fruitstock.</p>
+      </aside>
     </div>
-  </div>
+  </main>
 </template>
 
 <script>
@@ -162,7 +163,7 @@ export default {
       const invoiceNumber = (this.invoiceNumber || '').trim().toUpperCase()
       // Story 5.7 — input direct = numéro Pennylane F-YYYY-NNNNN (UX cutover Make).
       if (!/^F-\d{4}-\d{1,8}$/.test(invoiceNumber)) {
-        this.showError('Le numéro de facture doit avoir le format F-AAAA-NNNNN.')
+        this.showError('Le numéro de facture doit avoir le format F-AAAA-NNNNN (année puis 1 à 8 chiffres).')
         return
       }
       try {
@@ -217,17 +218,37 @@ export default {
 }
 </script>
 
-<style>
-.sticky-header {
-  position: sticky;
-  top: 0;
-  z-index: 100;
-  background: var(--bg-white, #fff);
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
-}
-</style>
-
 <style scoped>
+.lookup-page {
+  min-height: 90vh;
+  padding: clamp(1rem, 5vw, 4rem) 1rem;
+  background: #faf8f5;
+}
+.lookup-layout {
+  max-width: 60rem;
+  margin: auto;
+  display: grid;
+  grid-template-columns: minmax(0, 1.8fr) minmax(0, 1fr);
+  gap: 1.5rem;
+  align-items: start;
+}
+.lookup-card {
+  background: white;
+  padding: clamp(1.25rem, 3vw, 2.5rem);
+  border: 1px solid #ded8cf;
+  border-radius: 1rem;
+}
+.lookup-card h1, .lookup-card h2 {
+  color: var(--text-dark);
+  line-height: 1.2;
+}
+.lookup-card h1 { font-size: clamp(1.6rem, 3vw, 2.25rem); margin-bottom: 1.5rem; }
+.lookup-context { border-top: 3px solid var(--main-orange); }
+.lookup-context h2 { font-size: 1.25rem; }
+.lookup-hint { color: #534e48; margin-bottom: .5rem; font-size: .9375rem; }
+@media (max-width: 700px) {
+  .lookup-layout { grid-template-columns: minmax(0, 1fr); gap: 1rem; }
+}
 /* H-10 W95 — Toast inline non-bloquant. Pattern dupliqué (conforme AC #2.6 / DN-3). */
 .toast {
   display: flex;
@@ -242,7 +263,7 @@ export default {
 }
 .toast-error {
   background: #fde8e8;
-  color: #c62828;
+  color: #932323;
   border: 1px solid #f5c6c6;
 }
 .toast-success {
@@ -258,7 +279,8 @@ export default {
   line-height: 1;
   padding: 0 0.25rem;
   color: inherit;
-  opacity: 0.7;
+  min-width: 2rem;
+  min-height: 2rem;
   flex-shrink: 0;
 }
 .toast-dismiss:hover {

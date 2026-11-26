@@ -41,3 +41,29 @@ h1, h2, h3, h4, h5, h6 {
 .btn-main:hover {
   background: #c6711d;
 }
+
+.sav-field, .sav-primary {
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  padding: .8rem 1rem;
+  border-radius: .625rem;
+  font: inherit;
+}
+.sav-field {
+  border: 1px solid #84796d;
+  color: var(--text-dark);
+  background: white;
+}
+.sav-field::placeholder { color: #625950; }
+.sav-primary {
+  background: var(--main-orange);
+  color: #30200e;
+  font-weight: 700;
+  cursor: pointer;
+}
+.sav-primary:hover { background: #ed983a; }
+.sav-field:focus-visible, .sav-primary:focus-visible, .lookup-page button:focus-visible {
+  outline: 3px solid #80400b;
+  outline-offset: 3px;
+}
