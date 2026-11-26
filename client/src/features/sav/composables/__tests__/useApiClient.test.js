@@ -420,6 +420,15 @@ describe('useApiClient', () => {
       expect(result).toEqual({ data: { savId: 99 } })
     })
 
+    it.each(['', '<html></html>', { data: {} }])(
+      'rejette un succès HTTP sans reçu',
+      async (body) => {
+        axios.get = vi.fn().mockResolvedValue({ data: { data: { token: 'test' } } })
+        axios.post.mockResolvedValue({ data: body })
+        await expect(apiClient.submitSavWebhook({})).rejects.toThrow('identifiant de dossier')
+      }
+    )
+
     it('échoue si le token est manquant dans la réponse (non-retried 4xx)', async () => {
       // Le 4xx propage sans retry — pour ce test on simule le rejet direct.
       const err = new Error('not found')

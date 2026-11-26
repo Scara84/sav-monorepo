@@ -85,19 +85,20 @@ test('SAV error — API key invalide (403 upload-session)', async ({ page }) => 
     })
   })
 
-  await page.route('**/webhook', async (route) => {
+  await page.route('**/api/webhooks/capture', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ ok: true }),
+      body: JSON.stringify({ data: { savId: 13, reference: 'SAV-TEST-013' } }),
     })
   })
 
   await openInvoiceDetails(page)
   await fillSavForm(page, { imageCount: 1 })
 
-  await expect(page.getByText("Erreur d'envoi")).toBeVisible({ timeout: 15000 })
+  await expect(page.getByText('Envoi interrompu')).toBeVisible({ timeout: 15000 })
   await expect(page.getByText(/upload de/i)).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Réessayer l’envoi' })).toBeEnabled()
   await expect(page).not.toHaveURL(/sav-confirmation/)
 })
 
@@ -121,7 +122,7 @@ test('SAV error — rate limit sur share link (429)', async ({ page }) => {
       status: 201,
       contentType: 'application/json',
       body: JSON.stringify({
-        id: 'mock-id',
+        id: '01' + 'A'.repeat(30),
         name: 'photo.jpg',
         webUrl: 'https://mock-share.local/photo.jpg',
         size: 4,
@@ -137,19 +138,20 @@ test('SAV error — rate limit sur share link (429)', async ({ page }) => {
     })
   })
 
-  await page.route('**/webhook', async (route) => {
+  await page.route('**/api/webhooks/capture', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ ok: true }),
+      body: JSON.stringify({ data: { savId: 13, reference: 'SAV-TEST-013' } }),
     })
   })
 
   await openInvoiceDetails(page)
   await fillSavForm(page, { imageCount: 1 })
 
-  await expect(page.getByText("Erreur d'envoi")).toBeVisible({ timeout: 15000 })
+  await expect(page.getByText('Envoi interrompu')).toBeVisible({ timeout: 15000 })
   await expect(page.getByText(/429/)).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Réessayer l’envoi' })).toBeEnabled()
   await expect(page).not.toHaveURL(/sav-confirmation/)
 })
 
@@ -177,7 +179,7 @@ test('SAV error — PUT Graph échoue partiellement (500)', async ({ page }) => 
         status: 201,
         contentType: 'application/json',
         body: JSON.stringify({
-          id: 'mock-id-1',
+          id: '01' + 'A'.repeat(30),
           name: 'photo-1.jpg',
           webUrl: 'https://mock-share.local/photo-1.jpg',
           size: 4,
@@ -200,18 +202,19 @@ test('SAV error — PUT Graph échoue partiellement (500)', async ({ page }) => 
     })
   })
 
-  await page.route('**/webhook', async (route) => {
+  await page.route('**/api/webhooks/capture', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ ok: true }),
+      body: JSON.stringify({ data: { savId: 13, reference: 'SAV-TEST-013' } }),
     })
   })
 
   await openInvoiceDetails(page)
   await fillSavForm(page, { imageCount: 2 })
 
-  await expect(page.getByText("Erreur d'envoi")).toBeVisible({ timeout: 20000 })
+  await expect(page.getByText('Envoi interrompu')).toBeVisible({ timeout: 20000 })
   await expect(page.getByText(/upload de 1 fichier/i)).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Réessayer l’envoi' })).toBeEnabled()
   await expect(page).not.toHaveURL(/sav-confirmation/)
 })

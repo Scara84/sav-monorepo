@@ -58,7 +58,7 @@ test('SAV happy path (flow 2 étapes OneDrive upload session)', async ({ page })
       status: 201,
       contentType: 'application/json',
       body: JSON.stringify({
-        id: 'mock-drive-item-id',
+        id: '01' + 'A'.repeat(30),
         name: 'photo.jpg',
         webUrl: 'https://mock-share.local/photo.jpg',
         size: 4,
@@ -77,11 +77,14 @@ test('SAV happy path (flow 2 étapes OneDrive upload session)', async ({ page })
     })
   })
 
-  await page.route('**/webhook', async (route) => {
+  await page.route('**/api/self-service/submit-token', (route) =>
+    route.fulfill({ json: { data: { token: 'test' } } })
+  )
+  await page.route('**/api/webhooks/capture', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ ok: true }),
+      body: JSON.stringify({ data: { savId: 13, reference: 'SAV-TEST-013' } }),
     })
   })
 
@@ -116,7 +119,8 @@ test('SAV happy path (flow 2 étapes OneDrive upload session)', async ({ page })
   await submitAllButton.click()
 
   await expect(page).toHaveURL(/sav-confirmation/)
-  await expect(page.getByText('Demande SAV envoyée avec succès !')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Votre demande SAV a été reçue' })).toBeFocused()
+  await expect(page.getByText(/SAV-TEST-013/)).toBeVisible()
 })
 
 /**
@@ -158,11 +162,11 @@ test('V1.1 AC#1 — quantity input accepts 12.5 and preserves value (no coercion
     })
   })
 
-  await page.route('**/webhook', async (route) => {
+  await page.route('**/api/webhooks/capture', async (route) => {
     await route.fulfill({
       status: 200,
       contentType: 'application/json',
-      body: JSON.stringify({ ok: true }),
+      body: JSON.stringify({ data: { savId: 13, reference: 'SAV-TEST-013' } }),
     })
   })
 
@@ -179,4 +183,10 @@ test('V1.1 AC#1 — quantity input accepts 12.5 and preserves value (no coercion
   const quantityInput = firstItem.locator('[data-test="sav-form-quantity-0"]')
   await quantityInput.fill('12.5')
   await expect(quantityInput).toHaveValue('12.5')
+})
+
+test('une visite directe sans reçu retourne à l’accueil', async ({ page }) => {
+  await page.goto('/sav-confirmation')
+  await expect(page.getByRole('heading', { name: 'Retrouver ma facture' })).toBeVisible()
+  await expect(page.getByText('Votre demande SAV a été reçue')).toHaveCount(0)
 })

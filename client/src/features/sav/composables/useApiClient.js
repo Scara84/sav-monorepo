@@ -324,6 +324,9 @@ export function useApiClient() {
         'X-Capture-Token': token,
       },
     })
+    if (!Number.isSafeInteger(response.data?.data?.savId) || response.data.data.savId <= 0) {
+      throw new Error('Réponse de capture sans identifiant de dossier valide')
+    }
     return response.data
   }
 

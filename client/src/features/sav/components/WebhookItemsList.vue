@@ -42,149 +42,6 @@
         <span>{{ toastMessage }}</span>
       </div>
     </transition>
-    <!-- Modal d'upload avec overlay (Teleport vers body pour garantir le positionnement) -->
-    <Teleport to="body">
-      <transition name="modal-fade">
-        <div v-if="uploadModalVisible" class="upload-modal-overlay">
-          <div class="upload-modal-content" @click.stop>
-            <!-- État: Upload en cours -->
-            <div v-if="uploadStatus === 'uploading'" class="text-center">
-              <div class="mb-6">
-                <svg
-                  class="animate-spin h-16 w-16 text-blue-600 mx-auto"
-                  xmlns="http://www.w3.org/2000/svg"
-                  fill="none"
-                  viewBox="0 0 24 24"
-                >
-                  <circle
-                    class="opacity-25"
-                    cx="12"
-                    cy="12"
-                    r="10"
-                    stroke="currentColor"
-                    stroke-width="4"
-                  ></circle>
-                  <path
-                    class="opacity-75"
-                    fill="currentColor"
-                    d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"
-                  ></path>
-                </svg>
-              </div>
-              <h3 class="text-2xl font-bold text-gray-900 mb-2">Envoi en cours...</h3>
-              <p class="text-gray-600 mb-6">
-                Veuillez patienter pendant l'envoi de vos réclamations
-              </p>
-
-              <!-- Barre de progression -->
-              <div class="mb-4">
-                <div class="flex items-center justify-between mb-2">
-                  <span class="text-sm font-medium text-gray-700">Progression</span>
-                  <span class="text-sm font-bold text-blue-600"
-                    >{{ uploadedFiles }}/{{ totalFiles }} fichiers</span
-                  >
-                </div>
-                <div class="w-full bg-gray-200 rounded-full h-3 overflow-hidden">
-                  <div
-                    class="bg-gradient-to-r from-blue-500 to-indigo-600 h-3 rounded-full transition-all duration-500 ease-out flex items-center justify-end pr-2"
-                    :style="{
-                      width: totalFiles > 0 ? (uploadedFiles / totalFiles) * 100 + '%' : '0%',
-                    }"
-                  >
-                    <span
-                      v-if="uploadedFiles > 0 && totalFiles > 0"
-                      class="text-[10px] font-bold text-white"
-                      >{{ Math.round((uploadedFiles / totalFiles) * 100) }}%</span
-                    >
-                  </div>
-                </div>
-              </div>
-
-              <!-- Fichier actuel -->
-              <div class="bg-blue-50 rounded-lg p-3 mt-4">
-                <p class="text-xs text-gray-500 mb-1">Fichier en cours</p>
-                <p class="text-sm text-gray-900 font-semibold truncate">
-                  {{ currentUploadFile || 'Préparation...' }}
-                </p>
-              </div>
-            </div>
-
-            <!-- État: Succès -->
-            <div v-else-if="uploadStatus === 'success'" class="text-center">
-              <div class="mb-6">
-                <div
-                  class="mx-auto w-16 h-16 bg-green-100 rounded-full flex items-center justify-center"
-                >
-                  <svg
-                    class="w-10 h-10 text-green-600"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M5 13l4 4L19 7"
-                    ></path>
-                  </svg>
-                </div>
-              </div>
-              <h3 class="text-2xl font-bold text-gray-900 mb-2">Envoi réussi !</h3>
-              <p class="text-gray-600 mb-6">
-                Toutes vos réclamations ont été envoyées avec succès.
-              </p>
-              <button
-                @click="closeUploadModal"
-                class="w-full px-6 py-3 text-base font-medium text-white bg-green-600 rounded-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-green-500 transition-colors"
-              >
-                Fermer
-              </button>
-            </div>
-
-            <!-- État: Erreur -->
-            <div v-else-if="uploadStatus === 'error'" class="text-center">
-              <div class="mb-6">
-                <div
-                  class="mx-auto w-16 h-16 bg-red-100 rounded-full flex items-center justify-center"
-                >
-                  <svg
-                    class="w-10 h-10 text-red-600"
-                    fill="none"
-                    stroke="currentColor"
-                    viewBox="0 0 24 24"
-                  >
-                    <path
-                      stroke-linecap="round"
-                      stroke-linejoin="round"
-                      stroke-width="2"
-                      d="M6 18L18 6M6 6l12 12"
-                    ></path>
-                  </svg>
-                </div>
-              </div>
-              <h3 class="text-2xl font-bold text-gray-900 mb-2">Erreur d'envoi</h3>
-              <p class="text-gray-600 mb-2">
-                Une erreur est survenue lors de l'envoi de vos réclamations.
-              </p>
-              <p
-                v-if="uploadErrorMessage"
-                class="text-sm text-red-600 mb-6 bg-red-50 p-3 rounded-lg"
-              >
-                {{ uploadErrorMessage }}
-              </p>
-              <button
-                @click="closeUploadModal"
-                class="w-full px-6 py-3 text-base font-medium text-white bg-red-600 rounded-lg hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-offset-2 focus:ring-red-500 transition-colors"
-              >
-                Fermer
-              </button>
-            </div>
-          </div>
-        </div>
-      </transition>
-    </Teleport>
-
     <h2 class="section-title">Articles de la facture</h2>
     <ul class="space-y-6" :inert="globalLoading">
       <li v-for="(item, index) in items" :key="keyAt(index)" class="line-card">
@@ -520,7 +377,39 @@
     >
       <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <p v-if="filledFormsCount > 0" class="font-semibold text-gray-900">
+          <div
+            v-if="globalLoading"
+            role="status"
+            class="border-l-4 border-[var(--main-orange)] pl-3"
+          >
+            <strong>Envoi en cours…</strong>
+            <p>
+              <template v-if="totalFiles > uploadedFiles">Téléversement des photos…</template>
+              <template v-else-if="uploadStatus === 'capturing'"
+                >En attente de la réception du dossier…</template
+              >
+              <template v-else>Préparation de la demande…</template>
+            </p>
+            <progress
+              v-if="totalFiles > uploadedFiles"
+              aria-label="Photos téléversées"
+              :value="uploadedFiles"
+              :max="totalFiles"
+            />
+          </div>
+          <div
+            v-else-if="uploadStatus === 'error'"
+            role="alert"
+            class="rounded-lg bg-red-50 p-3 text-red-900"
+          >
+            <strong>Envoi interrompu</strong>
+            <p v-if="uploadErrorMessage">{{ uploadErrorMessage }}</p>
+            <p>
+              La réception de votre demande n’a pas été confirmée. Vos articles sont conservés. Vous
+              pouvez les modifier ou réessayer.
+            </p>
+          </div>
+          <p v-else-if="filledFormsCount > 0" class="font-semibold text-gray-900">
             {{ filledFormsCount }}
             {{ filledFormsCount === 1 ? 'réclamation ajoutée' : 'réclamations ajoutées' }}
           </p>
@@ -528,15 +417,22 @@
           <p v-if="hasUnfinishedForms" class="text-sm text-amber-700" role="alert">
             Finalisez ou annulez la ligne en cours avant l’envoi.
           </p>
-          <p v-else class="text-sm text-gray-600">Votre demande n’est pas encore envoyée.</p>
+          <p
+            v-else-if="!globalLoading && uploadStatus !== 'error' && !submissionSucceeded"
+            class="text-sm text-gray-600"
+          >
+            Votre demande n’est pas encore envoyée.
+          </p>
         </div>
         <button
           type="button"
+          ref="submitButton"
           @click="submitAllForms"
           class="sav-primary line-action disabled:opacity-60"
-          :disabled="globalLoading || hasUnfinishedForms || !hasFilledForms"
+          :disabled="submissionSucceeded || globalLoading || hasUnfinishedForms || !hasFilledForms"
         >
           <span v-if="globalLoading">Envoi...</span>
+          <span v-else-if="uploadStatus === 'error'">Réessayer l’envoi</span>
           <span v-else>
             Envoyer ma demande SAV ({{ filledFormsCount }}
             {{ filledFormsCount === 1 ? 'réclamation' : 'réclamations' }})
@@ -597,7 +493,6 @@ export default {
     const toastMessage = ref('')
 
     // États pour les progress bars
-    const currentUploadFile = ref('')
     const totalFiles = ref(0)
     const uploadedFiles = ref(0)
     const toastType = ref('success')
@@ -627,10 +522,16 @@ export default {
     onMounted(() => window.addEventListener('beforeunload', handleBeforeUnload))
     onBeforeUnmount(() => window.removeEventListener('beforeunload', handleBeforeUnload))
 
-    // États pour le modal d'upload
-    const uploadModalVisible = ref(false)
-    const uploadStatus = ref('uploading') // 'uploading' | 'success' | 'error'
+    const submitButton = ref(null)
+    const uploadStatus = ref('idle')
     const uploadErrorMessage = ref('')
+
+    watch(uploadStatus, async (status) => {
+      if (status === 'error') {
+        await nextTick()
+        submitButton.value?.focus()
+      }
+    })
 
     const showToast = (msg, type = 'success') => {
       toastMessage.value = msg
@@ -639,31 +540,6 @@ export default {
         toastMessage.value = ''
       }, 2500)
     }
-
-    const closeUploadModal = () => {
-      uploadModalVisible.value = false
-      uploadStatus.value = 'uploading'
-      uploadErrorMessage.value = ''
-    }
-
-    // Bloquer le scroll du body quand le modal est ouvert
-    watch(uploadModalVisible, (isVisible) => {
-      if (isVisible) {
-        // Scroll en haut de la page pour que le modal soit visible
-        window.scrollTo({ top: 0, behavior: 'smooth' })
-        // Bloquer le scroll
-        document.body.style.overflow = 'hidden'
-        document.body.style.position = 'fixed'
-        document.body.style.width = '100%'
-        document.body.style.top = '0'
-      } else {
-        // Débloquer le scroll
-        document.body.style.overflow = ''
-        document.body.style.position = ''
-        document.body.style.width = ''
-        document.body.style.top = ''
-      }
-    })
 
     const focusField = async (field, index) => {
       await nextTick()
@@ -748,12 +624,20 @@ export default {
       }
     }
 
+    let submissionFolder
+    const folderFiles = new Set()
+    watch([hasFilledForms, hasUnfinishedForms], ([filled, unfinished]) => {
+      if (!filled && !unfinished && !globalLoading.value && !submissionSucceeded.value) {
+        uploadStatus.value = 'idle'
+        uploadErrorMessage.value = ''
+        submissionFolder = undefined
+        folderFiles.clear()
+      }
+    })
     const submitAllForms = async () => {
-      if (globalLoading.value) return
+      if (globalLoading.value || submissionSucceeded.value) return
       globalLoading.value = true
 
-      // Ouvrir le modal immédiatement
-      uploadModalVisible.value = true
       uploadStatus.value = 'uploading'
       uploadErrorMessage.value = ''
 
@@ -790,17 +674,28 @@ export default {
           return
         }
 
-        // Créer un nom de dossier unique pour cette demande de SAV
-        const specialMention = props.facture?.special_mention || ''
-        const sanitizedSpecialMention =
-          specialMention.replace(/[^a-zA-Z0-9_]/g, '_') || 'SANS_MENTION'
-
-        const now = new Date()
-        const timestamp = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}_${String(now.getHours()).padStart(2, '0')}-${String(now.getMinutes()).padStart(2, '0')}-${String(now.getSeconds()).padStart(2, '0')}`
-        const savDossier = `SAV_${sanitizedSpecialMention}_${timestamp}`
-
-        // ÉTAPE 1 : Upload des images via le backend (authentification silencieuse)
-        const uploadStartTime = Date.now()
+        // Conserver les photos téléversées tant que le dossier partagé correspond au panier.
+        const images = filledForms.flatMap(({ form }) => form.images)
+        const selectedFiles = new Set(images.map((image) => image.file))
+        const photoRemoved = [...folderFiles].some((file) => !selectedFiles.has(file))
+        if (!submissionFolder || photoRemoved) {
+          const mention =
+            props.facture?.special_mention?.replace(/[^a-zA-Z0-9_]/g, '_') || 'SANS_MENTION'
+          const date = new Date()
+          const stamp =
+            date.toLocaleDateString('sv-SE') +
+            '_' +
+            date.toTimeString().slice(0, 8).replaceAll(':', '-')
+          submissionFolder = `SAV_${mention}_${stamp}_${crypto.randomUUID().slice(0, 8)}`
+          if (photoRemoved) {
+            for (const image of images) {
+              image.uploadedUrl = ''
+              image.itemId = ''
+            }
+          }
+          folderFiles.clear()
+        }
+        const savDossier = submissionFolder
 
         // Collecter tous les fichiers à uploader
         const allFiles = []
@@ -826,9 +721,9 @@ export default {
           const imgObj = fileMapping.get(file)
           imgObj.uploadError = false // AC#2 M1 — reset au début de chaque tentative (idempotent retry)
           try {
-            currentUploadFile.value = file.name
             // V1.6 AC#9 : uploadToBackend retourne { webUrl, itemId } (pas string)
             const uploadResult = await uploadToBackend(file, savDossier)
+            folderFiles.add(file)
             imgObj.uploadedUrl = uploadResult.webUrl
             imgObj.itemId = uploadResult.itemId
             imgObj.uploadError = false // AC#2 M1 — reset explicite sur success (defense-in-depth)
@@ -841,13 +736,6 @@ export default {
         })
 
         await Promise.all(uploadPromises)
-
-        // Délai minimum de 1.5 secondes pour que l'utilisateur voie la progress bar
-        const uploadDuration = Date.now() - uploadStartTime
-        const minDisplayTime = 1500
-        if (uploadDuration < minDisplayTime) {
-          await new Promise((resolve) => setTimeout(resolve, minDisplayTime - uploadDuration))
-        }
 
         // Vérifier si des uploads ont échoué
         if (uploadErrors.length > 0) {
@@ -942,7 +830,8 @@ export default {
             }
           }
         }
-        await submitSavWebhook({
+        uploadStatus.value = 'capturing'
+        const receipt = await submitSavWebhook({
           customer: captureCustomer,
           ...(captureInvoice ? { invoice: captureInvoice } : {}),
           items: captureItems,
@@ -957,14 +846,15 @@ export default {
         // Succès
         submissionSucceeded.value = true
         uploadStatus.value = 'success'
-        emit('sav-submitted')
+        emit('sav-submitted', receipt?.data?.reference)
       } catch (error) {
         uploadStatus.value = 'error'
-        uploadErrorMessage.value = error.message || "Erreur lors de l'envoi des réclamations"
+        uploadErrorMessage.value = error.response?.status
+          ? `Le service a renvoyé une erreur (HTTP ${error.response.status}).`
+          : 'Le service n’a pas confirmé la réception.'
         console.error("Erreur lors de l'envoi:", error)
       } finally {
         globalLoading.value = false
-        currentUploadFile.value = ''
         totalFiles.value = 0
         uploadedFiles.value = 0
       }
@@ -982,7 +872,6 @@ export default {
       getFilledForms,
       removeLine,
       reasons: { abime: 'Abîmé', manquant: 'Manquant', autre: 'Autre' },
-      currentUploadFile,
       totalFiles,
       uploadedFiles,
       toggleSavForm,
@@ -991,6 +880,7 @@ export default {
       handleImageUpload,
       handleDrop,
       removeImage,
+      submitButton,
       submitAllForms,
       toastMessage,
       toastType,
@@ -999,10 +889,8 @@ export default {
       handleBeforeUnload,
       confirmLeave,
       showToast,
-      uploadModalVisible,
       uploadStatus,
       uploadErrorMessage,
-      closeUploadModal,
       maxFileSizeMb,
     }
   },
@@ -1073,79 +961,5 @@ export default {
 .upload-drop-zone-disabled {
   @apply opacity-50 cursor-not-allowed;
   background-color: #f3f4f6;
-}
-</style>
-
-<style>
-/* Styles globaux pour le modal (non scopés car téléporté dans body) */
-.upload-modal-overlay {
-  position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  width: 100vw;
-  height: 100vh;
-  background: rgba(0, 0, 0, 0.75);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 1rem;
-  z-index: 99999;
-  overflow: auto;
-}
-
-.upload-modal-content {
-  background: white;
-  border-radius: 1rem;
-  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
-  max-width: 28rem;
-  width: 100%;
-  padding: 2rem;
-  transform: translateZ(0);
-  position: relative;
-  margin: auto;
-}
-
-/* Animations pour le modal */
-.modal-fade-enter-active,
-.modal-fade-leave-active {
-  transition: opacity 0.3s ease;
-}
-
-.modal-fade-enter-active .upload-modal-content,
-.modal-fade-leave-active .upload-modal-content {
-  transition: all 0.3s ease;
-}
-
-.modal-fade-enter-from,
-.modal-fade-leave-to {
-  opacity: 0;
-}
-
-.modal-fade-enter-from .upload-modal-content {
-  transform: scale(0.9) translateY(-20px);
-}
-
-.modal-fade-leave-to .upload-modal-content {
-  transform: scale(0.95) translateY(10px);
-}
-
-.modal-fade-enter-to .upload-modal-content,
-.modal-fade-leave-from .upload-modal-content {
-  transform: scale(1) translateY(0);
-}
-
-/* Fix pour mobile - garantir que le modal reste au-dessus */
-@media (max-width: 640px) {
-  .upload-modal-overlay {
-    position: fixed !important;
-    padding: 0.75rem;
-  }
-
-  .upload-modal-content {
-    max-height: 90vh;
-    overflow-y: auto;
-  }
 }
 </style>

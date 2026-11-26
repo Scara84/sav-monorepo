@@ -218,12 +218,94 @@ describe('WebhookItemsList.vue — H-05 Upload OneDrive flow (AC#1 / AC#2 / AC#3
 
     // Défaut happy path pour getFolderShareLink et submitSavWebhook
     mockGetFolderShareLink.mockResolvedValue('https://mock-sharepoint.local/folder')
-    mockSubmitSavWebhook.mockResolvedValue({ success: true })
+    mockSubmitSavWebhook.mockResolvedValue({ data: { savId: 13 } })
   })
 
   afterEach(() => {
     if (wrapper) wrapper.unmount()
     vi.useRealTimers()
+  })
+
+  it('attend la capture unique, conserve la photo et confirme après la reprise réussie', async () => {
+    wrapper = createWrapper({}, document.body)
+    const photo = createMockImageFile()
+    prepareFillledForm(wrapper.vm, 0, photo)
+    mockUploadToBackend.mockResolvedValue({
+      webUrl: 'https://test.invalid/photo',
+      itemId: MOCK_GRAPH_ID_1,
+    })
+    const second = createMockImageFile('photo-2.jpg')
+    wrapper.vm.getSavForm(0).images.push({ file: second })
+    let finishPhoto!: (value: unknown) => void
+    mockUploadToBackend
+      .mockResolvedValueOnce({ webUrl: 'https://test.invalid/1', itemId: MOCK_GRAPH_ID_1 })
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            finishPhoto = resolve
+          })
+      )
+    let fail!: (error: Error) => void
+    let succeed!: (value: unknown) => void
+    mockSubmitSavWebhook
+      .mockImplementationOnce(
+        () =>
+          new Promise((_, reject) => {
+            fail = reject
+          })
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise((resolve) => {
+            succeed = resolve
+          })
+      )
+    await wrapper.vm.$nextTick()
+    const button = wrapper.get('[data-test="sav-submit-bar"] button')
+    await Promise.all([button.trigger('click'), button.trigger('click')])
+    await flushPromises()
+    expect(wrapper.get('progress').attributes()).toMatchObject({ value: '1', max: '2' })
+    expect(mockSubmitSavWebhook).not.toHaveBeenCalled()
+    finishPhoto({ webUrl: 'https://test.invalid/2', itemId: MOCK_GRAPH_ID_1 })
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(mockSubmitSavWebhook).toHaveBeenCalledTimes(1)
+    expect(wrapper.get('[role="status"]').text()).toContain('En attente')
+    expect(wrapper.emitted('sav-submitted')).toBeUndefined()
+    fail(new Error('Interruption simulée'))
+    await flushPromises()
+    expect(document.activeElement).toBe(button.element)
+    expect(wrapper.get('[role="alert"]').text()).toContain('Envoi interrompu')
+    expect(wrapper.get('section').text()).toContain(photo.name)
+    await button.trigger('click')
+    await vi.advanceTimersByTimeAsync(2000)
+    expect(mockSubmitSavWebhook).toHaveBeenCalledTimes(2)
+    expect(mockUploadToBackend).toHaveBeenCalledTimes(2)
+    expect(mockGetFolderShareLink.mock.calls[1]).toEqual(mockGetFolderShareLink.mock.calls[0])
+    expect(wrapper.emitted('sav-submitted')).toBeUndefined()
+    succeed({ data: { savId: 13, reference: 'SAV-TEST' } })
+    await flushPromises()
+    expect(wrapper.emitted('sav-submitted')).toEqual([['SAV-TEST']])
+  })
+
+  it('isole le dossier partagé si une photo téléversée est retirée après échec', async () => {
+    wrapper = createWrapper()
+    const photo = createMockImageFile()
+    prepareFillledForm(wrapper.vm, 0, photo)
+    const form = wrapper.vm.getSavForm(0)
+    form.images.push({ file: createMockImageFile('retiree.jpg') })
+    mockUploadToBackend.mockResolvedValue({
+      webUrl: 'https://test.invalid/photo',
+      itemId: MOCK_GRAPH_ID_1,
+    })
+    mockSubmitSavWebhook.mockRejectedValueOnce(new Error('Interruption'))
+    await wrapper.vm.submitAllForms()
+    form.images.pop()
+    await wrapper.vm.submitAllForms()
+    expect(mockGetFolderShareLink.mock.calls[1]).not.toEqual(mockGetFolderShareLink.mock.calls[0])
+    expect(mockUploadToBackend).toHaveBeenCalledTimes(3)
+    expect(
+      mockSubmitSavWebhook.mock.calls[1][0].files.map((file) => file.originalFilename)
+    ).toEqual([photo.name])
   })
 
   it.each([true, false])(
@@ -495,11 +577,6 @@ describe('WebhookItemsList.vue — H-05 Upload OneDrive flow (AC#1 / AC#2 / AC#3
 
       // Après 1er submit : img0.uploadError === true (erreur posée)
       expect(form.images[0].uploadError).toBe(true)
-
-      // Reset le globalLoading pour permettre un 2e submit
-      // (après closeUploadModal ou equivalent)
-      wrapper.vm.closeUploadModal()
-      await wrapper.vm.$nextTick()
 
       // img0 n'a pas encore d'itemId/uploadedUrl → sera re-tenté au 2e submit
       // Réinitialiser uploadedUrl/itemId sur img0 pour forcer re-upload

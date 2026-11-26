@@ -73,9 +73,11 @@ export default {
     }
   },
   methods: {
-    handleSavSubmission() {
-      console.log('Demande SAV soumise avec succès.')
-      this.$router.push({ name: 'SavConfirmation' })
+    handleSavSubmission(reference) {
+      this.$router.push({
+        name: 'SavConfirmation',
+        state: { savReceived: true, savReference: reference || null },
+      })
     },
     confirmSavLeave() {
       return this.$refs.savItemsList?.confirmLeave?.() ?? true
