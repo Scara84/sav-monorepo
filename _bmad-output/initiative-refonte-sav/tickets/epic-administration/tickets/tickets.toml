@@ -33,4 +33,3 @@ after = ["3.1"]
 hitl = false
 risk = "medium"
 references = ["/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#catalog", "/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#validation"]
-

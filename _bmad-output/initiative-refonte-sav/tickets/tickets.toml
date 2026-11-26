@@ -53,4 +53,3 @@ title = "Administrer les paramètres et les référentiels"
 description = "L’administrateur retrouve les réglages, distingue les droits et vérifie les changements avec les outils existants."
 covers = ["R17", "R18", "R19"]
 after = [{ epic = 3, needs = "la navigation authentifiée du back-office livrée par 3.1" }]
-
