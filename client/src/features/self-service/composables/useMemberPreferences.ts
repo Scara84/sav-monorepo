@@ -1,4 +1,4 @@
-import { ref } from 'vue'
+import { getCurrentScope, onScopeDispose, ref } from 'vue'
 
 /**
  * Story 6.4 — composable préférences notifications adhérent.
@@ -41,7 +41,16 @@ export function useMemberPreferences(): UseMemberPreferencesReturn {
   const error = ref<'load' | 'save' | null>(null)
   const toastMsg = ref<string | null>(null)
 
+  let toastTimer: ReturnType<typeof setTimeout> | undefined
+  if (getCurrentScope()) onScopeDispose(() => clearTimeout(toastTimer))
+
+  function clearToast() {
+    clearTimeout(toastTimer)
+    toastMsg.value = null
+  }
+
   async function load(): Promise<void> {
+    clearToast()
     loading.value = true
     error.value = null
     try {
@@ -65,15 +74,13 @@ export function useMemberPreferences(): UseMemberPreferencesReturn {
       const meBody = (await meRes.json()) as {
         user?: { isGroupManager?: boolean }
       }
-      isManager.value = meBody.user?.isGroupManager === true
-
-      const prefsBody = (await prefsRes.json()) as {
-        data?: { notificationPrefs?: NotificationPrefs }
+      const np = await readPreferences(prefsRes)
+      if (typeof meBody.user?.isGroupManager !== 'boolean') {
+        error.value = 'load'
+        return
       }
-      const np = prefsBody.data?.notificationPrefs
+      isManager.value = meBody.user.isGroupManager
       prefs.value = np
-        ? { status_updates: !!np.status_updates, weekly_recap: !!np.weekly_recap }
-        : { status_updates: true, weekly_recap: false }
     } catch {
       error.value = 'load'
     } finally {
@@ -82,6 +89,8 @@ export function useMemberPreferences(): UseMemberPreferencesReturn {
   }
 
   async function save(next: Partial<NotificationPrefs>): Promise<{ ok: boolean }> {
+    if (saving.value) return { ok: false }
+    clearToast()
     saving.value = true
     error.value = null
     try {
@@ -95,17 +104,9 @@ export function useMemberPreferences(): UseMemberPreferencesReturn {
         error.value = 'save'
         return { ok: false }
       }
-      const body = (await res.json()) as {
-        data?: { notificationPrefs?: NotificationPrefs }
-      }
-      const np = body.data?.notificationPrefs
-      if (np) {
-        prefs.value = { status_updates: !!np.status_updates, weekly_recap: !!np.weekly_recap }
-      }
+      prefs.value = await readPreferences(res)
       toastMsg.value = 'Préférences enregistrées'
-      // Auto-dismiss 3s — non bloquant pour les tests (le timeout n'est pas
-      // assert).
-      setTimeout(() => {
+      toastTimer = setTimeout(() => {
         toastMsg.value = null
       }, 3000)
       return { ok: true }
@@ -118,4 +119,13 @@ export function useMemberPreferences(): UseMemberPreferencesReturn {
   }
 
   return { prefs, isManager, loading, saving, error, toastMsg, load, save }
+}
+
+async function readPreferences(response: Response): Promise<NotificationPrefs> {
+  const body = await response.json()
+  const prefs = body?.data?.notificationPrefs
+  if (typeof prefs?.status_updates !== 'boolean' || typeof prefs.weekly_recap !== 'boolean') {
+    throw new Error('Réponse de préférences invalide')
+  }
+  return { status_updates: prefs.status_updates, weekly_recap: prefs.weekly_recap }
 }

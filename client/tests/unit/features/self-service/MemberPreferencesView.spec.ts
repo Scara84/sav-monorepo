@@ -152,6 +152,10 @@ describe('MemberPreferencesView (Story 6.4)', () => {
     globalThis.fetch = fetchMock as unknown as typeof globalThis.fetch
     const wrapper = await mountView()
     await flushPromises()
+    expect(wrapper.get<HTMLButtonElement>('button[type="submit"]').element.disabled).toBe(true)
+    await wrapper.get('form').trigger('submit')
+    expect(fetchMock.mock.calls.filter(([, opts]) => opts?.method === 'PATCH')).toHaveLength(0)
+    expect(wrapper.find('[data-testid="toast-success"]').exists()).toBe(false)
     await wrapper.find('[data-testid="toggle-status-updates"]').setValue(false)
     await wrapper.find('[data-testid="preferences-form"]').trigger('submit.prevent')
     await flushPromises()
@@ -161,11 +165,13 @@ describe('MemberPreferencesView (Story 6.4)', () => {
     expect(patchCall).toBeDefined()
     expect(patchCall![0]).toContain('/api/self-service/preferences')
     const body = JSON.parse((patchCall![1] as { body: string }).body) as Record<string, unknown>
-    expect(body['status_updates']).toBe(false)
+    expect(body).toEqual({ status_updates: false })
     expect(wrapper.find('[data-testid="toast-success"]').exists()).toBe(true)
     expect(wrapper.find('[data-testid="toast-success"]').text()).toContain(
       'Préférences enregistrées'
     )
+    await wrapper.get('[data-testid="toggle-weekly-recap"]').setValue(true)
+    expect(wrapper.find('[data-testid="toast-success"]').exists()).toBe(false)
   })
 
   it("AC#7 (4) si PATCH échoue → message d'erreur + bouton retry visible", async () => {
@@ -208,5 +214,72 @@ describe('MemberPreferencesView (Story 6.4)', () => {
       // Implémentation alternative : la toggle est complètement masquée
       expect(weeklyToggle.exists()).toBe(false)
     }
+  })
+  it.each([true, false])(
+    'réessaie puis relit les choix persistés (responsable=%s)',
+    async (manager) => {
+      let persisted = { status_updates: true, weekly_recap: false }
+      const patches: Record<string, boolean>[] = []
+      globalThis.fetch = vi.fn(
+        async (url: string, options?: { method?: string; body?: string }) => {
+          if (url === '/api/auth/me')
+            return jsonResponse(200, { user: { isGroupManager: manager } })
+          if (options?.method === 'PATCH') {
+            const patch = JSON.parse(options.body!)
+            patches.push(patch)
+            if (patches.length === 1) return jsonResponse(403, {})
+            persisted = { ...persisted, ...patch }
+          }
+          return jsonResponse(200, { data: { notificationPrefs: persisted } })
+        }
+      ) as typeof globalThis.fetch
+
+      const wrapper = await mountView()
+      await flushPromises()
+      await wrapper.get('[data-testid="toggle-status-updates"]').setValue(false)
+      if (manager) await wrapper.get('[data-testid="toggle-weekly-recap"]').setValue(true)
+      await wrapper.get('form').trigger('submit')
+      await flushPromises()
+      expect(wrapper.get('[role="alert"]').text()).toContain('échoué')
+      const retry = wrapper.get('[data-testid="retry-button"]')
+      expect(retry.text()).toBe('Réessayer l’enregistrement')
+      expect(retry.attributes('type')).toBe('submit')
+      await wrapper.get('form').trigger('submit')
+      await flushPromises()
+      const expected = manager
+        ? { status_updates: false, weekly_recap: true }
+        : { status_updates: false }
+      expect(patches).toEqual([expected, expected])
+      expect(wrapper.get('[role="status"]').text()).toBe('Préférences enregistrées')
+      wrapper.unmount()
+      const reopened = await mountView()
+      await flushPromises()
+      expect(
+        reopened.get<HTMLInputElement>('[data-testid="toggle-status-updates"]').element.checked
+      ).toBe(false)
+      expect(
+        reopened.get<HTMLInputElement>('[data-testid="toggle-weekly-recap"]').element.checked
+      ).toBe(manager)
+    }
+  )
+
+  it('propose de relancer la lecture du profil depuis la vue', async () => {
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(403, {}))
+      .mockResolvedValueOnce(jsonResponse(200, PREFS_INITIAL_RESPONSE))
+      .mockResolvedValueOnce(jsonResponse(200, ME_RESPONSE_MANAGER))
+      .mockResolvedValueOnce(jsonResponse(200, PREFS_INITIAL_RESPONSE))
+    const wrapper = await mountView()
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toContain('Impossible de charger')
+    expect(wrapper.find('form').exists()).toBe(false)
+    const retry = wrapper.get('[data-testid="retry-button"]')
+    expect(retry.text()).toBe('Réessayer le chargement')
+    await retry.trigger('click')
+    await flushPromises()
+    expect(
+      wrapper.get<HTMLInputElement>('[data-testid="toggle-weekly-recap"]').element.disabled
+    ).toBe(false)
   })
 })
