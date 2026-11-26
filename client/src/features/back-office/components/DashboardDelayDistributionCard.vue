@@ -28,6 +28,7 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
+  refresh: []
   'update:basis': [value: DelayBasis]
 }>()
 
@@ -64,7 +65,7 @@ const showNoData = computed(
 <template>
   <section class="card" aria-labelledby="delay-distribution-heading">
     <header class="card-header">
-      <h3 id="delay-distribution-heading">Délais de traitement</h3>
+      <h2 id="delay-distribution-heading">Délais de traitement</h2>
       <div class="header-controls">
         <div class="basis-toggle" role="group" aria-label="Base de calcul">
           <button
@@ -86,11 +87,22 @@ const showNoData = computed(
             Clos
           </button>
         </div>
-        <span v-if="data" class="window">{{ data.from }} → {{ data.to }}</span>
+        <span v-if="data && !loading && !error" class="window"
+          >{{ data.from }} → {{ data.to }}</span
+        >
+        <span v-else class="window">90 derniers jours</span>
       </div>
+      <button
+        type="button"
+        class="card-refresh"
+        aria-label="Actualiser — Délais de traitement"
+        @click="emit('refresh')"
+      >
+        Actualiser
+      </button>
     </header>
 
-    <div v-if="loading && !data" class="skeleton" aria-hidden="true">Chargement…</div>
+    <div v-if="loading" class="skeleton" role="status">Chargement…</div>
     <div v-else-if="error" class="error" role="alert">{{ error }}</div>
     <div v-else-if="showNoData" class="placeholder">Pas de données sur la période.</div>
     <div v-else>
@@ -137,8 +149,9 @@ const showNoData = computed(
 <style scoped>
 .card {
   background: white;
-  border: 1px solid #eee;
-  border-radius: 8px;
+  min-width: 0;
+  border: 1px solid #dce2e2;
+  border-radius: 12px;
   padding: 1rem 1.25rem;
 }
 .card-header {
@@ -149,7 +162,7 @@ const showNoData = computed(
   flex-wrap: wrap;
   gap: 0.5rem;
 }
-.card-header h3 {
+.card-header h2 {
   margin: 0;
   font-size: 1rem;
 }
@@ -184,7 +197,7 @@ const showNoData = computed(
   background: #f5f5f5;
 }
 .basis-toggle button.active {
-  background: #0066cc;
+  background: #854510;
   color: white;
 }
 .warning {
@@ -217,16 +230,16 @@ const showNoData = computed(
   border: 2px solid white;
 }
 .marker.p50 .dot {
-  background: #0066cc;
+  background: #854510;
 }
 .marker.p90 .dot {
-  background: #c24747;
+  background: #a23737;
 }
 .scale {
   display: flex;
   justify-content: space-between;
   font-size: 0.75rem;
-  color: #999;
+  color: #52636b;
   margin-top: 0.5rem;
 }
 .metrics {
@@ -251,10 +264,15 @@ const showNoData = computed(
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #999;
+  color: #52636b;
 }
 .error {
-  color: #c24747;
+  color: #a23737;
   padding: 1rem;
+}
+@media (max-width: 480px) {
+  .metrics {
+    grid-template-columns: 1fr;
+  }
 }
 </style>

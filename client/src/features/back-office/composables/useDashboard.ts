@@ -18,6 +18,8 @@ import { ref, computed, onScopeDispose, type Ref, type ComputedRef } from 'vue'
 
 export interface CostTimelinePeriod {
   period: string
+  has_data: boolean
+  n1_has_data: boolean
   total_cents: number
   n1_total_cents: number
 }
@@ -72,6 +74,7 @@ export interface LoadAllParams {
   /** Fenêtre cost-timeline en mois (6/12/24, défaut 12). */
   windowMonths?: number
   /** Fenêtre top-products / top-reasons-suppliers en jours (défaut 90). */
+  basis?: DelayBasis
   windowDays?: number
 }
 
@@ -226,10 +229,12 @@ export function useDashboard(): UseDashboardApi {
     controllers[key]?.abort()
     const ac = new AbortController()
     controllers[key] = ac
+    errors.value[key] = null
     loadingByKey.value[key] = true
     try {
       const res = await fetch(url, { credentials: 'same-origin', signal: ac.signal })
       const body = (await res.json().catch(() => ({}))) as ApiErrorShape & { data?: T }
+      ac.signal.throwIfAborted()
       if (!res.ok) {
         const code = classifyHttpError(res.status, body)
         const msg = translate(code)
@@ -246,6 +251,7 @@ export function useDashboard(): UseDashboardApi {
       // P4 : check abort EN PREMIER. Sinon `errors[key] = NETWORK` était
       // exécuté avant le re-throw → flicker UX "Erreur réseau" au double-
       // clic du range selector alors que le fetch a juste été annulé.
+      ac.signal.throwIfAborted()
       if (isAbortError(e)) throw e
       if (errors.value[key] === null) errors.value[key] = translate('NETWORK')
       throw e instanceof Error ? e : new Error(String(e))
@@ -323,7 +329,7 @@ export function useDashboard(): UseDashboardApi {
     await Promise.allSettled([
       refreshCostTimeline(windowMonths),
       refreshTopProducts(windowDays),
-      refreshDelayDistribution(windowDays),
+      refreshDelayDistribution(windowDays, params.basis),
       refreshTopReasonsSuppliers(windowDays),
     ])
   }

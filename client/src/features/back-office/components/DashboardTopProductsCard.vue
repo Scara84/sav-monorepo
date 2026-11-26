@@ -11,6 +11,8 @@ defineProps<{
   error: string | null
 }>()
 
+const emit = defineEmits<{ refresh: [] }>()
+
 function formatEuros(cents: number): string {
   return (cents / 100).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })
 }
@@ -19,43 +21,60 @@ function formatEuros(cents: number): string {
 <template>
   <section class="card" aria-labelledby="top-products-heading">
     <header class="card-header">
-      <h3 id="top-products-heading">Top produits problématiques</h3>
-      <span v-if="data" class="window">{{ data.window_days }} derniers jours</span>
+      <h2 id="top-products-heading">Top produits problématiques</h2>
+      <span class="window">{{ data?.window_days ?? 90 }} derniers jours</span>
+      <button
+        type="button"
+        class="card-refresh"
+        aria-label="Actualiser — Top produits problématiques"
+        @click="emit('refresh')"
+      >
+        Actualiser
+      </button>
     </header>
 
-    <div v-if="loading && !data" class="skeleton" aria-hidden="true">Chargement…</div>
+    <div v-if="loading" class="skeleton" role="status">Chargement…</div>
     <div v-else-if="error" class="error" role="alert">{{ error }}</div>
     <div v-else-if="!data || data.items.length === 0" class="placeholder">
       Pas de données sur la période.
     </div>
-    <table v-else class="products-table">
-      <thead>
-        <tr>
-          <th scope="col" class="rank">#</th>
-          <th scope="col">Code</th>
-          <th scope="col">Désignation</th>
-          <th scope="col" class="num">Nb SAV</th>
-          <th scope="col" class="num">Total</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr v-for="(item, idx) in data.items" :key="item.product_id">
-          <td class="rank">{{ idx + 1 }}</td>
-          <td class="code">{{ item.product_code }}</td>
-          <td>{{ item.name_fr }}</td>
-          <td class="num">{{ item.sav_count }}</td>
-          <td class="num">{{ formatEuros(item.total_cents) }}</td>
-        </tr>
-      </tbody>
-    </table>
+    <div
+      v-else
+      class="table-scroll"
+      role="region"
+      aria-label="Classement des produits"
+      tabindex="0"
+    >
+      <table class="products-table">
+        <thead>
+          <tr>
+            <th scope="col" class="rank">#</th>
+            <th scope="col">Code</th>
+            <th scope="col">Désignation</th>
+            <th scope="col" class="num">Nb SAV</th>
+            <th scope="col" class="num">Total</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr v-for="(item, idx) in data.items" :key="item.product_id">
+            <td class="rank">{{ idx + 1 }}</td>
+            <td class="code">{{ item.product_code }}</td>
+            <td>{{ item.name_fr }}</td>
+            <td class="num">{{ item.sav_count }}</td>
+            <td class="num">{{ formatEuros(item.total_cents) }}</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
   </section>
 </template>
 
 <style scoped>
 .card {
   background: white;
-  border: 1px solid #eee;
-  border-radius: 8px;
+  min-width: 0;
+  border: 1px solid #dce2e2;
+  border-radius: 12px;
   padding: 1rem 1.25rem;
 }
 .card-header {
@@ -66,13 +85,16 @@ function formatEuros(cents: number): string {
   flex-wrap: wrap;
   gap: 0.5rem;
 }
-.card-header h3 {
+.card-header h2 {
   margin: 0;
   font-size: 1rem;
 }
 .window {
   font-size: 0.8rem;
   color: #666;
+}
+.table-scroll {
+  overflow-x: auto;
 }
 .products-table {
   width: 100%;
@@ -92,7 +114,7 @@ function formatEuros(cents: number): string {
 }
 .products-table .rank {
   width: 2rem;
-  color: #999;
+  color: #52636b;
 }
 .products-table .code {
   font-family: monospace;
@@ -104,10 +126,10 @@ function formatEuros(cents: number): string {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #999;
+  color: #52636b;
 }
 .error {
-  color: #c24747;
+  color: #a23737;
   padding: 1rem;
 }
 </style>

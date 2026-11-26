@@ -51,8 +51,10 @@ import DashboardView from './DashboardView.vue'
 describe('DashboardView (UI)', () => {
   beforeEach(() => {
     vi.restoreAllMocks()
+    localStorage.clear()
   })
   afterEach(() => {
+    vi.useRealTimers()
     globalThis.fetch = originalFetch
   })
 
@@ -63,12 +65,9 @@ describe('DashboardView (UI)', () => {
     // 4 sections cards (chacune un <section>)
     const cards = wrapper.findAll('section.card')
     expect(cards.length).toBe(4)
-    // Pendant fetch en cours (loading=true, data=null), chaque card affiche
-    // soit son skeleton soit son placeholder. On vérifie au moins 4 zones
-    // d'attente (cumul skeleton+placeholder).
-    const skeletons = wrapper.findAll('.skeleton').length
-    const placeholders = wrapper.findAll('.placeholder').length
-    expect(skeletons + placeholders).toBeGreaterThanOrEqual(4)
+    expect(wrapper.findAll('[role="status"]').map((el) => el.text())).toEqual(
+      Array(4).fill('Chargement…')
+    )
   })
 
   it('après data load — affiche données dans les 4 cards', async () => {
@@ -79,8 +78,20 @@ describe('DashboardView (UI)', () => {
           data: {
             granularity: 'month',
             periods: [
-              { period: '2026-01', total_cents: 100000, n1_total_cents: 80000 },
-              { period: '2026-02', total_cents: 120000, n1_total_cents: 90000 },
+              {
+                period: '2026-01',
+                total_cents: 100000,
+                n1_total_cents: 80000,
+                has_data: true,
+                n1_has_data: true,
+              },
+              {
+                period: '2026-02',
+                total_cents: 120000,
+                n1_total_cents: 90000,
+                has_data: true,
+                n1_has_data: true,
+              },
             ],
           },
         })
@@ -129,7 +140,7 @@ describe('DashboardView (UI)', () => {
     // Chart.js datasets transmis
     const chart = wrapper.find('[data-testid="line-chart"]')
     expect(chart.exists()).toBe(true)
-    expect(chart.attributes('data-datasets')).toContain('Année courante')
+    expect(chart.attributes('data-datasets')).toContain('Période sélectionnée')
     expect(chart.attributes('data-datasets')).toContain('N-1')
     // Top-product visible
     expect(wrapper.text()).toContain('Pomme Golden')
@@ -142,42 +153,73 @@ describe('DashboardView (UI)', () => {
     expect(wrapper.text()).toContain('RUFINO')
   })
 
-  it('range selector cost-timeline — change les params de fetch', async () => {
+  it('conserve la base Clos et affiche les dates, le zéro réel et le comparatif de la fenêtre', async () => {
+    localStorage.setItem('dashboard.delay.basis', 'closed')
     const urls: string[] = []
-    globalThis.fetch = vi.fn(async (url: string | URL | Request): Promise<Response> => {
-      const u = String(url)
-      urls.push(u)
-      if (u.startsWith('/api/reports/cost-timeline')) {
-        return jsonResponse(200, { data: { granularity: 'month', periods: [] } })
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-09-30T12:00:00Z'))
+    const twelveMonths = '/api/reports/cost-timeline?granularity=month&from=2025-10&to=2026-09'
+    const sixMonths = '/api/reports/cost-timeline?granularity=month&from=2026-04&to=2026-09'
+    const fixedReports = [
+      '/api/reports/top-products?days=90&limit=10',
+      '/api/reports/delay-distribution?from=2026-07-03&to=2026-09-30&basis=closed',
+      '/api/reports/top-reasons-suppliers?days=90&limit=10',
+    ]
+    globalThis.fetch = vi.fn(async (input) => {
+      const url = String(input)
+      urls.push(url)
+      if (url === twelveMonths || url === sixMonths) {
+        const row =
+          url === twelveMonths
+            ? {
+                period: '2026-03',
+                total_cents: 0,
+                has_data: true,
+                n1_total_cents: 0,
+                n1_has_data: false,
+              }
+            : {
+                period: '2026-09',
+                total_cents: 0,
+                has_data: false,
+                n1_total_cents: 1742,
+                n1_has_data: true,
+              }
+        return jsonResponse(200, { data: { granularity: 'month', periods: [row] } })
       }
-      if (u.startsWith('/api/reports/top-products')) {
+      if (url.includes('top-products'))
         return jsonResponse(200, { data: { window_days: 90, items: [] } })
-      }
-      if (u.startsWith('/api/reports/delay-distribution')) {
-        return jsonResponse(200, {
-          data: { from: 'a', to: 'b', p50_hours: null, p90_hours: null, n_samples: 0 },
-        })
-      }
+      if (url.includes('delay-distribution')) return jsonResponse(200, { data: { n_samples: 0 } })
       return jsonResponse(200, { data: { window_days: 90, reasons: [], suppliers: [] } })
-    }) as unknown as typeof fetch
+    })
 
     const wrapper = mount(DashboardView)
     await flushPromises()
-    const initialCount = urls.length
-    // Click sur "6 mois"
-    const button6 = wrapper.findAll('.window-selector button').find((b) => b.text().includes('6'))
-    expect(button6).toBeDefined()
-    await button6!.trigger('click')
+    const cost = wrapper.get('section[aria-labelledby="cost-timeline-heading"]')
+    expect(cost.text()).toMatch(/0,00\s€ TTC/)
+    expect(cost.text()).toContain('2026-03')
+    expect([...urls].sort()).toEqual([twelveMonths, ...fixedReports].sort())
+    const initial = urls.length
+    await cost.get('.window-selector button').trigger('click')
     await flushPromises()
-    // Nouveau fetch cost-timeline lancé
-    const newFetches = urls.slice(initialCount)
-    expect(newFetches.some((u) => u.startsWith('/api/reports/cost-timeline'))).toBe(true)
+    expect(urls.slice(initial)).toEqual([sixMonths])
+    expect(cost.text()).toContain('Pas de données sur la période')
+    expect(cost.text()).toContain('2026-09')
+    expect(cost.text()).toMatch(/17,42\s€ TTC/)
+    expect(cost.text()).not.toContain('Total de la période')
+
+    const beforeRefresh = urls.length
+    await wrapper.get('.refresh-btn').trigger('click')
+    await flushPromises()
+    expect(urls.slice(beforeRefresh).sort()).toEqual([sixMonths, ...fixedReports].sort())
   })
 
   it('error state 1 card — affiche message erreur, autres cards OK', async () => {
+    let retry = false
     globalThis.fetch = vi.fn(async (url: string | URL | Request): Promise<Response> => {
       const u = String(url)
       if (u.startsWith('/api/reports/top-products')) {
+        if (retry) return jsonResponse(200, { data: { window_days: 90, items: [] } })
         return jsonResponse(500, { error: { details: { code: 'QUERY_FAILED' } } })
       }
       if (u.startsWith('/api/reports/cost-timeline')) {
@@ -207,6 +249,15 @@ describe('DashboardView (UI)', () => {
     expect(errors.length).toBe(1)
     // Délais (autre card) reste affiché
     expect(wrapper.text()).toContain('Médiane')
+    retry = true
+    await wrapper
+      .get('section[aria-labelledby="top-products-heading"] .card-refresh')
+      .trigger('click')
+    await flushPromises()
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    expect(wrapper.get('section[aria-labelledby="top-products-heading"]').text()).toContain(
+      'Pas de données'
+    )
   })
 
   it('LOW_SAMPLE_SIZE warning — badge visible', async () => {

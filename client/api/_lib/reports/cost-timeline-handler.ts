@@ -9,7 +9,7 @@ import type { ApiHandler } from '../types'
  * Story 5.3 AC #1 — `GET /api/reports/cost-timeline`.
  *
  * Coût SAV agrégé mensuel + comparatif N-1 (FR52). Utilise la RPC
- * `report_cost_timeline` (migration 20260505120000) qui fait le gap-fill
+ * `report_cost_timeline_with_presence` (migration 20261126120000) qui fait le gap-fill
  * via generate_series + LEFT JOIN current/previous CTE — 1 round-trip.
  *
  * Query params :
@@ -44,12 +44,16 @@ type Query = z.infer<typeof querySchema>
 
 interface RpcRow {
   period: string
+  has_data: boolean
+  n1_has_data: boolean
   total_cents: number | string
   n1_total_cents: number | string
 }
 
 export interface CostTimelinePeriod {
   period: string
+  has_data: boolean
+  n1_has_data: boolean
   total_cents: number
   n1_total_cents: number
 }
@@ -130,7 +134,7 @@ export const costTimelineHandler: ApiHandler = async (req, res) => {
 
   try {
     const admin = supabaseAdmin()
-    const { data, error } = await admin.rpc('report_cost_timeline', {
+    const { data, error } = await admin.rpc('report_cost_timeline_with_presence', {
       p_from: fromDate,
       p_to: toDate,
     })
@@ -150,6 +154,8 @@ export const costTimelineHandler: ApiHandler = async (req, res) => {
     const rows = (data ?? []) as RpcRow[]
     const periods: CostTimelinePeriod[] = rows.map((r) => ({
       period: r.period,
+      has_data: r.has_data,
+      n1_has_data: r.n1_has_data,
       total_cents: toBigintNumber(r.total_cents),
       n1_total_cents: toBigintNumber(r.n1_total_cents),
     }))

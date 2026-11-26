@@ -5,6 +5,8 @@ import { mockReq, mockRes } from '../_lib/test-helpers'
 const state = vi.hoisted(() => ({
   rpcRows: [] as Array<{
     period: string
+    has_data: boolean
+    n1_has_data: boolean
     total_cents: number | string
     n1_total_cents: number | string
   }>,
@@ -43,8 +45,20 @@ describe('GET /api/reports/cost-timeline', () => {
 
   it('200 happy path retourne periods avec total_cents et n1_total_cents', async () => {
     state.rpcRows = [
-      { period: '2026-01', total_cents: 125000, n1_total_cents: 98000 },
-      { period: '2026-02', total_cents: 87000, n1_total_cents: 110000 },
+      {
+        period: '2026-01',
+        total_cents: 125000,
+        n1_total_cents: 98000,
+        has_data: true,
+        n1_has_data: true,
+      },
+      {
+        period: '2026-02',
+        total_cents: 87000,
+        n1_total_cents: 110000,
+        has_data: true,
+        n1_has_data: true,
+      },
     ]
     const res = mockRes()
     await costTimelineHandler(operatorReq({ from: '2026-01', to: '2026-02' }), res)
@@ -59,10 +73,12 @@ describe('GET /api/reports/cost-timeline', () => {
     expect(body.data.periods).toHaveLength(2)
     expect(body.data.periods[0]).toEqual({
       period: '2026-01',
+      has_data: true,
+      n1_has_data: true,
       total_cents: 125000,
       n1_total_cents: 98000,
     })
-    expect(state.lastRpcArgs?.fn).toBe('report_cost_timeline')
+    expect(state.lastRpcArgs?.fn).toBe('report_cost_timeline_with_presence')
     expect(state.lastRpcArgs?.args).toEqual({ p_from: '2026-01-01', p_to: '2026-02-01' })
   })
 
@@ -79,9 +95,21 @@ describe('GET /api/reports/cost-timeline', () => {
     // Le gap-fill est côté SQL (generate_series). Côté handler on vérifie
     // que les zéros remontés par la RPC sont bien transmis.
     state.rpcRows = [
-      { period: '2026-01', total_cents: 0, n1_total_cents: 0 },
-      { period: '2026-02', total_cents: 5000, n1_total_cents: 0 },
-      { period: '2026-03', total_cents: 0, n1_total_cents: 1200 },
+      { period: '2026-01', total_cents: 0, n1_total_cents: 0, has_data: true, n1_has_data: false },
+      {
+        period: '2026-02',
+        total_cents: 5000,
+        n1_total_cents: 0,
+        has_data: true,
+        n1_has_data: false,
+      },
+      {
+        period: '2026-03',
+        total_cents: 0,
+        n1_total_cents: 1200,
+        has_data: false,
+        n1_has_data: true,
+      },
     ]
     const res = mockRes()
     await costTimelineHandler(operatorReq({ from: '2026-01', to: '2026-03' }), res)
@@ -90,7 +118,13 @@ describe('GET /api/reports/cost-timeline', () => {
     }
     expect(body.data.periods).toHaveLength(3)
     expect(body.data.periods[0]!.total_cents).toBe(0)
-    expect(body.data.periods[2]!.n1_total_cents).toBe(1200)
+    expect(body.data.periods[0]).toMatchObject({ has_data: true, n1_has_data: false })
+    expect(body.data.periods[2]).toMatchObject({
+      total_cents: 0,
+      has_data: false,
+      n1_total_cents: 1200,
+      n1_has_data: true,
+    })
   })
 
   it('400 INVALID_PARAMS si format from/to incorrect', async () => {

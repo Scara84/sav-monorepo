@@ -51,14 +51,14 @@ const windowMonths = ref(12)
 const windowDays = ref(90)
 const delayBasis = ref<DelayBasis>(readDelayBasis())
 
-onMounted(() => {
-  void dash.loadAll({ windowMonths: windowMonths.value, windowDays: windowDays.value })
-  // loadAll utilise le default 'received' côté composable. Si l'utilisateur
-  // avait persisté 'closed', on relance la card concernée avec le bon basis.
-  if (delayBasis.value !== 'received') {
-    void dash.refreshDelayDistribution(windowDays.value, delayBasis.value)
-  }
-})
+function refreshAll(): void {
+  void dash.loadAll({
+    windowMonths: windowMonths.value,
+    windowDays: windowDays.value,
+    basis: delayBasis.value,
+  })
+}
+onMounted(refreshAll)
 
 function onChangeWindowMonths(m: number): void {
   windowMonths.value = m
@@ -80,7 +80,7 @@ function onChangeDelayBasis(next: DelayBasis): void {
         type="button"
         class="refresh-btn"
         :disabled="dash.loading.value"
-        @click="dash.loadAll({ windowMonths, windowDays })"
+        @click="refreshAll"
         aria-label="Actualiser toutes les cartes"
       >
         ↻ {{ dash.loading.value ? 'Chargement…' : 'Actualiser' }}
@@ -92,6 +92,7 @@ function onChangeDelayBasis(next: DelayBasis): void {
         :data="dash.costTimeline.value"
         :loading="dash.loadingByKey.value.costTimeline"
         :error="dash.errors.value.costTimeline"
+        @refresh="dash.refreshCostTimeline(windowMonths)"
         :window-months="windowMonths"
         @change-window="onChangeWindowMonths"
       />
@@ -99,11 +100,13 @@ function onChangeDelayBasis(next: DelayBasis): void {
         :data="dash.topProducts.value"
         :loading="dash.loadingByKey.value.topProducts"
         :error="dash.errors.value.topProducts"
+        @refresh="dash.refreshTopProducts(windowDays)"
       />
       <DashboardDelayDistributionCard
         :data="dash.delayDistribution.value"
         :loading="dash.loadingByKey.value.delayDistribution"
         :error="dash.errors.value.delayDistribution"
+        @refresh="dash.refreshDelayDistribution(windowDays, delayBasis)"
         :basis="delayBasis"
         @update:basis="onChangeDelayBasis"
       />
@@ -111,6 +114,7 @@ function onChangeDelayBasis(next: DelayBasis): void {
         :data="dash.topReasonsSuppliers.value"
         :loading="dash.loadingByKey.value.topReasonsSuppliers"
         :error="dash.errors.value.topReasonsSuppliers"
+        @refresh="dash.refreshTopReasonsSuppliers(windowDays)"
       />
     </div>
   </div>
@@ -118,7 +122,9 @@ function onChangeDelayBasis(next: DelayBasis): void {
 
 <style scoped>
 .dashboard {
-  padding: 1.5rem;
+  padding: clamp(0.75rem, 2.5vw, 2rem);
+  background: #f8f7f5;
+  color: #1b2c39;
   max-width: 1400px;
   margin: 0 auto;
 }
@@ -132,13 +138,16 @@ function onChangeDelayBasis(next: DelayBasis): void {
 }
 .dashboard-header h1 {
   margin: 0;
-  font-size: 1.4rem;
+  font-size: clamp(1.5rem, 3vw, 2.3rem);
+  letter-spacing: -0.035em;
 }
+.dashboard :deep(.card-refresh),
 .refresh-btn {
   padding: 0.4rem 0.9rem;
   background: white;
-  border: 1px solid #ccc;
-  border-radius: 4px;
+  border: 1px solid #cbd4d6;
+  color: #34464a;
+  border-radius: 7px;
   cursor: pointer;
   font-size: 0.9rem;
 }
@@ -151,12 +160,12 @@ function onChangeDelayBasis(next: DelayBasis): void {
 }
 .grid {
   display: grid;
-  grid-template-columns: repeat(2, 1fr);
+  grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 1rem;
 }
 @media (max-width: 900px) {
   .grid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
 }
 </style>

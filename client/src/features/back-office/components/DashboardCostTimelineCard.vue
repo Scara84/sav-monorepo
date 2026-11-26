@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, ref, watch } from 'vue'
+import { computed } from 'vue'
 import {
   Chart as ChartJS,
   Title,
@@ -31,21 +31,18 @@ const props = defineProps<{
 }>()
 
 const emit = defineEmits<{
+  refresh: []
   'change-window': [months: number]
 }>()
 
-const localWindow = ref(props.windowMonths)
-watch(
-  () => props.windowMonths,
-  (v) => {
-    localWindow.value = v
-  }
-)
-
-function setWindow(m: number): void {
-  localWindow.value = m
-  emit('change-window', m)
-}
+const periods = computed(() => props.data?.periods ?? [])
+const hasCurrent = computed(() => periods.value.some((p) => p.has_data))
+const hasN1 = computed(() => periods.value.some((p) => p.n1_has_data))
+const periodLabel = computed(() => {
+  const first = periods.value[0]?.period
+  const last = periods.value.at(-1)?.period
+  return first === last ? first : `${first} → ${last}`
+})
 
 const totalCurrent = computed(() => {
   if (!props.data) return 0
@@ -90,16 +87,16 @@ const chartData = computed(() => {
     labels: periods.map((p) => p.period),
     datasets: [
       {
-        label: 'Année courante',
-        data: periods.map((p) => p.total_cents / 100),
-        borderColor: '#0066cc',
-        backgroundColor: 'rgba(0, 102, 204, 0.15)',
+        label: 'Période sélectionnée',
+        data: periods.map((p) => (p.has_data ? p.total_cents / 100 : null)),
+        borderColor: '#854510',
+        backgroundColor: 'rgba(232, 138, 35, 0.15)',
         tension: 0.2,
         fill: false,
       },
       {
         label: 'N-1',
-        data: periods.map((p) => p.n1_total_cents / 100),
+        data: periods.map((p) => (p.n1_has_data ? p.n1_total_cents / 100 : null)),
         borderColor: '#999',
         backgroundColor: 'rgba(150, 150, 150, 0.15)',
         borderDash: [5, 5],
@@ -139,39 +136,48 @@ const chartOptions: ChartOptions<'line'> = {
 <template>
   <section class="card" aria-labelledby="cost-timeline-heading">
     <header class="card-header">
-      <h3 id="cost-timeline-heading">Coût SAV mensuel</h3>
-      <div class="window-selector" role="radiogroup" aria-label="Fenêtre de temps">
+      <h2 id="cost-timeline-heading">Coût SAV mensuel</h2>
+      <div class="window-selector" role="group" aria-label="Fenêtre de temps">
         <button
           v-for="m in [6, 12, 24]"
           :key="m"
           type="button"
-          role="radio"
-          :aria-checked="localWindow === m"
-          :class="{ active: localWindow === m }"
-          @click="setWindow(m)"
+          :aria-pressed="windowMonths === m"
+          :class="{ active: windowMonths === m }"
+          @click="emit('change-window', m)"
         >
           {{ m }} mois
         </button>
       </div>
+      <button
+        type="button"
+        class="card-refresh"
+        aria-label="Actualiser — Coût SAV mensuel"
+        @click="emit('refresh')"
+      >
+        Actualiser
+      </button>
     </header>
 
-    <div v-if="loading && !data" class="skeleton" aria-hidden="true">Chargement…</div>
+    <div v-if="loading" class="skeleton" role="status">Chargement…</div>
     <div v-else-if="error" class="error" role="alert">{{ error }}</div>
     <div v-else-if="!data || data.periods.length === 0" class="placeholder">
       Pas de données sur la période.
     </div>
     <div v-else class="card-body">
+      <p class="period">{{ periodLabel }}</p>
+      <p v-if="!hasCurrent" class="empty">Pas de données sur la période.</p>
       <div class="totals">
-        <div>
-          <span class="label">Total année courante</span>
-          <strong>{{ formatEuros(totalCurrent) }}</strong>
+        <div v-if="hasCurrent">
+          <span class="label">Total de la période</span>
+          <strong>{{ formatEuros(totalCurrent) }} TTC</strong>
         </div>
-        <div v-if="deltaPct !== null" :class="['delta', deltaDirection]">
+        <div v-if="hasN1"><span class="label">N-1</span>{{ formatEuros(totalN1) }} TTC</div>
+        <div v-if="hasCurrent && deltaPct !== null" :class="['delta', deltaDirection]">
           {{ deltaSign(deltaPct, deltaDirection) }}{{ formatDeltaPct(deltaPct) }} % vs N-1
         </div>
-        <div v-else class="delta">N-1 : —</div>
       </div>
-      <div class="chart-wrap">
+      <div v-if="hasCurrent || hasN1" class="chart-wrap">
         <Line :data="chartData" :options="chartOptions" />
       </div>
     </div>
@@ -181,8 +187,9 @@ const chartOptions: ChartOptions<'line'> = {
 <style scoped>
 .card {
   background: white;
-  border: 1px solid #eee;
-  border-radius: 8px;
+  min-width: 0;
+  border: 1px solid #dce2e2;
+  border-radius: 12px;
   padding: 1rem 1.25rem;
 }
 .card-header {
@@ -193,7 +200,7 @@ const chartOptions: ChartOptions<'line'> = {
   flex-wrap: wrap;
   gap: 0.5rem;
 }
-.card-header h3 {
+.card-header h2 {
   margin: 0;
   font-size: 1rem;
 }
@@ -210,11 +217,16 @@ const chartOptions: ChartOptions<'line'> = {
   font-size: 0.85rem;
 }
 .window-selector button.active {
-  background: #0066cc;
+  background: #854510;
   color: white;
-  border-color: #0066cc;
+  border-color: #854510;
+}
+.period {
+  font-size: 0.88rem;
+  color: #52636b;
 }
 .totals {
+  flex-wrap: wrap;
   display: flex;
   gap: 1rem;
   align-items: baseline;
@@ -226,13 +238,13 @@ const chartOptions: ChartOptions<'line'> = {
   display: block;
 }
 .totals strong {
-  font-size: 1.25rem;
+  font-size: clamp(1.4rem, 3vw, 2rem);
 }
 .delta.up {
-  color: #c24747;
+  color: #a23737;
 }
 .delta.down {
-  color: #2c8a3a;
+  color: #276531;
 }
 .delta.neutral {
   color: #666;
@@ -247,10 +259,10 @@ const chartOptions: ChartOptions<'line'> = {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #999;
+  color: #52636b;
 }
 .error {
-  color: #c24747;
+  color: #a23737;
   padding: 1rem;
 }
 </style>

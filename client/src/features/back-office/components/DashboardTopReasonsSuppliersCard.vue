@@ -11,6 +11,8 @@ defineProps<{
   error: string | null
 }>()
 
+const emit = defineEmits<{ refresh: [] }>()
+
 function formatEuros(cents: number): string {
   return (cents / 100).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })
 }
@@ -19,11 +21,19 @@ function formatEuros(cents: number): string {
 <template>
   <section class="card" aria-labelledby="reasons-suppliers-heading">
     <header class="card-header">
-      <h3 id="reasons-suppliers-heading">Top motifs &amp; fournisseurs</h3>
-      <span v-if="data" class="window">{{ data.window_days }} derniers jours</span>
+      <h2 id="reasons-suppliers-heading">Top motifs &amp; fournisseurs</h2>
+      <span class="window">{{ data?.window_days ?? 90 }} derniers jours</span>
+      <button
+        type="button"
+        class="card-refresh"
+        aria-label="Actualiser — Top motifs &amp; fournisseurs"
+        @click="emit('refresh')"
+      >
+        Actualiser
+      </button>
     </header>
 
-    <div v-if="loading && !data" class="skeleton" aria-hidden="true">Chargement…</div>
+    <div v-if="loading" class="skeleton" role="status">Chargement…</div>
     <div v-else-if="error" class="error" role="alert">{{ error }}</div>
     <div v-else-if="!data" class="placeholder">Pas de données sur la période.</div>
     <div v-else class="two-col">
@@ -56,8 +66,9 @@ function formatEuros(cents: number): string {
 <style scoped>
 .card {
   background: white;
-  border: 1px solid #eee;
-  border-radius: 8px;
+  min-width: 0;
+  border: 1px solid #dce2e2;
+  border-radius: 12px;
   padding: 1rem 1.25rem;
 }
 .card-header {
@@ -68,7 +79,7 @@ function formatEuros(cents: number): string {
   flex-wrap: wrap;
   gap: 0.5rem;
 }
-.card-header h3 {
+.card-header h2 {
   margin: 0;
   font-size: 1rem;
 }
@@ -99,10 +110,13 @@ function formatEuros(cents: number): string {
 }
 .two-col li {
   display: grid;
-  grid-template-columns: 1fr auto auto;
+  grid-template-columns: minmax(0, 1fr) auto auto;
   gap: 0.5rem;
   padding: 0.3rem 0;
   border-bottom: 1px solid #f5f5f5;
+}
+.two-col .label {
+  overflow-wrap: anywhere;
 }
 .two-col .label.code {
   font-family: monospace;
@@ -118,7 +132,7 @@ function formatEuros(cents: number): string {
 }
 .empty {
   font-size: 0.85rem;
-  color: #999;
+  color: #52636b;
   margin: 0;
 }
 .skeleton,
@@ -127,10 +141,10 @@ function formatEuros(cents: number): string {
   display: flex;
   align-items: center;
   justify-content: center;
-  color: #999;
+  color: #52636b;
 }
 .error {
-  color: #c24747;
+  color: #a23737;
   padding: 1rem;
 }
 </style>
