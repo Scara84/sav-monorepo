@@ -1225,7 +1225,7 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
           — {{ supplierClaim.count }} version{{ supplierClaim.count > 1 ? 's' : '' }}
           — {{ formatEur(supplierClaim.latestTotalImporteCents) }}
           <router-link
-            :to="{ path: `/admin/sav/${sav.id}/demande-fournisseur`, state: { supplierSavId: sav.id, expectedOrder: sav.invoiceSpecialMention } }"
+            :to="{ path: `/admin/sav/${sav.id}/demande-fournisseur`, state: { supplierSavId: sav.id, supplierSavReference: sav.reference, expectedOrder: sav.invoiceSpecialMention } }"
             class="supplier-claim-badge-link"
             data-testid="supplier-claim-badge-link"
           >
@@ -1399,7 +1399,7 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
             type="button"
             :class="['btn-sm', sav.status === 'validated' ? 'cta-primary' : '']"
             data-testid="supplier-claim-btn"
-            @click="router.push({ name: 'admin-sav-demande-fournisseur', params: { id: sav.id }, state: { supplierSavId: sav.id, prepareSupplier: sav.status === 'validated', expectedOrder: sav.invoiceSpecialMention } })"
+            @click="router.push({ name: 'admin-sav-demande-fournisseur', params: { id: sav.id }, state: { supplierSavId: sav.id, supplierSavReference: sav.reference, prepareSupplier: sav.status === 'validated', expectedOrder: sav.invoiceSpecialMention } })"
           >
             {{
               sav.status === 'validated'

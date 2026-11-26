@@ -206,6 +206,7 @@ function sendWorkbookPreview(fileBuffer: Buffer, filename: string, savId: number
       error: {
         code: 'INVALID_FORMAT',
         reason: 'MISSING_SHEETS',
+        missingSheets: missing,
         message: `Onglets requis manquants : ${missing.join(', ')}. Le fichier doit contenir FACTURE_GROUPE et BDD`,
         requestId,
       },

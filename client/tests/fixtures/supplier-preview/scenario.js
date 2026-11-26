@@ -4,24 +4,42 @@ import { createRouter, createWebHashHistory, RouterView } from 'vue-router'
 import SavDetail from '../../../src/features/back-office/views/SavDetailView.vue'
 import SupplierClaim from '../../../src/features/back-office/views/SupplierClaimView.vue'
 
-const order = '278_26S21_11'
+import * as XLSX from 'xlsx'
+import { parseFactureGroupe, parseBdd, extractMetadata } from '../../../api/_lib/sav/supplier-file-parser'
+import '../../../src/styles/fruitstock-theme.css'
+
+if (!['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)) throw new Error('Recette locale uniquement')
+const readFixture = window.fetch.bind(window)
+const orders = { 1: '278_26S21_11', 2: '46_26S5_94_1' }
 const scenario = new URLSearchParams(location.search).get('scenario')
 const claim = {
   id: 1, version: 1, generatedAt: '2026-05-21', generatedByOperator: { id: 1, fullName: 'Opérateur test' },
   totalImporteCents: 1200, lineCount: 1, filename: 'simulation.xlsx', regenerationOf: null, isLatest: true, hasDocument: false,
 }
-const detail = {
-  data: { sav: { id: 1, reference: 'SAV-SIMULATION', status: 'validated', version: 1,
-    invoiceSpecialMention: order, invoiceRef: 'FACTURE-TEST', tags: [], lines: [], files: [],
+function detailFor(id) { return {
+  data: { sav: { id, reference: 'SAV-SIM-' + id, status: scenario === 'manual' ? 'in_progress' : 'validated', version: 1,
+    invoiceSpecialMention: orders[id], invoiceRef: 'FACTURE-TEST', tags: [], lines: [], files: [],
     receivedAt: '2026-05-20', totalAmountCents: 0, invoiceFdpCents: 0, member: null, group: null },
     comments: [], auditTrail: [], settingsSnapshot: {},
     supplierClaim: scenario === 'history' ? { exists: true, latestGeneratedAt: claim.generatedAt, count: 1, latestTotalImporteCents: 1200 } : null },
 }
-const rows = { rows: [], warnings: [], skippedRows: 0 }
-const preview = {
-  metadata: { reference: order, albaran: 'TEST', fechaAlbaran: '2026-05-20', warnings: [] },
-  factureGroupe: rows, bdd: rows,
-  fileMeta: { filename: 'data.xlsx', sizeBytes: 1234, sheetsDetected: ['FACTURE_GROUPE', 'BDD'], parser: 'xlsx-cdn-0.20.3' },
+}
+
+function previewResponse(bytes, filename) {
+  try {
+    const wb = XLSX.read(bytes, { type: 'array', cellFormula: true, cellHTML: false, cellNF: false, cellText: false, raw: true })
+    const names = wb.SheetNames.map(sheet => sheet.trim().toUpperCase())
+    const missingSheets = ['FACTURE_GROUPE', 'BDD'].filter(name => !names.includes(name))
+    if (missingSheets.length) {
+      return Response.json({ error: { code: 'INVALID_FORMAT', reason: 'MISSING_SHEETS', missingSheets } }, { status: 400 })
+    }
+    const factureGroupe = parseFactureGroupe(wb)
+    const bdd = parseBdd(wb)
+    return Response.json({ factureGroupe, bdd, metadata: extractMetadata(wb),
+      fileMeta: { filename, sizeBytes: bytes.byteLength, sheetsDetected: wb.SheetNames, parser: 'xlsx-cdn-0.20.3' } })
+  } catch {
+    return Response.json({ error: { code: 'UNPROCESSABLE_ENTITY' } }, { status: 422 })
+  }
 }
 let attempts = 0
 const counter = document.createElement('p')
@@ -44,41 +62,43 @@ if (scenario === 'late-order') {
     release.disabled = false
   })
 }
-// Empreinte de tests/fixtures/supplier-claim-data.xlsx, sélectionnée pour la reprise.
-const fixtureHash = '0a451af6940257976233ef9801d88c052a4e0d5e3a070ce5395f261f96286bde'
 window.fetch = async (input, init) => {
   const url = new URL(input, location.origin)
-  if (url.pathname === '/api/sav/1') return Response.json(detail)
-  switch (url.searchParams.get('op')) {
+  const detailId = Number(url.pathname.match(/^\/api\/sav\/([12])$/)?.[1])
+  if (detailId) return Response.json(detailFor(detailId))
+  const id = Number(url.searchParams.get('id'))
+  if (!orders[id]) return Response.json({}, { status: 404 })
+  const op = url.searchParams.get('op')
+  if (scenario === 'sav-denied' && ['parse-supplier-file', 'prepare-supplier-file'].includes(op)) {
+    return Response.json({ error: { code: 'FORBIDDEN' } }, { status: 403 })
+  }
+  switch (op) {
     case 'get-supplier-claim-history':
       return scenario === 'history-error' ? Response.json({}, { status: 503 })
-        : Response.json({ savId: 1, claims: scenario === 'history' ? [claim] : [] })
+        : Response.json({ savId: id, claims: scenario === 'history' ? [claim] : [] })
     case 'prepare-supplier-file': {
       const attempt = ++attempts
       counter.textContent = 'Préparations simulées : ' + attempts
-      const reference = detail.data.sav.invoiceSpecialMention
       const { expectedOrder } = JSON.parse(init.body)
-      if ((scenario === 'late-order' || expectedOrder !== undefined) && expectedOrder !== reference) {
-        return Response.json({ error: { code: 'ORDER_CHANGED' } }, { status: 409 })
+      if (expectedOrder !== undefined && expectedOrder !== orders[id]) return Response.json({}, { status: 409 })
+      if (scenario === 'late-order' && attempt === 1) await waitForFirst()
+      await new Promise(resolve => setTimeout(resolve, 500))
+      if (scenario === 'denied') {
+        return Response.json({ error: { code: 'PREPARATION_FAILED', diagnostic: 'Droits insuffisants.' } }, { status: 422 })
       }
-      if (scenario === 'late-order' && attempt === 1) {
-        detail.data.sav.invoiceSpecialMention = '46_26S5_94_1'
-        await waitForFirst()
+      if (scenario === 'retry' && attempt === 1) {
+        return Response.json({ error: { code: 'PREPARATION_FAILED' } }, { status: 422 })
       }
-      await new Promise(resolve => setTimeout(resolve, 1200))
-      if (scenario === 'retry' && attempt === 1) return Response.json({}, { status: 422 })
-      if (scenario === 'late-order' && attempt === 1) {
-        counter.append(' — réponse initiale livrée')
-      }
-      return Response.json({ ...preview, metadata: { ...preview.metadata, reference } })
+      if (scenario === 'late-order' && attempt === 1) counter.append(' — réponse initiale livrée')
+      const filename = scenario === 'incomplete' ? 'sans-bdd.xlsx' : id === 1 ? 'commande-a.xlsx' : 'commande-b.xlsx'
+      const response = await readFixture(new URL(filename, import.meta.url))
+      return previewResponse(await response.arrayBuffer(), filename)
     }
     case 'parse-supplier-file': {
-      const { fileBuffer } = JSON.parse(init.body)
-      const bytes = Uint8Array.from(atob(fileBuffer || ''), char => char.charCodeAt(0))
-      const hash = new Uint8Array(await crypto.subtle.digest('SHA-256', bytes))
-      const hex = Array.from(hash, byte => byte.toString(16).padStart(2, '0')).join('')
-      if (hex !== fixtureHash) return Response.json({}, { status: 422 })
-      return Response.json(preview)
+      const { fileBuffer, filename, expectedOrder } = JSON.parse(init.body)
+      if (expectedOrder !== undefined && expectedOrder !== orders[id]) return Response.json({}, { status: 409 })
+      const bytes = Uint8Array.from(atob(fileBuffer), char => char.charCodeAt(0))
+      return previewResponse(bytes, filename)
     }
     case 'reconcile-supplier-claim':
       return Response.json({ claimLines: [], unmatchedSavLines: [], unusedSupplierLines: [], savLines: [] })
@@ -92,3 +112,10 @@ const router = createRouter({ history: createWebHashHistory(), routes: [
   { path: '/admin/sav/:id/demande-fournisseur', name: 'admin-sav-demande-fournisseur', component: SupplierClaim },
 ] })
 createApp({ render: () => h(RouterView) }).use(router).mount('#app')
+
+if (scenario === 'late-order') {
+  const second = document.createElement('a')
+  second.href = '#/admin/sav/2'
+  second.textContent = 'Ouvrir la fiche du second SAV'
+  document.body.append(second)
+}

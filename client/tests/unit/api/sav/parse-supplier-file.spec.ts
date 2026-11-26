@@ -535,6 +535,7 @@ describe('PSF-05: Classeur XLSX avec onglets manquants (AC #5)', () => {
     const body = res.jsonBody as { error: { code: string; message: string } }
     expect(body.error.code).toBe('INVALID_FORMAT')
     expect(body.error.message).toMatch(/FACTURE_GROUPE/i)
+    expect(body.error).toMatchObject({ reason: 'MISSING_SHEETS', missingSheets: ['FACTURE_GROUPE'] })
   })
 
   it('PSF-05b: XLSX sans FACTURE_GROUPE ni BDD → 400 INVALID_FORMAT', async () => {

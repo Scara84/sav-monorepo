@@ -48,6 +48,7 @@ const viewState = ref<ViewState>('loading')
 // Modal de confirmation régénération (DN-4 LOCKED = A)
 const showRegenerateModal = ref(false)
 
+const dossierReference = ref<string>()
 const expectedOrder = ref<string | null>()
 let historyRequest = 0
 
@@ -85,6 +86,7 @@ function openClaim() {
   const navigation = window.history.state
   const fromDetail = navigation?.supplierSavId === savId.value
   const requested = fromDetail && navigation.prepareSupplier === true
+  dossierReference.value = fromDetail ? navigation.supplierSavReference : undefined
   expectedOrder.value = fromDetail ? navigation.expectedOrder : undefined
   if (requested) {
     window.history.replaceState({ ...navigation, prepareSupplier: false }, '')
@@ -375,6 +377,11 @@ const oneDriveStatusText = computed(() => {
     </nav>
 
     <h1>Demande de remboursement fournisseur</h1>
+    <dl class="order-context" aria-label="Commande associée">
+      <div><dt>Dossier</dt><dd>{{ dossierReference || `SAV nº ${savId}` }}</dd></div>
+      <div><dt>Fournisseur</dt><dd>SOL Y FRUTA</dd></div>
+      <div><dt>Commande attendue</dt><dd>{{ expectedOrder || 'Référence indisponible' }}</dd></div>
+    </dl>
     <p v-if="viewState === 'loading'" role="status">Lecture de l’historique en cours…</p>
 
     <!-- =====================================================================
@@ -536,6 +543,7 @@ const oneDriveStatusText = computed(() => {
       class="upload-section card"
       data-testid="awaiting-upload-state"
     >
+      <h2>Choisir le classeur</h2>
       <p v-if="historyError" role="alert">{{ historyError }}</p>
       <button v-if="historyError && viewState === 'awaiting-upload'" class="btn-secondary" @click="retryHistory">
         Relire l’historique
@@ -544,14 +552,9 @@ const oneDriveStatusText = computed(() => {
         :disabled="state === 'preparing' || state === 'uploading'" @click="prepare">
         {{ state === 'error' ? 'Réessayer la préparation' : 'Préparer depuis kDrive' }}
       </button>
-      <h2>Importer le fichier SOL Y FRUTA</h2>
-      <p class="hint">
-        Déposez le fichier <code>data.xlsx</code> de la commande SOL Y FRUTA. Le système lira les
-        onglets <strong>FACTURE_GROUPE</strong> et <strong>BDD</strong>.
-      </p>
-
+      <label for="supplier-workbook" class="manual-label">Importer manuellement le classeur (.xlsx)</label>
       <input
-        aria-label="Importer manuellement un classeur fournisseur"
+        id="supplier-workbook"
         type="file"
         accept=".xlsx"
         data-testid="file-input"
@@ -609,6 +612,8 @@ const oneDriveStatusText = computed(() => {
       <ul v-if="parseResult.metadata.warnings.length > 0" class="metadata-warnings">
         <li v-for="w in parseResult.metadata.warnings" :key="w">{{ w }}</li>
       </ul>
+
+      <p class="detected-sheets"><strong>Onglets détectés</strong> · {{ parseResult.fileMeta.sheetsDetected.join(', ') }}</p>
 
       <!-- Compteurs lignes -->
       <div class="counts-row">
@@ -1595,5 +1600,30 @@ const oneDriveStatusText = computed(() => {
 .generating-indicator {
   color: #6b7280;
   font-style: italic;
+}
+
+.order-context {
+  display: flex;
+  flex-wrap: wrap;
+  gap: .75rem 2.5rem;
+  padding: 1rem;
+  background: #fff7ec;
+  border-left: 4px solid var(--main-orange, #e88a23);
+}
+.order-context dt { color: #634a31; font-size: .875rem; }
+.order-context dd { margin: .25rem 0 0; font-weight: 700; overflow-wrap: anywhere; }
+.manual-label { display: block; margin: 1rem 0 .5rem; font-weight: 600; }
+.upload-section input { max-width: 100%; }
+.upload-section .btn-primary { background: var(--main-orange, #e88a23); color: #30200e; }
+.upload-section .btn-primary:hover { background: #ed983a; }
+.upload-section .btn-primary:disabled { opacity: .65; cursor: wait; }
+.supplier-claim-view :focus-visible { outline: 3px solid #80400b; outline-offset: 3px; }
+.supplier-claim-view h1, .upload-section h2, .preview-section h2 { color: #392711; }
+.breadcrumb a { color: #79400e; }
+.file-info { color: #58606b; }
+@media (max-width: 600px) {
+  .supplier-claim-view { padding: .75rem; overflow-wrap: anywhere; }
+  .upload-section, .preview-section { padding: 1rem; }
+  .counts-row { flex-wrap: wrap; gap: 1rem; }
 }
 </style>

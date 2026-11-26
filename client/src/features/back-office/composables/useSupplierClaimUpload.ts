@@ -24,12 +24,19 @@ export type BddRow = z.infer<typeof bddRow>
 export type ParseWarning = z.infer<typeof warning>
 export type UploadState = 'idle' | 'uploading' | 'preparing' | 'previewing' | 'error'
 
-function importError(error: { code?: string; reason?: string; diagnostic?: unknown } | undefined, status: number) {
-  if (status === 422 && error?.code === 'PREPARATION_FAILED' && typeof error.diagnostic === 'string') {
-    return error.diagnostic
+function importError(error: { code?: string; reason?: string; missingSheets?: unknown; diagnostic?: unknown } | undefined, status: number) {
+  if (status === 422 && error?.code === 'PREPARATION_FAILED') {
+    return typeof error.diagnostic === 'string' && error.diagnostic.trim()
+      ? error.diagnostic : 'Le stockage fournisseur est indisponible. Vous pouvez importer le classeur manuellement.'
   }
-  if (error?.reason === 'MISSING_SHEETS') return 'Vérifiez que le classeur contient les onglets FACTURE_GROUPE et BDD.'
+  if (error?.reason === 'MISSING_SHEETS') {
+    const sheets = error.missingSheets
+    const missing = Array.isArray(sheets) ? ['FACTURE_GROUPE', 'BDD'].filter(name => sheets.includes(name)) : []
+    return missing.length ? `Onglet requis absent du classeur · ${missing.join(' et ')}.`
+      : 'Vérifiez que le classeur contient les onglets FACTURE_GROUPE et BDD.'
+  }
   if (error?.code === 'PREPARATION_BUSY') return 'Une préparation est déjà en cours pour cette commande. Réessayez après sa fin.'
+  if (status === 503) return 'Service indisponible. Réessayez dans quelques instants.'
   if (status === 413) return 'Le fichier dépasse 4 Mio. Sélectionnez un classeur plus petit.'
   if (status === 429) return 'Trop de tentatives. Patientez une minute avant de réessayer.'
   if (status === 415) return 'Sélectionnez un fichier au format .xlsx.'
