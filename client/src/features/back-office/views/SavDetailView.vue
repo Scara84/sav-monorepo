@@ -2,7 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { isTransitionAllowed, type SavStatus } from '../../../../api/_lib/business/sav-status-machine'
-import { useSavDetail, type SavDetailLine } from '../composables/useSavDetail'
+import { useSavDetail, type SavDetailLine, type SavDetailComment } from '../composables/useSavDetail'
 import { useSavLinePreview } from '../composables/useSavLinePreview'
 import { useSavLineEdit } from '../composables/useSavLineEdit'
 import AddLineDialog from '../components/AddLineDialog.vue'
@@ -31,7 +31,10 @@ const savId = computed(() => Number(route.params['id']))
 const {
   sav,
   comments,
+  commentsDegraded,
   auditTrail,
+  auditDegraded,
+  auditTruncated,
   settingsSnapshot,
   creditNote,
   creditNoteDegraded,
@@ -40,6 +43,7 @@ const {
   loading,
   error,
   refresh,
+  refreshExchanges,
 } = useSavDetail(savId)
 const isNotFound = computed(() => (error.value as string | null) === 'not_found')
 const hasOtherError = computed(() => error.value !== null && !isNotFound.value)
@@ -1065,90 +1069,89 @@ async function assignMe(): Promise<void> {
 }
 
 // --- Story 3.7b — ComposeCommentForm inline --------------------------------
-// Optimistic comment list (extends comments ref)
-interface OptimisticComment {
-  id: string | number
-  body: string
-  visibility: 'internal' | 'all'
-  createdAt: string
-  authorOperator: { id: number; displayName: string } | null
-  authorMember: null
-}
-
-const optimisticComments = ref<OptimisticComment[]>([])
+const postedComments = ref<SavDetailComment[]>([])
 const composeBody = ref('')
 const composeVisibility = ref<'internal' | 'all'>('internal')
 const composeSubmitting = ref(false)
 const composeError = ref<string | null>(null)
+const publicationUncertain = ref(false)
+function markPublicationUncertain(): void {
+  publicationUncertain.value = true
+  composeError.value = 'Publication non confirmée. Votre brouillon est conservé. Vérifiez les échanges avant de réessayer.'
+}
+let dossierGeneration = 0
 
-// Merged comment list: server comments + optimistic ones
+watch(savId, () => {
+  dossierGeneration++
+  postedComments.value = []
+  composeBody.value = ''
+  composeVisibility.value = 'internal'
+  composeSubmitting.value = false
+  composeError.value = null
+  publicationUncertain.value = false
+}, { flush: 'sync' })
+
+// Keep a confirmed POST visible until a detail response includes the same id.
+watch(comments, (rows) => {
+  const ids = new Set(rows.map(c => c.id))
+  postedComments.value = postedComments.value.filter(c => !ids.has(c.id))
+}, { flush: 'sync' })
 const allComments = computed(() => {
-  // Filter out optimistic entries that have been replaced by real server entries
-  return [...(comments.value ?? []), ...optimisticComments.value]
+  if (!postedComments.value.length) return comments.value
+  const byId = new Map(postedComments.value.map(c => [c.id, c]))
+  for (const c of comments.value) byId.set(c.id, c)
+  return [...byId.values()].sort((a, b) => Date.parse(a.createdAt) - Date.parse(b.createdAt))
 })
 
 async function submitComment(): Promise<void> {
-  if (!sav.value || !composeBody.value.trim()) return
+  const body = composeBody.value.trim()
+  if (!sav.value || sav.value.id !== savId.value || !body || composeSubmitting.value) return
+  const generation = dossierGeneration
+  const visibility = composeVisibility.value
   composeError.value = null
+  publicationUncertain.value = false
   composeSubmitting.value = true
-
-  const sentinelId = `optimistic-${Date.now()}`
-  const optimistic: OptimisticComment = {
-    id: sentinelId,
-    body: composeBody.value.trim(),
-    visibility: composeVisibility.value,
-    createdAt: new Date().toISOString(),
-    authorOperator: currentUser.value ? { id: currentUser.value.sub, displayName: 'Vous' } : null,
-    authorMember: null,
-  }
-
-  optimisticComments.value = [...optimisticComments.value, optimistic]
-  const bodyText = composeBody.value.trim()
-  composeBody.value = ''
-
   try {
-    const res = await fetch(`/api/sav/${sav.value.id}/comments`, {
+    const res = await fetch(`/api/sav/${savId.value}/comments`, {
       method: 'POST',
       credentials: 'include',
       headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        body: bodyText,
-        visibility: composeVisibility.value,
-      }),
+      body: JSON.stringify({ body, visibility }),
     })
-    if (!res.ok) {
-      // Rollback optimistic comment
-      optimisticComments.value = optimisticComments.value.filter((c) => c.id !== sentinelId)
-      composeBody.value = bodyText
-      composeError.value = `Erreur lors de l'envoi du commentaire (${res.status}).`
+    if (generation !== dossierGeneration) return
+    if (res.status >= 500 || res.status === 408) {
+      markPublicationUncertain()
       return
     }
-    const data = (await res.json()) as {
-      data: {
+    if (!res.ok) {
+      composeError.value = res.status === 403
+        ? 'Publication refusée. Votre brouillon est conservé.'
+        : `Échec de la publication (${res.status}). Votre brouillon est conservé.`
+      return
+    }
+    const { data } = (await res.json()) as {
+      data: Pick<SavDetailComment, 'createdAt' | 'body' | 'visibility'> & {
         commentId: number
-        createdAt: string
-        visibility: string
-        body: string
-        authorOperator?: { id: number }
+        authorOperator: { id: number }
       }
     }
-    // Replace sentinel with real comment
-    optimisticComments.value = optimisticComments.value.map((c) =>
-      c.id === sentinelId
-        ? {
-            ...c,
-            id: data.data.commentId,
-            createdAt: data.data.createdAt,
-          }
-        : c
-    )
+    if (generation !== dossierGeneration) return
+    postedComments.value.push({
+      id: data.commentId,
+      createdAt: data.createdAt,
+      body: data.body,
+      visibility: data.visibility,
+      authorMember: null,
+      authorOperator: { id: data.authorOperator.id, displayName: 'Vous' },
+    })
+    composeBody.value = ''
+    void refreshExchanges()
   } catch {
-    // Rollback on network error
-    optimisticComments.value = optimisticComments.value.filter((c) => c.id !== sentinelId)
-    composeBody.value = bodyText
-    composeError.value = 'Erreur réseau — réessayez.'
+    if (generation === dossierGeneration) {
+      markPublicationUncertain()
+    }
   } finally {
-    composeSubmitting.value = false
+    if (generation === dossierGeneration) composeSubmitting.value = false
   }
 }
 
@@ -2035,7 +2038,7 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
 
       <!-- Fichiers -->
       <section class="card" aria-labelledby="files-title">
-        <h2 id="files-title">Fichiers ({{ sav.files.length }})</h2>
+        <h2 id="files-title">Pièces jointes ({{ sav.files.length }})</h2>
         <!-- Story 3.7b — OperatorFileUploader -->
         <OperatorFileUploader :sav-id="sav.id" @uploaded="refresh" />
         <div v-if="sav.files.length === 0" class="empty">Aucun fichier joint.</div>
@@ -2097,6 +2100,7 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
                     : 'Opérateur'
               }}</span
             >
+            <span v-else class="file-meta">Provenance non renseignée</span>
             <p class="file-meta">{{ formatBytes(f.sizeBytes) }}</p>
             <!-- UAT V1.8 — bouton "Ouvrir" passe par le proxy backend
                  /api/sav/files/:id/download (extension PATTERN-V5) au lieu
@@ -2107,6 +2111,7 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
               :href="`/api/sav/files/${f.id}/download`"
               target="_blank"
               rel="noopener noreferrer"
+              :aria-label="`Ouvrir ${f.originalFilename} (nouvel onglet)`"
               >Ouvrir</a
             >
             <span v-else class="link-unsafe" :title="`Lien non fiable : ${f.webUrl}`"
@@ -2118,7 +2123,11 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
 
       <!-- Commentaires -->
       <section class="card" aria-labelledby="comments-title">
-        <h2 id="comments-title">Commentaires ({{ allComments.length }})</h2>
+        <h2 id="comments-title">Commentaires<span v-if="!commentsDegraded"> ({{ allComments.length }})</span></h2>
+        <p v-if="commentsDegraded" class="read-warning" role="status">
+          Impossible de charger les commentaires.
+          <button type="button" :disabled="loading" @click="refreshExchanges">Réessayer la lecture</button>
+        </p>
         <ul v-if="allComments.length > 0" class="comments">
           <li v-for="c in allComments" :key="c.id" class="comment">
             <div class="avatar" aria-hidden="true">
@@ -2127,7 +2136,9 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
             <div class="body">
               <header>
                 <strong>{{ c.authorOperator?.displayName ?? memberName(c.authorMember) }}</strong>
-                <span v-if="c.visibility === 'internal'" class="badge-internal">interne</span>
+                <span v-if="c.visibility === 'internal'" class="badge-internal">Note interne · équipe SAV</span>
+                <span v-else-if="c.visibility === 'all'" class="badge-shared">Partagé avec l’adhérent</span>
+                <span v-else>Visibilité non renseignée</span>
                 <time :datetime="c.createdAt">{{ timeRelative(c.createdAt) }}</time>
               </header>
               <!-- JAMAIS v-html — body interpolé safely -->
@@ -2135,7 +2146,7 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
             </div>
           </li>
         </ul>
-        <p v-else class="empty">Aucun commentaire pour ce SAV.</p>
+        <p v-else-if="!commentsDegraded" class="empty">Aucun commentaire pour ce SAV.</p>
 
         <!-- Story 3.7b — ComposeCommentForm inline (AC #6.2) -->
         <form class="compose-form" @submit.prevent="submitComment">
@@ -2146,7 +2157,7 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
             placeholder="Saisir un commentaire..."
             :disabled="composeSubmitting"
           />
-          <fieldset class="compose-visibility">
+          <fieldset class="compose-visibility" :disabled="composeSubmitting">
             <legend>Visibilité</legend>
             <label class="radio-label">
               <input
@@ -2155,7 +2166,7 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
                 value="internal"
                 name="compose-visibility"
               />
-              Interne (opérateurs)
+              Équipe SAV uniquement
             </label>
             <label class="radio-label">
               <input
@@ -2164,9 +2175,10 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
                 value="all"
                 name="compose-visibility"
               />
-              Adhérent + opérateurs
+              Adhérent et équipe SAV
             </label>
           </fieldset>
+          <p class="audience-hint" role="status">{{ composeVisibility === 'internal' ? 'Seule l’équipe SAV pourra lire cette note.' : 'L’adhérent pourra lire ce message avec l’équipe SAV.' }}</p>
           <button
             type="submit"
             class="btn-primary"
@@ -2176,14 +2188,20 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
           </button>
           <div v-if="composeError" class="compose-error" role="alert">
             {{ composeError }}
-            <button type="button" class="toast-close" @click="composeError = null">×</button>
+            <button v-if="publicationUncertain" type="button" :disabled="loading" @click="refreshExchanges">Relire les échanges</button>
+            <button type="button" aria-label="Fermer le message" @click="composeError = null">×</button>
           </div>
         </form>
       </section>
 
       <!-- Audit trail -->
       <section class="card" aria-labelledby="audit-title">
-        <h2 id="audit-title">Historique ({{ auditTrail.length }})</h2>
+        <h2 id="audit-title">Historique<span v-if="!auditDegraded"> ({{ auditTrail.length }})</span></h2>
+        <p v-if="auditDegraded" class="read-warning" role="status">
+          Impossible de charger l’historique.
+          <button type="button" :disabled="loading" @click="refreshExchanges">Réessayer la lecture</button>
+        </p>
+        <p v-else-if="auditTruncated" class="read-warning">Affichage limité aux {{ auditTrail.length }} événements les plus récents.</p>
         <ol v-if="auditTrail.length > 0" class="audit">
           <li v-for="event in auditTrail" :key="event.id">
             <time :datetime="event.createdAt">{{ formatDateTime(event.createdAt) }}</time>
@@ -2195,7 +2213,7 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
             </ul>
           </li>
         </ol>
-        <p v-else class="empty">Aucun événement enregistré.</p>
+        <p v-else-if="!auditDegraded" class="empty">Aucun événement enregistré.</p>
       </section>
     </template>
   </main>
@@ -2395,9 +2413,7 @@ a:focus-visible {
 .file-name {
   font-weight: 600;
   margin: 0.25rem 0 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  overflow-wrap: anywhere;
 }
 .file-meta {
   color: #666;
@@ -2416,8 +2432,8 @@ a:focus-visible {
   text-transform: uppercase;
 }
 .file-source-badge--capture {
-  background: #dbeafe;
-  color: #1e40af;
+  background: #f8eedf;
+  color: #664626;
 }
 .file-source-badge--member-add {
   background: #dcfce7;
@@ -2448,7 +2464,7 @@ a:focus-visible {
   width: 2rem;
   height: 2rem;
   border-radius: 50%;
-  background: #0066cc;
+  background: #506133;
   color: white;
   display: flex;
   align-items: center;
@@ -2458,10 +2474,12 @@ a:focus-visible {
   font-size: 0.75rem;
 }
 .comment .body {
+  min-width: 0;
   flex: 1;
 }
 .comment header {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
   align-items: baseline;
   font-size: 0.875rem;
@@ -2482,6 +2500,24 @@ a:focus-visible {
   white-space: pre-wrap;
   word-break: break-word;
 }
+.badge-shared {
+  background: #e8f1de;
+  color: #314c20;
+  padding: 0 0.375rem;
+  border-radius: 4px;
+  font-size: 0.75rem;
+}
+.audience-hint, .read-warning {
+  margin: 0.25rem 0;
+  color: #594322;
+}
+.compose-form .btn-primary {
+  background: #ef922d;
+  border-color: #9b520f;
+  color: #30200e;
+  align-self: flex-start;
+}
+.compose-form .btn-primary:disabled { opacity: 0.65; }
 .compose-placeholder {
   margin-top: 1rem;
   padding: 0.75rem;

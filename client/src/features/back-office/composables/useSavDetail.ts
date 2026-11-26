@@ -171,6 +171,9 @@ export function useSavDetail(id: Ref<number>) {
   const sav = ref<SavDetailSav | null>(null)
   const comments = ref<SavDetailComment[]>([])
   const auditTrail = ref<SavDetailAudit[]>([])
+  const commentsDegraded = ref(false)
+  const auditDegraded = ref(false)
+  const auditTruncated = ref(false)
   const settingsSnapshot = ref<SettingsSnapshot>({ ...EMPTY_SETTINGS })
   const creditNote = ref<SavDetailCreditNote | null>(null)
   const creditNoteDegraded = ref(false)
@@ -184,7 +187,7 @@ export function useSavDetail(id: Ref<number>) {
   let currentAbort: AbortController | null = null
   let requestSeq = 0
 
-  async function fetchDetail(): Promise<void> {
+  async function fetchDetail(exchangesOnly = false): Promise<void> {
     if (!Number.isFinite(id.value) || id.value <= 0) {
       // savId invalide (NaN sur `/admin/sav/abc`, 0, négatif) → même UX que 404
       error.value = 'not_found'
@@ -195,6 +198,14 @@ export function useSavDetail(id: Ref<number>) {
     currentAbort = new AbortController()
     const seq = ++requestSeq
     const seenId = id.value
+    function readFailed(kind: SavDetailErrorKind): void {
+      if (exchangesOnly && sav.value?.id === seenId) {
+        commentsDegraded.value = true
+        auditDegraded.value = true
+      } else {
+        error.value = kind
+      }
+    }
     loading.value = true
     error.value = null
     try {
@@ -205,6 +216,7 @@ export function useSavDetail(id: Ref<number>) {
       if (seq !== requestSeq || seenId !== id.value) return
       if (res.status === 401) {
         // Story 5.8 — pas de session → redirect /admin/login (magic link).
+        sav.value = null
         error.value = 'unauthenticated'
         if (typeof window !== 'undefined') {
           window.location.href = '/admin/login'
@@ -212,28 +224,38 @@ export function useSavDetail(id: Ref<number>) {
         return
       }
       if (res.status === 403) {
+        sav.value = null
         error.value = 'forbidden'
         return
       }
       if (res.status === 404) {
+        sav.value = null
         error.value = 'not_found'
         return
       }
       if (res.status === 429) {
-        error.value = 'rate_limited'
+        readFailed('rate_limited')
         return
       }
       if (!res.ok) {
-        error.value = 'server_error'
+        readFailed('server_error')
         return
       }
       const body = (await res.json()) as {
         data: SavDetailPayload
-        meta?: { creditNoteDegraded?: boolean }
+        meta?: {
+          creditNoteDegraded?: boolean
+          commentsDegraded?: boolean
+          auditDegraded?: boolean
+          auditTruncated?: boolean
+        }
       }
       if (seq !== requestSeq || seenId !== id.value) return
       sav.value = body.data.sav
       comments.value = body.data.comments
+      commentsDegraded.value = body.meta?.commentsDegraded === true
+      auditDegraded.value = body.meta?.auditDegraded === true
+      auditTruncated.value = body.meta?.auditTruncated === true
       auditTrail.value = body.data.auditTrail
       creditNote.value = body.data.creditNote ?? null
       creditNoteDegraded.value = body.meta?.creditNoteDegraded === true
@@ -253,7 +275,7 @@ export function useSavDetail(id: Ref<number>) {
     } catch (err) {
       if ((err as { name?: string })?.name === 'AbortError') return
       if (seq !== requestSeq || seenId !== id.value) return
-      error.value = 'network'
+      readFailed('network')
     } finally {
       if (seq === requestSeq) {
         loading.value = false
@@ -265,6 +287,12 @@ export function useSavDetail(id: Ref<number>) {
   watch(
     id,
     () => {
+      sav.value = null
+      comments.value = []
+      auditTrail.value = []
+      commentsDegraded.value = false
+      auditDegraded.value = false
+      auditTruncated.value = false
       void fetchDetail()
     },
     { immediate: false }
@@ -273,7 +301,10 @@ export function useSavDetail(id: Ref<number>) {
   return {
     sav,
     comments,
+    commentsDegraded,
     auditTrail,
+    auditDegraded,
+    auditTruncated,
     settingsSnapshot,
     creditNote,
     creditNoteDegraded,
@@ -281,6 +312,7 @@ export function useSavDetail(id: Ref<number>) {
     supplierClaim,
     loading,
     error,
-    refresh: fetchDetail,
+    refresh: () => fetchDetail(),
+    refreshExchanges: () => fetchDetail(true),
   }
 }

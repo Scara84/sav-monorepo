@@ -376,3 +376,157 @@ describe('Story 8.5 — AC #3 : badge réclamation fournisseur dans SavDetailVie
     expect(badge.exists()).toBe(false)
   })
 })
+
+describe('Pièces et échanges du dossier', () => {
+  it('distingue absence, lecture impossible et historique limité après une nouvelle lecture', async () => {
+    const fetchMock = mockFetch({
+      ...SAV_PAYLOAD,
+      meta: { commentsDegraded: true, auditDegraded: true },
+    })
+    const w = await mountDetail()
+    await flushPromises()
+    expect(w.text()).toContain('Aucun fichier joint')
+    expect(w.text()).toContain('Impossible de charger les commentaires')
+    expect(w.text()).toContain('Impossible de charger l’historique')
+    expect(w.text()).not.toContain('Aucun commentaire pour ce SAV')
+    expect(w.text()).not.toContain('Aucun événement enregistré')
+
+    const events = ['updated', 'created'].map((action, i) => ({
+      id: 10 - i, action, createdAt: `2026-11-${20 - i}T12:00:00Z`, diff: null,
+      actorSystem: 'SAV', actorOperator: null, actorMember: null,
+    }))
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({
+      data: { ...SAV_PAYLOAD.data, auditTrail: events }, meta: { auditTruncated: true },
+    })))
+    await w.get('[aria-labelledby="comments-title"] .read-warning button').trigger('click')
+    await flushPromises()
+    expect(w.text()).toContain('Aucun commentaire pour ce SAV')
+    expect(w.text()).toContain('2 événements les plus récents')
+    expect(w.findAll('.audit > li').map(li => li.find('time').attributes('datetime')))
+      .toEqual(events.map(event => event.createdAt))
+    expect(w.findAll('.diff-lines').map(el => el.text())).toEqual(['Modification', 'Création'])
+  })
+
+  it('conserve le brouillon et son audience après un refus puis fusionne la réponse de relecture', async () => {
+    const fetchMock = mockFetch(SAV_PAYLOAD)
+    const w = await mountDetail()
+    await flushPromises()
+    const textarea = w.get<HTMLTextAreaElement>('.compose-textarea')
+    const shared = w.get<HTMLInputElement>('input[value="all"]')
+    const form = w.get('.compose-form')
+    await textarea.setValue('Message fictif')
+    await shared.setValue()
+    expect(w.get('.audience-hint').text()).toContain('L’adhérent pourra lire')
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 403 }))
+    await form.trigger('submit')
+    await flushPromises()
+    expect(w.get('.compose-error').text()).toContain('Publication refusée')
+    expect(w.get('.compose-error').text()).not.toContain('Relire les échanges')
+    expect(textarea.element.value).toBe('Message fictif')
+    expect(shared.element.checked).toBe(true)
+    expect(w.find('.comment').exists()).toBe(false)
+
+    const comment = { id: 22, body: 'Message fictif', visibility: 'all', createdAt: '2026-11-20T10:00:00Z', authorMember: null, authorOperator: { id: 3, displayName: 'Camille' } }
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ data: { ...comment, commentId: 22 } })))
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({ data: { ...SAV_PAYLOAD.data, comments: [comment] } })))
+    await form.trigger('submit')
+    await flushPromises()
+    expect(w.findAll('.comment')).toHaveLength(1)
+    expect(w.get('.comment').text()).toContain('Partagé avec l’adhérent')
+    expect(w.get('.comment').text()).toContain('Camille')
+    expect(textarea.element.value).toBe('')
+  })
+
+  const savedComment = {
+    id: 25,
+    body: 'Échange fictif',
+    visibility: 'all',
+    createdAt: '2026-11-20T12:00:00Z',
+    authorMember: null,
+    authorOperator: { id: 3, displayName: 'Camille' },
+  }
+  function detailWithSavedComment() {
+    return new Response(JSON.stringify({ data: { ...SAV_PAYLOAD.data, comments: [savedComment] } }))
+  }
+
+  it('relit une publication dont la réponse a été perdue sans renvoyer le brouillon', async () => {
+    const fetchMock = mockFetch(SAV_PAYLOAD)
+    const w = await mountDetail()
+    await flushPromises()
+    const textarea = w.get<HTMLTextAreaElement>('.compose-textarea')
+    const shared = w.get<HTMLInputElement>('input[value="all"]')
+    await textarea.setValue(savedComment.body)
+    await shared.setValue()
+    fetchMock.mockRejectedValueOnce(new TypeError('Réponse perdue'))
+    await w.get('.compose-form').trigger('submit')
+    await flushPromises()
+    expect(w.get('.compose-error').text()).toContain('Publication non confirmée')
+    fetchMock.mockResolvedValueOnce(detailWithSavedComment())
+    const reread = w.get('.compose-error button')
+    expect(reread.text()).toBe('Relire les échanges')
+    await reread.trigger('click')
+    await flushPromises()
+    expect(w.get('.comment-body').text()).toBe(savedComment.body)
+    expect(textarea.element.value).toBe(savedComment.body)
+    expect(shared.element.checked).toBe(true)
+    expect(fetchMock.mock.calls.filter(([url]) => url === '/api/sav/1/comments')).toHaveLength(1)
+  })
+
+  it('garde le commentaire confirmé pendant une panne puis le réconcilie à la relecture', async () => {
+    const fetchMock = mockFetch(SAV_PAYLOAD)
+    const w = await mountDetail()
+    await flushPromises()
+    await w.get('.compose-textarea').setValue(savedComment.body)
+    await w.get('input[value="all"]').setValue()
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({
+      data: { ...savedComment, commentId: savedComment.id },
+    })))
+    fetchMock.mockResolvedValueOnce(new Response(null, { status: 503 }))
+    await w.get('.compose-form').trigger('submit')
+    await flushPromises()
+    expect(w.get('h1').text()).toBe('SAV-2026-00001')
+    expect(w.get('.comment-body').text()).toBe(savedComment.body)
+    expect(w.find('.compose-error').exists()).toBe(false)
+    fetchMock.mockResolvedValueOnce(detailWithSavedComment())
+    await w.get('[aria-labelledby="comments-title"] .read-warning button').trigger('click')
+    await flushPromises()
+    expect(w.findAll('.comment')).toHaveLength(1)
+    expect(w.get('.comment').text()).toContain('Camille')
+    expect(w.find('.read-warning').exists()).toBe(false)
+  })
+
+  it.each([401, 403, 404])('masque le dossier après une relecture refusée (%i)', async status => {
+    const fetchMock = mockFetch({ ...SAV_PAYLOAD, meta: { commentsDegraded: true } })
+    const w = await mountDetail()
+    await flushPromises()
+    fetchMock.mockResolvedValueOnce(new Response(null, { status }))
+    await w.get('[aria-labelledby="comments-title"] .read-warning button').trigger('click')
+    await flushPromises()
+    expect(w.text()).not.toContain('SAV-2026-00001')
+    expect(w.find('#comments-title').exists()).toBe(false)
+  })
+
+  it('ignore une publication tardive après un changement de dossier', async () => {
+    const fetchMock = mockFetch(SAV_PAYLOAD)
+    const w = await mountDetail()
+    await flushPromises()
+    await w.get('.compose-textarea').setValue('Note du premier dossier')
+    await w.get('input[value="all"]').setValue()
+    let resolvePost!: (value: Response) => void
+    fetchMock.mockImplementationOnce(() => new Promise(resolve => { resolvePost = resolve }))
+    await w.get('.compose-form').trigger('submit')
+    fetchMock.mockResolvedValueOnce(new Response(JSON.stringify({
+      data: { ...SAV_PAYLOAD.data, sav: { ...SAV_PAYLOAD.data.sav, id: 2, reference: 'SAV-FICTIF-2' } },
+    })))
+    await w.vm.$router.push('/admin/sav/2')
+    await flushPromises()
+    expect(w.text()).toContain('SAV-FICTIF-2')
+    expect(w.get<HTMLInputElement>('input[value="internal"]').element.checked).toBe(true)
+    await w.get('.compose-textarea').setValue('Nouveau brouillon')
+    resolvePost(new Response(null, { status: 403 }))
+    await flushPromises()
+    expect(w.find('.compose-error').exists()).toBe(false)
+    expect(w.get<HTMLTextAreaElement>('.compose-textarea').element.value).toBe('Nouveau brouillon')
+    expect(w.text()).not.toContain('Note du premier dossier')
+  })
+})

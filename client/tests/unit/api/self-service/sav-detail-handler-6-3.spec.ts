@@ -71,8 +71,11 @@ vi.mock('../../../../api/_lib/clients/supabase-admin', () => {
         return {
           select: () => ({
             eq: () => ({
-              eq: () => ({
-                order: () => Promise.resolve({ data: db.comments, error: db.commentsError }),
+              eq: (field: keyof CommentRow, value: unknown) => ({
+                order: () => Promise.resolve({
+                  data: db.comments.filter(comment => comment[field] === value),
+                  error: db.commentsError,
+                }),
               }),
             }),
           }),
@@ -302,8 +305,15 @@ describe('GET /api/self-service/sav/:id — sav-detail-handler ENRICHI (Story 6.
 
   it('AC#3 (a) seuls les comments visibility="all" sont retournés', async () => {
     db.savRow = defaultSavRow()
-    // Seuls visibility=all parviennent au handler — le filtre SQL `.eq('visibility','all')` les exclut.
     db.comments = [
+      {
+        id: 1,
+        body: 'Note de traitement interne',
+        created_at: '2026-04-26T08:00:00Z',
+        visibility: 'internal',
+        author_member_id: null,
+        author_operator_id: 7,
+      },
       {
         id: 2,
         body: 'Visible',
