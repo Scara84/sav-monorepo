@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
+import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { isTransitionAllowed, type SavStatus } from '../../../../api/_lib/business/sav-status-machine'
 import { useSavDetail, type SavDetailLine } from '../composables/useSavDetail'
@@ -189,11 +189,9 @@ const editDraft = reactive<
     {
       qtyRequested: string | number
       unitRequested: string
-      qtyInvoiced: string | number
-      unitInvoiced: string
-      // V1.9-B — arbitrage opérateur (PATTERN-V9-D : pre-fill = qtyArbitrated ?? qtyInvoiced)
       qtyArbitrated: string | number
       unitArbitrated: string
+      priceEdited: boolean
       unitPriceEuros: string | number
       creditCoefficient: string | number
       pieceToKgWeightG: string | number
@@ -201,23 +199,23 @@ const editDraft = reactive<
   >
 >({})
 
+const lineError = ref<{ id: number; message: string; field?: string } | null>(null)
+
+function focusLineControl(id: number, control: string): void {
+  void nextTick(() => document.getElementById(`${control}-${id}`)?.focus())
+}
+
 function beginEditLine(l: SavDetailLine): void {
-  // V1.9-B PATTERN-V9-D — pre-fill arbitrage : qtyArbitrated ?? qtyInvoiced (DN-4 Option A).
-  // L'opérateur voit la valeur facturée comme suggestion par défaut si pas encore arbitré.
-  const prefilledQtyArbitrated =
-    l.qtyArbitrated !== null
-      ? String(l.qtyArbitrated)
-      : l.qtyInvoiced !== null
-        ? String(l.qtyInvoiced)
-        : ''
-  const prefilledUnitArbitrated = l.unitArbitrated ?? l.unitInvoiced ?? ''
+  if (sav.value?.status !== 'in_progress' || lineEdit.savingLineId.value !== null) return
+  lineError.value = null
+  const previous = lineEdit.editingLineId.value
+  if (previous !== null) delete editDraft[previous]
   editDraft[l.id] = {
     qtyRequested: String(l.qtyRequested),
     unitRequested: l.unitRequested,
-    qtyInvoiced: l.qtyInvoiced !== null ? String(l.qtyInvoiced) : '',
-    unitInvoiced: l.unitInvoiced ?? '',
-    qtyArbitrated: prefilledQtyArbitrated,
-    unitArbitrated: prefilledUnitArbitrated,
+    qtyArbitrated: l.qtyArbitrated ?? '',
+    unitArbitrated: l.unitArbitrated ?? l.unitInvoiced ?? '',
+    priceEdited: false,
     // V1.9-B.2 — pre-fill PU TTC arbitré : override ?? facture (DN-4 pattern étendu)
     unitPriceEuros: (() => {
       const effective = l.unitPriceTtcArbitratedCents ?? l.unitPriceTtcCents
@@ -227,15 +225,25 @@ function beginEditLine(l: SavDetailLine): void {
     pieceToKgWeightG: l.pieceToKgWeightG !== null ? String(l.pieceToKgWeightG) : '',
   }
   lineEdit.startEdit(l.id)
+  focusLineControl(l.id, 'edit-qty-requested')
   toastMessage.value = null
 }
 
 function cancelEditLine(): void {
+  if (lineEdit.savingLineId.value !== null) return
+  lineError.value = null
   const id = lineEdit.editingLineId.value
   lineEdit.cancelEdit()
   // P7 (CR Edge-11) : cleanup draft après annulation.
-  if (id !== null) delete editDraft[id]
+  if (id !== null) {
+    delete editDraft[id]
+    focusLineControl(id, 'edit-line')
+  }
 }
+
+watch(() => sav.value?.status, (status) => {
+  if (status && status !== 'in_progress' && lineEdit.editingLineId.value !== null) cancelEditLine()
+})
 
 // P2 (CR Blind-5) : locale FR — accepter virgule comme séparateur décimal.
 // Défensif : Vue `<input type="number">` peut émettre number ou string selon
@@ -249,45 +257,54 @@ function isEmptyDraftField(v: unknown): boolean {
   return v === '' || v === null || v === undefined
 }
 
-async function saveEditLine(l: SavDetailLine): Promise<void> {
+async function saveEditLine(l: SavDetailLine, event: Event): Promise<void> {
   const draft = editDraft[l.id]
-  if (!draft) return
+  if (!draft || sav.value?.status !== 'in_progress' || lineEdit.savingLineId.value !== null) return
+  lineError.value = null
+  const row = (event.currentTarget as HTMLElement).closest('tbody')
+  const inputs = row?.querySelectorAll<HTMLInputElement>('input[data-quantity]')
+  const invalid = inputs && Array.from(inputs).find(input => {
+    if (input.validity.badInput) return true
+    if (input.value === '') return input.required
+    const value = Number(input.value)
+    return !Number.isFinite(value) || value < Number(input.min) || value > Number(input.max)
+      || value !== Number(value.toFixed(3))
+  })
+  if (invalid) {
+    const requested = invalid.dataset.quantity === 'requested'
+    lineError.value = {
+      id: l.id,
+      field: invalid.id,
+      message: requested
+        ? 'Saisissez une quantité demandée de 0,001 à 99 999, avec trois décimales maximum.'
+        : 'Saisissez une quantité arbitrée de 0 à 99 999, avec trois décimales maximum, ou laissez le champ vide.',
+    }
+    invalid.focus()
+    return
+  }
   const patch: Record<string, unknown> = {}
   const qtyReq = parseLocaleNumber(draft.qtyRequested)
   if (Number.isFinite(qtyReq) && qtyReq !== l.qtyRequested) patch['qtyRequested'] = qtyReq
   if (draft.unitRequested && draft.unitRequested !== l.unitRequested)
     patch['unitRequested'] = draft.unitRequested
-  // P3 (CR Blind-6) : qtyInvoiced/unitInvoiced resettables à null via valeur vide.
-  if (isEmptyDraftField(draft.qtyInvoiced)) {
-    if (l.qtyInvoiced !== null) patch['qtyInvoiced'] = null
-  } else {
-    const q = parseLocaleNumber(draft.qtyInvoiced)
-    if (Number.isFinite(q) && q !== l.qtyInvoiced) patch['qtyInvoiced'] = q
+  const quantity = isEmptyDraftField(draft.qtyArbitrated) ? null : parseLocaleNumber(draft.qtyArbitrated)
+  const initialUnit = l.unitArbitrated ?? l.unitInvoiced ?? null
+  const unit = draft.unitArbitrated || (quantity !== null ? l.unitInvoiced : null)
+  if (quantity !== null && !unit) {
+    const field = `edit-unit-arbitrated-${l.id}`
+    lineError.value = { id: l.id, field, message: 'Choisissez une unité pour la quantité arbitrée.' }
+    focusLineControl(l.id, 'edit-unit-arbitrated')
+    return
   }
-  if (isEmptyDraftField(draft.unitInvoiced)) {
-    if (l.unitInvoiced !== null) patch['unitInvoiced'] = null
-  } else if (draft.unitInvoiced !== l.unitInvoiced) {
-    patch['unitInvoiced'] = draft.unitInvoiced
-  }
-  // V1.9-B — arbitrage opérateur (Row 3 : toujours inclus dans le patch si draft present)
-  if (isEmptyDraftField(draft.qtyArbitrated)) {
-    if (l.qtyArbitrated !== null) patch['qtyArbitrated'] = null
-  } else {
-    const qa = parseLocaleNumber(draft.qtyArbitrated)
-    if (Number.isFinite(qa)) patch['qtyArbitrated'] = qa
-  }
-  if (isEmptyDraftField(draft.unitArbitrated)) {
-    if (l.unitArbitrated !== null) patch['unitArbitrated'] = null
-  } else if (draft.unitArbitrated !== (l.unitArbitrated ?? '')) {
-    patch['unitArbitrated'] = draft.unitArbitrated
-  } else {
-    // unitArbitrated inchangé mais toujours envoyé pour cohérence avec qtyArbitrated
-    if (!isEmptyDraftField(draft.unitArbitrated)) patch['unitArbitrated'] = draft.unitArbitrated
+  if (quantity !== (l.qtyArbitrated ?? null)) {
+    patch['qtyArbitrated'] = quantity
+    if (quantity !== null || unit !== initialUnit) patch['unitArbitrated'] = unit
+  } else if (unit !== initialUnit) {
+    patch['unitArbitrated'] = unit
   }
   // V1.9-B.2 — l'opérateur édite désormais unitPriceTtcArbitratedCents (override Row 3).
   // Le champ unit_price_ttc_cents (Row 2 = facture Pennylane) n'est plus éditable côté UI.
-  // Si la valeur saisie == facture → on persiste quand même l'override (l'opérateur a confirmé).
-  if (!isEmptyDraftField(draft.unitPriceEuros)) {
+  if (draft.priceEdited && !isEmptyDraftField(draft.unitPriceEuros)) {
     const cents = Math.round(parseLocaleNumber(draft.unitPriceEuros) * 100)
     if (Number.isFinite(cents) && cents !== l.unitPriceTtcArbitratedCents)
       patch['unitPriceTtcArbitratedCents'] = cents
@@ -301,16 +318,20 @@ async function saveEditLine(l: SavDetailLine): Promise<void> {
     if (Number.isFinite(g) && g !== l.pieceToKgWeightG) patch['pieceToKgWeightG'] = g
   }
   if (Object.keys(patch).length === 0) {
-    lineEdit.cancelEdit()
+    cancelEditLine()
     return
   }
   const result = await lineEdit.savePatch(l.id, patch)
   if (!result.ok) {
     if (result.error.code === 'VERSION_CONFLICT') {
       toastMessage.value = 'Rechargez, le SAV a été modifié par un autre utilisateur.'
+      lineEdit.cancelEdit()
+      delete editDraft[l.id]
+      lineError.value = { id: l.id, message: 'Le dossier a changé. Vérifiez les valeurs rechargées avant de reprendre.' }
       await refresh()
+      focusLineControl(l.id, 'edit-line')
     } else {
-      toastMessage.value = result.error.message
+      lineError.value = { id: l.id, message: result.error.message }
     }
     return
   }
@@ -322,6 +343,7 @@ async function saveEditLine(l: SavDetailLine): Promise<void> {
   // save a échoué ("rien ne se passe"). Le refresh garantit que Row 3 affiche
   // l'arbitrage saisi + l'avoir/validation à jour.
   await refresh()
+  focusLineControl(l.id, 'edit-line')
 }
 
 async function deleteLineConfirmed(l: SavDetailLine): Promise<void> {
@@ -1433,8 +1455,8 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
           >
             <!-- Row 1 — Demande adhérent (voix du client, fond gris italique) -->
             <tr class="sav-line-request" :data-testid="`sav-line-${l.id}-request-row`">
-              <td>{{ l.lineNumber ?? l.position }}</td>
-              <td>{{ l.productCodeSnapshot }}</td>
+              <td data-label="Ligne">{{ l.lineNumber ?? l.position }}</td>
+              <td data-label="Code">{{ l.productCodeSnapshot }}</td>
               <td>{{ l.productNameSnapshot }}</td>
               <!-- Qté demandée + unité demandée (V1.x-B — l'unité est éditable en
                    cas d'erreur de capture, reste la voix du client). -->
@@ -1443,7 +1465,13 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
                   v-if="lineEdit.editingLineId.value === l.id && editDraft[l.id]"
                   class="cell-pair"
                 >
+                  <label :for="`edit-qty-requested-${l.id}`" class="quantity-label">Quantité demandée</label>
                   <input
+                    :id="`edit-qty-requested-${l.id}`"
+                    data-quantity="requested"
+                    :aria-invalid="lineError?.field === `edit-qty-requested-${l.id}` || undefined"
+                    :aria-describedby="lineError?.field === `edit-qty-requested-${l.id}` ? `line-error-${l.id}` : undefined"
+                    required
                     v-model="editDraft[l.id]!.qtyRequested"
                     type="number"
                     min="0.001"
@@ -1452,7 +1480,7 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
                     :aria-label="`Quantité demandée, ligne ${l.lineNumber ?? l.position}`"
                     class="cell-input"
                     :data-testid="`edit-qty-requested-${l.id}`"
-                    @keydown.enter.prevent="saveEditLine(l)"
+                    @keydown.enter.prevent="saveEditLine(l, $event)"
                     @keydown.esc.prevent="cancelEditLine"
                   />
                   <select
@@ -1466,7 +1494,7 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
                     <option value="liter">litre</option>
                   </select>
                 </span>
-                <span v-else>{{ l.qtyRequested }} {{ l.unitRequested }}</span>
+                <span v-else><span class="mobile-line-label">Quantité demandée</span>{{ l.qtyRequested }} {{ l.unitRequested }}</span>
               </td>
               <!-- V1.9-B — colspan=8 : colonnes 5-12 — motif demande adhérent (requestReason) + commentaire.
                    reason-pill (badge ambre) si requestReason set, sinon fallback stub italic gris.
@@ -1488,14 +1516,14 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
               <td></td>
               <td></td>
               <!-- Qté facturée (colonne 5) — 100% read-only D-3 (jamais d'input, même en édition) -->
-              <td>
+              <td data-label="Quantité facturée">
                 <span>
                   {{ l.qtyInvoiced ?? '—' }}
                   {{ l.qtyInvoiced !== null ? (l.unitInvoiced ?? l.unitRequested) : '' }}
                 </span>
               </td>
               <!-- PU TTC facture (colonne 6) — V1.9-B.2 read-only Pennylane -->
-              <td>
+              <td data-label="PU TTC facturé">
                 <span>{{ formatEur(l.unitPriceTtcCents) }}</span>
               </td>
               <!-- Colonnes 7-12 vides (alignement) -->
@@ -1519,7 +1547,12 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
                   v-if="lineEdit.editingLineId.value === l.id && editDraft[l.id]"
                   class="cell-pair"
                 >
+                  <label :for="`edit-qty-arbitrated-${l.id}`" class="quantity-label">Quantité arbitrée</label>
                   <input
+                    :id="`edit-qty-arbitrated-${l.id}`"
+                    data-quantity="arbitrated"
+                    :aria-invalid="lineError?.field === `edit-qty-arbitrated-${l.id}` || undefined"
+                    :aria-describedby="lineError?.field === `edit-qty-arbitrated-${l.id}` ? `line-error-${l.id}` : undefined"
                     v-model="editDraft[l.id]!.qtyArbitrated"
                     type="number"
                     min="0"
@@ -1529,34 +1562,39 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
                     :aria-label="`Quantité arbitrée, ligne ${l.lineNumber ?? l.position}`"
                     class="cell-input"
                     :data-testid="`edit-qty-arbitrated-${l.id}`"
-                    @keydown.enter.prevent="saveEditLine(l)"
+                    @keydown.enter.prevent="saveEditLine(l, $event)"
                     @keydown.esc.prevent="cancelEditLine"
                   />
                   <select
+                    :id="`edit-unit-arbitrated-${l.id}`"
+                    :aria-invalid="lineError?.field === `edit-unit-arbitrated-${l.id}` || undefined"
+                    :aria-describedby="lineError?.field === `edit-unit-arbitrated-${l.id}` ? `line-error-${l.id}` : undefined"
                     v-model="editDraft[l.id]!.unitArbitrated"
                     class="cell-select"
                     :aria-label="`Unité arbitrée, ligne ${l.lineNumber ?? l.position}`"
                     :data-testid="`edit-unit-arbitrated-${l.id}`"
                   >
-                    <option value="">—</option>
+                    <option v-if="!l.unitInvoiced" value="">—</option>
                     <option value="kg">kg</option>
                     <option value="piece">pièce</option>
                     <option value="liter">litre</option>
                   </select>
                 </span>
                 <span v-else>
+                  <span class="mobile-line-label">Quantité arbitrée</span>
                   <span v-if="l.qtyArbitrated !== null" style="font-weight: 500">
-                    {{ l.qtyArbitrated }} {{ l.unitArbitrated }}
+                    {{ l.qtyArbitrated }} {{ l.unitArbitrated ?? l.unitInvoiced ?? '· unité à préciser' }}
                   </span>
                   <span v-else style="font-style: italic; color: #6b7280">—</span>
                 </span>
               </td>
               <!-- PU TTC arbitré (colonne 6) — V1.9-B.2 override opérateur
                    Affichage non-édition : override si set, sinon vide (la facture est Row 2) -->
-              <td>
+              <td data-label="PU TTC arbitré">
                 <input
                   v-if="lineEdit.editingLineId.value === l.id && editDraft[l.id]"
                   v-model="editDraft[l.id]!.unitPriceEuros"
+                  @input="editDraft[l.id]!.priceEdited = true"
                   type="number"
                   min="0"
                   max="999999.99"
@@ -1565,7 +1603,7 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
                   :aria-label="`Prix unitaire TTC arbitré, ligne ${l.lineNumber ?? l.position}`"
                   class="cell-input"
                   :data-testid="`edit-unit-price-arbitrated-${l.id}`"
-                  @keydown.enter.prevent="saveEditLine(l)"
+                  @keydown.enter.prevent="saveEditLine(l, $event)"
                   @keydown.esc.prevent="cancelEditLine"
                 />
                 <span v-else>
@@ -1580,7 +1618,7 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
                 </span>
               </td>
               <!-- Story 4.8 — PU achat HT (colonne 7, avec tooltip supplier_reference) -->
-              <td>
+              <td data-label="PU achat HT">
                 <span
                   :title="
                     l.supplierReference ? `Réf. fournisseur : ${l.supplierReference}` : undefined
@@ -1590,7 +1628,7 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
                 </span>
               </td>
               <!-- Story 4.8 — Marge unit. HT (colonne 8, positif=vert, négatif=rouge, null=gris) -->
-              <td>
+              <td data-label="Marge unit. HT">
                 <span
                   v-if="unitMarginHtCents(l) !== null"
                   :class="{
@@ -1603,7 +1641,7 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
                 <span v-else class="margin-null">—</span>
               </td>
               <!-- Coefficient (colonne 9) -->
-              <td>
+              <td data-label="Coefficient">
                 <input
                   v-if="lineEdit.editingLineId.value === l.id && editDraft[l.id]"
                   v-model="editDraft[l.id]!.creditCoefficient"
@@ -1613,7 +1651,7 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
                   step="0.01"
                   :aria-label="`Coefficient avoir, ligne ${l.lineNumber ?? l.position}`"
                   class="cell-input"
-                  @keydown.enter.prevent="saveEditLine(l)"
+                  @keydown.enter.prevent="saveEditLine(l, $event)"
                   @keydown.esc.prevent="cancelEditLine"
                 />
                 <span v-else>
@@ -1627,7 +1665,7 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
                    Affiche TTC = round(HT × (1 + bp/10000)) half-up.
                    `—` si creditAmountCents ou vatRateBpSnapshot null
                    (pattern ghost line aligné avec PDF AC#2). -->
-              <td>{{ formatEur(creditTtcCentsLine(l)) }}</td>
+              <td data-label="Avoir TTC">{{ formatEur(creditTtcCentsLine(l)) }}</td>
               <!-- Validation (colonne 11) -->
               <td>
                 <span
@@ -1645,10 +1683,10 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
                 <span v-if="lineEdit.editingLineId.value === l.id" class="actions-pair">
                   <button
                     type="button"
-                    class="btn-sm"
-                    :disabled="lineEdit.savingLineId.value !== null"
+                    class="btn-sm line-save"
+                    :disabled="lineEdit.savingLineId.value !== null || sav.status !== 'in_progress'"
                     :data-testid="`save-line-${l.id}`"
-                    @click="saveEditLine(l)"
+                    @click="saveEditLine(l, $event)"
                   >
                     Enregistrer
                   </button>
@@ -1666,6 +1704,7 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
                     type="button"
                     class="btn-sm"
                     :disabled="sav.status !== 'in_progress'"
+                    :id="`edit-line-${l.id}`"
                     :data-testid="`edit-line-${l.id}`"
                     @click="beginEditLine(l)"
                   >
@@ -1681,6 +1720,11 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
                     Supprimer
                   </button>
                 </span>
+              </td>
+            </tr>
+            <tr v-if="lineError?.id === l.id">
+              <td colspan="12">
+                <p :id="`line-error-${l.id}`" class="line-edit-error" role="alert">{{ lineError.message }}</p>
               </td>
             </tr>
             <!-- Row 4 (optionnel) — poids unité (g) visible si to_calculate + édition.
@@ -1705,7 +1749,7 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
                     :aria-label="`Poids unité en grammes, ligne ${l.lineNumber ?? l.position}`"
                     class="cell-input"
                     data-testid="edit-piece-to-kg-weight-g"
-                    @keydown.enter.prevent="saveEditLine(l)"
+                    @keydown.enter.prevent="saveEditLine(l, $event)"
                     @keydown.esc.prevent="cancelEditLine"
                   />
                 </label>
@@ -2773,6 +2817,26 @@ a:focus-visible {
   justify-content: flex-end;
   gap: 0.5rem;
 }
+.mobile-line-label { display: none; }
+@media (max-width: 600px) {
+  .lines-table, .lines-table tbody { display: block; }
+  .lines-table thead { position: absolute; clip-path: inset(50%); width: 1px; height: 1px; overflow: hidden; }
+  .lines-table tr { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .lines-table tr td { min-width: 0; overflow-wrap: anywhere; }
+  .lines-table td:empty { display: none; }
+  .lines-table td[colspan], .lines-table .actions-cell, .sav-line-request td:nth-child(3),
+  .sav-line-request td:nth-child(4), .sav-line-arbitration td:nth-child(5) { grid-column: 1 / -1; }
+  .mobile-line-label, .lines-table [data-label]::before {
+    display: block;
+    font-size: .75rem;
+    font-style: normal;
+    font-weight: 600;
+    color: #563916;
+  }
+  .lines-table [data-label]::before { content: attr(data-label); }
+  .lines-table .cell-pair { width: 100%; grid-template-columns: 1fr 1fr; }
+  .lines-table tbody + tbody { margin-top: 1rem; }
+}
 .cell-input,
 .cell-select {
   width: 100%;
@@ -2796,8 +2860,16 @@ a:focus-visible {
   gap: 0.25rem;
   flex-wrap: wrap;
 }
+.quantity-label {
+  grid-column: 1 / -1;
+  font-style: normal;
+  white-space: normal;
+}
+.quantity-label { font-weight: 600; color: #30200e; }
+.line-edit-error { color: #842c16; margin: 0; white-space: normal; }
 .cell-pair {
-  display: inline-flex;
+  display: inline-grid;
+  grid-template-columns: auto auto;
   gap: 0.25rem;
   align-items: center;
 }
@@ -2812,6 +2884,8 @@ a:focus-visible {
 .btn-sm:hover:not(:disabled) {
   background: #f3f4f6;
 }
+.btn-sm.line-save { background: #ef922d; border-color: #9b520f; color: #30200e; }
+.btn-sm.line-save:hover:not(:disabled) { background: #e38724; }
 .btn-sm:disabled {
   opacity: 0.5;
   cursor: not-allowed;

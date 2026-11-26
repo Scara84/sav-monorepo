@@ -8,7 +8,7 @@ import SavDetailView from './SavDetailView.vue'
  *
  * Couvre :
  *   (a) creditNote.pdfWebUrl NULL → bouton sav-validate-btn disabled +
- *       title « Générez d'abord le bon SAV » (libellé PO D-5).
+ *       title « Le PDF du bon SAV doit être disponible avant la validation ».
  *   (b) creditNote.pdfWebUrl présent + lignes OK → bouton ENABLED.
  *   (c) creditNoteDegraded === true → bouton disabled (conservateur).
  *   (d) Priorité d'affichage des messages : « Corrige les lignes en erreur »
@@ -162,7 +162,7 @@ afterEach(() => {
 })
 
 describe('SavDetailView — V1.13 AC#8 gate Valider', () => {
-  it("AC#8 (a) creditNote.pdfWebUrl NULL → bouton disabled + title « Générez d'abord le bon SAV »", async () => {
+  it("AC#8 (a) creditNote.pdfWebUrl NULL → bouton disabled avec motif du PDF indisponible", async () => {
     installFetch({
       detail: () =>
         buildDetail({ pdfWebUrl: null, hasCreditNote: true, status: 'in_progress' }),
@@ -174,7 +174,7 @@ describe('SavDetailView — V1.13 AC#8 gate Valider', () => {
     const btn = w.find('[data-testid="sav-validate-btn"]')
     expect(btn.exists()).toBe(true)
     expect(btn.attributes('disabled')).toBeDefined()
-    expect(btn.attributes('title')).toContain("Générez d'abord le bon SAV")
+    expect(btn.attributes('title')).toBe('Le PDF du bon SAV doit être disponible avant la validation')
   })
 
   it("AC#8 (a-bis) creditNote absent (jamais émis) → bouton disabled + title « Générez d'abord le bon SAV »", async () => {

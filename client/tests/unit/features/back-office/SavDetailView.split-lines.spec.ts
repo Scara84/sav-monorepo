@@ -680,8 +680,8 @@ describe('V1.9-B S-08 — awaiting_arbitration : badge orange + data-blocking vi
 // AC#4.4 — PATTERN-V9-D
 // ---------------------------------------------------------------------------
 
-describe('V1.9-B S-09 — Pre-fill draft : qtyArbitrated IS NULL → draft préremplit avec qtyInvoiced', () => {
-  it("qtyArbitrated IS NULL → à l'ouverture édition, edit-qty-arbitrated-100 pré-rempli avec qtyInvoiced", async () => {
+describe('Valeur arbitrée en édition', () => {
+  it("Une quantité non arbitrée reste vide même si la quantité facturée est connue", async () => {
     mockFetch(
       makeSavWithLines(
         [
@@ -689,7 +689,7 @@ describe('V1.9-B S-09 — Pre-fill draft : qtyArbitrated IS NULL → draft prér
             id: 100,
             qtyInvoiced: 7.5,
             unitInvoiced: 'kg',
-            qtyArbitrated: null, // ← NULL → pre-fill attendu avec 7.5
+            qtyArbitrated: null,
             unitArbitrated: null,
             validationStatus: 'awaiting_arbitration',
             creditAmountCents: null,
@@ -703,14 +703,13 @@ describe('V1.9-B S-09 — Pre-fill draft : qtyArbitrated IS NULL → draft prér
 
     await w.find('[data-testid="edit-line-100"]').trigger('click')
 
-    // AC#4.4 — input qtyArbitrated doit être pré-rempli avec la valeur de qtyInvoiced (7.5)
     const arbitrationRow = w.find('[data-testid="sav-line-100-arbitration-row"]')
     const qtyArbitratedInput = arbitrationRow.find('[data-testid="edit-qty-arbitrated-100"]')
     expect(qtyArbitratedInput.exists()).toBe(true)
 
     const inputElement = qtyArbitratedInput.element as HTMLInputElement
-    // La valeur pré-remplie doit correspondre à qtyInvoiced = 7.5
-    expect(parseFloat(inputElement.value)).toBe(7.5)
+    expect(inputElement.value).toBe('')
+    expect(arbitrationRow.get<HTMLSelectElement>('[data-testid="edit-unit-arbitrated-100"]').element.value).toBe('kg')
   })
 
   it("qtyArbitrated=5 (set) → à l'ouverture édition, edit-qty-arbitrated-100 conserve la valeur existante", async () => {

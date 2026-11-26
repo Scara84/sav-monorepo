@@ -100,6 +100,8 @@ type LineOverride = {
   productNameSnapshot?: string
   qtyRequested?: number
   unitRequested?: string
+  qtyArbitrated?: number | null
+  unitArbitrated?: string | null
   qtyInvoiced?: number | null
   unitInvoiced?: string | null
   unitPriceTtcCents?: number | null
@@ -122,6 +124,9 @@ function line(overrides: LineOverride = {}) {
     productNameSnapshot: 'Pommes',
     qtyRequested: 10,
     unitRequested: 'kg',
+    qtyArbitrated: null,
+    unitArbitrated: null,
+    unitPriceTtcArbitratedCents: null,
     qtyInvoiced: 10,
     unitInvoiced: 'kg',
     unitPriceTtcCents: 250,
@@ -214,9 +219,52 @@ describe('SavDetailView — édition inline lignes (Story 3.6b)', () => {
 
     const patchCall = ctrl.calls.find((c) => c.method === 'PATCH')
     expect(patchCall).toBeTruthy()
-    expect(patchCall?.body).toMatchObject({
+    expect(patchCall?.body).toEqual({
       qtyRequested: 12,
       version: 1,
+    })
+  })
+
+  it('enregistre le prix de facture lorsque l’opérateur le ressaisit explicitement', async () => {
+    const ctrl = makeFetchController(buildPayload({}))
+    const w = await mountDetail()
+    await flushPromises()
+    await w.get('#edit-line-100').trigger('click')
+    const price = w.get('[data-testid="edit-unit-price-arbitrated-100"]')
+    await price.setValue('')
+    await price.setValue('2.50')
+    await w.get('[data-testid="save-line-100"]').trigger('click')
+    expect(ctrl.calls.find(call => call.method === 'PATCH')?.body).toEqual({
+      unitPriceTtcArbitratedCents: 250, version: 1,
+    })
+  })
+
+  it('utilise l’unité facturée pour un premier arbitrage', async () => {
+    const ctrl = makeFetchController(buildPayload({ lines: [line({ unitInvoiced: 'liter' })] }))
+    const w = await mountDetail()
+    await flushPromises()
+    await w.get('#edit-line-100').trigger('click')
+    expect(w.get<HTMLSelectElement>('#edit-unit-arbitrated-100').element.value).toBe('liter')
+    await w.get('#edit-qty-arbitrated-100').setValue('2')
+    await w.get('[data-testid="save-line-100"]').trigger('click')
+    expect(ctrl.calls.find(call => call.method === 'PATCH')?.body).toEqual({
+      qtyArbitrated: 2, unitArbitrated: 'liter', version: 1,
+    })
+  })
+
+  it('demande une unité manquante avant d’enregistrer l’arbitrage', async () => {
+    const ctrl = makeFetchController(buildPayload({ lines: [line({ unitInvoiced: null })] }))
+    const w = await mountDetail()
+    await flushPromises()
+    await w.get('#edit-line-100').trigger('click')
+    await w.get('#edit-qty-arbitrated-100').setValue('2')
+    await w.get('[data-testid="save-line-100"]').trigger('click')
+    expect(w.get('#sav-line-100 [role="alert"]').text()).toContain('Choisissez une unité')
+    expect(ctrl.calls.some(call => call.method === 'PATCH')).toBe(false)
+    await w.get('#edit-unit-arbitrated-100').setValue('piece')
+    await w.get('[data-testid="save-line-100"]').trigger('click')
+    expect(ctrl.calls.find(call => call.method === 'PATCH')?.body).toEqual({
+      qtyArbitrated: 2, unitArbitrated: 'piece', version: 1,
     })
   })
 
@@ -235,6 +283,91 @@ describe('SavDetailView — édition inline lignes (Story 3.6b)', () => {
     expect(w.find('[data-testid="edit-qty-requested-100"]').exists()).toBe(false)
     const patchCall = ctrl.calls.find((c) => c.method === 'PATCH')
     expect(patchCall).toBeFalsy()
+  })
+
+  it('relit les quantités et l’avoir TTC après correction sur deux taux de TVA', async () => {
+    const first = line({ qtyRequested: 4, unitRequested: 'piece', qtyArbitrated: 2, unitArbitrated: null, creditAmountCents: 474 })
+    const second = line({ id: 101, qtyArbitrated: 1, unitArbitrated: 'kg', unitPriceTtcCents: 1200, vatRateBpSnapshot: 2000, creditAmountCents: 1000 })
+    const ctrl = makeFetchController(buildPayload({ lines: [first, second] }))
+    const w = await mountDetail()
+    await flushPromises()
+    expect(w.get('[data-testid="sav-line-100-arbitration-row"]').text()).toContain('2 kg')
+    expect(w.get('[data-testid="preview-ttc"]').text()).toMatch(/17,00\s*€/)
+
+    await w.get('#edit-line-100').trigger('click')
+    expect(w.get<HTMLInputElement>('#edit-qty-requested-100').element.value).toBe('4')
+    expect(w.get<HTMLSelectElement>('[data-testid="edit-unit-requested-100"]').element.value).toBe('piece')
+    expect(w.get<HTMLInputElement>('#edit-qty-arbitrated-100').element.value).toBe('2')
+    expect(w.get<HTMLSelectElement>('[data-testid="edit-unit-arbitrated-100"]').element.value).toBe('kg')
+
+    ctrl.onceFor((url, m) => m === 'PATCH' && url.endsWith('/lines/100'), {
+      status: 200, body: { data: { version: 2 } },
+    })
+    ctrl.onceFor((url, m) => m === 'GET' && url === '/api/sav/1', {
+      status: 200, body: buildPayload({ version: 2, lines: [{ ...first, qtyArbitrated: 3, creditAmountCents: 711 }, second] }),
+    })
+    await w.get('#edit-qty-arbitrated-100').setValue('3')
+    await w.get('[data-testid="save-line-100"]').trigger('click')
+    await flushPromises()
+    expect(ctrl.calls.find(c => c.method === 'PATCH')?.body).toEqual({ qtyArbitrated: 3, unitArbitrated: 'kg', version: 1 })
+    expect(w.get('[data-testid="sav-line-100-request-row"]').text()).toContain('4 piece')
+    expect(w.get('[data-testid="sav-line-100-arbitration-row"]').text()).toContain('3 kg')
+    expect(w.get('[data-testid="sav-line-100-arbitration-row"]').text()).toMatch(/7,50\s*€/)
+    expect(w.get('[data-testid="preview-ht"]').text()).toMatch(/17,11\s*€/)
+    expect(w.get('[data-testid="preview-vat"]').text()).toMatch(/2,39\s*€/)
+    expect(w.get('[data-testid="preview-ttc"]').text()).toMatch(/19,50\s*€/)
+
+    await w.get('#edit-line-100').trigger('click')
+    await w.get('#edit-qty-arbitrated-100').setValue('9')
+    await w.get('#edit-qty-arbitrated-100').trigger('keydown', { key: 'Escape' })
+    expect(w.get('[data-testid="sav-line-100-arbitration-row"]').text()).toContain('3 kg')
+    expect(w.get('[data-testid="preview-ttc"]').text()).toMatch(/19,50\s*€/)
+    expect(ctrl.calls.filter(c => c.method === 'PATCH')).toHaveLength(1)
+  })
+
+  it.each([
+    ['requested', ''], ['requested', '0'], ['requested', '0.0001'],
+    ['arbitrated', '-1'], ['arbitrated', '100000'],
+  ])('explique la quantité %s invalide (%s) sans enregistrer', async (field, value) => {
+    const ctrl = makeFetchController(buildPayload({}))
+    const w = await mountDetail()
+    await flushPromises()
+    await w.get('#edit-line-100').trigger('click')
+    const input = w.get(`#edit-qty-${field}-100`)
+    await input.setValue(value)
+    await w.get('[data-testid="save-line-100"]').trigger('click')
+    expect(w.get('#sav-line-100 [role="alert"]').text()).toContain('Saisissez une quantité')
+    expect(input.attributes('aria-invalid')).toBe('true')
+    expect(ctrl.calls.some(c => c.method === 'PATCH')).toBe(false)
+  })
+
+  it('conserve le brouillon après un refus et restaure la ligne lors de l’annulation', async () => {
+    const ctrl = makeFetchController(buildPayload({}))
+    ctrl.onceFor((_url, m) => m === 'PATCH', { status: 403, body: { error: { message: 'Modification interdite.' } } })
+    const w = await mountDetail()
+    await flushPromises()
+    await w.get('#edit-line-100').trigger('click')
+    await w.get('#edit-qty-requested-100').setValue('11')
+    await w.get('[data-testid="save-line-100"]').trigger('click')
+    await flushPromises()
+    expect(w.get('#sav-line-100 [role="alert"]').text()).toBe('Modification interdite.')
+    expect(w.get<HTMLInputElement>('#edit-qty-requested-100').element.value).toBe('11')
+    await w.get('#edit-qty-requested-100').trigger('keydown', { key: 'Escape' })
+    expect(w.get('[data-testid="sav-line-100-request-row"]').text()).toContain('10 kg')
+    expect(w.find('#line-error-100').exists()).toBe(false)
+  })
+
+  it('verrouille les contrôles de la ligne validée', async () => {
+    const ctrl = makeFetchController(buildPayload({ status: 'validated' }))
+    const w = await mountDetail()
+    await flushPromises()
+    for (const action of ['edit', 'delete']) {
+      const button = w.get(`[data-testid="${action}-line-100"]`)
+      expect(button.attributes('disabled')).toBeDefined()
+      await button.trigger('click')
+    }
+    expect(w.find('#edit-qty-requested-100').exists()).toBe(false)
+    expect(ctrl.calls.every(call => call.method === 'GET')).toBe(true)
   })
 
   it('TC-04 : ligne to_calculate en édition → champ « Poids unité (g) » visible', async () => {
