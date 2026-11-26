@@ -36,6 +36,7 @@ export interface UseAdminErpQueueApi {
   featureAvailable: Ref<boolean>
   loading: Ref<boolean>
   error: Ref<string | null>
+  retryError: Ref<string | null>
   fetchPushes: (filters: ErpQueueFilters, cursor?: string) => Promise<void>
   // H-10 W117 — opts.removeFromList contrôle la suppression vs mutation en place (rétrocompat).
   retryPush: (id: number, opts?: { removeFromList?: boolean }) => Promise<void>
@@ -62,6 +63,8 @@ export function useAdminErpQueue(): UseAdminErpQueueApi {
   const loading = ref(false)
   const error = ref<string | null>(null)
 
+  const retryError = ref<string | null>(null)
+
   async function fetchPushes(filters: ErpQueueFilters, cursor?: string): Promise<void> {
     loading.value = true
     error.value = null
@@ -71,26 +74,28 @@ export function useAdminErpQueue(): UseAdminErpQueueApi {
       const body = (await res.json().catch(() => ({}))) as ApiErrorShape & {
         data?: { items: ErpPushItem[]; nextCursor: string | null }
       }
-      if (res.status === 503) {
+      if (res.status === 503 && body.error?.details?.code === 'ERP_QUEUE_NOT_PROVISIONED') {
         // D-10 mode (a) — feature-flag.
         featureAvailable.value = false
+        nextCursor.value = null
         pushes.value = []
         return
       }
+      featureAvailable.value = true
       if (!res.ok) {
         const msg =
           body.error?.message ?? body.error?.details?.code ?? body.error?.code ?? 'Erreur inconnue'
         error.value = msg
         return
       }
-      featureAvailable.value = true
-      if (cursor === undefined) {
-        pushes.value = body.data?.items ?? []
-      } else {
-        pushes.value = [...pushes.value, ...(body.data?.items ?? [])]
+      if (!Array.isArray(body?.data?.items)) {
+        error.value = 'Réponse ERP incomplète.'
+        return
       }
-      nextCursor.value = body.data?.nextCursor ?? null
+      pushes.value = cursor === undefined ? body.data.items : [...pushes.value, ...body.data.items]
+      nextCursor.value = body.data.nextCursor ?? null
     } catch (e) {
+      featureAvailable.value = true
       error.value = e instanceof Error ? e.message : 'Erreur réseau'
     } finally {
       loading.value = false
@@ -101,7 +106,7 @@ export function useAdminErpQueue(): UseAdminErpQueueApi {
   // permet au caller de contrôler si la ligne doit être supprimée de la liste locale
   // (cas filtre status='failed') ou mutée en status='pending' (comportement par défaut).
   async function retryPush(id: number, opts?: { removeFromList?: boolean }): Promise<void> {
-    error.value = null
+    retryError.value = null
     try {
       const res = await fetch(`/api/admin/erp-queue/${id}/retry`, {
         method: 'POST',
@@ -111,7 +116,7 @@ export function useAdminErpQueue(): UseAdminErpQueueApi {
       if (!res.ok) {
         const msg =
           body.error?.message ?? body.error?.details?.code ?? body.error?.code ?? 'Erreur inconnue'
-        error.value = msg
+        retryError.value = msg
         throw new Error(msg)
       }
       if (opts?.removeFromList === true) {
@@ -132,7 +137,7 @@ export function useAdminErpQueue(): UseAdminErpQueueApi {
         }
       }
     } catch (e) {
-      if (error.value === null) error.value = e instanceof Error ? e.message : 'Erreur réseau'
+      if (retryError.value === null) retryError.value = e instanceof Error ? e.message : 'Erreur réseau'
       throw e
     }
   }
@@ -143,6 +148,7 @@ export function useAdminErpQueue(): UseAdminErpQueueApi {
     featureAvailable,
     loading,
     error,
+    retryError,
     fetchPushes,
     retryPush,
   }

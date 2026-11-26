@@ -4,7 +4,7 @@ import { sendError } from '../errors'
 import { logger } from '../logger'
 import { supabaseAdmin } from '../clients/supabase-admin'
 import { encodeCursor, decodeCursor } from './audit-trail-schema'
-import type { ApiHandler } from '../types'
+import type { ApiHandler, ApiResponse } from '../types'
 
 /**
  * Story 7-5 AC #5 D-10 — `GET /api/admin/erp-queue`
@@ -13,7 +13,7 @@ import type { ApiHandler } from '../types'
  * Décisions :
  *   D-10 — feature-flag : tant que la table erp_push_queue n'existe pas
  *          (Story 7-1 deferred), retourne 503 ERP_QUEUE_NOT_PROVISIONED.
- *          Détection via SELECT discret sur pg_tables cached 60s.
+ *          Sonde sans ligne sur la file, résultat mis en cache 60 s.
  *   D-2 — pagination cursor base64 `(created_at, id)` cohérent audit-trail.
  *   D-7 — defense-in-depth role==='admin' réappliqué côté handler.
  *
@@ -50,7 +50,7 @@ export interface ErpPushItem extends ErpPushRow {
 }
 
 /**
- * D-10 cache 60s pour `pg_tables` check. Reset au cold-start serverless.
+ * D-10 cache 60s pour la disponibilité de la file. Reset au cold-start serverless.
  * Exporté pour tests d'invalidation manuelle si besoin.
  */
 let _erpQueueTableCheckCache: { exists: boolean; checkedAt: number } | null = null
@@ -60,38 +60,35 @@ export function __resetErpQueueCacheForTests(): void {
   _erpQueueTableCheckCache = null
 }
 
-export async function isErpQueueTableProvisioned(): Promise<boolean> {
+async function isErpQueueTableProvisioned(): Promise<boolean> {
   const now = Date.now()
-  // Désactiver le cache sous Vitest pour permettre aux tests de muter le state
-  // mock entre `it` (cf. erp-queue-list-handler.spec.ts qui flip
-  // `state.erpQueueTableExists` sans appeler de reset hook).
-  const inTest =
-    typeof process !== 'undefined' &&
-    (process.env['VITEST'] === 'true' || process.env['NODE_ENV'] === 'test')
-  if (
-    !inTest &&
-    _erpQueueTableCheckCache !== null &&
-    now - _erpQueueTableCheckCache.checkedAt < ERP_QUEUE_CACHE_TTL_MS
-  ) {
+  if (_erpQueueTableCheckCache && now - _erpQueueTableCheckCache.checkedAt < ERP_QUEUE_CACHE_TTL_MS) {
     return _erpQueueTableCheckCache.exists
   }
+  // GET limité à zéro ligne pour conserver le code d’erreur JSON de PostgREST.
+  const { error } = await supabaseAdmin().from('erp_push_queue').select('id').limit(0)
+  if (error && error.code !== 'PGRST205' && error.code !== '42P01') throw error
+  const exists = !error
+  _erpQueueTableCheckCache = { exists, checkedAt: now }
+  return exists
+}
+
+export async function requireErpQueue(res: ApiResponse, requestId: string): Promise<boolean> {
   try {
-    const { data, error } = (await supabaseAdmin()
-      .from('pg_tables')
-      .select('tablename')
-      .eq('schemaname', 'public')
-      .eq('tablename', 'erp_push_queue')
-      .maybeSingle()) as unknown as {
-      data: { tablename: string } | null
-      error: { message: string } | null
-    }
-    const exists = error === null && data !== null
-    _erpQueueTableCheckCache = { exists, checkedAt: now }
-    return exists
+    if (await isErpQueueTableProvisioned()) return true
+    sendError(
+      res,
+      'DEPENDENCY_DOWN',
+      "La file ERP n'est pas encore provisionnée — Story 7-1 en attente du contrat ERP Fruitstock",
+      requestId,
+      { code: 'ERP_QUEUE_NOT_PROVISIONED' }
+    )
   } catch {
-    _erpQueueTableCheckCache = { exists: false, checkedAt: now }
-    return false
+    sendError(res, 'SERVER_ERROR', 'Vérification de la file ERP impossible', requestId, {
+      code: 'QUERY_FAILED',
+    })
   }
+  return false
 }
 
 function asString(v: unknown): string | undefined {
@@ -129,18 +126,7 @@ export const adminErpQueueListHandler: ApiHandler = async (req, res) => {
     }
   }
 
-  // D-10 feature-flag — check pg_tables cached 60s.
-  const provisioned = await isErpQueueTableProvisioned()
-  if (!provisioned) {
-    sendError(
-      res,
-      'DEPENDENCY_DOWN',
-      "La file ERP n'est pas encore provisionnée — Story 7-1 en attente du contrat ERP Fruitstock",
-      requestId,
-      { code: 'ERP_QUEUE_NOT_PROVISIONED' }
-    )
-    return
-  }
+  if (!(await requireErpQueue(res, requestId))) return
 
   // status filter — défaut 'failed' (D-10).
   const statusParsed = statusSchema.safeParse(queryRaw['status'])

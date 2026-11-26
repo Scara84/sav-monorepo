@@ -1,6 +1,6 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest'
 import { mockReq, mockRes } from '../../_lib/test-helpers'
-import { adminSession, ADMIN_ID } from '../../../../fixtures/admin-fixtures'
+import { adminSession, savOperatorSession, ADMIN_ID } from '../../../../fixtures/admin-fixtures'
 
 /**
  * Story 7-5 AC #5 + #6 — RED-PHASE tests pour
@@ -35,6 +35,7 @@ import { adminSession, ADMIN_ID } from '../../../../fixtures/admin-fixtures'
  */
 
 interface State {
+  probeError: string | null
   erpQueueTableExists: boolean
   updateCalls: Array<{ payload: Record<string, unknown>; whereId: number; whereStatus: string }>
   updateReturn: Record<string, unknown> | null
@@ -49,6 +50,7 @@ interface State {
 const state = vi.hoisted(
   () =>
     ({
+      probeError: null,
       erpQueueTableExists: true,
       updateCalls: [],
       updateReturn: null,
@@ -61,23 +63,17 @@ const state = vi.hoisted(
 )
 
 vi.mock('../../../../../api/_lib/clients/supabase-admin', () => {
-  function buildPgTablesBuilder(): unknown {
-    const out: Record<string, unknown> = {
-      select: () => out,
-      eq: () => out,
-      maybeSingle: () =>
-        Promise.resolve({
-          data: state.erpQueueTableExists ? { tablename: 'erp_push_queue' } : null,
-          error: null,
-        }),
-    }
-    return out
-  }
-
   function buildErpQueueBuilder(): unknown {
     const out: Record<string, unknown> = {
       // SELECT post-fail pour hint current_status.
-      select: () => {
+      select: (cols: string) => {
+        if (cols === 'id')
+          return {
+            limit: () => {
+              const code = state.probeError ?? (state.erpQueueTableExists ? null : '42P01')
+              return Promise.resolve({ data: [], error: code ? { code } : null })
+            },
+          }
         let capturedId: number | null = null
         const chain = {
           eq: (col: string, val: unknown) => {
@@ -125,7 +121,6 @@ vi.mock('../../../../../api/_lib/clients/supabase-admin', () => {
   return {
     supabaseAdmin: () => ({
       from: (table: string) => {
-        if (table === 'pg_tables') return buildPgTablesBuilder()
         if (table === 'erp_push_queue') return buildErpQueueBuilder()
         throw new Error(`Unmocked table: ${table}`)
       },
@@ -145,9 +140,12 @@ vi.mock('../../../../../api/_lib/audit/record', () => ({
 }))
 
 // RED — module n'existe pas encore.
+import { __resetErpQueueCacheForTests } from '../../../../../api/_lib/admin/erp-queue-list-handler'
 import { adminErpPushRetryHandler } from '../../../../../api/_lib/admin/erp-push-retry-handler'
 
 beforeEach(() => {
+  __resetErpQueueCacheForTests()
+  state.probeError = null
   state.erpQueueTableExists = true
   state.updateCalls = []
   state.updateReturn = null
@@ -159,6 +157,28 @@ beforeEach(() => {
 })
 
 describe('POST /api/admin/erp-queue/:id/retry (admin-erp-push-retry)', () => {
+  it.each([
+    ['42501', 500, 'QUERY_FAILED'],
+    ['42P01', 503, 'ERP_QUEUE_NOT_PROVISIONED'],
+  ] as const)('interrompt la relance quand la sonde renvoie %s', async (code, status, details) => {
+    state.probeError = code
+    const req = mockReq({ method: 'POST', query: { id: '123' } })
+    req.user = adminSession()
+    const res = mockRes()
+    await adminErpPushRetryHandler(req, res)
+    expect(res.statusCode).toBe(status)
+    expect(res.jsonBody).toMatchObject({ error: { details: { code: details } } })
+    expect(state.updateCalls).toHaveLength(0)
+  })
+  it('refuse la relance à un opérateur SAV avant toute modification', async () => {
+    const req = mockReq({ method: 'POST', query: { id: '123' } })
+    req.user = savOperatorSession()
+    const res = mockRes()
+    await adminErpPushRetryHandler(req, res)
+    expect(res.statusCode).toBe(403)
+    expect(state.updateCalls).toHaveLength(0)
+  })
+
   it('AC #5 D-8 happy path : push failed → UPDATE atomique reset 4 colonnes + 200', async () => {
     state.updateReturn = { id: 123, status: 'pending', attempts: 0 }
 

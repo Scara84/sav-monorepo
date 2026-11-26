@@ -4,7 +4,7 @@ import { logger } from '../logger'
 import { supabaseAdmin } from '../clients/supabase-admin'
 import { recordAudit } from '../audit/record'
 import { parseTargetId } from './parse-target-id'
-import { isErpQueueTableProvisioned } from './erp-queue-list-handler'
+import { requireErpQueue } from './erp-queue-list-handler'
 import type { ApiHandler } from '../types'
 
 /**
@@ -58,18 +58,7 @@ export const adminErpPushRetryHandler: ApiHandler = async (req, res) => {
     return
   }
 
-  // D-10 feature-flag.
-  const provisioned = await isErpQueueTableProvisioned()
-  if (!provisioned) {
-    sendError(
-      res,
-      'DEPENDENCY_DOWN',
-      "La file ERP n'est pas encore provisionnée — Story 7-1 en attente du contrat ERP Fruitstock",
-      requestId,
-      { code: 'ERP_QUEUE_NOT_PROVISIONED' }
-    )
-    return
-  }
+  if (!(await requireErpQueue(res, requestId))) return
 
   const admin = supabaseAdmin()
   const nowIso = new Date().toISOString()

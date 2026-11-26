@@ -257,6 +257,7 @@ export function useSupplierExport(): UseSupplierExportApi {
       const body = (await res.json().catch(() => ({}))) as ApiErrorShape & {
         data?: ExportHistoryPage
       }
+      if (ac.signal.aborted) throw new DOMException('Lecture annulée', 'AbortError')
       if (!res.ok) {
         const code = classifyHttpError(res.status, body)
         const msg = translate(code)
@@ -270,6 +271,7 @@ export function useSupplierExport(): UseSupplierExportApi {
       return body.data
     } catch (e) {
       if (isAbortError(e)) throw e
+      if (ac.signal.aborted) throw new DOMException('Lecture annulée', 'AbortError')
       if (historyError.value === null) {
         historyError.value = translate('NETWORK')
       }

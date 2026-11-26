@@ -209,7 +209,8 @@ describe('useAdminErpQueue — H-10 W117 retryPush opts.removeFromList (AC #3)',
     await flushPromises()
 
     // error.value doit être posé
-    expect(erp.error.value).toBeTruthy()
+    expect(erp.retryError.value).toBeTruthy()
+    expect(erp.error.value).toBeNull()
     // La liste ne doit pas avoir changé (push reste failed)
     expect(erp.pushes.value[0]!.status).toBe('failed')
   })

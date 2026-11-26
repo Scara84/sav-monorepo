@@ -13,7 +13,7 @@ import { adminSession, savOperatorSession, erpPushEntry } from '../../../../fixt
  *   D-10 — feature-flag : tant que la table `erp_push_queue` n'existe pas
  *          (Story 7-1 deferred), le handler retourne `503` avec code
  *          `ERP_QUEUE_NOT_PROVISIONED`. Détection via SELECT discret sur
- *          `pg_tables WHERE schemaname='public' AND tablename='erp_push_queue'`
+ *          `erp_push_queue LIMIT 0`
  *          cached 60s (mock state mutable).
  *   D-2 — pagination cursor base64 `(created_at, id)` cohérent audit-trail.
  *   D-7 — defense-in-depth role==='admin' réappliqué côté handler.
@@ -31,45 +31,42 @@ import { adminSession, savOperatorSession, erpPushEntry } from '../../../../fixt
  */
 
 interface State {
+  probeError: string | null
   erpQueueTableExists: boolean
   erpRows: Array<Record<string, unknown>>
   erpError: { message: string } | null
   savJoinRows: Array<{ id: number; reference: string }>
   fromCallsHistory: Array<{ table: string; method: string; arg?: unknown }>
-  pgTablesCheckCount: number
+  probeCount: number
 }
 
 const state = vi.hoisted(
   () =>
     ({
+      probeError: null,
       erpQueueTableExists: true,
       erpRows: [],
       erpError: null,
       savJoinRows: [],
       fromCallsHistory: [],
-      pgTablesCheckCount: 0,
+      probeCount: 0,
     }) as State
 )
 
 vi.mock('../../../../../api/_lib/clients/supabase-admin', () => {
-  function buildPgTablesBuilder(): unknown {
-    const out: Record<string, unknown> = {
-      select: () => out,
-      eq: () => out,
-      maybeSingle: () => {
-        state.pgTablesCheckCount += 1
-        return Promise.resolve({
-          data: state.erpQueueTableExists ? { tablename: 'erp_push_queue' } : null,
-          error: null,
-        })
-      },
-    }
-    return out
-  }
-
   function buildErpQueueBuilder(): unknown {
     const out: Record<string, unknown> = {
       select: (cols?: string) => {
+        if (cols === 'id')
+          return {
+            limit: (limit: number) => {
+              expect(limit).toBe(0)
+              state.probeCount++
+              if (state.probeError === 'throw') throw new Error('unavailable')
+              const code = state.probeError ?? (state.erpQueueTableExists ? null : 'PGRST205')
+              return Promise.resolve({ data: [], error: code ? { code } : null })
+            },
+          }
         state.fromCallsHistory.push({ table: 'erp_push_queue', method: 'select', arg: cols })
         return out
       },
@@ -119,7 +116,6 @@ vi.mock('../../../../../api/_lib/clients/supabase-admin', () => {
   return {
     supabaseAdmin: () => ({
       from: (table: string) => {
-        if (table === 'pg_tables') return buildPgTablesBuilder()
         if (table === 'erp_push_queue') return buildErpQueueBuilder()
         if (table === 'sav') return buildSavJoinBuilder()
         throw new Error(`Unmocked table: ${table}`)
@@ -130,15 +126,20 @@ vi.mock('../../../../../api/_lib/clients/supabase-admin', () => {
 })
 
 // RED — module n'existe pas encore.
-import { adminErpQueueListHandler } from '../../../../../api/_lib/admin/erp-queue-list-handler'
+import {
+  adminErpQueueListHandler,
+  __resetErpQueueCacheForTests,
+} from '../../../../../api/_lib/admin/erp-queue-list-handler'
 
 beforeEach(() => {
+  __resetErpQueueCacheForTests()
+  state.probeError = null
   state.erpQueueTableExists = true
   state.erpRows = []
   state.erpError = null
   state.savJoinRows = []
   state.fromCallsHistory = []
-  state.pgTablesCheckCount = 0
+  state.probeCount = 0
 })
 
 describe('GET /api/admin/erp-queue (admin-erp-queue-list)', () => {
@@ -155,9 +156,29 @@ describe('GET /api/admin/erp-queue (admin-erp-queue-list)', () => {
     expect(body.error.details?.code).toBe('ERP_QUEUE_NOT_PROVISIONED')
     // Aucun SELECT sur erp_push_queue tant que la table n'existe pas.
     expect(state.fromCallsHistory.filter((c) => c.table === 'erp_push_queue')).toHaveLength(0)
-    // Le handler a bien checké pg_tables au moins 1 fois.
-    expect(state.pgTablesCheckCount).toBeGreaterThanOrEqual(1)
+    // Le handler a bien sondé la file au moins 1 fois.
+    expect(state.probeCount).toBeGreaterThanOrEqual(1)
   })
+
+  it.each(['throw', '42501'])(
+    'une panne de sonde (%s) permet une relecture immédiate',
+    async (failure) => {
+      const req = mockReq({ method: 'GET', query: {} })
+      req.user = adminSession()
+      state.probeError = failure
+      const failureResponse = mockRes()
+      await adminErpQueueListHandler(req, failureResponse)
+      expect(failureResponse.statusCode).toBe(500)
+      expect(failureResponse.jsonBody).toMatchObject({
+        error: { details: { code: 'QUERY_FAILED' } },
+      })
+      state.probeError = null
+      const successResponse = mockRes()
+      await adminErpQueueListHandler(req, successResponse)
+      expect(successResponse.statusCode).toBe(200)
+      expect(state.probeCount).toBe(2)
+    }
+  )
 
   it('AC #5 D-10 (mode b) : table présente + status default failed → SELECT eq("status","failed")', async () => {
     state.erpQueueTableExists = true
@@ -229,9 +250,9 @@ describe('GET /api/admin/erp-queue (admin-erp-queue-list)', () => {
     expect(body.error.details?.code).toBe('ROLE_NOT_ALLOWED')
     // Aucun SELECT exécuté.
     expect(state.fromCallsHistory).toHaveLength(0)
-    // Le check pg_tables ne devrait PAS s'exécuter avant le RBAC (économie).
+    // La sonde ne devrait PAS s'exécuter avant le RBAC (économie).
     // Mais le handler peut légitimement le faire après — on n'asserte pas sur
-    // pgTablesCheckCount ici (laisse l'implémentation libre).
+    // probeCount ici (laisse l'implémentation libre).
   })
 
   it('AC #5 D-2 : cursor base64 corrompu → 422 INVALID_CURSOR (cohérent audit-trail D-2)', async () => {

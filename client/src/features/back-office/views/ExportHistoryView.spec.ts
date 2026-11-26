@@ -1,6 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { mount, flushPromises } from '@vue/test-utils'
-import { defineComponent, h } from 'vue'
 
 /**
  * CR Story 5.6 P5 — tests dédiés `ExportHistoryView.vue` (la story livrait
@@ -164,5 +163,65 @@ describe('ExportHistoryView (UI) — Story 5.6 + CR P1/P3/P4/P5', () => {
     expect(routerMock.replace).toHaveBeenCalled()
     const lastCall = routerMock.replace.mock.calls.at(-1)
     expect(lastCall?.[0]).toEqual({ query: { supplier: 'MARTINEZ' } })
+  })
+  it('affiche la référence du fournisseur choisi ou son historique vide, en lecture seule', async () => {
+    const calls: string[] = []
+    const config = {
+      suppliers: ['A', 'B', 'C'].map((code) => ({
+        code,
+        label: 'Fournisseur ' + code,
+        language: 'es',
+      })),
+    }
+    globalThis.fetch = async (input, init) => {
+      calls.push(init?.method ?? 'GET')
+      const url = new URL(String(input), 'http://localhost')
+      if (url.pathname.endsWith('config-list')) return jsonResponse(200, { data: config })
+      const code = url.searchParams.get('supplier')
+      const items =
+        code && code !== 'C' ? [{ id: 1, supplier_code: code, file_name: code + '.xlsx' }] : []
+      return jsonResponse(200, { data: { items, next_cursor: null } })
+    }
+    const wrapper = mount(ExportHistoryView)
+    await flushPromises()
+    for (const code of ['A', 'B', 'C']) {
+      await wrapper.get('select').setValue(code)
+      await flushPromises()
+      expect(wrapper.get('h2').text()).toBe('Fournisseur ' + code)
+      if (code === 'C') {
+        expect(wrapper.get('.empty').text()).toContain('Fournisseur C')
+        expect(wrapper.find('table').exists()).toBe(false)
+      } else {
+        expect(wrapper.get('.filename').text()).toBe(code + '.xlsx')
+      }
+    }
+    await wrapper.get('.back').trigger('click')
+    expect(routerMock.push).toHaveBeenCalledWith({ name: 'admin-sav-list' })
+    expect(calls).toEqual(Array(5).fill('GET'))
+  })
+
+  it('ignore la réponse tardive du fournisseur précédent', async () => {
+    let resolveRufino!: (response: Response) => void
+    globalThis.fetch = async (input) => {
+      const url = new URL(String(input), 'http://localhost')
+      if (url.pathname.endsWith('config-list')) return jsonResponse(200, configListResponse())
+      const supplier = url.searchParams.get('supplier')
+      if (supplier === 'RUFINO')
+        return new Promise((resolve) => {
+          resolveRufino = resolve
+        })
+      return jsonResponse(200, {
+        data: { items: supplier ? [{ id: 1, file_name: 'martinez.xlsx' }] : [], next_cursor: null },
+      })
+    }
+    const wrapper = mount(ExportHistoryView)
+    await flushPromises()
+    await wrapper.get('select').setValue('RUFINO')
+    await wrapper.get('select').setValue('MARTINEZ')
+    await flushPromises()
+    resolveRufino(jsonResponse(503, {}))
+    await flushPromises()
+    expect(wrapper.get('.filename').text()).toBe('martinez.xlsx')
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
   })
 })

@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { ref, onMounted, watch, computed } from 'vue'
+import { ref, onMounted, computed } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import {
   useSupplierExport,
@@ -34,15 +34,13 @@ const supplierOptions = ref<SupplierConfigEntry[]>([])
 const items = ref<ExportHistoryItem[]>([])
 const nextCursor = ref<string | null>(null)
 const cursorStack = ref<Array<string | null>>([])
-// CR Story 5.6 P1 — toast warning pour parité avec `ExportSupplierModal`
-// (AC #6 / AC #9). Sans ce feedback, l'opérateur travaille avec une liste
-// statique sans le savoir si /config-list est down (ex. token expiré).
 const toastMessage = ref<string | null>(null)
-// CR Story 5.6 P3 — flag pour suppression de la première fire du watcher
-// `supplier` pendant le setup initial (hydrateFromQuery + loadConfigList).
-// Sans cela, watcher fire un `load(null)` concurrent qui est abortée par
-// l'`await load(null)` explicite ligne suivante.
-let suppressNextSupplierWatch = false
+const initialized = ref(false)
+const supplierLabel = computed(
+  () =>
+    supplierOptions.value.find((option) => option.code === supplier.value)?.label ??
+    'Tous les fournisseurs'
+)
 
 async function loadConfigList(): Promise<void> {
   try {
@@ -62,8 +60,8 @@ async function loadConfigList(): Promise<void> {
   // qui ne correspond à aucun fournisseur connu (option fantôme dans le
   // select + filtre serveur sur code invalide → 0 résultats trompeurs).
   if (supplier.value && !supplierOptions.value.some((s) => s.code === supplier.value)) {
-    suppressNextSupplierWatch = true
     supplier.value = ''
+    updateQuery()
     toastMessage.value = `Filtre fournisseur « ${route.query['supplier']} » inconnu — réinitialisé.`
   }
 }
@@ -86,18 +84,19 @@ async function load(cursor: string | null = null): Promise<void> {
     // (changement filtre / pagination rapide) : silently ignore, le fetch
     // suivant produira l'état affiché.
     if (e instanceof Error && e.name === 'AbortError') return
-    throw e
+    items.value = []
+    nextCursor.value = null
   }
 }
 
 async function onNext(): Promise<void> {
-  if (nextCursor.value === null) return
+  if (exp.fetchingHistory.value || nextCursor.value === null) return
   cursorStack.value.push(nextCursor.value)
   await load(nextCursor.value)
 }
 
 async function onPrev(): Promise<void> {
-  if (cursorStack.value.length === 0) return
+  if (exp.fetchingHistory.value || cursorStack.value.length === 0) return
   cursorStack.value.pop()
   const prev = cursorStack.value[cursorStack.value.length - 1] ?? null
   await load(prev)
@@ -126,31 +125,14 @@ function goBack(): void {
   void router.push({ name: 'admin-sav-list' })
 }
 
-const isEmpty = computed(() => !exp.fetchingHistory.value && items.value.length === 0)
-
 onMounted(async () => {
-  // CR Story 5.6 P3 — ordre rigoureux pour éviter race watcher-vs-load :
-  //  1. hydrateFromQuery → set supplier (peut déclencher watcher en
-  //     microtâche, on bloque via suppressNextSupplierWatch).
-  //  2. loadConfigList → peut révoquer la sélection si supplier inconnu
-  //     (P4) ; pose aussi suppressNextSupplierWatch.
-  //  3. load(null) explicite → unique requête historique.
-  suppressNextSupplierWatch = true
   hydrateFromQuery()
-  cursorStack.value = []
   await loadConfigList()
-  await load(null)
-  // Reset le flag (au cas où aucune mutation supplier n'a eu lieu — le
-  // watcher reprend son comportement normal au prochain changement
-  // utilisateur).
-  suppressNextSupplierWatch = false
+  initialized.value = true
+  await load()
 })
 
-watch(supplier, async (v) => {
-  if (suppressNextSupplierWatch) {
-    suppressNextSupplierWatch = false
-    return
-  }
+function updateQuery(): void {
   // W45 (CR Story 5.2) — merger avec la query existante au lieu d'écraser :
   // un deep-link portant d'autres params (tracking, debug, etc.) reste
   // intact lors d'un changement de filtre.
@@ -160,174 +142,225 @@ watch(supplier, async (v) => {
     if (typeof val === 'string') nextQuery[k] = val
     else if (Array.isArray(val)) nextQuery[k] = val
   }
-  if (v) nextQuery['supplier'] = v
+  if (supplier.value) nextQuery['supplier'] = supplier.value
   void router.replace({ query: nextQuery })
+}
+
+async function changeSupplier(): Promise<void> {
+  updateQuery()
   cursorStack.value = []
-  await load(null)
-})
+  await load()
+}
 </script>
 
 <template>
   <main class="export-history-view">
     <header class="header">
-      <button type="button" class="back" @click="goBack">← Retour</button>
+      <button type="button" class="back" @click="goBack">← Liste des SAV</button>
       <h1>Historique des exports fournisseurs</h1>
     </header>
 
     <p v-if="toastMessage" class="export-history-view__toast" role="status">{{ toastMessage }}</p>
 
-    <section class="filters">
-      <label>
-        <span>Fournisseur</span>
-        <select v-model="supplier" aria-label="Filtrer par fournisseur">
-          <option value="">Tous</option>
-          <option v-for="s in supplierOptions" :key="s.code" :value="s.code">
-            {{ s.label }}
-          </option>
-        </select>
-      </label>
-    </section>
+    <div class="history-layout">
+      <section class="filters">
+        <label>
+          <span>Fournisseur</span>
+          <select
+            v-model="supplier"
+            class="sav-field"
+            :disabled="!initialized"
+            @change="changeSupplier"
+            aria-label="Filtrer par fournisseur"
+          >
+            <option value="">Tous</option>
+            <option v-for="s in supplierOptions" :key="s.code" :value="s.code">
+              {{ s.label }}
+            </option>
+          </select>
+        </label>
+      </section>
 
-    <p v-if="exp.historyError.value" class="error" role="alert">{{ exp.historyError.value }}</p>
+      <section class="results" aria-labelledby="history-title">
+        <h2 id="history-title">{{ supplierLabel }}</h2>
+        <div v-if="exp.historyError.value">
+          <p class="error" role="alert">{{ exp.historyError.value }}</p>
+          <button type="button" @click="load(cursorStack.at(-1) ?? null)">
+            Relire l’historique
+          </button>
+        </div>
 
-    <template v-if="exp.fetchingHistory.value && items.length === 0">
-      <div class="skeleton" aria-busy="true">Chargement…</div>
-    </template>
+        <template v-else-if="!initialized || exp.fetchingHistory.value">
+          <div class="skeleton" aria-busy="true">Chargement…</div>
+        </template>
 
-    <template v-else-if="isEmpty">
-      <p class="empty">Aucun export pour ces critères.</p>
-    </template>
+        <template v-else-if="items.length === 0">
+          <p class="empty" role="status">Aucun export pour {{ supplierLabel }}.</p>
+        </template>
 
-    <template v-else>
-      <table class="history-table" role="table" aria-label="Historique des exports">
-        <thead>
-          <tr>
-            <th scope="col">Généré le</th>
-            <th scope="col">Fournisseur</th>
-            <th scope="col">Période</th>
-            <th scope="col">Fichier</th>
-            <th scope="col">Lignes</th>
-            <th scope="col">Total</th>
-            <th scope="col">Opérateur</th>
-            <th scope="col">Téléchargement</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr v-for="item in items" :key="item.id">
-            <td>{{ formatDate(item.created_at) }}</td>
-            <td>{{ item.supplier_code }}</td>
-            <td>{{ formatDate(item.period_from) }} → {{ formatDate(item.period_to) }}</td>
-            <td class="ellipsis">{{ item.file_name }}</td>
-            <td>{{ item.line_count }}</td>
-            <td>{{ formatEuros(item.total_amount_cents) }}</td>
-            <td>{{ item.generated_by_operator?.email_display_short ?? '—' }}</td>
-            <td>
-              <a
-                v-if="item.web_url"
-                :href="`/api/exports/supplier/${item.id}/download`"
-                target="_blank"
-                rel="noopener"
-                >Télécharger</a
-              >
-              <span v-else class="muted">indisponible</span>
-            </td>
-          </tr>
-        </tbody>
-      </table>
-
-      <footer class="pagination">
-        <button
-          type="button"
-          :disabled="cursorStack.length === 0 || exp.fetchingHistory.value"
-          @click="onPrev"
-        >
-          Page précédente
-        </button>
-        <button
-          type="button"
-          :disabled="nextCursor === null || exp.fetchingHistory.value"
-          @click="onNext"
-        >
-          Page suivante
-        </button>
-      </footer>
-    </template>
+        <template v-else>
+          <div class="table-scroll" tabindex="0" role="region" aria-label="Parcourir les exports">
+            <table class="history-table" role="table" aria-label="Historique des exports">
+              <thead>
+                <tr>
+                  <th scope="col">Fichier</th>
+                  <th scope="col">Généré le</th>
+                  <th scope="col">Fournisseur</th>
+                  <th scope="col">Période</th>
+                  <th scope="col">Lignes</th>
+                  <th scope="col">Total</th>
+                  <th scope="col">Opérateur</th>
+                  <th scope="col">Téléchargement</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr v-for="item in items" :key="item.id">
+                  <td class="filename">{{ item.file_name }}</td>
+                  <td>{{ formatDate(item.created_at) }}</td>
+                  <td>{{ item.supplier_code }}</td>
+                  <td>{{ formatDate(item.period_from) }} → {{ formatDate(item.period_to) }}</td>
+                  <td>{{ item.line_count }}</td>
+                  <td>{{ formatEuros(item.total_amount_cents) }}</td>
+                  <td>{{ item.generated_by_operator?.email_display_short ?? '—' }}</td>
+                  <td>
+                    <a
+                      v-if="item.web_url"
+                      :href="`/api/exports/supplier/${item.id}/download`"
+                      target="_blank"
+                      rel="noopener"
+                      >Télécharger</a
+                    >
+                    <span v-else class="muted">indisponible</span>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </template>
+        <footer v-if="items.length || cursorStack.length" class="pagination">
+          <button
+            type="button"
+            :disabled="cursorStack.length === 0 || exp.fetchingHistory.value"
+            @click="onPrev"
+          >
+            Page précédente
+          </button>
+          <button
+            type="button"
+            :disabled="nextCursor === null || exp.fetchingHistory.value"
+            @click="onNext"
+          >
+            Page suivante
+          </button>
+        </footer>
+      </section>
+    </div>
   </main>
 </template>
 
 <style scoped>
 .export-history-view {
-  padding: 1rem;
-  max-width: 1400px;
-  margin: 0 auto;
+  max-width: 88rem;
+  margin: auto;
+  padding: clamp(1rem, 3vw, 2rem);
+  color: var(--text-dark);
 }
-.header {
-  display: flex;
-  align-items: center;
+.header h1 {
+  font-size: clamp(1.55rem, 3vw, 2.2rem);
+  color: var(--text-dark);
+}
+.back,
+a {
+  color: #80400b;
+  text-decoration: underline;
+}
+.history-layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(12rem, 16rem);
   gap: 1rem;
+  align-items: start;
 }
-.back {
-  background: none;
-  border: 1px solid #ccc;
-  padding: 0.35rem 0.8rem;
-  border-radius: 4px;
-  cursor: pointer;
+.filters,
+.results {
+  min-width: 0;
+  border: 1px solid #e7ddd0;
+  border-radius: 1rem;
+  padding: 1rem;
+  background: white;
 }
 .filters {
-  margin: 1rem 0;
+  grid-column: 2;
+  grid-row: 1;
+  background: #fff8ef;
 }
 .filters label {
-  display: inline-flex;
-  flex-direction: column;
-  font-size: 0.875rem;
+  display: grid;
+  gap: 0.5rem;
+  font-weight: 700;
 }
-.filters select {
-  padding: 0.4rem;
-  border: 1px solid #ccc;
-  border-radius: 4px;
+.results {
+  grid-column: 1;
+  grid-row: 1;
+}
+.results h2 {
+  font-size: 1.15rem;
+  color: var(--text-dark);
+  margin: 0 0 1rem;
+}
+.table-scroll {
+  overflow-x: auto;
 }
 .history-table {
   width: 100%;
+  min-width: 54rem;
   border-collapse: collapse;
-  background: white;
+  font-size: 0.875rem;
 }
 .history-table th,
 .history-table td {
-  padding: 0.5rem;
+  padding: 0.65rem;
   text-align: left;
-  border-bottom: 1px solid #eee;
-  font-size: 0.875rem;
+  border-bottom: 1px solid #e7ddd0;
 }
-.ellipsis {
-  max-width: 300px;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+.history-table th {
+  background: #fff8ef;
 }
-.empty {
-  color: #666;
-  margin-top: 1rem;
+.filename {
+  overflow-wrap: anywhere;
+  font-weight: 600;
 }
 .error {
-  color: #b00020;
+  color: #90251b;
 }
 .muted {
-  color: #888;
+  color: #625950;
 }
 .pagination {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.75rem;
   margin-top: 1rem;
 }
 .pagination button {
-  padding: 0.4rem 0.9rem;
-  border: 1px solid #ccc;
-  background: white;
-  border-radius: 4px;
-  cursor: pointer;
+  padding: 0.5rem 0.8rem;
+  border: 1px solid #84796d;
+  border-radius: 0.625rem;
 }
-.pagination button:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
+button:disabled {
+  opacity: 0.55;
+}
+:focus-visible {
+  outline: 3px solid #80400b;
+  outline-offset: 2px;
+}
+@media (max-width: 48rem) {
+  .history-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .filters,
+  .results {
+    grid-column: auto;
+    grid-row: auto;
+  }
 }
 </style>

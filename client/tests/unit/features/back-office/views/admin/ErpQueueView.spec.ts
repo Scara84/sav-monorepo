@@ -138,7 +138,10 @@ describe('ErpQueueView — H-10 OQ-2 W117: retryPush reçoit removeFromList selo
     const filterSelect = w.find('#filter-status')
     expect(filterSelect.exists()).toBe(true)
     await filterSelect.setValue('all')
-    await w.vm.$nextTick()
+    expect(w.get('.filter-summary').text()).toContain('Échec')
+    await w.get('form').trigger('submit')
+    await flushPromises()
+    expect(w.get('.filter-summary').text()).toContain('Tous')
 
     // Cliquer Retenter
     const retryBtn = w.find('[data-retry-push="42"]')

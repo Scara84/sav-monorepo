@@ -139,4 +139,67 @@ describe('ErpQueueView (UI smoke — Story 7-5 D-10 feature-flag)', () => {
     expect(wrapper.text()).not.toContain('signature')
     expect(wrapper.text()).not.toContain('idempotency_key')
   })
+  it('relit la file après un non-provisionnement et distingue panne, vide et échec', async () => {
+    const requests: string[] = []
+    const failed = {
+      id: 12,
+      sav_id: 3,
+      sav_reference: 'SAV-TEMOIN',
+      status: 'failed',
+      attempts: 4,
+      last_error: null,
+    }
+    const responses = [
+      jsonResponse(503, { error: { details: { code: 'ERP_QUEUE_NOT_PROVISIONED' } } }),
+      jsonResponse(503, { error: { message: 'Service indisponible' } }),
+      jsonResponse(200, { data: { items: [] } }),
+      jsonResponse(200, { data: { items: [failed] } }),
+      jsonResponse(500, { error: { message: 'Relance refusée' } }),
+      jsonResponse(200, { data: {} }),
+    ]
+    globalThis.fetch = async (input, init) => {
+      requests.push((init?.method ?? 'GET') + ' ' + String(input))
+      return responses.shift()!
+    }
+    const wrapper = mount(ErpQueueView)
+    await flushPromises()
+    expect(wrapper.get('.banner-placeholder').text()).toContain('non provisionnée')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toContain('Service indisponible')
+    expect(wrapper.find('.banner-placeholder').exists()).toBe(false)
+    await wrapper.get('#filter-status').setValue('pending')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(requests.at(-1)).toContain('status=pending')
+    expect(wrapper.get('.filter-summary').text()).toContain('En attente')
+    expect(wrapper.text()).toContain('Aucune synchronisation')
+    await wrapper.get('#filter-status').setValue('failed')
+    expect(wrapper.get('.filter-summary').text()).toContain('En attente')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(wrapper.get('tbody tr').text()).toContain('SAV-TEMOIN')
+    expect(wrapper.get('tbody tr').findAll('td')[2]!.text()).toBe('4')
+    expect(requests.every((req) => req.startsWith('GET '))).toBe(true)
+    await wrapper.get('[data-retry-push]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.toast.error').text()).toContain('Relance refusée')
+    expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+    await wrapper.get('[data-retry-push]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('.toast.success [role="status"]').text()).toContain('replanifiée')
+    await wrapper.get('.toast button').trigger('click')
+    expect(wrapper.find('.toast').exists()).toBe(false)
+    expect(requests.filter((req) => req.startsWith('POST '))).toEqual(
+      Array(2).fill('POST /api/admin/erp-queue/12/retry')
+    )
+    wrapper.unmount()
+  })
+  it.each([{}, { data: { items: {} } }])('signale un contenu de file incomplet', async (body) => {
+    globalThis.fetch = async () => jsonResponse(200, body)
+    const wrapper = mount(ErpQueueView)
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toContain('Réponse ERP incomplète')
+    expect(wrapper.text()).not.toContain('Aucune synchronisation')
+  })
 })
