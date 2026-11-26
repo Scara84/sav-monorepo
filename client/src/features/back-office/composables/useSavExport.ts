@@ -205,6 +205,7 @@ export function useSavExport(): UseSavExportApi {
 
       // 4xx/5xx → JSON erreur (toujours)
       if (!res.ok) {
+        if (res.status === 401 && typeof window !== 'undefined') window.location.assign('/admin/login')
         const body = (await res.json().catch(() => ({}))) as ApiErrorShape
         const code = classifyHttpError(res.status, body)
         const msg = translate(code)

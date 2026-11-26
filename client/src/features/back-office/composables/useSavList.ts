@@ -110,6 +110,10 @@ export function useSavList() {
         signal: currentAbort.signal,
       })
       if (seq !== requestSeq) return // stale response ignored
+      if (res.status === 401 || res.status === 403) {
+        items.value = []
+        meta.value = { cursor: null, count: 0, limit: 50 }
+      }
       if (res.status === 401) {
         // Story 5.8 — pas de session → redirect /admin/login (magic link).
         // Le cookie `sav_session` est HttpOnly, on ne peut pas le détecter

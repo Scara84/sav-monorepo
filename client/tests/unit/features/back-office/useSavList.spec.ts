@@ -72,11 +72,15 @@ describe('useSavList', () => {
     expect(list.initialLoadDone.value).toBe(true)
   })
 
-  it('401 pose error "Session expirée"', async () => {
-    mockFetchOnce({}, 401)
+  it.each([401, 403])('efface les données affichées après un refus %i', async (status) => {
+    mockFetchOnce({ data: [{ id: 1 }], meta: { cursor: 'suite', count: 1, limit: 50 } })
     const list = useSavList()
-    await list.fetchList({ resetCursor: true })
-    expect(list.error.value).toBe('Session expirée')
+    await list.fetchList()
+    mockFetchOnce({}, status)
+    await list.fetchList()
+    expect(list.error.value).toBe(status === 401 ? 'Session expirée' : 'Accès refusé')
+    expect(list.items.value).toEqual([])
+    expect(list.meta.value).toEqual({ cursor: null, count: 0, limit: 50 })
   })
 
   it('429 pose error de rate-limit', async () => {

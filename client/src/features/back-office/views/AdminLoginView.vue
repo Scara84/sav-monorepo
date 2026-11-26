@@ -103,11 +103,11 @@ async function handleSubmit(): Promise<void> {
 </script>
 
 <template>
-  <div class="login-page">
+  <main class="login-page">
     <div class="login-card">
       <header class="login-header">
-        <h1>SAV Fruitstock</h1>
-        <p class="subtitle">Back-office opérateur</p>
+        <p class="subtitle">SAV Fruitstock</p>
+        <h1>Espace opérateur</h1>
       </header>
 
       <!-- H-04 AC#5(d) — banner d'erreur inline au-dessus du form (W42) -->
@@ -160,7 +160,7 @@ async function handleSubmit(): Promise<void> {
         <p v-if="state === 'error'" role="alert" class="error">{{ errorMessage }}</p>
       </form>
     </div>
-  </div>
+  </main>
 </template>
 
 <style scoped>
@@ -175,7 +175,8 @@ async function handleSubmit(): Promise<void> {
 .login-card {
   background: #ffffff;
   border-radius: 12px;
-  padding: 2.5rem;
+  border-top: 5px solid var(--main-orange, #e88a23);
+  padding: clamp(1.25rem, 5vw, 2.5rem);
   width: 100%;
   max-width: 420px;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
@@ -187,7 +188,7 @@ async function handleSubmit(): Promise<void> {
 .login-header h1 {
   margin: 0 0 0.25rem;
   font-size: 1.5rem;
-  color: #ea7500;
+  color: #30200e;
 }
 .login-header .subtitle {
   margin: 0;
@@ -212,7 +213,7 @@ async function handleSubmit(): Promise<void> {
   background: #fafafa;
 }
 .login-form input:focus {
-  outline: 2px solid #ea7500;
+  outline: 3px solid #80400b;
   outline-offset: 1px;
   background: #ffffff;
 }
@@ -224,8 +225,8 @@ async function handleSubmit(): Promise<void> {
 }
 .login-form button[type='submit'] {
   margin-top: 0.5rem;
-  background: #ea7500;
-  color: #ffffff;
+  background: var(--main-orange, #e88a23);
+  color: #30200e;
   border: 0;
   padding: 0.75rem 1rem;
   border-radius: 8px;
@@ -234,7 +235,7 @@ async function handleSubmit(): Promise<void> {
   cursor: pointer;
 }
 .login-form button[type='submit']:hover:not(:disabled) {
-  background: #c66400;
+  background: #ed983a;
 }
 .login-form button[type='submit']:disabled {
   background: #d4cfc4;
@@ -273,6 +274,10 @@ async function handleSubmit(): Promise<void> {
   font: inherit;
   font-size: 0.9rem;
 }
+.login-card button:focus-visible {
+  outline: 3px solid #80400b;
+  outline-offset: 3px;
+}
 .login-success {
   text-align: center;
   line-height: 1.6;
@@ -289,7 +294,7 @@ async function handleSubmit(): Promise<void> {
   background: none;
   border: 0;
   padding: 0;
-  color: #ea7500;
+  color: #30200e;
   text-decoration: underline;
   cursor: pointer;
   font: inherit;

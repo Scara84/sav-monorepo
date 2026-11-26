@@ -67,11 +67,12 @@
   font-weight: 600;
 }
 .bo-header .logo:focus {
-  outline: 2px solid #0066cc;
+  outline: 2px solid #80400b;
   outline-offset: 2px;
 }
 .bo-nav {
   display: flex;
+  flex-wrap: wrap;
   gap: 0.5rem;
 }
 .nav-link {
@@ -89,11 +90,11 @@
   color: #333;
 }
 .nav-link.router-link-active {
-  background: #0066cc;
-  color: white;
+  background: var(--main-orange, #e88a23);
+  color: #30200e;
 }
 .nav-link:focus {
-  outline: 2px solid #0066cc;
+  outline: 2px solid #80400b;
   outline-offset: 2px;
 }
 .bo-main {

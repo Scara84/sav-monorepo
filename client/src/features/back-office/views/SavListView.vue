@@ -477,7 +477,7 @@ async function runExport(format: ExportFormat): Promise<void> {
       <button type="button" @click="list.fetchList({ resetCursor: true })">Réessayer</button>
     </p>
 
-    <template v-if="showSkeleton">
+    <template v-else-if="showSkeleton">
       <div class="skeleton" aria-busy="true" aria-label="Chargement">
         <div v-for="n in 5" :key="n" class="skeleton-row" />
       </div>
