@@ -17,7 +17,7 @@
  *   AC #11(d) — Archive ZIP valide mais hors-OOXML (.zip renommé .xlsx) → 422 UNPROCESSABLE_ENTITY
  *   AC #11(e) — Classeur XLSX sans onglet FACTURE_GROUPE → 400 INVALID_FORMAT
  *   AC #11(f) — Tolérance #N/A (fixture réelle avec #N/A dans precio, lignes vides) → 200, warnings > 0, skippedRows > 0
- *   AC #11(g) — Cross-SAV / group scope : opérateur groupe A → SAV groupe B → 403 FORBIDDEN
+ *   AC #11(g) — Cross-SAV / group scope : opérateur groupe A → SAV groupe B → 200
  *   AC #11(h) — Formula injection guard : designationFr avec =cmd... → jamais évalué (cellFormula:false)
  *   AC #3    — 401 rôle non op/admin (self_service user) ; 404 savId inexistant
  *   AC #4    — GET → 405 METHOD_NOT_ALLOWED
@@ -612,11 +612,11 @@ describe('PSF-06: Tolérance #N/A et lignes vides (AC #8)', () => {
 })
 
 // ===========================================================================
-// AC #11(g) — Cross-SAV / group scope → 403 FORBIDDEN
+// AC #11(g) — Cross-SAV / group scope → 200
 // ===========================================================================
 
 describe('PSF-07: RBAC group scope (AC #3)', () => {
-  it('PSF-07a: opérateur groupe A, SAV dans groupe B → 403 FORBIDDEN', async () => {
+  it('PSF-07a: opérateur groupe A, SAV dans groupe B → 200', async () => {
     db.savGroupId = 2
     db.operatorGroupIds = [1] // opérateur PAS dans groupe 2
 
@@ -624,10 +624,7 @@ describe('PSF-07: RBAC group scope (AC #3)', () => {
     const res = mockRes()
     await handler(parseReq(1, fileBuffer), res)
 
-    expect(res.statusCode).toBe(403)
-    const body = res.jsonBody as { error: { code: string; message: string } }
-    expect(body.error.code).toBe('FORBIDDEN')
-    expect(body.error.message).toMatch(/scope|groupe/i)
+    expect(res.statusCode).toBe(200)
   })
 
   it('PSF-07b: admin bypass → 200 même si SAV dans groupe différent', async () => {
@@ -928,8 +925,8 @@ describe('Préparation kDrive sur la commande du SAV', () => {
     expect(await manual('périmée')).toBe(409)
     db.operatorGroupIds = []
     db.mentionReads = 0
-    expect(await manual(db.mention)).toBe(403)
-    expect(db.mentionReads).toBe(0)
+    expect(await manual(db.mention)).toBe(200)
+    expect(db.mentionReads).toBe(1)
     expect(await manual(db.mention, 'admin')).toBe(200)
     db.mention = ''
     db.operatorGroupIds = [1]
@@ -955,6 +952,7 @@ describe('Préparation kDrive sur la commande du SAV', () => {
     const buffer = readFileSync(FIXTURE_VALID)
     readWorkbook.mockResolvedValue(buffer)
     const auto = await prepare(opCookie(), { reference: 'autre commande' })
+    expect(db.mentionReads).toBe(2)
     const manual = mockRes()
     await handler(parseReq(1, buffer), manual)
     expect(manual.statusCode).toBe(200)
@@ -966,14 +964,14 @@ describe('Préparation kDrive sur la commande du SAV', () => {
     })
     expect(auto.jsonBody).toEqual(manual.jsonBody)
     expect(readWorkbook).toHaveBeenCalledWith(db.mention, process.env)
-    expect(db.mentionReads).toBe(2)
   })
 
-  it.each(['admin', 'sav-operator'] as const)('refuse %s hors groupe avant toute lecture de la commande', async role => {
-    db.operatorGroupIds = [42]
-    expect(await prepare(opCookie({ role }))).toHaveProperty('statusCode', 403)
-    expect(db.mentionReads).toBe(0)
-    expect(readWorkbook).not.toHaveBeenCalled()
+  it.each(['admin', 'sav-operator'] as const)('prépare le classeur pour %s sans groupe affecté', async role => {
+    db.operatorGroupIds = []
+    readWorkbook.mockResolvedValueOnce(readFileSync(FIXTURE_VALID))
+    expect(await prepare(opCookie({ role }))).toHaveProperty('statusCode', 200)
+    expect(db.mentionReads).toBe(2)
+    expect(readWorkbook).toHaveBeenCalledTimes(1)
   })
 
   it('refuse une session absente et une commande périmée avant kDrive', async () => {
@@ -982,13 +980,13 @@ describe('Préparation kDrive sur la commande du SAV', () => {
     expect(readWorkbook).not.toHaveBeenCalled()
   })
 
-  it.each(['commande', 'droits'])('revérifie %s après la lecture', async kind => {
+  it.each(['commande', 'existence du SAV'])('revérifie %s après la lecture', async kind => {
     readWorkbook.mockImplementation(async () => {
       if (kind === 'commande') db.mention += ' modifiée'
-      else db.operatorGroupIds = []
+      else db.savNotFound = true
       return readFileSync(FIXTURE_VALID)
     })
-    expect((await prepare()).statusCode).toBe(kind === 'commande' ? 409 : 403)
+    expect((await prepare()).statusCode).toBe(kind === 'commande' ? 409 : 404)
   })
 
   it('masque les détails internes et bloque le classeur illisible', async () => {

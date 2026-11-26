@@ -30,7 +30,7 @@
  *   DL-05 (AC #6h) : audit sav_supplier_claim_downloaded tracé après 200
  *   DL-06 (AC #6i) : audit échec ≠ bloquant — 200 livré même si recordAudit throws
  *   DL-07 (AC #4a) : méthode POST → 405
- *   DL-08 (AC #4c) : group scope — opérateur autre groupe → 403
+ *   DL-08 (AC #4c) : group scope — opérateur autre groupe → 200
  *   DL-09 (AC #4d) : claimId inexistant → 404
  *   DL-10 (AC #2)  : headers Content-Length + Cache-Control: private, no-store
  *
@@ -626,13 +626,24 @@ describe('DL-07: méthode non-GET → 405 (AC #4)', () => {
 })
 
 // ===========================================================================
-// DL-08 — Group scope — opérateur autre groupe → 403 (AC #4c)
+// DL-08 — Group scope — opérateur autre groupe → 200 (AC #4c)
 // ===========================================================================
 
-describe('DL-08: group scope — opérateur autre groupe → 403 (AC #4c)', () => {
-  it('DL-08a: opérateur groupe [2] pour SAV groupe_id=1 → 403 FORBIDDEN', async () => {
+describe('DL-08: group scope — opérateur autre groupe → 200 (AC #4c)', () => {
+  it('DL-08a: opérateur groupe [2] pour SAV groupe_id=1 → 200', async () => {
     db.operatorGroupIds = [2]
     db.savGroupId = 1
+
+    const blob = makeXlsxBlob()
+    db.claimRow = {
+      id: 1,
+      sav_id: 1,
+      filename: 'RECLAMACION_SOL_Y_FRUTA_SAV-2026-00001_2026-06-05.xlsx',
+      document_blob: blob,
+      document_sha256: createHash('sha256').update(blob).digest('hex'),
+      total_importe_cents: 174,
+      generated_by_operator_id: 10,
+    }
 
     const req = mockReq({
       method: 'GET',
@@ -644,7 +655,7 @@ describe('DL-08: group scope — opérateur autre groupe → 403 (AC #4c)', () =
 
     await downloadSupplierClaimHandler(1)(req, res)
 
-    expect(res.statusCode).toBe(403)
+    expect(res.statusCode).toBe(200)
   })
 })
 

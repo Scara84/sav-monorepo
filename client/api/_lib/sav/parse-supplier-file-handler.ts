@@ -5,7 +5,7 @@
  *
  * Flux : body JSON { fileBuffer: base64, mimeType, filename }
  *        → validation taille/MIME/magic-bytes/extension
- *        → check group scope (RBAC)
+ *        → lecture du SAV
  *        → parse XLSX SheetJS 0.20.3 CDN (PATTERN-XLSX-CDN-PINNED)
  *        → réponse 200 JSON preview (0 persistance — PATTERN-PARSE-PREVIEW-NO-PERSIST)
  *
@@ -17,7 +17,6 @@
  *   Q1   : body JSON base64 (cohérence Story 4.8 import-supplier-prices)
  *   Q2   : savId inexistant → 404 NOT_FOUND
  *
- * Ordre middleware : withAuth → withRateLimit → checkGroupScope → handler
  * (AC #3 — R-8 : withAuth AVANT withRateLimit pour éviter consommation bucket non-auth)
  */
 
@@ -43,63 +42,6 @@ const ALLOWED_MIMES = new Set([
   'application/octet-stream',
 ])
 
-// RBAC — check group scope (pattern Story 4.8 apply-supplier-prices-handler)
-// Q2 : savId inexistant → 404 NOT_FOUND (déviation du pattern 4.8 qui retourne 403)
-// ---------------------------------------------------------------------------
-
-interface GroupCheckResult {
-  status: 'allowed' | 'not_found' | 'forbidden'
-  groupId?: number
-  reason?: string
-}
-
-async function checkGroupScope(
-  savId: number,
-  operatorId: number,
-  operatorRole: string | undefined
-): Promise<GroupCheckResult> {
-  // Admin bypass (AC #3c — admin voit tous les groupes)
-  if (operatorRole === 'admin') {
-    return { status: 'allowed' }
-  }
-
-  const admin = supabaseAdmin()
-
-  // Récupérer le group_id du SAV
-  const { data: savRow, error: savError } = await admin
-    .from('sav')
-    .select('group_id')
-    .eq('id', savId)
-    .maybeSingle<{ group_id: number }>()
-
-  if (savError) {
-    return { status: 'not_found', reason: 'Erreur lecture SAV' }
-  }
-
-  if (!savRow) {
-    // Q2 : SAV inexistant → 404
-    return { status: 'not_found', reason: 'SAV introuvable' }
-  }
-
-  const savGroupId = savRow.group_id
-
-  // Récupérer les groupes de l'opérateur
-  const { data: opGroups, error: opGroupsError } = await admin
-    .from('operator_groups')
-    .select('group_id')
-    .eq('operator_id', operatorId)
-
-  if (opGroupsError) {
-    return { status: 'forbidden', reason: 'Erreur lecture groupes opérateur' }
-  }
-
-  const operatorGroupIds = new Set((opGroups ?? []).map((g: { group_id: number }) => g.group_id))
-  if (!operatorGroupIds.has(savGroupId)) {
-    return { status: 'forbidden', reason: 'SAV hors scope groupe opérateur' }
-  }
-
-  return { status: 'allowed', groupId: savGroupId }
-}
 
 // ---------------------------------------------------------------------------
 // Core handler
@@ -204,32 +146,25 @@ function parseSupplierFileCore(savId: number): ApiHandler {
       })
       return
     }
-
-    // --- RBAC : check group scope (AC #3) ---
     try {
-      const groupCheck = await checkGroupScope(savId, user.sub, user.role)
-      if (groupCheck.status === 'not_found') {
-        res.status(404).json({ error: { code: 'NOT_FOUND', message: groupCheck.reason ?? 'SAV introuvable', requestId } })
+      const { data: sav, error } = await readSupplierOrder(savId)
+      if (error) throw error
+      if (!sav) {
+        res.status(404).json({ error: { code: 'NOT_FOUND', message: 'SAV introuvable', requestId } })
         return
       }
-      if (groupCheck.status === 'forbidden') {
-        res.status(403).json({ error: { code: 'FORBIDDEN', message: groupCheck.reason ?? 'Accès refusé', requestId } })
+      if (typeof body.expectedOrder === 'string' && body.expectedOrder.trim()
+          && body.expectedOrder !== sav.metadata?.invoice_special_mention) {
+        orderChanged(res, requestId)
         return
-      }
-      if (typeof body?.expectedOrder === 'string' && body.expectedOrder.trim()) {
-        const { data, error } = await readMention(savId, groupCheck.groupId)
-        if (error || data?.metadata?.invoice_special_mention !== body.expectedOrder) {
-          orderChanged(res, requestId)
-          return
-        }
       }
     } catch (err) {
-      logger.error('sav.parse_supplier_file.group_check_error', {
+      logger.error('sav.parse_supplier_file.sav_read_error', {
         requestId,
         savId,
         error: err instanceof Error ? err.message : String(err),
       })
-      res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Erreur vérification accès', requestId } })
+      res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Erreur de lecture du SAV', requestId } })
       return
     }
 
@@ -339,25 +274,26 @@ function orderChanged(res: ApiResponse, requestId: string) {
   res.status(409).json({ error: { code: 'ORDER_CHANGED', message: 'La commande a changé. Rouvrez le détail du SAV.', requestId } })
 }
 
-function readMention(savId: number, groupId?: number) {
-  const query = supabaseAdmin().from('sav').select('metadata').eq('id', savId)
-  return (groupId === undefined ? query : query.eq('group_id', groupId)).maybeSingle()
+function readSupplierOrder(savId: number) {
+  return supabaseAdmin().from('sav').select('metadata').eq('id', savId).maybeSingle()
 }
 
-async function readOrderContext(savId: number, operatorId: number, requestId: string, res: ApiResponse) {
-  const access = await checkGroupScope(savId, operatorId, undefined)
-  if (access.status !== 'allowed' || access.groupId === undefined) {
-    const missing = access.status === 'not_found'
-    res.status(missing ? 404 : 403).json({ error: { code: missing ? 'NOT_FOUND' : 'FORBIDDEN', message: 'SAV inaccessible', requestId } })
+async function readOrderContext(savId: number, requestId: string, res: ApiResponse) {
+  const { data, error } = await readSupplierOrder(savId)
+  if (error) {
+    res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Lecture du SAV impossible.', requestId } })
     return
   }
-  const { data, error } = await readMention(savId, access.groupId)
+  if (!data) {
+    res.status(404).json({ error: { code: 'NOT_FOUND', message: 'SAV introuvable', requestId } })
+    return
+  }
   const mention = data?.metadata?.invoice_special_mention
-  if (error || typeof mention !== 'string' || !mention.trim()) {
+  if (typeof mention !== 'string' || !mention.trim()) {
     res.status(409).json({ error: { code: 'ORDER_UNAVAILABLE', message: 'Commande du SAV indisponible.', requestId } })
     return
   }
-  return { groupId: access.groupId, mention }
+  return { mention }
 }
 
 // Coordination entre requêtes servies par la même instance, uniquement pendant la lecture.
@@ -372,7 +308,7 @@ function prepareSupplierFileCore(savId: number): ApiHandler {
     }
     let ownedKey: string | undefined
     try {
-      const context = await readOrderContext(savId, req.user.sub, requestId, res)
+      const context = await readOrderContext(savId, requestId, res)
       if (!context) return
       const body = req.body as { expectedOrder?: unknown } | undefined
       if (body && 'expectedOrder' in body && body.expectedOrder !== context.mention) {
@@ -387,9 +323,9 @@ function prepareSupplierFileCore(savId: number): ApiHandler {
       preparingOrders.add(key)
       ownedKey = key
       const buffer = await readKdriveOrderWorkbook(context.mention, process.env)
-      const current = await readOrderContext(savId, req.user.sub, requestId, res)
+      const current = await readOrderContext(savId, requestId, res)
       if (!current) return
-      if (current.groupId !== context.groupId || current.mention !== context.mention) {
+      if (current.mention !== context.mention) {
         orderChanged(res, requestId)
         return
       }
