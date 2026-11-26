@@ -71,3 +71,11 @@ Essai du SAV 150 sur la preview a37fc92 : le 26 novembre à 13 h 05 (Paris), le 
 Essai réel sur la preview `3155b52`, SAV 150, le 26 novembre à 13 h 48 (Paris). Message vu par l’opérateur et confirmé dans Vercel : « Redirection refusée. ». La résolution initiale a sélectionné le dossier de commande (une erreur de redirection pendant cette résolution porterait le nom de l’étape). La requête exacte et le statut 3xx précis ne figurent pas dans le journal. Le contenu distant et son empreinte restent non vérifiés. Reprise manuelle en attente de la copie indépendante du data.xlsx de cette commande.
 
 Rejeu autorisé du SAV 150, commande 522_26S45_63_3 (2026/S45). Le client applicatif a résolu et revérifié le dossier, le fichier direct unique data.xlsx et les droits. Première redirection observée sur GET /2/drive/134781/files/245741/download : HTTP 302 vers le nom d’hôte 1-6-v3-13.download.kdrive.infomaniakusercontent.com. Arrêt immédiat. Aucun appel à cet hôte et aucun octet du classeur lu. Le témoin S05 et la comparaison des octets restent ouverts.
+
+### Correctif autorisé après observation du SAV 150
+
+AC-11 à AC-15. Pour le seul GET de téléchargement du classeur vérifié, un 302 peut conduire à un second GET sur l’origine HTTPS exacte observée. La requête de stockage omet les identifiants et le référent. Toute redirection suivante est refusée. Cette décision remplace le refus systématique du 302 pour ce parcours. Le diagnostic CSV et les lectures de métadonnées conservent leur comportement.
+
+Revue ciblée : contrôle de l’origine, des identifiants dans l’URL, du statut et du nombre de sauts ; le même flux borné et le même validateur XLSX traitent les réponses directes et redirigées. 223 tests réussis et contrôle TypeScript réussi.
+
+Observé sur compte réel en exécutant localement le client serveur corrigé pour la commande 522_26S45_63_3 du SAV 150 : GET de téléchargement HTTP 302, un seul GET sans jeton ni cookies vers le stockage autorisé, HTTP 200. Classeur de 408 185 octets, SHA-256 `4bace44c3e8f5c70bb01a4111802c0376cbb7a81212d35566219bce1b541c572`. Parseur fournisseur : métadonnées lues, 981 lignes FACTURE_GROUPE et 873 lignes BDD. Lecture en mémoire exclusivement. Le parcours de la preview avec ce correctif, la comparaison avec une copie indépendante et le témoin S05 restent à vérifier.

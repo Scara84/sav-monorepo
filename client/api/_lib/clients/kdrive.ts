@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto'
 import { MAX_FILE_SIZE, validateOriginalWorkbook } from '../sav/supplier-workbook'
 
 const origin = 'https://api.infomaniak.com'
+const workbookDownloadOrigin = 'https://1-6-v3-13.download.kdrive.infomaniakusercontent.com'
 const folders = ['04_SUIVI_COMMANDE', '03_FACTURE', 'FRANCAIS']
 const witnessLimit = 1024 * 1024
 const metadataLimit = 256 * 1024
@@ -79,14 +80,25 @@ function kdriveClient(env: NodeJS.ProcessEnv, request: typeof fetch, controller:
     path: string,
     limit: number,
     consume: (chunk: Uint8Array) => void,
-    binary = false
+    kind: 'metadata' | 'witness' | 'workbook' = 'metadata'
   ) {
-    const response = await request(origin + path, {
+    let response = await request(origin + path, {
       method: 'GET',
-      headers: { Authorization: 'Bearer ' + token, Accept: binary ? '*/*' : 'application/json' },
+      headers: { Authorization: 'Bearer ' + token, Accept: kind === 'metadata' ? 'application/json' : '*/*' },
       redirect: 'manual',
       signal: controller.signal,
     })
+    if (kind === 'workbook' && response.status === 302) {
+      const location = response.headers.get('location')
+      await response.body?.cancel()
+      const target = location && URL.canParse(location) ? new URL(location) : null
+      if (!target || target.origin !== workbookDownloadOrigin || target.protocol !== 'https:' ||
+          target.username || target.password) fail('Destination de téléchargement refusée.')
+      response = await request(target, {
+        method: 'GET', redirect: 'manual', credentials: 'omit', referrerPolicy: 'no-referrer',
+        signal: controller.signal,
+      })
+    }
     const status = response.status
     if (status >= 300 && status < 400) fail('Redirection refusée.')
     if (status === 401) {
@@ -288,7 +300,7 @@ export async function checkKdrive(env: NodeJS.ProcessEnv, request = fetch) {
         '/2/drive/' + drive + '/files/' + witness + '/download',
         witnessLimit,
         (chunk) => hash.update(chunk),
-        true
+        'witness'
       )
       if (hash.digest('hex') !== digest.toLowerCase()) fail('Empreinte SHA-256 différente.')
       messages.push('Téléchargement du témoin vérifié par SHA-256.')
@@ -437,7 +449,7 @@ export async function readKdriveOrderWorkbook(raw: unknown, env: NodeJS.ProcessE
     await verifyReadable(originalId, 'file', 'data.xlsx', folderId)
     const chunks: Buffer[] = []
     await client.read('/2/drive/' + client.drive + '/files/' + originalId + '/download',
-      MAX_FILE_SIZE, chunk => chunks.push(Buffer.from(chunk)), true)
+      MAX_FILE_SIZE, chunk => chunks.push(Buffer.from(chunk)), 'workbook')
     const buffer = Buffer.concat(chunks)
     try {
       await validateOriginalWorkbook(buffer, controller.signal)

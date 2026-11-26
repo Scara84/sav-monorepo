@@ -6,6 +6,7 @@ import { readKdriveOrderWorkbook } from '../../../api/_lib/clients/kdrive'
 const original = readFileSync('tests/fixtures/supplier-claim-data.xlsx')
 const env = { KDRIVE_ID: '15', KDRIVE_TOKEN: 'secret-test' }
 const base = '/3/drive/15/files/'
+const storage = 'https://1-6-v3-13.download.kdrive.infomaniakusercontent.com'
 const download = '/2/drive/15/files/90/download'
 const list = (id: number) => base + id + '/files?limit=20'
 const dir = (id: number, parent_id: number, name: string) => ({
@@ -35,11 +36,19 @@ function fixture() {
     [detail(90), () => ({ data: file })],
     [download, () => bytes(original)],
   ])
+  const storageResponse = vi.fn(() => bytes(original))
   const calls: string[] = []
   const request = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
     const url = new URL(String(input))
     const path = url.pathname + url.search
     calls.push(path)
+    if (url.origin === storage) {
+      expect(init?.method).toBe('GET')
+      expect(init?.redirect).toBe('manual')
+      expect(init?.credentials).toBe('omit')
+      expect(Array.from(new Headers(init?.headers).keys())).toEqual([])
+      return storageResponse()
+    }
     expect(url.origin).toBe('https://api.infomaniak.com')
     expect(init?.method).toBe('GET')
     expect(init?.redirect).toBe('manual')
@@ -49,7 +58,7 @@ function fixture() {
     const response = route()
     return response instanceof Response ? response : Response.json({ result: 'success', ...Object(response) })
   })
-  return { routes, calls, run: () => readKdriveOrderWorkbook('46_26S5_94_1', env, request) }
+  return { routes, calls, storageResponse, run: () => readKdriveOrderWorkbook('46_26S5_94_1', env, request) }
 }
 
 describe('Original kDrive', () => {
@@ -59,6 +68,40 @@ describe('Original kDrive', () => {
     expect((await run()).equals(original)).toBe(true)
     expect(calls.slice(-3)).toEqual([detail(80), detail(90), download])
     expect(calls.filter(path => path === list(70))).toHaveLength(2)
+  })
+
+  const signed = storage + '/file?signature=test'
+  const redirect = (location: string, status = 302) => new Response(null, { status, headers: { location } })
+
+  it('accepte un seul 302 du téléchargement du classeur et conserve les octets', async () => {
+    const { routes, calls, run } = fixture()
+    routes.set(download, () => redirect(signed))
+    expect((await run()).equals(original)).toBe(true)
+    expect(calls.slice(-4)).toEqual([detail(80), detail(90), download, '/file?signature=test'])
+  })
+
+  it.each(['', '/relative', storage.replace('https:', 'http:'), storage + '.example.org/x',
+    storage + ':8443/x', storage.replace('https://', 'https://user:pass@')])(
+    'refuse une destination non autorisée (%#)', async location => {
+      const { routes, calls, run } = fixture()
+      routes.set(download, () => redirect(location))
+      await expect(run()).rejects.toThrow('Destination de téléchargement refusée.')
+      expect(calls.at(-1)).toBe(download)
+    })
+
+  it.each([[download, 307], [detail(90), 302]] as const)('refuse la redirection de %s avec HTTP %i', async (path, status) => {
+    const { routes, storageResponse, run } = fixture()
+    routes.set(path, () => redirect(signed, status))
+    await expect(run()).rejects.toThrow('Redirection refusée.')
+    expect(storageResponse).not.toHaveBeenCalled()
+  })
+
+  it('arrête au deuxième 302, même vers le même hôte', async () => {
+    const { routes, storageResponse, run } = fixture()
+    routes.set(download, () => redirect(signed))
+    storageResponse.mockReturnValueOnce(redirect(signed))
+    await expect(run()).rejects.toThrow('Redirection refusée.')
+    expect(storageResponse).toHaveBeenCalledTimes(1)
   })
 
   it('lit aussi un classeur XLSX compressé', async () => {
