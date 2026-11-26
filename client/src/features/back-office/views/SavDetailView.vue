@@ -1334,8 +1334,14 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
             </dd>
           </div>
           <div>
-            <dt>Montant avoir</dt>
-            <dd>{{ formatEur(sav.totalAmountCents) }}</dd>
+            <dt>Lignes validées HT</dt>
+            <dd>{{ sav.totalAmountCents == null ? 'Indisponible' : formatEur(sav.totalAmountCents) }}</dd>
+          </div>
+          <div>
+            <dt>Avoir</dt>
+            <dd v-if="creditNoteDegraded">Information indisponible</dd>
+            <dd v-else-if="creditNote"><a href="#credit-note-title">{{ creditNote.numberFormatted }} · {{ formatEur(creditNote.totalTtcCents) }} TTC</a></dd>
+            <dd v-else>Aucun avoir émis</dd>
           </div>
         </dl>
         <!-- Story 3.7b — SavTagsBar avec gestion optimistic -->
@@ -1771,7 +1777,7 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
         aria-labelledby="credit-note-title"
         data-testid="sav-credit-note-issued"
       >
-        <h2 id="credit-note-title">Avoir émis</h2>
+        <h2 id="credit-note-title" tabindex="-1">Avoir émis</h2>
         <dl class="credit-note-dl">
           <div>
             <dt>Numéro</dt>
@@ -1784,6 +1790,18 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
           <div>
             <dt>Émis le</dt>
             <dd>{{ formatDateTime(creditNote.issuedAt) }}</dd>
+          </div>
+          <div>
+            <dt>Sous-total HT</dt>
+            <dd>{{ formatEur(creditNote.totalHtCents) }}</dd>
+          </div>
+          <div>
+            <dt>Remise HT</dt>
+            <dd>{{ formatEur(creditNote.discountCents) }}</dd>
+          </div>
+          <div>
+            <dt>TVA</dt>
+            <dd>{{ formatEur(creditNote.vatCents) }}</dd>
           </div>
           <div>
             <dt>Total TTC</dt>
@@ -1945,6 +1963,7 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
             >Voir la 1re ligne bloquante</a
           >
         </div>
+        <p v-if="preview.anyLineBlocking.value">Les totaux de l’aperçu portent sur les lignes calculables.</p>
         <dl class="preview-totals">
           <div>
             <dt>Sous-total HT</dt>
@@ -2601,6 +2620,11 @@ a:focus-visible {
   opacity: 0.5;
   cursor: not-allowed;
 }
+/* Garder la cible du lien visible sous l’en-tête fixe. */
+#credit-note-title {
+  scroll-margin-top: 5rem;
+}
+
 /* Section avoir émis */
 .credit-note-issued {
   border-left: 4px solid #16a34a;

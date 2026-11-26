@@ -499,7 +499,7 @@ async function runExport(format: ExportFormat): Promise<void> {
             <th scope="col">Facture</th>
             <th scope="col">Reçu le</th>
             <th scope="col">Assigné à</th>
-            <th scope="col">Montant</th>
+            <th scope="col">Montant HT</th>
           </tr>
         </thead>
         <tbody>

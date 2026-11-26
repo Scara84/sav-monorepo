@@ -122,6 +122,9 @@ export interface SavDetailCreditNote {
   number: number
   numberFormatted: string
   bonType: string
+  totalHtCents?: number
+  discountCents?: number
+  vatCents?: number
   totalTtcCents: number
   pdfWebUrl: string | null
   issuedAt: string

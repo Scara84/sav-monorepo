@@ -78,6 +78,9 @@ interface CreditNoteRow {
   number: number
   number_formatted: string
   bon_type: string
+  total_ht_cents: number
+  discount_cents: number
+  vat_cents: number
   total_ttc_cents: number
   pdf_web_url: string | null
   issued_at: string
@@ -151,7 +154,7 @@ function buildCoreHandler(savId: number): ApiHandler {
           admin
             .from('credit_notes')
             .select(
-              'id, number, number_formatted, bon_type, total_ttc_cents, pdf_web_url, issued_at, issued_by_operator_id'
+              'id, number, number_formatted, bon_type, total_ht_cents, discount_cents, vat_cents, total_ttc_cents, pdf_web_url, issued_at, issued_by_operator_id'
             )
             .eq('sav_id', savId)
             .maybeSingle(),
@@ -607,6 +610,9 @@ function projectCreditNote(r: CreditNoteRow): {
   number: number
   numberFormatted: string
   bonType: string
+  totalHtCents: number
+  discountCents: number
+  vatCents: number
   totalTtcCents: number
   pdfWebUrl: string | null
   issuedAt: string
@@ -617,6 +623,9 @@ function projectCreditNote(r: CreditNoteRow): {
     number: r.number,
     numberFormatted: r.number_formatted,
     bonType: r.bon_type,
+    totalHtCents: r.total_ht_cents,
+    discountCents: r.discount_cents,
+    vatCents: r.vat_cents,
     totalTtcCents: r.total_ttc_cents,
     pdfWebUrl: r.pdf_web_url,
     issuedAt: r.issued_at,

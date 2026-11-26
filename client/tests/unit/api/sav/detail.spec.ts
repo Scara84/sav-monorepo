@@ -75,9 +75,14 @@ vi.mock('../../../../api/_lib/clients/supabase-admin', () => {
       if (table === 'credit_notes') {
         // Chain `.select(...).eq('sav_id', ...).maybeSingle()` → { data, error }
         return {
-          select: () => ({
+          select: (columns: string) => ({
             eq: () => ({
-              maybeSingle: () => Promise.resolve({ data: db.creditNote, error: null }),
+              maybeSingle: () => Promise.resolve({
+                data: db.creditNote && Object.fromEntries(
+                  columns.split(',').map((key) => key.trim()).map((key) => [key, db.creditNote?.[key]])
+                ),
+                error: null,
+              }),
             }),
           }),
         }
@@ -249,6 +254,16 @@ describe('GET /api/sav/:id (Story 3.4)', () => {
     expect(body.data.sav.member?.firstName).toBe('Jean')
     expect(body.data.comments).toHaveLength(1)
     expect(body.data.auditTrail[0]?.actorSystem).toBe('webhook-capture')
+  })
+
+  it('retourne les montants enregistrés sur le bon, remise et TVA comprises', async () => {
+    db.savRow = { id: 1, reference: 'SAV-1', lines: [], files: [] }
+    db.creditNote = { total_ht_cents: 1000, discount_cents: 100, vat_cents: 50, total_ttc_cents: 950 }
+    const res = mockRes()
+    await handler(req(['1']), res)
+    expect(res.jsonBody).toMatchObject({ data: { creditNote: {
+      totalHtCents: 1000, discountCents: 100, vatCents: 50, totalTtcCents: 950,
+    } } })
   })
 
   it("TS-06 (F33 CR) : comments préservés dans l'ordre ascending_at", async () => {
