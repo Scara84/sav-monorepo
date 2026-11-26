@@ -157,7 +157,15 @@ export function useSavList() {
     }
   }
 
-  const fetchDebounced = useDebounceFn(() => fetchList({ resetCursor: true }), 300)
+  const scheduleFetch = useDebounceFn(() => fetchList({ resetCursor: true }), 300)
+
+  function fetchDebounced() {
+    currentAbort?.abort()
+    requestSeq++
+    loading.value = true
+    error.value = null
+    return scheduleFetch()
+  }
 
   async function nextPage(): Promise<void> {
     // F27 (CR Epic 3) : guard early-return si fetch déjà en cours → évite

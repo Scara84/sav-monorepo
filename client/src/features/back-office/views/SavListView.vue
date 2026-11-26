@@ -134,13 +134,6 @@ function onRowClick(e: MouseEvent, id: number): void {
   onRowActivate(id)
 }
 
-function onRowKeydown(e: KeyboardEvent, id: number): void {
-  if (e.key === 'Enter' || e.key === ' ') {
-    e.preventDefault()
-    onRowActivate(id)
-  }
-}
-
 async function goNextPage(): Promise<void> {
   const scrollBefore = window.scrollY
   await list.nextPage() // attend le fetch + re-render ; évite le scroll-restore qui race la peinture
@@ -210,10 +203,10 @@ const activeChips = computed<ActiveChip[]>(() => {
 const ariaLiveMessage = computed(() =>
   list.loading.value
     ? 'Chargement en cours'
-    : `${list.meta.value.count} résultat${list.meta.value.count > 1 ? 's' : ''} trouvé${list.meta.value.count > 1 ? 's' : ''}`
+    : list.error.value || !list.initialLoadDone.value ? '' : `${list.meta.value.count} résultat${list.meta.value.count > 1 ? 's' : ''} trouvé${list.meta.value.count > 1 ? 's' : ''}`
 )
 
-const showSkeleton = computed(() => list.loading.value && !list.initialLoadDone.value)
+const showSkeleton = computed(() => list.loading.value)
 const showEmpty = computed(
   () => !list.loading.value && list.initialLoadDone.value && list.items.value.length === 0
 )
@@ -321,7 +314,7 @@ async function runExport(format: ExportFormat): Promise<void> {
     <header class="header">
       <h1 id="sav-list-title">SAV — Liste</h1>
       <div class="header-actions">
-        <p class="count">{{ list.meta.value.count }} résultats</p>
+        <p v-if="!list.loading.value && !list.error.value" class="count">{{ list.meta.value.count }} résultat{{ list.meta.value.count > 1 ? 's' : '' }}</p>
         <button type="button" class="btn-export" @click="openExportModal">
           Export fournisseur
         </button>
@@ -463,6 +456,7 @@ async function runExport(format: ExportFormat): Promise<void> {
         :key="chip.key"
         type="button"
         class="active-chip"
+        :aria-label="`Retirer le filtre ${chip.label}`"
         @click="chip.clear()"
       >
         {{ chip.label }} <span aria-hidden="true">×</span>
@@ -494,6 +488,7 @@ async function runExport(format: ExportFormat): Promise<void> {
     </template>
 
     <template v-else>
+      <div class="table-scroll" tabindex="0" role="region" aria-label="Colonnes des dossiers SAV">
       <table class="sav-table" role="table" aria-label="Liste des SAV">
         <thead>
           <tr>
@@ -511,14 +506,10 @@ async function runExport(format: ExportFormat): Promise<void> {
           <tr
             v-for="row in list.items.value"
             :key="row.id"
-            tabindex="0"
-            role="button"
-            :aria-label="`Ouvrir le SAV ${row.reference}`"
             class="sav-row"
             @click="onRowClick($event, row.id)"
-            @keydown="onRowKeydown($event, row.id)"
           >
-            <td>{{ row.reference }}</td>
+            <td><button type="button" class="reference" :aria-label="`Ouvrir le SAV ${row.reference}`" @click="onRowActivate(row.id)">{{ row.reference }}</button></td>
             <td>
               <span :class="['status-badge', statusBadgeClass(row.status)]">
                 {{ statusLabel(row.status) }}
@@ -533,6 +524,7 @@ async function runExport(format: ExportFormat): Promise<void> {
           </tr>
         </tbody>
       </table>
+      </div>
 
       <footer class="pagination">
         <button type="button" disabled aria-label="Page précédente (non disponible V1)">
@@ -553,6 +545,8 @@ async function runExport(format: ExportFormat): Promise<void> {
   margin: 0 auto;
 }
 .header {
+  flex-wrap: wrap;
+  gap: .75rem;
   display: flex;
   justify-content: space-between;
   align-items: baseline;
@@ -561,13 +555,14 @@ async function runExport(format: ExportFormat): Promise<void> {
   color: #666;
 }
 .header-actions {
+  flex-wrap: wrap;
   display: flex;
   gap: 1rem;
   align-items: center;
 }
 .btn-export {
-  background: #f57c00;
-  color: white;
+  background: var(--main-orange, #e88a23);
+  color: #30200e;
   border: none;
   padding: 0.5rem 1rem;
   border-radius: 4px;
@@ -575,7 +570,7 @@ async function runExport(format: ExportFormat): Promise<void> {
   font-weight: 500;
 }
 .btn-export:hover {
-  background: #e65100;
+  background: #ed983a;
 }
 .btn-export:disabled {
   opacity: 0.6;
@@ -658,6 +653,12 @@ async function runExport(format: ExportFormat): Promise<void> {
   gap: 0.75rem;
   margin: 1rem 0;
 }
+.filters {
+  background: #fff8ef;
+  border: 1px solid #ead9c4;
+  border-radius: 12px;
+  padding: 1rem;
+}
 .filters label {
   display: flex;
   flex-direction: column;
@@ -674,7 +675,7 @@ async function runExport(format: ExportFormat): Promise<void> {
 .chip:focus-visible,
 .sav-row:focus-visible,
 button:focus-visible {
-  outline: 2px solid #0066cc;
+  outline: 2px solid #80400b;
   outline-offset: 2px;
 }
 .status-chips {
@@ -734,17 +735,17 @@ button:focus-visible {
   align-items: center;
 }
 .active-chip {
-  background: #eef;
+  background: #fff3df;
   padding: 0.25rem 0.5rem;
   border-radius: 4px;
-  border: 1px solid #99c;
+  border: 1px solid #b57b39;
   cursor: pointer;
 }
 .clear-all {
   margin-left: auto;
   background: transparent;
   border: 0;
-  color: #0066cc;
+  color: #80400b;
   cursor: pointer;
   text-decoration: underline;
 }
@@ -755,6 +756,17 @@ button:focus-visible {
   border-radius: 4px;
   color: #800;
   margin: 1rem 0;
+}
+.table-scroll {
+  overflow-x: auto;
+}
+.table-scroll:focus-visible {
+  outline: 2px solid #80400b;
+}
+.reference {
+  color: #80400b;
+  text-decoration: underline;
+  white-space: nowrap;
 }
 .sav-table {
   width: 100%;
@@ -772,7 +784,7 @@ button:focus-visible {
 }
 .sav-row:hover,
 .sav-row:focus {
-  background: #f5f8ff;
+  background: #fff6e9;
 }
 .status-badge {
   display: inline-block;
