@@ -24,7 +24,10 @@ export type BddRow = z.infer<typeof bddRow>
 export type ParseWarning = z.infer<typeof warning>
 export type UploadState = 'idle' | 'uploading' | 'preparing' | 'previewing' | 'error'
 
-function importError(error: { code?: string; reason?: string } | undefined, status: number) {
+function importError(error: { code?: string; reason?: string; diagnostic?: unknown } | undefined, status: number) {
+  if (status === 422 && error?.code === 'PREPARATION_FAILED' && typeof error.diagnostic === 'string') {
+    return error.diagnostic
+  }
   if (error?.reason === 'MISSING_SHEETS') return 'Vérifiez que le classeur contient les onglets FACTURE_GROUPE et BDD.'
   if (error?.code === 'PREPARATION_BUSY') return 'Une préparation est déjà en cours pour cette commande. Réessayez après sa fin.'
   if (status === 413) return 'Le fichier dépasse 4 Mio. Sélectionnez un classeur plus petit.'

@@ -154,7 +154,10 @@ vi.mock('../../../../api/_lib/clients/supabase-admin', () => {
 // NOTE: This import will fail RED until parse-supplier-file-handler is implemented.
 // The router is imported via api/sav which dispatches to the handler.
 const readWorkbook = vi.hoisted(() => vi.fn())
-vi.mock('../../../../api/_lib/clients/kdrive', () => ({ readKdriveOrderWorkbook: readWorkbook }))
+vi.mock('../../../../api/_lib/clients/kdrive', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../../../api/_lib/clients/kdrive')>(),
+  readKdriveOrderWorkbook: readWorkbook,
+}))
 import handler from '../../../../api/sav'
 
 // ---------------------------------------------------------------------------
@@ -987,6 +990,15 @@ describe('Préparation kDrive sur la commande du SAV', () => {
       return readFileSync(FIXTURE_VALID)
     })
     expect((await prepare()).statusCode).toBe(kind === 'commande' ? 409 : 404)
+  })
+
+  it('transmet un diagnostic kDrive contrôlé pour une référence invalide', async () => {
+    const client = await vi.importActual<typeof import('../../../../api/_lib/clients/kdrive')>('../../../../api/_lib/clients/kdrive')
+    db.mention = 'invalide'
+    readWorkbook.mockImplementationOnce(client.readKdriveOrderWorkbook)
+    const res = await prepare()
+    expect(res.statusCode).toBe(422)
+    expect(res.jsonBody).toMatchObject({ error: { diagnostic: 'Référence de commande invalide.' } })
   })
 
   it('masque les détails internes et bloque le classeur illisible', async () => {

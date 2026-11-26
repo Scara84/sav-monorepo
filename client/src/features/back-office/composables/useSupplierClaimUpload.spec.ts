@@ -20,6 +20,17 @@ describe('Préparation de l’aperçu', () => {
     scope.stop()
   })
 
+  it('affiche la cause de la préparation refusée', async () => {
+    const scope = effectScope()
+    const upload = scope.run(() => useSupplierClaimUpload(ref(150), ref('A')))!
+    vi.stubGlobal('fetch', vi.fn(async () => Response.json({
+      error: { code: 'PREPARATION_FAILED', diagnostic: 'Redirection refusée.' },
+    }, { status: 422 })))
+    await upload.prepare()
+    expect(upload.errorMessage.value).toBe('Redirection refusée.')
+    scope.stop()
+  })
+
   it('ignore le double clic et une réponse à une ancienne commande, même revenue à sa valeur initiale', async () => {
     const order = ref('commande A')
     const scope = effectScope()

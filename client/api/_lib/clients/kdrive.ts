@@ -8,6 +8,10 @@ const metadataLimit = 256 * 1024
 
 // Only locally defined messages may reach the operator.
 class DiagnosticError extends Error {}
+export function kdriveDiagnostic(error: unknown): string | undefined {
+  return error instanceof DiagnosticError ? error.message : undefined
+}
+
 function fail(message: string): never {
   throw new DiagnosticError(message)
 }

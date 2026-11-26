@@ -20,7 +20,7 @@
  * (AC #3 — R-8 : withAuth AVANT withRateLimit pour éviter consommation bucket non-auth)
  */
 
-import { readKdriveOrderWorkbook } from '../clients/kdrive'
+import { kdriveDiagnostic, readKdriveOrderWorkbook } from '../clients/kdrive'
 import type * as XLSX from 'xlsx'
 import { MAX_FILE_SIZE, hasXlsxMagicBytes, readSupplierWorkbook } from './supplier-workbook'
 import { withAuth } from '../middleware/with-auth'
@@ -330,8 +330,12 @@ function prepareSupplierFileCore(savId: number): ApiHandler {
         return
       }
       sendWorkbookPreview(buffer, 'data.xlsx', savId, requestId, res)
-    } catch {
-      res.status(422).json({ error: { code: 'PREPARATION_FAILED', message: 'Lecture du classeur fournisseur impossible.', requestId } })
+    } catch (error) {
+      const diagnostic = kdriveDiagnostic(error)
+      logger.warn('sav.prepare_supplier_file.failed', { requestId, savId, diagnostic: diagnostic ?? 'Erreur interne' })
+      res.status(422).json({ error: {
+        code: 'PREPARATION_FAILED', diagnostic, message: 'Lecture du classeur fournisseur impossible.', requestId,
+      } })
     } finally {
       if (ownedKey !== undefined) preparingOrders.delete(ownedKey)
     }
