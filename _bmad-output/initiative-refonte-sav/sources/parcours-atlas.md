@@ -11,8 +11,8 @@ La couleur demandée par l’opérateur le 26 novembre 2026 est l’orange carot
 | `erreur` | [Envoi interrompu](/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#erreur) | Interface locale et réponses simulées | 1.3 |
 | `confirmation` | [Demande reçue](/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#confirmation) | Interface locale et réponses simulées | 1.3 |
 | `lien` | [Lien de connexion expiré](/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#lien) | Interface locale et réponses simulées | 2.1 |
-| `membre` | [Mes demandes](/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#membre) | Interface locale et réponses simulées | 2.1 |
-| `groupe` | [Demandes de mon groupe](/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#groupe) | Interface locale et réponses simulées | 2.1 |
+| `membre` | [Mes demandes](/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#membre) | Interface locale et réponses simulées | 2.4 |
+| `groupe` | [Demandes de mon groupe](/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#groupe) | Interface locale et réponses simulées | 2.4 |
 | `membre-detail` | [Suivre mon SAV](/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#membre-detail) | Interface locale et réponses simulées | 2.2 |
 | `preferences` | [Préférences de notifications](/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#preferences) | Interface locale et réponses simulées | 2.3 |
 | `login` | [Connexion opérateur](/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#login) | Production en lecture seule | 3.1 |

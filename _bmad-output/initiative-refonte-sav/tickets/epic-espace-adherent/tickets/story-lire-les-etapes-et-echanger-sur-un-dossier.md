@@ -4,7 +4,7 @@ type: story
 title: "Lire les étapes et échanger sur un dossier"
 parent: epic-espace-adherent
 covers: [R2]
-after: [1]
+after: [4]
 hitl: false
 risk: high
 ---

@@ -4,7 +4,7 @@ type: story
 title: "Choisir ses notifications"
 parent: epic-espace-adherent
 covers: [R3]
-after: [1]
+after: [4]
 hitl: false
 risk: medium
 ---

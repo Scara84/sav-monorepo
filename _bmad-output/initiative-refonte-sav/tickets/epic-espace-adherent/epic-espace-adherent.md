@@ -52,6 +52,7 @@ Ce lot couvre les vues référencées ci-dessous et leurs états. Les autres par
 
 ## Stories
 
-- [1. Retrouver sa liste après une connexion par lien](tickets/story-retrouver-sa-liste-apres-une-connexion-par-lien.md)
+- [1. Accéder à son espace depuis le lien de connexion](tickets/story-acceder-a-son-espace-depuis-le-lien-de-connexion.md)
+- [4. Consulter les demandes personnelles et celles du groupe](tickets/story-consulter-les-demandes-personnelles-et-du-groupe.md)
 - [2. Lire les étapes et échanger sur un dossier](tickets/story-lire-les-etapes-et-echanger-sur-un-dossier.md)
 - [3. Choisir ses notifications](tickets/story-choisir-ses-notifications.md)

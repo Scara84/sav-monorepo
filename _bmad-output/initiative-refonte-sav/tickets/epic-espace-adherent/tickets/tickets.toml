@@ -1,14 +1,26 @@
 [[entry]]
 id = 1
 type = "story"
-title = "Retrouver sa liste après une connexion par lien"
-description = "Un lien expiré explique la reprise et une session valide donne accès aux dossiers autorisés du compte et du groupe."
-verify = "Ouvrir une session adhérent et une session responsable avec données simulées distinctes, puis rejouer un lien expiré et une liste vide."
+title = "Accéder à son espace depuis le lien de connexion"
+description = "Un lien valide ouvre la destination autorisée. Un lien expiré ou déjà utilisé propose une reprise au clavier."
+verify = "Simuler un lien valide puis un lien expiré. Vérifier la destination et rejoindre au clavier la demande de nouveau lien sur ordinateur et à 390 pixels."
 covers = ["R1"]
 after = ["1.1", "1.3"]
 hitl = false
 risk = "high"
-references = ["/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#lien", "/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#membre", "/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#groupe"]
+references = ["/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#lien"]
+
+[[entry]]
+id = 4
+type = "story"
+title = "Consulter les demandes personnelles et celles du groupe"
+description = "L’adhérent retrouve ses demandes et le responsable peut rechercher celles de son groupe."
+verify = "Comparer les listes de deux adhérents et celle du responsable, les filtres, la pagination, la liste vide et une erreur simulée."
+covers = ["R1"]
+after = [1]
+hitl = false
+risk = "high"
+references = ["/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#membre", "/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#groupe"]
 
 [[entry]]
 id = 2
@@ -17,7 +29,7 @@ title = "Lire les étapes et échanger sur un dossier"
 description = "Le détail présente l’état, les articles, les pièces et les échanges accessibles à l’adhérent."
 verify = "Vérifier une fiche avec échanges et avoir, une fiche sans avoir et un identifiant indisponible avec les fixtures de l’espace adhérent."
 covers = ["R2"]
-after = [1]
+after = [4]
 hitl = false
 risk = "high"
 references = ["/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#membre-detail"]
@@ -29,7 +41,7 @@ title = "Choisir ses notifications"
 description = "Les préférences disponibles pour le profil reflètent les réglages persistés après rechargement."
 verify = "Modifier une préférence dans une session fictive, recharger, puis simuler le refus d’enregistrement."
 covers = ["R3"]
-after = [1]
+after = [4]
 hitl = false
 risk = "medium"
 references = ["/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#preferences"]
