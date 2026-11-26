@@ -50,5 +50,7 @@ Ce lot couvre les vues référencées ci-dessous et leurs états. Les autres par
 
 ## Stories
 
-- [1. Entrer dans le back-office et rechercher un dossier](tickets/story-entrer-dans-le-back-office-et-rechercher-un-dossier.md)
-- [2. Lire la fiche selon le cycle de vie](tickets/story-lire-la-fiche-selon-le-cycle-de-vie.md)
+- [1. Accéder au back-office avec les droits opérateur](tickets/story-acces-operateur.md)
+- [3. Retrouver un dossier dans la file avec les filtres existants](tickets/story-recherche-file.md)
+- [2. Lire le statut du dossier et identifier les actions autorisées](tickets/story-statut-actions.md)
+- [4. Vérifier les montants et l’avoir selon l’état du dossier](tickets/story-montants-avoir.md)

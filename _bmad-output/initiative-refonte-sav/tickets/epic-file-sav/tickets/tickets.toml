@@ -1,23 +1,47 @@
 [[entry]]
 id = 1
 type = "story"
-title = "Entrer dans le back-office et rechercher un dossier"
-description = "L’opérateur authentifié ouvre la liste et peut retrouver un dossier ou lever un filtre sans résultat."
-verify = "Combiner un statut et une facture, ouvrir le dossier trouvé puis supprimer un filtre sans résultat. Vérifier aussi la redirection hors session."
+title = "Accéder au back-office avec les droits opérateur"
+description = "Accéder au back-office avec les droits opérateur"
+verify = "La connexion indique les champs et erreurs existants. L’opérateur autorisé rejoint la file. Hors session ou après expiration en cours de consultation, revenir au parcours de connexion. Refuser un profil non autorisé."
 covers = ["R1"]
 after = ["1.1"]
 hitl = false
 risk = "high"
-references = ["/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#login", "/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#liste", "/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#vide"]
+references = ["/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#login"]
+
+[[entry]]
+id = 3
+type = "story"
+title = "Retrouver un dossier dans la file avec les filtres existants"
+description = "Retrouver un dossier dans la file avec les filtres existants"
+verify = "Conserver recherche, six statuts, dates, assignation, tag, facture, pagination et exports. Chaque filtre appliqué reste visible et effaçable. Combiner statut et facture, ouvrir le dossier trouvé et supprimer un filtre sans résultat. Distinguer vide, chargement et échec. Rendre consultables les colonnes repliées à 390 px. Retrouver la référence du dépôt client fictif."
+covers = ["R1"]
+after = [1]
+hitl = false
+risk = "high"
+references = ["/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#liste", "/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#vide"]
 
 [[entry]]
 id = 2
 type = "story"
-title = "Lire la fiche selon le cycle de vie"
-description = "Chaque statut affiche les actions applicables, le contexte du dossier et les montants avec leur base fiscale."
-verify = "Comparer sur jeux de test les six statuts et les actions permises. Vérifier un total HT différent du TTC et l’accès fournisseur depuis un dossier éligible."
+title = "Lire le statut du dossier et identifier les actions autorisées"
+description = "Lire le statut du dossier et identifier les actions autorisées"
+verify = "Comparer les six statuts nommés, leurs actions, désactivations et prérequis au moteur existant pour l’utilisateur courant. Conserver le contexte et l’accès fournisseur si éligible. Vérifier brouillon, clos et annulé sur fixtures, les confirmations de clôture, validation ou annulation et les permissions après rechargement suite à un changement concurrent."
 covers = ["R2"]
-after = [1]
+after = [3]
+hitl = false
+risk = "high"
+references = ["/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#brouillon", "/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#recu", "/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#traitement", "/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#valide", "/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#clos", "/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#annule"]
+
+[[entry]]
+id = 4
+type = "story"
+title = "Vérifier les montants et l’avoir selon l’état du dossier"
+description = "Vérifier les montants et l’avoir selon l’état du dossier"
+verify = "Comparer HT, TVA, TTC et avoir éventuellement émis aux valeurs métier selon le statut, y compris pour le dossier du parcours client. Vérifier un HT différent du TTC et un montant indisponible distinct de zéro."
+covers = ["R2"]
+after = [2]
 hitl = false
 risk = "high"
 references = ["/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#brouillon", "/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#recu", "/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#traitement", "/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#valide", "/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#clos", "/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#annule"]

@@ -4,7 +4,7 @@ type: story
 title: "Ajuster une ligne et relire le montant de l’avoir"
 parent: epic-traitement-sav
 covers: [R1]
-after: [3.2]
+after: [3.4]
 hitl: false
 risk: high
 ---
