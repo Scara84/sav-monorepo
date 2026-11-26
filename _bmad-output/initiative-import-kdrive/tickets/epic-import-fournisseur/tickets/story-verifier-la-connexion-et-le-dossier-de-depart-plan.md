@@ -3,15 +3,18 @@ title: "Vérifier la connexion et le dossier de départ"
 type: feature
 ticket: 1
 created: '2026-11-26'
-status: draft
+status: built
 baseline_revision: '605018f685b8d1108cefe95baf84573952796ae8'
 route: full
 route_source: auto
 risk: high
-review: ''
-review_source: ''
-lenses_ran: []
+review: quick
+review_source: pinned
+lenses_ran: [quick]
 review_loop_iteration: 0
+followup_review_recommended: false
+warnings: []
+deferred: []
 context:
   - _bmad-output/initiative-import-kdrive/sources/infomaniak-kdrive-api.md
 ---
@@ -44,10 +47,10 @@ Le projet place les clients externes dans `client/api/_lib/clients/` et les diag
 
 ## Tasks & Acceptance
 
-- [ ] Ajouter `client/api/_lib/clients/kdrive.ts` pour vérifier le drive en v2 puis la racine logique et les segments exacts 04_SUIVI_COMMANDE, 03_FACTURE et FRANCAIS en v3. À chaque étape, contrôler identité, type et parent. Ne jamais ajouter le libellé de l’organisation au chemin. Si une racine organisation particulière est nécessaire, décrire le blocage observé.
-- [ ] Ajouter `client/scripts/check-kdrive.ts` pour lancer ce contrôle isolément. Permettre le contrôle optionnel d’un petit fichier témoin autorisé, avec validation du périmètre et de l’empreinte. Fixer un délai et une limite de transfert pour le diagnostic.
-- [ ] Adapter `client/package.json`, `client/.env.example` et `client/README.md` pour exposer la commande locale, le chargement des secrets et les deux niveaux de vérification.
-- [ ] Ajouter `client/tests/unit/api/kdrive.spec.ts` pour simuler les cas du tableau et contrôler les méthodes, les routes et l’absence de valeurs sensibles dans les sorties, y compris sur erreur.
+- [x] Ajouter `client/api/_lib/clients/kdrive.ts` pour vérifier le drive en v2 puis la racine logique et les segments exacts 04_SUIVI_COMMANDE, 03_FACTURE et FRANCAIS en v3. À chaque étape, contrôler identité, type et parent. Ne jamais ajouter le libellé de l’organisation au chemin. Si une racine organisation particulière est nécessaire, décrire le blocage observé.
+- [x] Ajouter `client/scripts/check-kdrive.ts` pour lancer ce contrôle isolément. Permettre le contrôle optionnel d’un petit fichier témoin autorisé, avec validation du périmètre et de l’empreinte. Fixer un délai et une limite de transfert pour le diagnostic.
+- [x] Adapter `client/package.json`, `client/.env.example` et `client/README.md` pour exposer la commande locale, le chargement des secrets et les deux niveaux de vérification.
+- [x] Ajouter `client/tests/unit/api/kdrive.spec.ts` pour simuler les cas du tableau et contrôler les méthodes, les routes et l’absence de valeurs sensibles dans les sorties, y compris sur erreur.
 
 **Critères d’acceptation**
 
@@ -57,10 +60,26 @@ Le projet place les clients externes dans `client/api/_lib/clients/` et les diag
 
 ## Implementation Notes
 
+Lecture par GET uniquement, délai global de 30 secondes, métadonnées limitées à 256 Kio et témoin à 1 Mio. Empreinte calculée en flux.
+
 ## Plan Change Log
 
 ## Review Triage Log
 
+### 2026-11-26 — Revue ciblée
+- 3 constats corrigés (2 moyens, 1 mineur). Aucun rejet ou report.
+- [medium] [patch] HTTP 429 générique. Le message indique désormais le délai Retry-After exploitable, sans relance automatique.
+- [medium] [patch] Identifiant final perdu. Le résultat et la commande fournissent l’ID vérifié même si le témoin échoue.
+- [low] [patch] Jeton local mal formé signalé comme erreur réseau. Sa syntaxe est contrôlée avant tout GET.
+
 ## Verification
 
 Depuis `client/`, exécuter `npx vitest run tests/unit/api/kdrive.spec.ts`. Lancer aussi la commande locale avec une configuration volontairement vide et vérifier son code de sortie ainsi que le message. Pour la recette réelle, obtenir l’accord pour se connecter, utiliser des secrets locaux et un témoin connu, puis consigner séparément les étapes réellement vérifiées.
+
+## Auto Run Result
+
+- Story 1.1 implémentée localement. Le client REST effectue les contrôles, le script affiche le résultat, le script npm expose la commande, le README explique la procédure, .env.example décrit les variables et kdrive.spec.ts couvre les réponses simulées.
+- AC-01 validé en simulation. La racine du compte, le chemin et les octets du témoin restent à confirmer sur le drive réel après accord.
+- AC-02 validé par erreurs simulées et par la commande sans configuration (code 1, « KDRIVE_TOKEN manquant »).
+- AC-03 validé en isolation. Les tests contrôlent les routes et les méthodes GET.
+- 41 tests ciblés réussis après les 3 corrections. Aucun accès réel effectué. La prochaine vérification utile porte sur les métadonnées effectivement retournées par le compte.

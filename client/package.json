@@ -4,6 +4,7 @@
   "private": true,
   "scripts": {
     "dev": "vite",
+    "check:kdrive": "tsx scripts/check-kdrive.ts",
     "build": "vite build",
     "serve": "vite preview",
     "start": "node server.js",
