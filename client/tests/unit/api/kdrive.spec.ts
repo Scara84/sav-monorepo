@@ -59,6 +59,73 @@ describe('Diagnostic local kDrive', () => {
     ])
     expect(request).toHaveBeenCalledTimes(5)
   })
+  it.each([undefined, 1, 3])('ancre le chemin sur la racine du drive (parent %s)', async (parent_id) => {
+    const request = replay({ index: 1, response: json({ ...data[1], parent_id }) })
+    expect(await checkKdrive(env, request)).toMatchObject({ ok: true, folderId: '4' })
+    expect(request).toHaveBeenCalledTimes(5)
+  })
+  it.each([
+    ['is_team_space', '03_FACTURE', true],
+    ['is_private_space', '03_FACTURE', false],
+    ['is_team_space', 'archive', false],
+  ] as const)('vérifie la branche organisation (%s, %s)', async (visibility, invoiceName, ok) => {
+    const entries = new Map<string, unknown>([
+      [routes[0]!, data[0]], [routes[1]!, data[1]],
+      [base + '28', { ...data[4], id: 28, parent_id: 3 }],
+      [base + '3', { ...data[3], name: invoiceName }],
+      [base + '2', { ...data[2], parent_id: 8 }],
+      [base + '8', { type: 'dir', id: 8, drive_id: 15, visibility }],
+    ])
+    const request = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+      expect(init?.method).toBe('GET')
+      return json(entries.get(String(url).slice(origin.length)))
+    })
+    const result = await checkKdrive({ ...env, KDRIVE_FRANCAIS_ID: '28' }, request)
+    expect(result.ok).toBe(ok)
+    expect(result.folderId).toBe(ok ? '28' : undefined)
+    expect(request).toHaveBeenCalledTimes(invoiceName === 'archive' ? 4 : 6)
+  })
+  it.each([
+    [{ name: 'privé', parent_id: 3 }, 'Le dossier 28 ne porte pas le nom exact FRANCAIS.'],
+    [{ parent_id: 3 }, 'Nom absent ou illisible'],
+    [{ name: 'FRANCAIS' }, 'Identifiant du parent absent ou invalide'],
+    [{ name: 'FRANCAIS', parent_id: 28 }, 'identifiant déjà rencontré'],
+  ] as const)('explique un refus sur le dossier cible (%#)', async (fields, error) => {
+    const request = vi.fn()
+      .mockResolvedValueOnce(json(data[0]))
+      .mockResolvedValueOnce(json(data[1]))
+      .mockResolvedValueOnce(json({ id: 28, drive_id: 15, type: 'dir', ...fields }))
+    const result = await checkKdrive({ ...witness, KDRIVE_FRANCAIS_ID: '28' }, request)
+    expect(result.ok).toBe(false)
+    expect(result.messages.at(-1)).toContain(error)
+    expect(result.messages.join(' ')).not.toContain('privé')
+    expect(request).toHaveBeenCalledTimes(3)
+  })
+  it.each(['succès', 'ambigu', 'absent', 'parent', 'curseur'] as const)(
+    'résout depuis l’espace commun en lecture seule (%s)', async (scenario) => {
+      const space = { id: 8, type: 'dir', drive_id: 15, parent_id: 1, visibility: 'is_team_space' }
+      const pages = [
+        { data: [{ visibility: 'is_private_space' }], has_more: true, cursor: 'suite' },
+        { data: scenario === 'absent' ? [] : [space], has_more: scenario === 'curseur', cursor: 'suite' },
+      ]
+      if (scenario === 'ambigu') pages[1]!.data.push({ ...space, id: 10 })
+      if (scenario === 'parent') space.parent_id = 7
+      const urls = [routes[0], routes[1], base + '1/files?limit=20',
+        base + '1/files?limit=20&cursor=suite', base + '8/name?name=04_SUIVI_COMMANDE', routes[3], routes[4]]
+      const replies = [json(data[0]), json(data[1]), ...pages.map(page => Response.json({ result: 'success', ...page })),
+        json({ ...data[2], parent_id: 8 }), json(data[3]), json(data[4])]
+      let count = 0
+      const request = vi.fn(async (url: RequestInfo | URL, init?: RequestInit) => {
+        expect(init?.method).toBe('GET')
+        expect(url).toBe(origin + urls[count])
+        return replies[count++]!
+      })
+      const result = await checkKdrive({ ...env, KDRIVE_ORGANIZATION: '1' }, request)
+      expect(result.ok).toBe(scenario === 'succès')
+      expect(result.folderId).toBe(scenario === 'succès' ? '4' : undefined)
+      expect(count).toBe(scenario === 'succès' ? 7 : 4)
+    }
+  )
   it('contrôle les parents puis les octets du témoin', async () => {
     const request = replay()
     const result = await checkKdrive(witness, request)
@@ -68,6 +135,7 @@ describe('Diagnostic local kDrive', () => {
   })
   it.each([
     [{}, 'KDRIVE_TOKEN'],
+    [{ ...env, KDRIVE_FRANCAIS_ID: '../28' }, 'KDRIVE_FRANCAIS_ID'],
     [{ ...env, KDRIVE_TOKEN: 'secret-bearer\nother' }, 'KDRIVE_TOKEN invalide'],
     [{ ...env, KDRIVE_TOKEN: 'secret-bearer€' }, 'KDRIVE_TOKEN invalide'],
     [{ ...env, KDRIVE_ID: '../15' }, 'KDRIVE_ID'],
@@ -90,7 +158,9 @@ describe('Diagnostic local kDrive', () => {
     [0, () => new Response(bytes, { status: 401 }), 'Authentification rejetée'],
     [1, () => new Response(bytes, { status: 403 }), 'Droits insuffisants'],
     [1, () => json({ ...data[1], id: 5 }), 'Identité'],
-    [1, () => json({ ...data[1], parent_id: 3 }), 'Parent'],
+    [1, () => json({ ...data[1], type: 'file' }), 'Type'],
+    [1, () => json({ ...data[1], drive_id: 16 }), 'Drive incohérent'],
+    [2, () => json({ ...data[2], parent_id: null }), 'parent'],
     [2, () => new Response(bytes, { status: 404 }), '04_SUIVI_COMMANDE — Ressource introuvable'],
     [2, () => Response.json({ result: 'error', data: data[2] }), 'Réponse API incohérente'],
     [2, () => new Response(bytes), 'Réponse JSON incohérente'],

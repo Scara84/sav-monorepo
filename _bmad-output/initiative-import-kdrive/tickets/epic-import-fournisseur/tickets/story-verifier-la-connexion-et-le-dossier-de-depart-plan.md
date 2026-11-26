@@ -83,3 +83,21 @@ Depuis `client/`, exécuter `npx vitest run tests/unit/api/kdrive.spec.ts`. Lanc
 - AC-02 validé par erreurs simulées et par la commande sans configuration (code 1, « KDRIVE_TOKEN manquant »).
 - AC-03 validé en isolation. Les tests contrôlent les routes et les méthodes GET.
 - 41 tests ciblés réussis après les 3 corrections. Aucun accès réel effectué. La prochaine vérification utile porte sur les métadonnées effectivement retournées par le compte.
+
+### Première exécution réelle par l’opérateur
+
+Drive confirmé. Le diagnostic a accepté l’identité, le drive et le type de la racine 1, puis a rejeté son parent. La valeur renvoyée est inconnue. Correctif local : la racine 1 du drive est le point de départ ; le nom, le type et le parent de chaque segment restent obligatoires. 46 tests simulés réussis. Accès réel à FRANCAIS et téléchargement du témoin en attente.
+
+Deuxième exécution réelle par l’opérateur : configuration, drive et racine vérifiés. La recherche de l’enfant direct 04_SUIVI_COMMANDE retourne « Ressource introuvable ou masquée ». Vérifier son emplacement et sa visibilité avec le compte du jeton. FRANCAIS et témoin non atteints.
+
+L’opérateur situe FRANCAIS sous Dossiers de l’organisation/04_SUIVI_COMMANDE/03_FACTURE. Le mode optionnel KDRIVE_FRANCAIS_ID remonte les trois parents et vérifie la visibilité is_team_space du conteneur. 50 tests ciblés réussis. La vérification réelle du chemin et du témoin reste à effectuer.
+
+Essai réel de l’opérateur avec l’ID 28 : drive, racine et lecture des métadonnées du dossier 28 confirmés. Le message groupé ne permet pas de conclure sur son nom ou son parent. Messages séparés, 54 tests simulés réussis. Chemin et témoin toujours à vérifier.
+
+L’essai réel confirme que le nom du dossier 28 diffère de FRANCAIS. Le nouveau mode KDRIVE_ORGANIZATION=1 liste les enfants de la racine par pages, exige un espace is_team_space unique du bon drive et vérifie les trois dossiers. 59 tests simulés et contrôle TypeScript ciblé réussis. Recette réelle du chemin et du témoin en attente.
+
+Recette réelle du 26 novembre 2026, exécutée par l’opérateur avec KDRIVE_ORGANIZATION=1 : drive, racine, espace d’organisation et chemin 04_SUIVI_COMMANDE/03_FACTURE/FRANCAIS vérifiés. Identifiant vérifié de FRANCAIS : 52. AC-01 : accès au dossier confirmé sur le compte réel ; téléchargement et comparaison SHA-256 du témoin autorisé encore à vérifier.
+
+Recette réelle autorisée du témoin chronopost-test.csv (502 octets localement). Résolution exacte de FRANCAIS/2026/S48/chronopost-test.csv : ID 246210. Ascendance confirmée ; le GET de téléchargement renvoie une redirection que le diagnostic refuse conformément au plan. Aucun contenu distant validé. AC-01 reste partiel.
+
+Recette complémentaire en lecture seule du témoin 246210 : ascendance revérifiée jusqu’à l’espace commun, redirection 302 émise par l’API, destination HTTPS limitée à l’hôte exact observé, second GET sans jeton ni cookies et sans autre redirection. HTTP 200, 502 octets, SHA-256 identique à la copie locale. Accès et intégrité réels prouvés pour ce témoin. Cette vérification ponctuelle complète la recette ; la commande standard continue de refuser les redirections conformément au plan approuvé.

@@ -71,6 +71,11 @@ export async function checkKdrive(env: NodeJS.ProcessEnv, request = fetch) {
     if (!/^[A-Za-z0-9._~+/-]+=*$/.test(token)) fail('KDRIVE_TOKEN invalide.')
     const drive = id(env.KDRIVE_ID)
     if (!drive) fail('KDRIVE_ID manquant ou invalide.')
+    const targetId = env.KDRIVE_FRANCAIS_ID
+    if (targetId && !id(targetId)) fail('KDRIVE_FRANCAIS_ID invalide.')
+    const organization = env.KDRIVE_ORGANIZATION
+    if (organization && organization !== '1') fail('KDRIVE_ORGANIZATION invalide.')
+    if (organization && targetId) fail('Choisissez la recherche par organisation ou par identifiant.')
     const witness = env.KDRIVE_WITNESS_ID
     const digest = env.KDRIVE_WITNESS_SHA256
     if (witness || digest) {
@@ -122,7 +127,7 @@ export async function checkKdrive(env: NodeJS.ProcessEnv, request = fetch) {
       }
     }
 
-    async function metadata(path: string) {
+    async function envelope(path: string) {
       const chunks: Buffer[] = []
       await read(path, metadataLimit, (chunk) => chunks.push(Buffer.from(chunk)))
       let json: unknown
@@ -131,9 +136,15 @@ export async function checkKdrive(env: NodeJS.ProcessEnv, request = fetch) {
       } catch {
         fail('Réponse JSON incohérente.')
       }
-      if (!object(json) || json.result !== 'success' || !object(json.data))
+      if (!object(json) || json.result !== 'success')
         fail('Réponse API incohérente.')
-      return json.data
+      return json
+    }
+
+    async function metadata(path: string) {
+      const { data } = await envelope(path)
+      if (!object(data)) fail('Réponse API incohérente.')
+      return data
     }
 
     const files = '/3/drive/' + drive + '/files/'
@@ -145,6 +156,35 @@ export async function checkKdrive(env: NodeJS.ProcessEnv, request = fetch) {
       if (data.type !== type) fail('Type de ressource incorrect.')
       return actual
     }
+    async function organizationId() {
+      const params = new URLSearchParams({ limit: '20' })
+      const cursors = new Set<string>()
+      let found: string | undefined
+      for (;;) {
+        const page = await envelope(files + '1/files?' + params)
+        if (!Array.isArray(page.data) || typeof page.has_more !== 'boolean')
+          fail('Liste de la racine incomplète.')
+        for (const entry of page.data) {
+          if (!object(entry) || typeof entry.visibility !== 'string')
+            fail('Visibilité indéterminée dans la racine.')
+          if (entry.visibility !== 'is_team_space') continue
+          const candidate = fileIdentity(entry, 'dir')
+          if (candidate === '1' || id(entry.parent_id) !== '1')
+            fail('Parent de l’espace d’organisation incohérent.')
+          if (found) fail('Plusieurs espaces d’organisation dans la racine.')
+          found = candidate
+        }
+        if (!page.has_more) break
+        const cursor = page.cursor
+        if (typeof cursor !== 'string' || !cursor || cursors.has(cursor) || cursors.size >= 19)
+          fail('Pagination de la racine incomplète.')
+        cursors.add(cursor)
+        params.set('cursor', cursor)
+      }
+      if (!found) fail('Espace d’organisation introuvable ou masqué.')
+      return found
+    }
+
     step = 'Drive'
     if (id((await metadata('/2/drive/' + drive)).id) !== drive)
       fail('Identité du drive incohérente.')
@@ -152,26 +192,55 @@ export async function checkKdrive(env: NodeJS.ProcessEnv, request = fetch) {
     step = 'Racine'
     const root = await metadata(files + '1')
     fileIdentity(root, 'dir', '1')
-    if (root.parent_id !== null && root.parent_id !== 0 && root.parent_id !== '0')
-      fail('Parent de la racine incohérent.')
+    // File 1 anchors the path within this drive. Its own parent is outside the path.
     messages.push('Racine vérifiée.')
     let parent = '1'
     const pathIds = new Set([parent])
-    for (const name of folders) {
-      step = name
-      const child = await metadata(files + parent + '/name?' + new URLSearchParams({ name }))
-      const childId = fileIdentity(child, 'dir')
-      if (child.name !== name || id(child.parent_id) !== parent || pathIds.has(childId))
-        fail('Nom ou parent du dossier incohérent.')
-      parent = childId
-      pathIds.add(parent)
-      if (name === 'FRANCAIS') {
-        folderId = childId
-        messages.push('Dossier FRANCAIS accessible (ID ' + folderId + ').')
-      } else {
-        messages.push('Dossier ' + name + ' vérifié.')
+    if (targetId) {
+      let current = targetId
+      for (const name of [...folders].reverse()) {
+        step = name
+        const directory = await metadata(files + current)
+        fileIdentity(directory, 'dir', current)
+        const parentId = id(directory.parent_id)
+        if (typeof directory.name !== 'string' || !directory.name)
+          fail('Nom absent ou illisible dans la réponse kDrive.')
+        if (directory.name !== name)
+          fail('Le dossier ' + current + ' ne porte pas le nom exact ' + name + '.')
+        if (!parentId) fail('Nom confirmé. Identifiant du parent absent ou invalide.')
+        if (pathIds.has(current) || pathIds.has(parentId) || current === parentId)
+          fail('Ascendance incohérente : identifiant déjà rencontré.')
+        pathIds.add(current)
+        current = parentId
+      }
+      step = 'Dossiers de l’organisation'
+      if (pathIds.has(current)) fail('Ascendance de l’organisation incohérente.')
+      const space = await metadata(files + current)
+      fileIdentity(space, 'dir', current)
+      if (space.visibility !== 'is_team_space') fail('Espace d’organisation non confirmé.')
+      pathIds.add(current)
+      messages.push('Chemin vérifié dans les dossiers de l’organisation.')
+      parent = targetId
+    } else {
+      if (organization) {
+        step = 'Dossiers de l’organisation'
+        parent = await organizationId()
+        pathIds.add(parent)
+        messages.push('Espace d’organisation vérifié.')
+      }
+      for (const name of folders) {
+        step = name
+        const child = await metadata(files + parent + '/name?' + new URLSearchParams({ name }))
+        const childId = fileIdentity(child, 'dir')
+        if (child.name !== name || id(child.parent_id) !== parent || pathIds.has(childId))
+          fail('Nom ou parent du dossier incohérent.')
+        parent = childId
+        pathIds.add(parent)
+        if (name !== 'FRANCAIS') messages.push('Dossier ' + name + ' vérifié.')
       }
     }
+    folderId = parent
+    messages.push('Dossier FRANCAIS accessible (ID ' + folderId + ').')
     if (witness && digest) {
       step = 'Ascendance du témoin'
       const file = await metadata(files + witness)
