@@ -749,3 +749,28 @@ describe('GEN-UI-08: toast success contient total IMPORTE + nb lignes (AC #8)', 
     expect(toast.text()).toMatch(/réclamation générée|généré/i)
   })
 })
+
+it('conserve le résultat du stockage et le nom du document après la relecture de l’historique', async () => {
+  const { wrapper } = await mountAndReachArbitratingWithBlobResponse()
+  const filename = 'version-1.xlsx'
+  const fetch = vi.spyOn(globalThis, 'fetch')
+  fetch.mockResolvedValueOnce(new Response('classeur', { headers: {
+    'Content-Disposition': `attachment; filename="${filename}"`,
+    'X-Supplier-Claim-Onedrive-Status': 'success',
+    'X-Supplier-Claim-Onedrive-Message': encodeURIComponent('Stockage fictif confirmé.'),
+  } }))
+  fetch.mockResolvedValueOnce(Response.json({ savId: 1, claims: [{
+    id: 101, generatedAt: '2026-05-21T10:00:00Z', filename, lineCount: 2,
+    generatedByOperator: { id: 1, fullName: 'Opérateur test' }, version: 1,
+    totalImporteCents: 700, regenerationOf: null, isLatest: true, hasDocument: true,
+  }] }))
+  vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+  await wrapper.get('[data-testid="generate-btn"]').trigger('click')
+  await flushPromises()
+  const card = wrapper.get('[data-testid="existing-claim-state"]')
+  expect(card.text()).toContain(filename)
+  expect(card.text()).toContain('2 lignes')
+  expect(card.get('[role="status"]').text()).toContain('Document généré')
+  expect(card.get('[data-testid="onedrive-fill-status"]').text()).toContain('Stockage fictif confirmé.')
+  wrapper.unmount()
+})

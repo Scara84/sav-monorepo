@@ -624,9 +624,9 @@ export function useSupplierClaimArbitration(
       )
 
       if (!res.ok) {
-        const errData = await res.json() as { error?: { message?: string; code?: string } }
+        const errData = await res.json().catch(() => null) as { error?: { message?: string } } | null
         if (!current()) return
-        generateError.value = errData.error?.message ?? `Erreur ${res.status} — génération impossible`
+        generateError.value = errData?.error?.message ?? `Erreur ${res.status} — génération impossible`
         generateState.value = 'generate-error'
         return
       }
@@ -660,9 +660,9 @@ export function useSupplierClaimArbitration(
         ...(onedriveMessage ? { onedriveMessage } : {}),
       }
       generateState.value = 'generated'
-    } catch (err) {
+    } catch {
       if (!current()) return
-      generateError.value = err instanceof Error ? err.message : 'Erreur réseau — génération impossible'
+      generateError.value = 'La génération du document a échoué. Vous pouvez réessayer.'
       generateState.value = 'generate-error'
     }
   }

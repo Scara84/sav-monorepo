@@ -15,7 +15,7 @@
  *
  * PATTERN-DEFAULT-TO-HISTORY-IF-PRESENT posé en 8.5 (AC #5).
  */
-import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
+import { computed, ref, watch, nextTick, onMounted, onUnmounted } from 'vue'
 import { z } from 'zod'
 import { useRoute } from 'vue-router'
 import { useSupplierClaimUpload } from '../composables/useSupplierClaimUpload'
@@ -47,6 +47,12 @@ const viewState = ref<ViewState>('loading')
 
 // Modal de confirmation régénération (DN-4 LOCKED = A)
 const showRegenerateModal = ref(false)
+const cancelBtnRef = ref<HTMLButtonElement>()
+const confirmBtnRef = ref<HTMLButtonElement>()
+const regenerateBtn = ref<HTMLButtonElement>()
+const uploadTitle = ref<HTMLElement>()
+const downloadError = ref('')
+let downloadContext = 0
 
 const dossierReference = ref<string>()
 const expectedOrder = ref<string | null>()
@@ -91,6 +97,8 @@ function openClaim() {
   if (requested) {
     window.history.replaceState({ ...navigation, prepareSupplier: false }, '')
   }
+  downloadContext++
+  downloadError.value = ''
   claimHistory.value = []
   historyExpanded.value = false
   showRegenerateModal.value = false
@@ -111,22 +119,27 @@ const olderClaims = computed(() => claimHistory.value.slice(1))
 // Re-télécharger (PATTERN-DIRECT-BLOB-DOWNLOAD hérité 8.4)
 // ---------------------------------------------------------------------------
 
-async function redownloadClaim(claimId: number, filename: string): Promise<void> {
+async function redownloadClaim(claim: SupplierClaimHistoryItem): Promise<void> {
+  const attempt = downloadContext
+  downloadError.value = ''
   try {
     const res = await fetch(
-      `/api/sav?op=download-supplier-claim&id=${savId.value}&claimId=${claimId}`,
+      `/api/sav?op=download-supplier-claim&id=${savId.value}&claimId=${claim.id}`,
       { credentials: 'include' }
     )
-    if (!res.ok) return
+    if (!res.ok) throw new Error()
     const blob = await res.blob()
+    if (attempt !== downloadContext) return
     const url = URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
-    a.download = filename
+    a.download = claim.filename
     a.click()
     URL.revokeObjectURL(url)
-  } catch (_err) {
-    // Silent — user can retry
+  } catch {
+    if (attempt === downloadContext) {
+      downloadError.value = `Le téléchargement de la version v${claim.version} a échoué. Vous pouvez réessayer.`
+    }
   }
 }
 
@@ -136,26 +149,36 @@ async function redownloadClaim(claimId: number, filename: string): Promise<void>
 
 function onRegenerateClick(): void {
   showRegenerateModal.value = true
+  void nextTick(() => cancelBtnRef.value?.focus())
 }
 
 function onModalCancel(): void {
   showRegenerateModal.value = false
+  void nextTick(() => regenerateBtn.value?.focus())
   // ZÉRO side-effect : pas de reset, pas de transition, pas de POST (AC #7)
 }
 
 function onModalConfirm(): void {
   if (!showRegenerateModal.value) return
   historyError.value = null
+  downloadError.value = ''
+  downloadContext++
   showRegenerateModal.value = false
   // Transition vers awaiting-upload + reset composable (AC #5, AC #7)
   resetArbitrageState()
   viewState.value = 'awaiting-upload'
   void prepare()
+  void nextTick(() => uploadTitle.value?.focus())
 }
 
 // Esc = Annuler (DN-4 LOCKED = A)
 function onKeydown(event: KeyboardEvent): void {
-  if (event.key === 'Escape' && showRegenerateModal.value) {
+  if (!showRegenerateModal.value) return
+  if (event.key === 'Tab') {
+    event.preventDefault()
+    const target = document.activeElement === cancelBtnRef.value ? confirmBtnRef : cancelBtnRef
+    target.value?.focus()
+  } else if (event.key === 'Escape') {
     onModalCancel()
   }
 }
@@ -165,6 +188,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  downloadContext++
   historyRequest++
   window.removeEventListener('keydown', onKeydown)
 })
@@ -406,6 +430,9 @@ const oneDriveStatusText = computed(() => {
 
       <!-- Carte dernière version -->
       <div v-if="latestClaim" class="latest-claim-card card">
+        <p v-if="generateResult && generateResult.filename === latestClaim.filename" role="status">
+          Document généré et prêt à télécharger.
+        </p>
         <h3>Dernière version (v{{ latestClaim.version }})</h3>
         <div class="claim-metadata-grid">
           <div class="claim-meta-item">
@@ -434,13 +461,15 @@ const oneDriveStatusText = computed(() => {
           <button
             class="btn-primary"
             data-testid="redownload-btn"
-            @click="redownloadClaim(latestClaim!.id, latestClaim!.filename)"
+            :aria-label="`Re-télécharger la version v${latestClaim.version}`"
+            :disabled="!latestClaim.hasDocument"
+            @click="redownloadClaim(latestClaim!)"
           >
             Re-télécharger
           </button>
           <button
             class="btn-secondary"
-            data-testid="regenerate-btn"
+            ref="regenerateBtn" data-testid="regenerate-btn"
             @click="onRegenerateClick()"
           >
             Régénérer (nouvel import)
@@ -448,7 +477,7 @@ const oneDriveStatusText = computed(() => {
         </div>
 
         <div
-          v-if="oneDriveStatusText"
+          v-if="oneDriveStatusText && generateResult?.filename === latestClaim.filename"
           class="onedrive-status"
           :class="oneDriveStatusClass"
           data-testid="onedrive-fill-status"
@@ -466,11 +495,14 @@ const oneDriveStatusText = computed(() => {
         </div>
       </div>
 
+      <p v-if="downloadError" role="alert" class="generate-error-toast">{{ downloadError }}</p>
+
       <!-- Section historique repliable -->
       <div v-if="olderClaims.length > 0" class="history-section">
         <button
           class="history-toggle"
           data-testid="history-toggle"
+          :aria-expanded="historyExpanded"
           @click="historyExpanded = !historyExpanded"
         >
           {{ historyExpanded ? '▲' : '▼' }} Historique ({{ olderClaims.length }} version{{ olderClaims.length > 1 ? 's' : '' }} antérieure{{ olderClaims.length > 1 ? 's' : '' }})
@@ -494,7 +526,9 @@ const oneDriveStatusText = computed(() => {
               <button
                 class="btn-secondary btn-sm"
                 data-testid="redownload-btn"
-                @click="redownloadClaim(claim.id, claim.filename)"
+                :aria-label="`Re-télécharger la version v${claim.version}`"
+                :disabled="!claim.hasDocument"
+                @click="redownloadClaim(claim)"
               >
                 Re-télécharger cette version
               </button>
@@ -515,12 +549,13 @@ const oneDriveStatusText = computed(() => {
       role="dialog"
       aria-modal="true"
       aria-labelledby="modal-title"
+      aria-describedby="modal-description"
     >
       <div class="modal-dialog">
         <h2 id="modal-title" class="modal-title">Confirmer la régénération ?</h2>
-        <p class="modal-body">
+        <p id="modal-description" class="modal-body">
           L'historique précédent est conservé.
-          La version v{{ latestClaim?.version }} actuelle restera consultable dans l'historique.
+          <span v-if="latestClaim">La version v{{ latestClaim.version }} actuelle restera consultable dans l'historique.</span>
         </p>
         <div class="modal-actions">
           <!-- [Annuler] focus par défaut (DN-4 LOCKED = A) -->
@@ -535,7 +570,7 @@ const oneDriveStatusText = computed(() => {
           </button>
           <button
             class="btn-danger"
-            data-testid="regenerate-confirm-btn"
+            ref="confirmBtnRef" data-testid="regenerate-confirm-btn"
             @click="onModalConfirm()"
           >
             Confirmer
@@ -552,7 +587,7 @@ const oneDriveStatusText = computed(() => {
       class="upload-section card"
       data-testid="awaiting-upload-state"
     >
-      <h2>Choisir le classeur</h2>
+      <h2 ref="uploadTitle" tabindex="-1">Choisir le classeur</h2>
       <p v-if="historyError" role="alert">{{ historyError }}</p>
       <button v-if="historyError && viewState === 'awaiting-upload'" class="btn-secondary" @click="retryHistory">
         Relire l’historique
@@ -988,7 +1023,7 @@ const oneDriveStatusText = computed(() => {
       <!-- Bouton Régénérer — retour arbitrating (8.4 AC #13e — fallback si historique non chargé) -->
       <button
         class="btn-secondary"
-        data-testid="regenerate-btn"
+        ref="regenerateBtn" data-testid="regenerate-btn"
         style="margin-top: 1rem;"
         @click="onRegenerateFromGenerated()"
       >
@@ -1498,7 +1533,7 @@ const oneDriveStatusText = computed(() => {
 
 .history-item-lines {
   font-size: 0.8125rem;
-  color: #9ca3af;
+  color: #58606b;
 }
 
 .history-item-actions {
@@ -1573,6 +1608,9 @@ const oneDriveStatusText = computed(() => {
   padding: 2rem;
   max-width: 480px;
   width: 90%;
+  box-sizing: border-box;
+  max-height: 90vh;
+  overflow: auto;
   box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
 }
 

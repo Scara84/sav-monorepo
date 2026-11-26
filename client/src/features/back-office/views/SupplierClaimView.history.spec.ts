@@ -725,3 +725,26 @@ describe('HIST-UI-10: [Annuler] = zéro side-effect — no reset, no POST, no au
     expect(wrapper.find('[data-testid="regenerate-btn"]').exists()).toBe(true)
   })
 })
+
+it('identifie la version dont le téléchargement échoue et autorise une nouvelle tentative', async () => {
+  const { wrapper } = await mountWithHistory(makeClaimV2())
+  const fetch = vi.spyOn(globalThis, 'fetch')
+  fetch.mockResolvedValueOnce(new Response(null, { status: 503 }))
+  await wrapper.get('[data-testid="history-toggle"]').trigger('click')
+  const older = wrapper.get('[aria-label="Re-télécharger la version v1"]')
+  await older.trigger('click')
+  await flushPromises()
+  expect(fetch.mock.calls.at(-1)?.[0]).toContain('claimId=1')
+  expect(wrapper.get('[role="alert"]').text()).toContain('version v1')
+  const names: string[] = []
+  vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
+    names.push(this.download)
+  })
+  vi.spyOn(URL, 'createObjectURL').mockReturnValue('blob:recette')
+  vi.spyOn(URL, 'revokeObjectURL').mockImplementation(() => {})
+  await older.trigger('click')
+  await flushPromises()
+  expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+  expect(names).toEqual([makeClaimV2()[1].filename])
+  wrapper.unmount()
+})

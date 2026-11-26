@@ -4,6 +4,7 @@ import { createRouter, createWebHashHistory, RouterView } from 'vue-router'
 import SavDetail from '../../../src/features/back-office/views/SavDetailView.vue'
 import SupplierClaim from '../../../src/features/back-office/views/SupplierClaimView.vue'
 
+import { createClaimStorage } from './claim-storage.js'
 import * as XLSX from 'xlsx'
 import { parseFactureGroupe, parseBdd, extractMetadata } from '../../../api/_lib/sav/supplier-file-parser'
 import { reconcile } from '../../../api/_lib/sav/reconcile-supplier-claim'
@@ -13,16 +14,21 @@ if (!['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)) throw new 
 const readFixture = window.fetch.bind(window)
 const orders = { 1: '278_26S21_11', 2: '46_26S5_94_1' }
 const scenario = new URLSearchParams(location.search).get('scenario')
+let failGeneration = scenario === 'generation-error'
+let failDownload = scenario === 'download-error'
 const claim = {
   id: 1, version: 1, generatedAt: '2026-05-21', generatedByOperator: { id: 1, fullName: 'Opérateur test' },
   totalImporteCents: 1200, lineCount: 1, filename: 'simulation.xlsx', regenerationOf: null, isLatest: true, hasDocument: false,
 }
-function detailFor(id) { return {
+const storage = createClaimStorage(scenario === 'history' ? claim : null)
+function detailFor(id) {
+  const claims = storage.history(id)
+  return {
   data: { sav: { id, reference: 'SAV-SIM-' + id, status: scenario === 'manual' ? 'in_progress' : 'validated', version: 1,
     invoiceSpecialMention: orders[id], invoiceRef: 'FACTURE-TEST', tags: [], lines: [], files: [],
     receivedAt: '2026-05-20', totalAmountCents: 0, invoiceFdpCents: 0, member: null, group: null },
     comments: [], auditTrail: [], settingsSnapshot: {},
-    supplierClaim: scenario === 'history' ? { exists: true, latestGeneratedAt: claim.generatedAt, count: 1, latestTotalImporteCents: 1200 } : null },
+    supplierClaim: claims.length ? { exists: true, latestGeneratedAt: claims[0].generatedAt, count: claims.length, latestTotalImporteCents: claims[0].totalImporteCents } : null },
 }
 }
 
@@ -97,7 +103,7 @@ window.fetch = async (input, init) => {
   switch (op) {
     case 'get-supplier-claim-history':
       return scenario === 'history-error' ? Response.json({}, { status: 503 })
-        : Response.json({ savId: id, claims: scenario === 'history' ? [claim] : [] })
+        : Response.json({ savId: id, claims: storage.history(id) })
     case 'prepare-supplier-file': {
       const attempt = ++attempts
       counter.textContent = 'Préparations simulées : ' + attempts
@@ -122,6 +128,18 @@ window.fetch = async (input, init) => {
       const bytes = Uint8Array.from(atob(fileBuffer), char => char.charCodeAt(0))
       return previewResponse(bytes, filename)
     }
+    case 'generate-supplier-claim':
+      if (failGeneration) {
+        failGeneration = false
+        return Response.json({ error: { message: 'Panne simulée lors de la génération.' } }, { status: 503 })
+      }
+      return storage.generate(id, JSON.parse(init.body))
+    case 'download-supplier-claim':
+      if (failDownload) {
+        failDownload = false
+        return Response.json({}, { status: 503 })
+      }
+      return storage.download(id, Number(url.searchParams.get('claimId')))
     case 'reconcile-supplier-claim':
       return Response.json(reconcileFixture(id, JSON.parse(init.body).parsed))
     default: return Response.json({}, { status: 404 })
