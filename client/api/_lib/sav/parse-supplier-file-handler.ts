@@ -21,7 +21,8 @@
  * (AC #3 — R-8 : withAuth AVANT withRateLimit pour éviter consommation bucket non-auth)
  */
 
-import * as XLSX from 'xlsx'
+import type * as XLSX from 'xlsx'
+import { MAX_FILE_SIZE, hasXlsxMagicBytes, readSupplierWorkbook } from './supplier-workbook'
 import { withAuth } from '../middleware/with-auth'
 import { withRateLimit } from '../middleware/with-rate-limit'
 import { ensureRequestId } from '../request-id'
@@ -34,13 +35,6 @@ import type { ApiHandler, ApiRequest, ApiResponse } from '../types'
 // Constantes (AC #5)
 // ---------------------------------------------------------------------------
 
-/**
- * 4 MB cap (M-2 fix: Vercel coupe ~4,5 Mo avant le handler ; base64 inflation ~1,33x)
- * Les fichiers SOL Y FRUTA réels font ~400 Ko — le cap 4 MB est largement suffisant.
- * DN-2 actualisé : 4 MB (ex 10 MB était du code mort).
- */
-const MAX_FILE_SIZE = 4 * 1024 * 1024
-
 /** MIME whitelist (AC #5b) */
 const ALLOWED_MIMES = new Set([
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -48,20 +42,6 @@ const ALLOWED_MIMES = new Set([
   'application/octet-stream',
 ])
 
-/** Magic bytes ZIP PK (OOXML = ZIP container) */
-const PK_MAGIC = Buffer.from([0x50, 0x4b, 0x03, 0x04])
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/** Vérifie que le buffer commence par les magic bytes ZIP (PK) */
-function hasXlsxMagicBytes(buf: Buffer): boolean {
-  if (buf.length < 4) return false
-  return buf[0] === PK_MAGIC[0] && buf[1] === PK_MAGIC[1] && buf[2] === PK_MAGIC[2] && buf[3] === PK_MAGIC[3]
-}
-
-// ---------------------------------------------------------------------------
 // RBAC — check group scope (pattern Story 4.8 apply-supplier-prices-handler)
 // Q2 : savId inexistant → 404 NOT_FOUND (déviation du pattern 4.8 qui retourne 403)
 // ---------------------------------------------------------------------------
@@ -251,14 +231,7 @@ function parseSupplierFileCore(savId: number): ApiHandler {
     // SheetJS retire .f mais conserve .v, laissant la valeur forgée accessible.
     let wb: XLSX.WorkBook
     try {
-      wb = XLSX.read(fileBuffer, {
-        type: 'buffer',
-        cellFormula: true,  // nécessaire pour que le scrubber détecte les .f (H-3-bis)
-        cellHTML: false,    // anti-XSS
-        cellNF: false,
-        cellText: false,
-        raw: true,
-      })
+      wb = readSupplierWorkbook(fileBuffer)
     } catch (parseErr) {
       res.status(422).json({
         error: {

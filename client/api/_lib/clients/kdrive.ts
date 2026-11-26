@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto'
+import { MAX_FILE_SIZE, validateOriginalWorkbook } from '../sav/supplier-workbook'
 
 const origin = 'https://api.infomaniak.com'
 const folders = ['04_SUIVI_COMMANDE', '03_FACTURE', 'FRANCAIS']
@@ -320,10 +321,10 @@ type OrderStatus = 'invalid-reference' | 'branch-missing' | 'branch-ambiguous'
 
 type OrderCandidate = { id: string; name: string }
 
-export async function resolveKdriveOrder(raw: unknown, env: NodeJS.ProcessEnv, request = fetch) {
+async function resolveOrder(raw: unknown, env: NodeJS.ProcessEnv, request: typeof fetch) {
   const branch = orderBranch(raw)
   function result(status: OrderStatus, message: string, candidates: OrderCandidate[] = []) {
-    return { branch, status, message, candidates, selectedFolderId: null }
+    return { branch, status, message, candidates, selectedFolderId: null, ancestry: null }
   }
   if (!branch) return result('invalid-reference', 'Référence de commande invalide.')
 
@@ -333,6 +334,7 @@ export async function resolveKdriveOrder(raw: unknown, env: NodeJS.ProcessEnv, r
   try {
     const client = kdriveClient(env, request, controller)
     const { parent, pathIds } = await client.francais([], value => { step = value }, true)
+    const ancestry = [...pathIds]
     let current = parent
     async function matchingDirectories(matches: (name: string) => boolean) {
       const found: OrderCandidate[] = []
@@ -354,6 +356,7 @@ export async function resolveKdriveOrder(raw: unknown, env: NodeJS.ProcessEnv, r
       if (!found.length) return result('branch-missing', 'Dossier ' + name + ' introuvable.')
       if (found.length > 1) return result('branch-ambiguous', 'Plusieurs dossiers nommés ' + name + '.')
       current = found[0]!.id
+      ancestry.push(current)
     }
     step = 'Dossiers de la commande'
     const candidates = await matchingDirectories(name => ('_' + name + '_').includes('_' + branch.key + '_'))
@@ -365,9 +368,81 @@ export async function resolveKdriveOrder(raw: unknown, env: NodeJS.ProcessEnv, r
     if (/(?:^|[^\p{L}\p{N}])(?:archives?|copies?|copy)(?=$|[^\p{L}\p{N}])/iu.test(affixes))
       return result('active-unknown', 'Le nom du dossier indique une archive ou une copie.', candidates)
     return { branch, status: 'selected' as const, message: 'Dossier définitif identifié.',
-      candidates, selectedFolderId: candidate.id }
+      candidates, selectedFolderId: candidate.id, ancestry }
   } catch (error) {
     return result('unverified', step + ' — ' + diagnosticReason(error, controller.signal))
+  } finally {
+    clearTimeout(timer)
+    controller.abort()
+  }
+}
+
+export async function resolveKdriveOrder(raw: unknown, env: NodeJS.ProcessEnv, request = fetch) {
+  const { ancestry: _ancestry, ...result } = await resolveOrder(raw, env, request)
+  return result
+}
+
+export async function readKdriveOrderWorkbook(raw: unknown, env: NodeJS.ProcessEnv, request = fetch) {
+  const selected = await resolveOrder(raw, env, request)
+  if (selected.status !== 'selected') fail(selected.message)
+
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), 30_000)
+  try {
+    const client = kdriveClient(env, request, controller)
+    const folderId = selected.selectedFolderId
+    async function findOriginal(ancestry: string[]) {
+      const seen = new Set([...ancestry, folderId])
+      let originalId: string | undefined
+      for await (const entry of client.children(folderId, 'de la commande')) {
+        if (!object(entry) || typeof entry.name !== 'string' || !entry.name ||
+            (entry.type !== 'dir' && entry.type !== 'file'))
+          fail('Métadonnées de l’enfant incomplètes.')
+        const child = client.fileIdentity(entry, entry.type)
+        if (id(entry.parent_id) !== folderId || seen.has(child))
+          fail('Ascendance ou identité de l’enfant incohérente.')
+        seen.add(child)
+        if (entry.name !== 'data.xlsx') continue
+        if (entry.type !== 'file') fail('data.xlsx doit être un fichier.')
+        if (originalId) fail('Plusieurs enfants nommés data.xlsx.')
+        originalId = child
+      }
+      if (!originalId) fail('data.xlsx introuvable dans la commande.')
+      return originalId
+    }
+    const originalId = await findOriginal(selected.ancestry)
+
+    // La liste peut avoir pris plusieurs pages. Reconfirmer le choix et toute la branche.
+    const fresh = await resolveOrder(raw, env, request)
+    if (fresh.status !== 'selected') fail(fresh.message)
+    if (fresh.selectedFolderId !== folderId || fresh.candidates[0]!.name !== selected.candidates[0]!.name ||
+        fresh.ancestry.join('/') !== selected.ancestry.join('/'))
+      fail('Dossier ou ascendance de commande modifié.')
+
+    if (await findOriginal(fresh.ancestry) !== originalId) fail('Identité de data.xlsx modifiée.')
+
+    async function verifyReadable(resourceId: string, type: string, name: string, parent: string) {
+      const data = await client.metadata(client.files + resourceId + '?with=capabilities')
+      client.fileIdentity(data, type, resourceId)
+      if (data.name !== name || id(data.parent_id) !== parent) fail('Nom ou parent modifié.')
+      if (!object(data.capabilities) || data.capabilities.can_read !== true ||
+          ('can_download' in data.capabilities && data.capabilities.can_download !== true))
+        fail('Droit de lecture insuffisant ou invérifiable.')
+    }
+    await verifyReadable(folderId, 'dir', selected.candidates[0]!.name, selected.ancestry.at(-1)!)
+    await verifyReadable(originalId, 'file', 'data.xlsx', folderId)
+    const chunks: Buffer[] = []
+    await client.read('/2/drive/' + client.drive + '/files/' + originalId + '/download',
+      MAX_FILE_SIZE, chunk => chunks.push(Buffer.from(chunk)), true)
+    const buffer = Buffer.concat(chunks)
+    try {
+      await validateOriginalWorkbook(buffer, controller.signal)
+    } catch {
+      fail('Le fichier data.xlsx est vide, corrompu ou de format incorrect.')
+    }
+    return buffer
+  } catch (error) {
+    throw new DiagnosticError(diagnosticReason(error, controller.signal))
   } finally {
     clearTimeout(timer)
     controller.abort()
