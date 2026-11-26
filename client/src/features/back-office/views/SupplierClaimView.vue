@@ -15,34 +15,30 @@
  *
  * PATTERN-DEFAULT-TO-HISTORY-IF-PRESENT posé en 8.5 (AC #5).
  */
-import { computed, ref, onMounted, onUnmounted } from 'vue'
+import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
+import { z } from 'zod'
 import { useRoute } from 'vue-router'
 import { useSupplierClaimUpload } from '../composables/useSupplierClaimUpload'
 import { useSupplierClaimArbitration, formatImporte } from '../composables/useSupplierClaimArbitration'
 import ClientDemandTable from '../components/ClientDemandTable.vue'
 
 const route = useRoute()
+const claimRouteName = route.name
 const savId = computed(() => Number(route.params['id']))
 
 // ---------------------------------------------------------------------------
 // 8.5 — State historique
 // ---------------------------------------------------------------------------
 
-interface SupplierClaimHistoryItem {
-  id: number
-  generatedAt: string
-  generatedByOperator: { id: number; fullName: string }
-  totalImporteCents: number
-  lineCount: number
-  filename: string
-  version: number
-  regenerationOf: number | null
-  isLatest: boolean
-  hasDocument: boolean
-}
-
+const claimItem = z.object({
+  id: z.number(), generatedAt: z.string(),
+  generatedByOperator: z.object({ id: z.number(), fullName: z.string() }),
+  totalImporteCents: z.number(), lineCount: z.number(), filename: z.string(),
+  version: z.number(), regenerationOf: z.number().nullable(), isLatest: z.boolean(), hasDocument: z.boolean(),
+})
+const historyPayload = z.object({ savId: z.number(), claims: z.array(claimItem) })
+type SupplierClaimHistoryItem = z.infer<typeof claimItem>
 const claimHistory = ref<SupplierClaimHistoryItem[]>([])
-const historyLoading = ref(false)
 const historyError = ref<string | null>(null)
 
 // UI state machine
@@ -52,45 +48,49 @@ const viewState = ref<ViewState>('loading')
 // Modal de confirmation régénération (DN-4 LOCKED = A)
 const showRegenerateModal = ref(false)
 
-// Fetch historique depuis l'API
-async function fetchHistory(): Promise<void> {
-  historyLoading.value = true
+const expectedOrder = ref<string | null>()
+let historyRequest = 0
+
+async function fetchHistory(prepareIfEmpty = false): Promise<boolean> {
+  const request = ++historyRequest
+  const id = savId.value
   historyError.value = null
   try {
-    const res = await fetch(
-      `/api/sav?op=get-supplier-claim-history&id=${savId.value}`,
-      { credentials: 'include' }
-    )
-    if (!res.ok) {
-      historyError.value = `Erreur ${res.status}`
-      // Dégradation propre : erreur → afficher l'écran d'import (historique non disponible)
-      if (viewState.value === 'loading') {
-        viewState.value = 'awaiting-upload'
-      }
-      return
-    }
-    const data = await res.json() as { savId: number; claims: SupplierClaimHistoryItem[] }
-    claimHistory.value = data.claims ?? []
-
-    // PATTERN-DEFAULT-TO-HISTORY-IF-PRESENT (AC #5)
-    if (claimHistory.value.length > 0 && viewState.value === 'loading') {
-      viewState.value = 'existing-claim'
-    } else if (viewState.value === 'loading') {
-      viewState.value = 'awaiting-upload'
-    }
-  } catch (_err) {
-    historyError.value = 'Erreur réseau'
+    const res = await fetch(`/api/sav?op=get-supplier-claim-history&id=${id}`, { credentials: 'include' })
+    if (!res.ok) throw new Error()
+    const data = historyPayload.parse(await res.json())
+    if (request !== historyRequest) return false
+    if (data.savId !== id) throw new Error()
+    claimHistory.value = data.claims
     if (viewState.value === 'loading') {
-      viewState.value = 'awaiting-upload'
+      viewState.value = data.claims.length ? 'existing-claim' : 'awaiting-upload'
+      if (prepareIfEmpty && !data.claims.length) void prepare()
     }
-  } finally {
-    historyLoading.value = false
+    return true
+  } catch {
+    if (request !== historyRequest) return false
+    historyError.value = 'Impossible de consulter l’historique des demandes.'
+    if (viewState.value === 'loading') viewState.value = 'awaiting-upload'
+    return false
   }
 }
 
-onMounted(() => {
-  void fetchHistory()
-})
+function openClaim() {
+  if (route.name !== claimRouteName || !Number.isSafeInteger(savId.value)) return
+  const navigation = window.history.state
+  const fromDetail = navigation?.supplierSavId === savId.value
+  const requested = fromDetail && navigation.prepareSupplier === true
+  expectedOrder.value = fromDetail ? navigation.expectedOrder : undefined
+  if (requested) {
+    window.history.replaceState({ ...navigation, prepareSupplier: false }, '')
+  }
+  claimHistory.value = []
+  historyExpanded.value = false
+  showRegenerateModal.value = false
+  resetArbitrageState()
+  viewState.value = 'loading'
+  void fetchHistory(requested)
+}
 
 // Historique repliable
 const historyExpanded = ref(false)
@@ -137,10 +137,13 @@ function onModalCancel(): void {
 }
 
 function onModalConfirm(): void {
+  if (!showRegenerateModal.value) return
+  historyError.value = null
   showRegenerateModal.value = false
   // Transition vers awaiting-upload + reset composable (AC #5, AC #7)
   resetArbitrageState()
   viewState.value = 'awaiting-upload'
+  void prepare()
 }
 
 // Esc = Annuler (DN-4 LOCKED = A)
@@ -155,6 +158,7 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  historyRequest++
   window.removeEventListener('keydown', onKeydown)
 })
 
@@ -162,12 +166,14 @@ onUnmounted(() => {
 // Upload composable (8.1)
 // ---------------------------------------------------------------------------
 
-const { state, parseResult, errorMessage, handleFileChange, reset: resetUpload } = useSupplierClaimUpload(savId)
+const { state, parseResult, errorMessage, handleFileChange, prepare, reset: resetUpload } = useSupplierClaimUpload(savId, expectedOrder)
 
 // Watch upload state to transition
-import { watch } from 'vue'
 watch(state, (newState) => {
-  if (newState === 'previewing' && viewState.value !== 'arbitrating') {
+  if (newState === 'uploading' || newState === 'preparing') {
+    resetToArbitrating()
+    viewState.value = 'awaiting-upload'
+  } else if (newState === 'previewing' && viewState.value !== 'arbitrating') {
     viewState.value = 'previewing'
   }
 })
@@ -204,6 +210,9 @@ const {
   resetToArbitrating,
 } = useSupplierClaimArbitration(savId, parseResult)
 
+onMounted(openClaim)
+watch(savId, openClaim, { flush: 'sync' })
+
 // Watch reconcileState to transition view
 watch(reconcileState, (newState) => {
   if (newState === 'arbitrating') {
@@ -218,7 +227,9 @@ watch(generateState, async (newState) => {
   if (newState === 'generated') {
     viewState.value = 'generated'
     // Re-fetch historique pour basculer en existing-claim avec la nouvelle version
-    await fetchHistory()
+    const id = savId.value
+    const refreshed = await fetchHistory()
+    if (!refreshed || savId.value !== id || viewState.value !== 'generated') return
     // Si on a des claims après le fetch, transitionner vers existing-claim
     if (claimHistory.value.length > 0) {
       viewState.value = 'existing-claim'
@@ -359,6 +370,7 @@ const oneDriveStatusText = computed(() => {
     </nav>
 
     <h1>Demande de remboursement fournisseur</h1>
+    <p v-if="viewState === 'loading'" role="status">Lecture de l’historique en cours…</p>
 
     <!-- =====================================================================
          Story 8.5 — État "existing-claim" (PATTERN-DEFAULT-TO-HISTORY-IF-PRESENT)
@@ -519,6 +531,14 @@ const oneDriveStatusText = computed(() => {
       class="upload-section card"
       data-testid="awaiting-upload-state"
     >
+      <p v-if="historyError" role="alert">{{ historyError }}</p>
+      <button v-if="historyError && viewState === 'awaiting-upload'" class="btn-secondary" @click="viewState = 'loading'; fetchHistory()">
+        Relire l’historique
+      </button>
+      <button v-if="!historyError && viewState === 'awaiting-upload'" type="button" class="btn-primary"
+        :disabled="state === 'preparing' || state === 'uploading'" @click="prepare">
+        {{ state === 'error' ? 'Réessayer la préparation' : 'Préparer depuis kDrive' }}
+      </button>
       <h2>Importer le fichier SOL Y FRUTA</h2>
       <p class="hint">
         Déposez le fichier <code>data.xlsx</code> de la commande SOL Y FRUTA. Le système lira les
@@ -526,6 +546,7 @@ const oneDriveStatusText = computed(() => {
       </p>
 
       <input
+        aria-label="Importer manuellement un classeur fournisseur"
         type="file"
         accept=".xlsx"
         data-testid="file-input"
@@ -533,6 +554,7 @@ const oneDriveStatusText = computed(() => {
         @change="handleFileChange"
       />
 
+      <div v-if="state === 'preparing'" role="status">Lecture du classeur de la commande en cours…</div>
       <div v-if="state === 'uploading'" class="uploading-indicator" aria-live="polite">
         Analyse du fichier en cours…
       </div>

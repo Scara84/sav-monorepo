@@ -507,3 +507,136 @@ describe('SC-05: Gestion d\'erreur parse (AC #12d, M-2-bis fix — VRAI Supplier
     expect(otherPosts).toHaveLength(0)
   })
 })
+
+describe('Préparation kDrive dans la demande courante', () => {
+  const op = (name: string) => (url: string) => url.includes('op=' + name)
+
+  async function openFromDetail(history: unknown, status = 200, savStatus = 'validated') {
+    const router = makeRouterWithRealSupplierClaim()
+    await router.push('/admin/sav/1')
+    await router.isReady()
+    const detail = buildSavPayload(savStatus)
+    Object.assign(detail.data.sav, { invoiceSpecialMention: '278_26S21_11' })
+    const ctrl = makeFetchController(detail)
+    ctrl.onceFor(op('get-supplier-claim-history'), { status, body: history })
+    const wrapper = mount(RootWrapper, { global: { plugins: [router] } })
+    await flushPromises()
+    return { ctrl, wrapper, router, click: async () => {
+      await wrapper.get('[data-testid="supplier-claim-btn"]').trigger('click')
+      await flushPromises()
+    } }
+  }
+
+  it('ouvre le SAV en consultation et conserve sa commande pour le dépôt manuel', async () => {
+    const { ctrl, wrapper, click } = await openFromDetail({ savId: 1, claims: [] }, 200, 'in_progress')
+    await click()
+    expect(ctrl.calls.some(c => op('prepare-supplier-file')(c.url))).toBe(false)
+    await setInputFiles(wrapper.get('input[type=file]').element as HTMLInputElement,
+      [new File(['test'], 'data.xlsx')], wrapper)
+    expect(ctrl.calls.find(c => op('parse-supplier-file')(c.url))?.body).toMatchObject({ expectedOrder: '278_26S21_11' })
+    wrapper.unmount()
+  })
+
+  it('consomme une préparation unique, puis le retour dans l’historique consulte seulement', async () => {
+    const { ctrl, wrapper, router, click } = await openFromDetail({ savId: 1, claims: [] })
+    ctrl.onceFor(op('prepare-supplier-file'), { status: 200, body: buildParseSuccessResponse() })
+    await click()
+    expect(wrapper.get('[data-testid="preview-panel"]').text()).toContain('278_26S21_11')
+    expect(ctrl.calls.filter(c => op('prepare-supplier-file')(c.url)).map(c => c.body)).toEqual([{ expectedOrder: '278_26S21_11' }])
+    expect(window.history.state.prepareSupplier).toBe(false)
+    expect(ctrl.calls.some(c => op('generate-supplier-claim')(c.url))).toBe(false)
+    wrapper.unmount()
+    ctrl.onceFor(op('get-supplier-claim-history'), { status: 200, body: { savId: 1, claims: [] } })
+    const reopened = mount(RootWrapper, { global: { plugins: [router] } })
+    await flushPromises()
+    expect(reopened.find('[data-testid="preview-panel"]').exists()).toBe(false)
+    expect(ctrl.calls.filter(c => op('prepare-supplier-file')(c.url))).toHaveLength(1)
+    reopened.unmount()
+  })
+
+  it.each([
+    [503, {}], [200, {}], [200, { savId: 2, claims: [] }], [200, { savId: 1, claims: [null] }],
+  ])('bloque l’import implicite si l’historique est illisible (%s)', async (status, history) => {
+    const { wrapper, click, ctrl } = await openFromDetail(history, Number(status))
+    await click()
+    expect(wrapper.get('[role="alert"]').text()).toContain('historique')
+    expect(ctrl.calls.some(c => op('prepare-supplier-file')(c.url))).toBe(false)
+    expect(wrapper.find('[data-testid="file-input"]').exists()).toBe(true)
+    wrapper.unmount()
+  })
+
+  it('garde l’historique jusqu’à confirmation, rejette un aperçu invalide et permet la reprise', async () => {
+    const claim = { id: 5, generatedAt: '2026-05-20', generatedByOperator: { id: 1, fullName: 'Test' },
+      version: 1, totalImporteCents: 200, lineCount: 1, filename: 'historique.xlsx', regenerationOf: null, isLatest: true, hasDocument: true }
+    const { wrapper, click, ctrl } = await openFromDetail({ savId: 1, claims: [claim] })
+    await click()
+    await wrapper.get('[data-testid="regenerate-btn"]').trigger('click')
+    expect(ctrl.calls.some(c => op('prepare-supplier-file')(c.url))).toBe(false)
+    ctrl.onceFor(op('prepare-supplier-file'), { status: 200, body: { metadata: {} } })
+    await wrapper.get('[data-testid="regenerate-confirm-btn"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toContain('aperçu valide')
+    expect(wrapper.find('[data-testid="preview-panel"]').exists()).toBe(false)
+    ctrl.onceFor(op('prepare-supplier-file'), { status: 200, body: buildParseSuccessResponse() })
+    await wrapper.get('button.btn-primary').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="preview-panel"]').text()).toContain('278_26S21_11')
+    wrapper.unmount()
+  })
+
+  it('conserve le résultat généré quand la relecture de l’historique échoue', async () => {
+    const claim = { id: 5, generatedAt: '2026-05-20', generatedByOperator: { id: 1, fullName: 'Test' },
+      version: 1, totalImporteCents: 200, lineCount: 1, filename: 'ancienne.xlsx', regenerationOf: null, isLatest: true, hasDocument: true }
+    const { wrapper, click, ctrl } = await openFromDetail({ savId: 1, claims: [claim] })
+    await click()
+    await wrapper.get('[data-testid="regenerate-btn"]').trigger('click')
+    ctrl.onceFor(op('prepare-supplier-file'), { status: 200, body: buildParseSuccessResponse() })
+    ctrl.onceFor(op('reconcile-supplier-claim'), { status: 200, body: { claimLines: [{
+      savLineId: 1, qty: 1, qteFact: 1, precio: 2, unidad: 'kg', codigoEs: 'A', productoEs: 'A',
+      blockingForGeneration: false, conversionFlag: 'ok', comentarios: '', causaEs: 'défaut',
+    }], unusedSupplierLines: [], unmatchedSavLines: [] } })
+    await wrapper.get('[data-testid="regenerate-confirm-btn"]').trigger('click')
+    await flushPromises()
+    ctrl.onceFor(op('get-supplier-claim-history'), { status: 503, body: {} })
+    const original = globalThis.fetch
+    globalThis.fetch = (input, init) => op('generate-supplier-claim')(String(input))
+      ? Promise.resolve(new Response(new Blob(['nouveau']))) : original(input, init)
+    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    await wrapper.get('[data-testid="generate-btn"]').trigger('click')
+    await flushPromises()
+    expect(wrapper.get('[data-testid="generated-state"]').text()).toContain('Réclamation générée')
+    expect(wrapper.get('[role="alert"]').text()).toContain('historique')
+    expect(wrapper.find('[data-testid="existing-claim-state"]').exists()).toBe(false)
+    wrapper.unmount()
+  })
+
+  it.each(['manuel', 'autre SAV'])('ignore la réponse kDrive tardive après %s', async action => {
+    const { wrapper, router, ctrl, click } = await openFromDetail({ savId: 1, claims: [] })
+    const original = globalThis.fetch
+    let finish!: (res: Response) => void
+    let preparations = 0
+    globalThis.fetch = (input, init) => {
+      if (!op('prepare-supplier-file')(String(input))) return original(input, init)
+      preparations++
+      return new Promise(resolve => { finish = resolve })
+    }
+    await click()
+    expect(wrapper.get('[role="status"]').text()).toContain('Lecture')
+    expect(wrapper.get('.upload-section button').attributes('disabled')).toBeDefined()
+    if (action === 'manuel') {
+      const manual = buildParseSuccessResponse()
+      manual.metadata.reference = 'MANUEL'
+      ctrl.onceFor(op('parse-supplier-file'), { status: 200, body: manual })
+      await setInputFiles(wrapper.get('input[type=file]').element as HTMLInputElement, [new File(['test'], 'data.xlsx')], wrapper)
+    } else {
+      ctrl.onceFor(op('get-supplier-claim-history'), { status: 200, body: { savId: 2, claims: [] } })
+      await router.push('/admin/sav/2/demande-fournisseur')
+    }
+    finish(Response.json(buildParseSuccessResponse()))
+    await flushPromises()
+    expect(preparations).toBe(1)
+    expect(wrapper.find('[data-testid="preview-panel"]').exists()).toBe(action === 'manuel')
+    if (action === 'manuel') expect(wrapper.get('[data-testid="preview-panel"]').text()).toContain('MANUEL')
+    wrapper.unmount()
+  })
+})

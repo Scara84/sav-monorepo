@@ -435,9 +435,15 @@ export function useSupplierClaimArbitration(
   // API call
   // ---------------------------------------------------------------------------
 
+  let reconcileAttempt = 0
+
   async function runReconcile(): Promise<void> {
     if (!parseResult.value) return
 
+    const attempt = ++reconcileAttempt
+    const id = savId.value
+    const source = parseResult.value
+    const current = () => attempt === reconcileAttempt && savId.value === id && parseResult.value === source
     reconcileState.value = 'reconciling'
     reconcileError.value = null
 
@@ -454,6 +460,7 @@ export function useSupplierClaimArbitration(
 
       const data = await res.json() as ReconcileResponse | { error?: { message?: string } }
 
+      if (!current()) return
       if (!res.ok) {
         const errData = data as { error?: { message?: string } }
         reconcileError.value = errData.error?.message ?? `Erreur ${res.status} — pré-remplissage impossible`
@@ -496,6 +503,7 @@ export function useSupplierClaimArbitration(
       // AC #10 : register beforeunload guard (OQ-3)
       registerBeforeUnload()
     } catch (err) {
+      if (!current()) return
       reconcileError.value = err instanceof Error ? err.message : 'Erreur réseau — pré-remplissage impossible'
       reconcileState.value = 'reconcile-error'
     }
@@ -560,7 +568,11 @@ export function useSupplierClaimArbitration(
   // ---------------------------------------------------------------------------
 
   async function generate(creditNoteId: number | null = null): Promise<void> {
-    if (!canGenerateComputed.value) return
+    if (!canGenerateComputed.value || generateState.value === 'generating') return
+    const attempt = reconcileAttempt
+    const source = parseResult.value
+    const id = savId.value
+    const current = () => attempt === reconcileAttempt && parseResult.value === source && savId.value === id
 
     generateState.value = 'generating'
     generateError.value = null
@@ -613,6 +625,7 @@ export function useSupplierClaimArbitration(
 
       if (!res.ok) {
         const errData = await res.json() as { error?: { message?: string; code?: string } }
+        if (!current()) return
         generateError.value = errData.error?.message ?? `Erreur ${res.status} — génération impossible`
         generateState.value = 'generate-error'
         return
@@ -620,6 +633,7 @@ export function useSupplierClaimArbitration(
 
       // Success : trigger download (PATTERN-DIRECT-BLOB-DOWNLOAD)
       const blob = await res.blob()
+      if (!current()) return
       const url = URL.createObjectURL(blob)
       const contentDisposition = res.headers.get('content-disposition') ?? ''
       const filenameMatch = contentDisposition.match(/filename="([^"]+)"/)
@@ -647,6 +661,7 @@ export function useSupplierClaimArbitration(
       }
       generateState.value = 'generated'
     } catch (err) {
+      if (!current()) return
       generateError.value = err instanceof Error ? err.message : 'Erreur réseau — génération impossible'
       generateState.value = 'generate-error'
     }
@@ -661,6 +676,7 @@ export function useSupplierClaimArbitration(
   // unmatchedSavLines, unusedSupplierLines) survives into the new session.
   // The view is responsible for also resetting the upload composable (state/parseResult).
   function resetToArbitrating(): void {
+    reconcileAttempt++
     generateState.value = 'idle'
     generateError.value = null
     generateResult.value = null
@@ -707,6 +723,7 @@ export function useSupplierClaimArbitration(
   }
 
   onUnmounted(() => {
+    reconcileAttempt++
     unregisterBeforeUnload()
   })
 
@@ -714,16 +731,12 @@ export function useSupplierClaimArbitration(
   // Watch parseResult: auto-trigger reconcile when parse completes
   // (AC #1 : "appel automatique après transition previewing")
   //
-  // MEDIUM-2 (CR fix): original guard `reconcileState.value === null` blocked reconcile on
-  // a SECOND successful upload (parseResult changes but reconcileState is already 'arbitrating').
-  // Fixed: re-trigger on any non-loading state (any state except 'reconciling' which is in-flight).
-  // On re-trigger, reset ALL arbitrage state so stale savLineId keys from the prior file don't leak.
-  // ---------------------------------------------------------------------------
-
+  // Un nouveau fichier peut arriver pendant le rapprochement du précédent.
+  // runReconcile ignore la réponse si le fichier ou la tentative a changé.
   watch(
     parseResult,
     (newVal) => {
-      if (newVal !== null && reconcileState.value !== 'reconciling') {
+      if (newVal !== null) {
         // MEDIUM-2: reset stale arbitrage state before re-reconciling
         edits.value = new Map()
         exclusions.value = new Map()

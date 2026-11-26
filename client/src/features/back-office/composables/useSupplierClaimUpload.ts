@@ -1,148 +1,103 @@
-/**
- * Story 8.1 — Composable useSupplierClaimUpload
- *
- * State machine : idle → uploading → previewing | error
- *
- * Responsabilités :
- *   - handleFileChange : lit le fichier sélectionné, encode en base64, appelle l'API
- *   - POST /api/sav?op=parse-supplier-file&id=:savId (JSON base64 — Q1)
- *   - Expose parseResult en état 'previewing'
- *   - Expose errorMessage en état 'error'
- *   - 0 persistance (PATTERN-PARSE-PREVIEW-NO-PERSIST)
- */
+import { onScopeDispose, ref, shallowRef, watch, type Ref } from 'vue'
+import { z } from 'zod'
 
-import { ref } from 'vue'
-import type { ComputedRef } from 'vue'
+const text = z.string().nullable()
+const number = z.number().nullable()
+const identifier = z.union([z.string(), z.number()]).nullable()
+const factureRow = z.object({
+  codeFr: z.string(), designationFr: text, prixVenteClientHt: number, unite: text,
+  qteCmd: number, qteFact: number, codigoEs: text, descripcionEs: text,
+  kilosPiezas: text, kilosNetos: number, precio: number, importe: number, cmd: identifier,
+})
+const bddRow = z.object({ code: z.string(), designationEs: text, origen: text })
+const warning = z.object({ row: z.number(), sheet: z.string(), fields: z.array(z.string()) })
+const sheet = z.object({ skippedRows: z.number(), warnings: z.array(warning) })
+const preview = z.object({
+  metadata: z.object({ reference: text, albaran: identifier, fechaAlbaran: text, warnings: z.array(z.string()) }),
+  factureGroupe: sheet.extend({ rows: z.array(factureRow) }),
+  bdd: sheet.extend({ rows: z.array(bddRow) }),
+  fileMeta: z.object({ filename: z.string(), sizeBytes: z.number(), sheetsDetected: z.array(z.string()), parser: z.string() }),
+})
+export type SupplierFileParseResult = z.infer<typeof preview>
+export type FactureGroupeRow = z.infer<typeof factureRow>
+export type BddRow = z.infer<typeof bddRow>
+export type ParseWarning = z.infer<typeof warning>
+export type UploadState = 'idle' | 'uploading' | 'preparing' | 'previewing' | 'error'
 
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
-
-export interface FactureGroupeRow {
-  codeFr: string
-  designationFr: string | null
-  prixVenteClientHt: number | null
-  unite: string | null
-  qteCmd: number | null
-  qteFact: number | null
-  codigoEs: string | null
-  descripcionEs: string | null
-  kilosPiezas: string | null
-  kilosNetos: number | null
-  precio: number | null
-  importe: number | null
-  cmd: string | number | null
+function importError(error: { code?: string; reason?: string } | undefined, status: number) {
+  if (error?.reason === 'MISSING_SHEETS') return 'Vérifiez que le classeur contient les onglets FACTURE_GROUPE et BDD.'
+  if (error?.code === 'PREPARATION_BUSY') return 'Une préparation est déjà en cours pour cette commande. Réessayez après sa fin.'
+  if (status === 413) return 'Le fichier dépasse 4 Mio. Sélectionnez un classeur plus petit.'
+  if (status === 429) return 'Trop de tentatives. Patientez une minute avant de réessayer.'
+  if (status === 415) return 'Sélectionnez un fichier au format .xlsx.'
+  if (status === 409) return 'Commande indisponible ou modifiée. Rouvrez le détail du SAV.'
+  if (status === 403) return 'Accès refusé pour ce SAV.'
+  return 'Impossible de lire le fichier fournisseur. Vérifiez le classeur et réessayez.'
 }
 
-export interface BddRow {
-  code: string
-  designationEs: string | null
-  origen: string | null
-}
-
-export interface ParseWarning {
-  row: number
-  sheet: string
-  fields: string[]
-}
-
-export interface SupplierFileParseResult {
-  metadata: {
-    reference: string | null
-    albaran: string | number | null
-    fechaAlbaran: string | null
-    warnings: string[]
-  }
-  factureGroupe: {
-    rows: FactureGroupeRow[]
-    skippedRows: number
-    warnings: ParseWarning[]
-  }
-  bdd: {
-    rows: BddRow[]
-    skippedRows: number
-    warnings: ParseWarning[]
-  }
-  fileMeta: {
-    filename: string
-    sizeBytes: number
-    sheetsDetected: string[]
-    parser: string
-  }
-}
-
-export type UploadState = 'idle' | 'uploading' | 'previewing' | 'error'
-
-// ---------------------------------------------------------------------------
-// Composable
-// ---------------------------------------------------------------------------
-
-export function useSupplierClaimUpload(savId: ComputedRef<number>) {
+export function useSupplierClaimUpload(savId: Ref<number>, order: Ref<string | null | undefined>) {
   const state = ref<UploadState>('idle')
-  const parseResult = ref<SupplierFileParseResult | null>(null)
+  const parseResult = shallowRef<SupplierFileParseResult | null>(null)
   const errorMessage = ref<string | null>(null)
+  let operation = 0
 
-  async function handleFileChange(event: Event): Promise<void> {
-    const input = event.target as HTMLInputElement
-    const file = input.files?.[0]
-    if (!file) return
-
-    state.value = 'uploading'
-    parseResult.value = null
-    errorMessage.value = null
-
-    try {
-      // Encode en base64 (cohérence Story 4.8 import-supplier-prices — Q1)
-      const arrayBuffer = await file.arrayBuffer()
-      const uint8 = new Uint8Array(arrayBuffer)
-      let binary = ''
-      for (let i = 0; i < uint8.length; i++) {
-        binary += String.fromCharCode(uint8[i]!)
-      }
-      const base64 = btoa(binary)
-
-      const res = await fetch(
-        `/api/sav?op=parse-supplier-file&id=${savId.value}`,
-        {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            fileBuffer: base64,
-            mimeType: file.type || 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
-            filename: file.name,
-          }),
-          credentials: 'include',
-        }
-      )
-
-      const data = await res.json() as SupplierFileParseResult | { error?: { message?: string; code?: string } }
-
-      if (!res.ok) {
-        const errData = data as { error?: { message?: string; code?: string } }
-        errorMessage.value = errData.error?.message ?? `Erreur ${res.status} — fournir un fichier .xlsx valide`
-        state.value = 'error'
-        return
-      }
-
-      parseResult.value = data as SupplierFileParseResult
-      state.value = 'previewing'
-    } catch (err) {
-      errorMessage.value = err instanceof Error ? err.message : 'Erreur réseau lors de l\'import'
-      state.value = 'error'
-    }
-  }
-
-  function reset(): void {
+  function reset() {
+    operation++
     state.value = 'idle'
     parseResult.value = null
     errorMessage.value = null
   }
 
-  return {
-    state,
-    parseResult,
-    errorMessage,
-    handleFileChange,
-    reset,
+  watch([savId, order], reset, { flush: 'sync' })
+  onScopeDispose(reset)
+
+  async function importFile(file?: File) {
+    reset()
+    const attempt = operation
+    const id = savId.value
+    const expectedOrder = order.value
+    state.value = file ? 'uploading' : 'preparing'
+    try {
+      let body: Record<string, unknown> = { expectedOrder }
+      if (file) {
+        const bytes = new Uint8Array(await file.arrayBuffer())
+        if (attempt !== operation) return
+        let binary = ''
+        for (const byte of bytes) binary += String.fromCharCode(byte)
+        body = { expectedOrder, fileBuffer: btoa(binary), mimeType: file.type || 'application/octet-stream', filename: file.name }
+      }
+      const op = file ? 'parse-supplier-file' : 'prepare-supplier-file'
+      const response = await fetch(`/api/sav?op=${op}&id=${id}`, {
+        method: 'POST', credentials: 'include',
+        headers: { 'content-type': 'application/json' }, body: JSON.stringify(body),
+      })
+      const data = response.ok ? await response.json() : await response.json().catch(() => null)
+      if (attempt !== operation) return
+      if (!response.ok) {
+        errorMessage.value = importError(data?.error, response.status)
+        state.value = 'error'
+        return
+      }
+      parseResult.value = preview.parse(data)
+      state.value = 'previewing'
+    } catch {
+      if (attempt !== operation) return
+      errorMessage.value = 'Impossible de préparer un aperçu valide du fichier fournisseur.'
+      state.value = 'error'
+    }
   }
+
+  function prepare() {
+    if (state.value === 'preparing' || state.value === 'uploading') return
+    return importFile()
+  }
+
+  function handleFileChange(event: Event) {
+    const input = event.target as HTMLInputElement
+    const file = input.files?.[0]
+    input.value = ''
+    if (file) return importFile(file)
+  }
+
+  return { state, parseResult, errorMessage, handleFileChange, prepare, reset }
 }
