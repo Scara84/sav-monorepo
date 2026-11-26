@@ -1,0 +1,56 @@
+[[entry]]
+id = 1
+type = "story"
+title = "Vérifier la connexion et le dossier de départ"
+description = "Client REST serveur réutilisable et diagnostic indépendant fournissant l’identifiant vérifié de FRANCAIS. Borner les délais, distinguer 429 et respecter Retry-After. Contrôler le drive, la racine et chaque parent jusqu’à FRANCAIS. Distinguer accès aux métadonnées et téléchargement témoin autorisé. Documenter la configuration locale."
+verify = "Exécuter le diagnostic simulé avec succès, secret absent, 401, 403, mauvais drive, dossier absent et parent erroné. Sur compte autorisé, vérifier séparément accès au dossier et lecture témoin."
+covers = ["R1", "R2", "R3"]
+after = []
+hitl = true
+risk = "high"
+
+[[entry]]
+id = 2
+unknown = "Quelles conventions confirmées permettent de reconnaître le dossier actif dans la branche année/semaine ?"
+type = "story"
+title = "Identifier le dossier actif de la commande"
+description = "À partir de la référence validée, dériver la clé, résoudre année et semaine, puis parcourir toutes les pages des enfants directs. Vérifier les conventions métier avant activation."
+verify = "Tester S5, S05, S46, bornes 1–53, zéros conservés, autre année, clés partielles, curseur bloqué, archives, doublons et statut inconnu. Zéro requête pour une référence invalide."
+covers = ["R4", "R5", "R7", "R8", "R9", "R10"]
+after = [1]
+hitl = true
+risk = "high"
+
+[[entry]]
+id = 3
+type = "story"
+title = "Récupérer et valider le classeur original"
+description = "Depuis le dossier résolu, identifier data.xlsx unique, refuser les redirections non validées et toute fuite de jeton, revérifier parent et autorisation, borner le flux à 4 Mio et partager les contrôles du parseur existant."
+verify = "Sur la fixture valide, comparer les octets. Refuser déplacement, doublon, ZIP invalide, HTML, flux interrompu et dépassement de taille sans traitement métier."
+covers = ["R11", "R12", "R13", "R14"]
+after = [2]
+hitl = false
+risk = "high"
+
+[[entry]]
+id = 4
+type = "story"
+title = "Afficher l’aperçu automatique dans la demande en cours"
+description = "Lire sav.metadata.invoice_special_mention après contrôle opérateur/groupe, y compris pour un admin. Consommer le classeur validé de la story 3. À partir de l’action de préparation dans SavDetailView, déclencher après historique vide confirmé ou régénération confirmée. Préserver la simple consultation et distinguer un échec de lecture de l’historique. Réutiliser le résultat du parseur et conserver le recours manuel."
+verify = "Tester double clic, changement de SAV ou commande en vol, nouvel essai, manuel concurrent, réponse tardive, lecteur d’écran et accès à un autre groupe. Vérifier un seul aperçu accepté, aucun effet sur génération ou historique."
+covers = ["R6", "R15", "R16", "R17", "R18", "R19", "R20", "R21", "R22"]
+after = [3]
+hitl = false
+risk = "high"
+
+[[entry]]
+id = 5
+unknown = "Quel témoin et quel accès autorisé permettront la recette sur le compte réel ?"
+type = "story"
+title = "Vérifier la parité et le parcours réel"
+description = "Comparer les deux entrées avec supplier-claim-data.xlsx et le même SAV. Rejouer le parcours complet et les refus dans le navigateur intégré. Consigner configuration, limites et observations réelles séparément des mocks."
+verify = "Comparer les champs métier et lignes de l’aperçu. Exécuter le diagnostic de la story 1 puis, sur compte autorisé, vérifier la branche réelle S05, les variantes actives et les octets témoins. Vérifier la reprise manuelle après refus, sans modifier de données de production."
+covers = ["R1", "R7", "R13", "R14", "R15", "R16", "R17", "R18", "R19", "R20", "R21", "R22"]
+after = [4]
+hitl = true
+risk = "high"
