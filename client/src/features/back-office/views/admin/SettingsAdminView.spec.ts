@@ -74,65 +74,116 @@ describe('SettingsAdminView (UI)', () => {
     expect(inputDedup.element.value).toBe('24')
   })
 
-  it('Click Enregistrer → PATCH appelé avec body correct + toast success', async () => {
-    let calls = 0
-    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      calls += 1
-      const url = String(input)
-      if (url.includes('/history')) {
-        return jsonResponse(200, {
-          data: {
-            items: [
-              {
-                id: 1,
-                value: { count: 5, days: 7, dedup_hours: 24 },
-                valid_from: '2026-04-20T10:00:00Z',
-                valid_to: null,
-                notes: null,
-                created_at: '2026-04-20T10:00:00Z',
-                updated_by: null,
-              },
-            ],
-          },
-        })
-      }
-      // PATCH
+  it('relit les trois valeurs enregistrées après remontage et conserve la règle devant un brouillon invalide', async () => {
+    let value = { count: 5, days: 7, dedup_hours: 24 }
+    const row = () => ({
+      id: 1,
+      value,
+      valid_from: '2026-04-20T10:00:00Z',
+      valid_to: null,
+      updated_by: null,
+      notes: null,
+      created_at: '2026-04-20T10:00:00Z',
+    })
+    const service = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).includes('/history')) return jsonResponse(200, { data: { items: [row()] } })
       expect(init?.method).toBe('PATCH')
-      const body = JSON.parse(String(init?.body)) as { count: number }
-      expect(body.count).toBe(8)
-      return jsonResponse(200, {
-        data: {
-          id: 99,
-          key: 'threshold_alert',
-          value: { count: 8, days: 14, dedup_hours: 48 },
-          valid_from: '2026-04-28T10:00:00Z',
-          valid_to: null,
-          updated_by: 9,
-          notes: 'tighten',
-          created_at: '2026-04-28T10:00:00Z',
-        },
-      })
-    }) as unknown as typeof fetch
-
+      const payload = JSON.parse(String(init?.body))
+      expect(payload).toEqual({ count: 8, days: 14, dedup_hours: 48, notes: 'tighten' })
+      value = { count: payload.count, days: payload.days, dedup_hours: payload.dedup_hours }
+      return jsonResponse(200, { data: { ...row(), key: 'threshold_alert' } })
+    })
+    globalThis.fetch = service
     const router = buildRouter()
     await router.push('/admin/settings')
-    const wrapper = mount(SettingsAdminView, { global: { plugins: [router] } })
+    const open = () => mount(SettingsAdminView, { global: { plugins: [router] } })
+    const wrapper = open()
     await flushPromises()
-    expect(calls).toBe(1) // history mount
-
-    // Modifier les valeurs et soumettre.
-    await wrapper.find<HTMLInputElement>('#threshold-count').setValue('8')
-    await wrapper.find<HTMLInputElement>('#threshold-days').setValue('14')
-    await wrapper.find<HTMLInputElement>('#threshold-dedup').setValue('48')
-    await wrapper.find<HTMLInputElement>('#threshold-notes').setValue('tighten')
-    await wrapper.find('form.form').trigger('submit')
+    await wrapper.get('#threshold-count').setValue('0')
+    await wrapper.get('form.form').trigger('submit')
+    expect(service).toHaveBeenCalledTimes(1)
+    expect(wrapper.get('.confirmed').text()).toContain('5 occurrences')
+    await wrapper.get('#threshold-count').setValue('8')
+    await wrapper.get('#threshold-days').setValue('14')
+    await wrapper.get('#threshold-dedup').setValue('48')
+    await wrapper.get('#threshold-notes').setValue('tighten')
+    await wrapper.get('form.form').trigger('submit')
     await flushPromises()
-
-    expect(calls).toBeGreaterThanOrEqual(2)
-    const toast = wrapper.find('.toast.success')
-    expect(toast.exists()).toBe(true)
-    expect(toast.text()).toContain('Seuils enregistrés')
+    expect(wrapper.get('.toast.success').text()).toContain('Seuils enregistrés')
+    wrapper.unmount()
+    const reopened = open()
+    await flushPromises()
+    expect(
+      reopened
+        .get('.confirmed')
+        .findAll('dd')
+        .map((cell) => cell.text())
+    ).toEqual(['8 occurrences de SAV', '14 jours', '48 heures'])
+    reopened.unmount()
   })
+
+  it.each([200, 409])(
+    'PATCH %i puis lecture en panne : masque les données périmées et reprend sans perdre la saisie',
+    async (status) => {
+      const row = (count: number) => ({
+        id: count,
+        value: { count, days: 7, dedup_hours: 24 },
+        valid_from: '2026-04-20T10:00:00Z',
+        valid_to: null,
+        updated_by: null,
+        notes: null,
+      })
+      const persistedCount = status === 200 ? 8 : 11
+      const fetchMock = vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse(200, { data: { items: [row(5)] } }))
+        .mockResolvedValueOnce(
+          jsonResponse(
+            status,
+            status === 200 ? { data: row(8) } : { error: { details: { code: 'CONCURRENT_PATCH' } } }
+          )
+        )
+        .mockResolvedValueOnce(jsonResponse(503, {}))
+        .mockResolvedValueOnce(jsonResponse(200, { data: { items: [row(persistedCount)] } }))
+      globalThis.fetch = fetchMock
+      const router = buildRouter()
+      await router.push('/admin/settings')
+      const wrapper = mount(SettingsAdminView, { global: { plugins: [router] } })
+      await flushPromises()
+      await wrapper.get('#threshold-count').setValue('8')
+      await wrapper.get('#threshold-notes').setValue('Motif')
+      await wrapper.get('form.form').trigger('submit')
+      await flushPromises()
+      expect(wrapper.find('.history-table').exists()).toBe(false)
+      expect(wrapper.get('.history').text()).toContain('Historique indisponible')
+      if (status === 409) {
+        expect(wrapper.get('.confirmed').text()).toContain(
+          'Lecture de la règle enregistrée impossible'
+        )
+        expect(wrapper.get('form.form button').attributes('disabled')).toBeDefined()
+      } else {
+        expect(wrapper.get('.confirmed').text()).toContain('8 occurrences')
+      }
+      await wrapper.get('.history button').trigger('click')
+      await flushPromises()
+      expect(wrapper.get('.history-table tbody td:nth-child(2)').text()).toBe(
+        String(persistedCount)
+      )
+      expect(wrapper.get('.confirmed').text()).toContain(persistedCount + ' occurrences')
+      expect(wrapper.get<HTMLInputElement>('#threshold-count').element.value).toBe('8')
+      expect(wrapper.get<HTMLInputElement>('#threshold-notes').element.value).toBe(
+        status === 409 ? 'Motif' : ''
+      )
+      expect(wrapper.get('form.form button').attributes('disabled')).toBeUndefined()
+      expect(fetchMock.mock.calls.map(([, init]) => init.method ?? 'GET')).toEqual([
+        'GET',
+        'PATCH',
+        'GET',
+        'GET',
+      ])
+      wrapper.unmount()
+    }
+  )
 
   it('PATCH 403 ROLE_NOT_ALLOWED → toast erreur FR', async () => {
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
@@ -164,12 +215,19 @@ describe('SettingsAdminView (UI)', () => {
     await router.push('/admin/settings')
     const wrapper = mount(SettingsAdminView, { global: { plugins: [router] } })
     await flushPromises()
+    await wrapper.get('#threshold-count').setValue('12')
     await wrapper.find('form.form').trigger('submit')
     await flushPromises()
 
     const toast = wrapper.find('.toast.error')
     expect(toast.exists()).toBe(true)
     expect(toast.text()).toContain('administrateurs')
+    expect(
+      wrapper
+        .get('.confirmed')
+        .findAll('dd')
+        .map((cell) => cell.text())
+    ).toEqual(['5 occurrences de SAV', '7 jours', '24 heures'])
   })
 
   it('Historique rendu avec dates + auteur', async () => {

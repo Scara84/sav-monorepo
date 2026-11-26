@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
+import userEvent from '@testing-library/user-event'
 import { mount, flushPromises } from '@vue/test-utils'
 import { createRouter, createMemoryHistory } from 'vue-router'
 
@@ -91,6 +92,60 @@ describe('AuditTrailView (UI smoke — Story 7-5)', () => {
     globalThis.fetch = originalFetch
   })
 
+  it('filtre au clavier, ouvre le témoin et reprend après une panne sans écriture', async () => {
+    const items = [
+      buildItem({ id: 31, action: 'rotated' }),
+      buildItem({ id: 32, action: 'created' }),
+    ]
+    let offline = false
+    const service = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      expect(init?.method ?? 'GET').toBe('GET')
+      if (offline) return jsonResponse(503, { error: { message: 'Service indisponible' } })
+      const action = new URL(String(input), 'http://localhost').searchParams.get('action')
+      return jsonResponse(200, {
+        data: {
+          items: items.filter((item) => !action || item.action === action),
+          nextCursor: null,
+        },
+      })
+    })
+    globalThis.fetch = service
+    const user = userEvent.setup()
+    const wrapper = mount(AuditTrailView, { attachTo: document.body })
+    try {
+      await flushPromises()
+      expect(wrapper.findAll('[data-diff-toggle]')).toHaveLength(2)
+      await user.type(wrapper.get('#filter-action').element as HTMLInputElement, 'rotated{Enter}')
+      await flushPromises()
+      expect(wrapper.find('[data-diff-toggle="32"]').exists()).toBe(false)
+      const toggle = wrapper.get('[data-diff-toggle="31"]')
+      ;(toggle.element as HTMLButtonElement).focus()
+      await user.keyboard('{Enter}')
+      expect(toggle.attributes('aria-expanded')).toBe('true')
+      expect(wrapper.get('[data-diff-panel="31"]').isVisible()).toBe(true)
+      offline = true
+      await wrapper.get('#filter-action').setValue('missing')
+      await wrapper.get('form').trigger('submit')
+      await flushPromises()
+      expect(wrapper.get('[role="alert"]').text()).toContain('Service indisponible')
+      expect(wrapper.text()).not.toContain('Aucune entrée')
+      expect(wrapper.find('[data-diff-toggle]').exists()).toBe(false)
+      offline = false
+      await wrapper.get('[role="alert"] button').trigger('click')
+      await flushPromises()
+      expect(wrapper.get('[role="status"]').text()).toContain('Aucune entrée')
+      expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+      expect(service.mock.calls.map(([, init]) => init?.method ?? 'GET')).toEqual([
+        'GET',
+        'GET',
+        'GET',
+        'GET',
+      ])
+    } finally {
+      wrapper.unmount()
+    }
+  })
+
   it('AC #1 : render formulaire filtres + table avec entries au mount', async () => {
     globalThis.fetch = vi.fn(async () =>
       jsonResponse(200, {
@@ -164,12 +219,14 @@ describe('AuditTrailView (UI smoke — Story 7-5)', () => {
     // Click bouton « Voir diff ».
     const diffToggle = wrapper.find('[data-diff-toggle="200"]')
     expect(diffToggle.exists()).toBe(true)
+    expect(diffToggle.text()).toBe('Voir les détails de l’événement 200')
     await diffToggle.trigger('click')
     await flushPromises()
 
     // Panel diff visible + contient la valeur after (bp=600).
     const panel = wrapper.find('[data-diff-panel="200"]')
     expect(panel.exists()).toBe(true)
+    expect(diffToggle.text()).toBe('Masquer les détails de l’événement 200')
     expect(panel.text()).toContain('600')
   })
 

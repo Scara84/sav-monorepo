@@ -76,6 +76,7 @@ vi.mock('../../../../../api/_lib/clients/supabase-admin', () => {
    * `.select('*', { count: 'exact', head: true })` pour `include_total`.
    */
   function buildAuditTrailBuilder(): unknown {
+    let rows = state.auditRows
     let isCountQuery = false
     const out: Record<string, unknown> = {
       select: (_columns?: string, opts?: { count?: string; head?: boolean }) => {
@@ -86,6 +87,7 @@ vi.mock('../../../../../api/_lib/clients/supabase-admin', () => {
         return out
       },
       eq: (col: string, val: unknown) => {
+        rows = rows.filter((row) => row[col] === val)
         state.fromCallsHistory.push({ table: 'audit_trail', method: 'eq', arg: { col, val } })
         return out
       },
@@ -122,7 +124,7 @@ vi.mock('../../../../../api/_lib/clients/supabase-admin', () => {
             error: state.totalCountError,
           })
         }
-        return Promise.resolve({ data: state.auditRows, error: state.auditError })
+        return Promise.resolve({ data: rows, error: state.auditError })
       },
       then: (resolve: (v: unknown) => unknown) => {
         if (isCountQuery) {
@@ -132,7 +134,7 @@ vi.mock('../../../../../api/_lib/clients/supabase-admin', () => {
             error: state.totalCountError,
           }).then(resolve)
         }
-        return Promise.resolve({ data: state.auditRows, error: state.auditError }).then(resolve)
+        return Promise.resolve({ data: rows, error: state.auditError }).then(resolve)
       },
     }
     return out
@@ -182,6 +184,20 @@ beforeEach(() => {
 })
 
 describe('GET /api/admin/audit-trail (admin-audit-trail-list)', () => {
+  it('isole le témoin parmi deux événements voisins avec des lectures seules', async () => {
+    state.auditRows = [
+      auditTrailEntry({ id: 80, entity_type: 'setting', actor_operator_id: ADMIN_ID }),
+      auditTrailEntry({ id: 81, entity_type: 'sav', actor_operator_id: ADMIN_ID }),
+    ]
+    const req = mockReq({ method: 'GET', query: { entity_type: 'setting' } })
+    req.user = adminSession()
+    const res = mockRes()
+    await adminAuditTrailListHandler(req, res)
+    expect(res.statusCode).toBe(200)
+    expect(res.jsonBody).toMatchObject({ data: { items: [{ id: 80 }], nextCursor: null } })
+    expect(state.auditRows.map((row) => row.id)).toEqual([80, 81])
+  })
+
   it('AC #1 happy path : sans filtre → 50 derniers DESC, items shape conforme', async () => {
     state.auditRows = Array.from({ length: 50 }, (_, i) =>
       auditTrailEntry({

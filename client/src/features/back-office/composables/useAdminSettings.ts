@@ -60,6 +60,15 @@ export interface SettingHistoryItem {
   updated_by: { id: number; email_display_short: string | null } | null
 }
 
+export class ThresholdSaveError extends Error {
+  constructor(
+    readonly code: string,
+    message: string
+  ) {
+    super(message)
+  }
+}
+
 export interface UpdateThresholdPayload {
   count: number
   days: number
@@ -246,9 +255,10 @@ export function useAdminSettings(): UseAdminSettingsApi {
         data?: SettingValue
       }
       if (!res.ok) {
-        const msg = translate(classifyHttpError(res.status, body))
+        const code = classifyHttpError(res.status, body)
+        const msg = translate(code)
         saveError.value = msg
-        throw new Error(msg)
+        throw new ThresholdSaveError(code, msg)
       }
       if (!body.data) {
         saveError.value = translate('UNKNOWN')

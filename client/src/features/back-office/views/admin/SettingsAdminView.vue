@@ -4,6 +4,7 @@ import { useRoute, useRouter } from 'vue-router'
 import type { LocationQueryValue } from 'vue-router'
 import {
   useAdminSettings,
+  ThresholdSaveError,
   type SettingHistoryItem,
   type ThresholdAlertValue,
   type SettingActiveSummary,
@@ -50,6 +51,8 @@ const form = ref<ThresholdAlertValue & { notes: string }>({
 })
 
 const formHydrated = ref(false)
+const confirmationPending = ref(true)
+const historyUnavailable = ref(false)
 
 const toast = ref<{ kind: 'success' | 'error'; message: string } | null>(null)
 let toastTimer: ReturnType<typeof setTimeout> | null = null
@@ -97,7 +100,9 @@ function selectTab(id: TabId): void {
 async function refresh(): Promise<void> {
   try {
     await settings.loadCurrent('threshold_alert')
-    if (settings.current.value !== null) {
+    confirmationPending.value = false
+    historyUnavailable.value = false
+    if (!formHydrated.value && settings.current.value !== null) {
       const v = settings.current.value.value
       form.value = {
         count: v.count,
@@ -109,7 +114,7 @@ async function refresh(): Promise<void> {
     formHydrated.value = true
   } catch (e) {
     if (e instanceof Error && e.name === 'AbortError') return
-    showToast('error', settings.loadError.value ?? 'Lecture impossible.')
+    historyUnavailable.value = true
   }
 }
 
@@ -130,7 +135,13 @@ const formIsValid = computed(() => {
 
 async function onSubmit(e: Event): Promise<void> {
   e.preventDefault()
-  if (settings.saving.value || !formHydrated.value || !formIsValid.value) return
+  if (
+    settings.saving.value ||
+    settings.loading.value ||
+    confirmationPending.value ||
+    !formIsValid.value
+  )
+    return
   try {
     const trimmedNotes = form.value.notes.trim()
     const payload: import('../../composables/useAdminSettings').UpdateThresholdPayload = {
@@ -142,11 +153,16 @@ async function onSubmit(e: Event): Promise<void> {
     await settings.updateThreshold(payload)
     showToast('success', 'Seuils enregistrés. Appliqués au prochain cron (jusqu’à 24 h).')
     form.value.notes = ''
-    await settings.loadHistory('threshold_alert', 5)
   } catch (err) {
     if (err instanceof Error && err.name === 'AbortError') return
     showToast('error', settings.saveError.value ?? 'Enregistrement impossible.')
+    if (err instanceof ThresholdSaveError && err.code === 'CONCURRENT_PATCH') {
+      confirmationPending.value = true
+      await refresh()
+    }
+    return
   }
+  await refresh()
 }
 
 const formattedHistory = computed(() =>
@@ -391,15 +407,49 @@ onMounted(async () => {
       <header class="panel-header">
         <h2>Seuil alerte produit</h2>
         <p class="hint">
-          Si un produit dépasse ce nombre de SAV sur la fenêtre indiquée, un email est envoyé aux
+          Si un produit atteint ce nombre de SAV sur la fenêtre indiquée, un email est envoyé aux
           opérateurs actifs au prochain tour de cron (1×/jour à 03:00 UTC). La dédup empêche l'envoi
           répété d'une même alerte pendant la fenêtre indiquée.
         </p>
       </header>
 
+      <section class="confirmed" aria-labelledby="confirmed-title" aria-live="polite">
+        <h3 id="confirmed-title">Règle enregistrée</h3>
+        <dl v-if="!confirmationPending && settings.current.value">
+          <div>
+            <dt>Seuil</dt>
+            <dd>
+              {{ settings.current.value.value.count }} occurrence{{
+                settings.current.value.value.count > 1 ? 's' : ''
+              }}
+              de SAV
+            </dd>
+          </div>
+          <div>
+            <dt>Fenêtre</dt>
+            <dd>
+              {{ settings.current.value.value.days }} jour{{
+                settings.current.value.value.days > 1 ? 's' : ''
+              }}
+            </dd>
+          </div>
+          <div>
+            <dt>Déduplication</dt>
+            <dd>
+              {{ settings.current.value.value.dedup_hours }} heure{{
+                settings.current.value.value.dedup_hours > 1 ? 's' : ''
+              }}
+            </dd>
+          </div>
+        </dl>
+        <p v-else-if="!confirmationPending">Aucune règle enregistrée.</p>
+        <p v-else-if="settings.loading.value">Lecture en cours…</p>
+        <p v-else>Lecture de la règle enregistrée impossible.</p>
+      </section>
+      <h3>Brouillon de modification</h3>
       <form class="form" @submit="onSubmit">
         <div class="field">
-          <label for="threshold-count">Nombre de SAV</label>
+          <label for="threshold-count">Seuil (occurrences de SAV)</label>
           <input
             id="threshold-count"
             v-model.number="form.count"
@@ -425,7 +475,7 @@ onMounted(async () => {
           <span class="field-hint">Durée glissante d'observation (1–365 jours).</span>
         </div>
         <div class="field">
-          <label for="threshold-dedup">Dédup (heures)</label>
+          <label for="threshold-dedup">Déduplication (heures)</label>
           <input
             id="threshold-dedup"
             v-model.number="form.dedup_hours"
@@ -453,7 +503,9 @@ onMounted(async () => {
           <button
             type="submit"
             class="btn primary"
-            :disabled="settings.saving.value || settings.loading.value"
+            :disabled="
+              settings.saving.value || settings.loading.value || confirmationPending || !formIsValid
+            "
           >
             {{ settings.saving.value ? 'Enregistrement…' : 'Enregistrer' }}
           </button>
@@ -466,6 +518,10 @@ onMounted(async () => {
       <section class="history">
         <h3>Historique (5 dernières versions)</h3>
         <p v-if="settings.loading.value" class="status">Chargement…</p>
+        <div v-else-if="historyUnavailable" role="alert">
+          Historique indisponible.
+          <button type="button" class="btn ghost" @click="refresh">Réessayer la lecture</button>
+        </div>
         <p v-else-if="formattedHistory.length === 0" class="status muted">
           Aucune version enregistrée.
         </p>
@@ -832,6 +888,36 @@ onMounted(async () => {
   margin: 0;
   color: #777;
   font-size: 0.85rem;
+}
+.confirmed {
+  padding: 1rem;
+  border: 1px solid #e0d7c9;
+  background: #fcf9f5;
+  border-radius: 8px;
+}
+.confirmed h3,
+.confirmed dl,
+.confirmed dd {
+  margin: 0;
+}
+.confirmed dl {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 1rem 2rem;
+  margin-top: 0.75rem;
+}
+.confirmed dt {
+  color: #52636b;
+  font-size: 0.85rem;
+}
+.confirmed dd {
+  font-weight: 600;
+}
+.history {
+  overflow-x: auto;
+}
+.field {
+  min-width: 0;
 }
 .history h3 {
   font-size: 1rem;

@@ -73,6 +73,7 @@ vi.mock('../../../../api/_lib/clients/supabase-admin', () => {
     if (fn === 'update_settings_threshold_alert') {
       state.rpcCalls.push(args)
       const data = state.rpcError ? null : (state.rpcReturn ?? null)
+      if (data) state.selectRows.unshift({ ...data, value: args.p_value })
       const built = {
         single: () => Promise.resolve({ data, error: state.rpcError }),
         then: (resolve: (v: unknown) => unknown) =>
@@ -160,6 +161,10 @@ describe('PATCH /api/admin/settings/threshold_alert', () => {
     const body = res.jsonBody as { data: { id: number; value: unknown } }
     expect(body.data.id).toBe(99)
     expect(body.data.value).toEqual({ count: 7, days: 14, dedup_hours: 48 })
+    const read = mockRes()
+    await adminSettingsThresholdHistoryHandler(adminGetReq(), read)
+    expect(read.statusCode).toBe(200)
+    expect(read.jsonBody).toMatchObject({ data: { items: [{ id: 99, value: body.data.value }] } })
   })
 
   it('400 INVALID_BODY si Zod invalide (count=0)', async () => {
@@ -209,7 +214,9 @@ describe('PATCH /api/admin/settings/threshold_alert', () => {
     expect(res.statusCode).toBe(400)
   })
 
-  it('403 ROLE_NOT_ALLOWED si role=sav-operator', async () => {
+  it('refuse la modification opérateur et relit la règle initiale avec les droits administrateur', async () => {
+    const initial = { count: 8, days: 14, dedup_hours: 48 }
+    state.selectRows = [{ id: 42, value: initial, valid_to: null, updated_by: null }]
     const res = mockRes()
     await adminSettingsThresholdPatchHandler(
       operatorReq({ count: 5, days: 7, dedup_hours: 24 }),
@@ -219,6 +226,10 @@ describe('PATCH /api/admin/settings/threshold_alert', () => {
     const body = res.jsonBody as { error: { details: { code: string } } }
     expect(body.error.details.code).toBe('ROLE_NOT_ALLOWED')
     expect(state.rpcCalls).toHaveLength(0)
+    const read = mockRes()
+    await adminSettingsThresholdHistoryHandler(adminGetReq(), read)
+    expect(read.statusCode).toBe(200)
+    expect(read.jsonBody).toMatchObject({ data: { items: [{ id: 42, value: initial }] } })
   })
 
   it('CR A5 — 409 CONCURRENT_PATCH si la RPC retourne 23505 (W37 unique violation)', async () => {

@@ -40,6 +40,8 @@ const filters = reactive<AuditTrailFilters>({
   limit: 50,
 })
 
+const appliedFilters = ref<AuditTrailFilters>({ limit: 50 })
+const loadingMore = ref(false)
 const expandedDiff = ref<Record<number, boolean>>({})
 
 function toggleDiff(id: number): void {
@@ -47,12 +49,16 @@ function toggleDiff(id: number): void {
 }
 
 async function applyFilters(): Promise<void> {
+  if (audit.loading.value) return
+  loadingMore.value = false
+  appliedFilters.value = { ...filters }
   expandedDiff.value = {}
-  await audit.fetchEntries({ ...filters })
+  await audit.fetchEntries(appliedFilters.value)
 }
 
 async function loadMore(): Promise<void> {
-  await audit.loadMore({ ...filters })
+  loadingMore.value = true
+  await audit.loadMore(appliedFilters.value)
 }
 
 function formatDateTime(iso: string): string {
@@ -71,7 +77,7 @@ function formatDateTime(iso: string): string {
 }
 
 onMounted(async () => {
-  await audit.fetchEntries({ limit: 50 })
+  await audit.fetchEntries(appliedFilters.value)
 })
 </script>
 
@@ -79,9 +85,7 @@ onMounted(async () => {
   <main class="audit-trail-view">
     <header class="header">
       <h1>Journal d'audit</h1>
-      <p class="subtitle">
-        Trace des actions (création / mise à jour / rotation / retry) — immutable 3 ans.
-      </p>
+      <p class="subtitle">Consultez les événements par date, entité, action ou acteur.</p>
     </header>
 
     <form class="filters" @submit.prevent="applyFilters">
@@ -127,55 +131,78 @@ onMounted(async () => {
       </div>
     </form>
 
-    <p v-if="audit.error.value" class="error">{{ audit.error.value }}</p>
-
-    <table class="entries-table" aria-label="Entrées audit_trail">
-      <thead>
-        <tr>
-          <th scope="col">Date</th>
-          <th scope="col">Entité</th>
-          <th scope="col">Action</th>
-          <th scope="col">Acteur</th>
-          <th scope="col">Diff</th>
-        </tr>
-      </thead>
-      <tbody>
-        <template v-for="entry in audit.entries.value" :key="entry.id">
+    <div v-if="audit.error.value" class="error" role="alert">
+      Lecture du journal impossible. {{ audit.error.value }}
+      <button
+        type="button"
+        class="btn ghost"
+        @click="loadingMore ? loadMore() : audit.fetchEntries(appliedFilters)"
+      >
+        Réessayer
+      </button>
+    </div>
+    <p v-else-if="audit.loading.value" role="status">Lecture du journal…</p>
+    <p v-else-if="audit.entries.value.length === 0" role="status">
+      Aucune entrée correspondant aux filtres.
+    </p>
+    <div
+      v-if="
+        (!audit.error.value || loadingMore) &&
+        (!audit.loading.value || loadingMore) &&
+        audit.entries.value.length
+      "
+      class="table-scroll"
+      tabindex="0"
+      role="region"
+      aria-label="Événements du journal"
+    >
+      <table class="entries-table" aria-label="Entrées audit_trail">
+        <thead>
           <tr>
-            <td>{{ formatDateTime(entry.created_at) }}</td>
-            <td>
-              <code>{{ entry.entity_type }}</code>
-              <span class="muted">#{{ entry.entity_id }}</span>
-            </td>
-            <td>{{ entry.action }}</td>
-            <td>
-              <span class="actor-badge">{{ audit.formatActor(entry) }}</span>
-            </td>
-            <td>
-              <button
-                type="button"
-                class="btn ghost small"
-                :data-diff-toggle="entry.id"
-                @click="toggleDiff(entry.id)"
-              >
-                {{ expandedDiff[entry.id] ? 'Masquer diff' : 'Voir diff' }}
-              </button>
-            </td>
+            <th scope="col">Date</th>
+            <th scope="col">Entité</th>
+            <th scope="col">Action</th>
+            <th scope="col">Acteur</th>
+            <th scope="col">Diff</th>
           </tr>
-          <tr v-if="expandedDiff[entry.id]" class="diff-row">
-            <td colspan="5">
-              <AuditDiffPanel :diff="entry.diff" :entry-id="entry.id" />
-              <p v-if="entry.notes" class="notes"><strong>Note :</strong> {{ entry.notes }}</p>
-            </td>
-          </tr>
-        </template>
-        <tr v-if="audit.entries.value.length === 0 && !audit.loading.value">
-          <td colspan="5" class="muted center">Aucune entrée correspondant aux filtres.</td>
-        </tr>
-      </tbody>
-    </table>
+        </thead>
+        <tbody>
+          <template v-for="entry in audit.entries.value" :key="entry.id">
+            <tr>
+              <td>{{ formatDateTime(entry.created_at) }}</td>
+              <td>
+                <code>{{ entry.entity_type }}</code>
+                <span class="muted">#{{ entry.entity_id }}</span>
+              </td>
+              <td>{{ entry.action }}</td>
+              <td>
+                <span class="actor-badge">{{ audit.formatActor(entry) }}</span>
+              </td>
+              <td>
+                <button
+                  type="button"
+                  class="btn ghost small"
+                  :data-diff-toggle="entry.id"
+                  :aria-expanded="!!expandedDiff[entry.id]"
+                  @click="toggleDiff(entry.id)"
+                >
+                  {{ expandedDiff[entry.id] ? 'Masquer' : 'Voir' }} les détails de l’événement
+                  {{ entry.id }}
+                </button>
+              </td>
+            </tr>
+            <tr v-if="expandedDiff[entry.id]" class="diff-row">
+              <td colspan="5">
+                <AuditDiffPanel :diff="entry.diff" :entry-id="entry.id" />
+                <p v-if="entry.notes" class="notes"><strong>Note :</strong> {{ entry.notes }}</p>
+              </td>
+            </tr>
+          </template>
+        </tbody>
+      </table>
+    </div>
 
-    <div v-if="audit.nextCursor.value !== null" class="load-more">
+    <div v-if="!audit.error.value && audit.nextCursor.value !== null" class="load-more">
       <button type="button" class="btn ghost" :disabled="audit.loading.value" @click="loadMore">
         Charger plus
       </button>
@@ -204,7 +231,7 @@ onMounted(async () => {
   gap: 0.75rem;
   margin-bottom: 1rem;
   padding: 1rem;
-  background: #fafafa;
+  background: #fcf9f5;
   border: 1px solid #eee;
   border-radius: 4px;
 }
@@ -236,7 +263,7 @@ onMounted(async () => {
   cursor: pointer;
 }
 .btn.primary {
-  background: #f57c00;
+  background: #854407;
   color: white;
   font-weight: 600;
 }
@@ -253,6 +280,13 @@ onMounted(async () => {
   padding: 0.3rem 0.7rem;
   font-size: 0.8rem;
 }
+.table-scroll {
+  overflow-x: auto;
+}
+.audit-trail-view :focus-visible {
+  outline: 2px solid #703804;
+  outline-offset: 2px;
+}
 .entries-table {
   width: 100%;
   border-collapse: collapse;
@@ -265,7 +299,7 @@ onMounted(async () => {
   border-bottom: 1px solid #f0f0f0;
 }
 .entries-table th {
-  background: #fafafa;
+  background: #fcf9f5;
   font-weight: 600;
 }
 .actor-badge {
