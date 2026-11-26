@@ -50,8 +50,8 @@ describe('Résolution serveur de la commande kDrive', () => {
     const name = 'fact_' + key + '_RUNGIS'
     const { request, calls, routes } = fixture(year, week, name)
     expect(await resolveKdriveOrder(raw, env, request)).toMatchObject({
-      branch: { key, year, week }, status: 'active-unknown',
-      candidates: [{ id: '80', name }], selectedFolderId: null,
+      branch: { key, year, week }, status: 'selected',
+      candidates: [{ id: '80', name }], selectedFolderId: '80',
     })
     expect(calls).toEqual([...routes.keys()])
   })
@@ -73,11 +73,16 @@ describe('Résolution serveur de la commande kDrive', () => {
     routes.set(base + '30', { data: dir(30, 20, '04_SUIVI_COMMANDE') })
     routes.set(base + '20', { data: { ...dir(20, parent, 'organisation'), visibility: 'is_team_space' } })
     const result = await resolveKdriveOrder(ref, { ...env, KDRIVE_FRANCAIS_ID: '50' }, request)
-    expect(result.status).toBe(parent === 1 ? 'active-unknown' : 'unverified')
+    expect(result.status).toBe(parent === 1 ? 'selected' : 'unverified')
     expect(calls.at(-1)).toBe(parent === 1 ? list(70) : base + '20')
   })
 
-  it.each([key, 'fact_' + key + '_AUTRE', 'fact_' + key + '_ARCHIVE', 'copie_' + key])(
+  it.each([key, 'fact_' + key + '_AUTRE'])('sélectionne la seule version définitive %s', async name => {
+    const { request } = fixture('2026', 'S05', name)
+    expect(await resolveKdriveOrder(ref, env, request)).toMatchObject({ status: 'selected', selectedFolderId: '80' })
+  })
+
+  it.each(['fact_' + key + '_ARCHIVE', 'copie_' + key])(
     'conserve %s comme candidat sans le sélectionner', async name => {
       const { request } = fixture('2026', 'S05', name)
       expect(await resolveKdriveOrder(ref, env, request)).toMatchObject({
@@ -107,7 +112,7 @@ describe('Résolution serveur de la commande kDrive', () => {
       pages.push(path, next)
     }
     expect(await resolveKdriveOrder(ref, env, request)).toMatchObject({
-      status: 'active-unknown', candidates: [{ id: '80', name: candidate.name }], selectedFolderId: null,
+      status: 'selected', candidates: [{ id: '80', name: candidate.name }], selectedFolderId: '80',
     })
     expect(calls.slice(-6)).toEqual(pages)
   })

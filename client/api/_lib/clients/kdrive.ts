@@ -359,7 +359,13 @@ export async function resolveKdriveOrder(raw: unknown, env: NodeJS.ProcessEnv, r
     const candidates = await matchingDirectories(name => ('_' + name + '_').includes('_' + branch.key + '_'))
     if (!candidates.length) return result('no-candidate', 'Aucun dossier candidat.')
     if (candidates.length > 1) return result('multiple-candidates', 'Plusieurs dossiers candidats.', candidates)
-    return result('active-unknown', 'Statut actif du dossier indéterminé.', candidates)
+    const candidate = candidates[0]!
+    // La branche contient les versions définitives. Un libellé contradictoire demande vérification.
+    const affixes = ('_' + candidate.name + '_').replace('_' + branch.key + '_', '_')
+    if (/(?:^|[^\p{L}\p{N}])(?:archives?|copies?|copy)(?=$|[^\p{L}\p{N}])/iu.test(affixes))
+      return result('active-unknown', 'Le nom du dossier indique une archive ou une copie.', candidates)
+    return { branch, status: 'selected' as const, message: 'Dossier définitif identifié.',
+      candidates, selectedFolderId: candidate.id }
   } catch (error) {
     return result('unverified', step + ' — ' + diagnosticReason(error, controller.signal))
   } finally {

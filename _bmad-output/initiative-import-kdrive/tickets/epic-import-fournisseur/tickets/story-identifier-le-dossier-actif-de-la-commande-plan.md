@@ -3,7 +3,7 @@ title: Identifier le dossier actif de la commande
 type: feature
 ticket: 2
 created: '2026-11-26'
-status: built
+status: done
 baseline_revision: d49f12495495c80a660d4634d0373fe0adaa0a51
 route: full
 route_source: auto
@@ -60,6 +60,8 @@ Route complète retenue pour le partage du client et les tests de parcours.
 
 ## Plan Change Log
 
+Le 26 novembre, l’opérateur confirme que les dossiers à cet emplacement sont les versions définitives et normalement uniques. Cette décision remplace le blocage systématique décrit dans le plan initial. Sélectionner la correspondance unique après lecture complète. Une mention explicite d’archive ou de copie en dehors de la clé constitue une incohérence à vérifier.
+
 ## Review Triage Log
 
 ### 2026-11-26 — Revue ciblée
@@ -78,3 +80,7 @@ Depuis client, exécuter `npx vitest run tests/unit/api/kdrive-order.spec.ts tes
 - Tests : 56 cas pour la 1.2 et 59 pour la 1.1, tous réussis en simulation. Contrôle TypeScript strict ciblé et contrôle du diff réussis. Aucun accès au compte réel.
 - AC-04, AC-05, AC-07 à AC-10 vérifiés sur réponses simulées. AC-07 identifie le candidat de la fixture. L’éligibilité métier reste ouverte. Aucun identifiant sélectionné, même pour un candidat unique.
 - Question à trancher avant activation : quel marqueur vérifiable dans le nom, le classement ou les métadonnées distingue positivement une commande active de son archive ou de sa copie pour une même clé ? Le chemin RUNGIS fourni atteste un nom et une branche, sans établir cette règle.
+
+### Après confirmation métier
+
+AC-07 sélectionne désormais le dossier définitif unique de la fixture. AC-09 conserve le blocage pour absence, doublon, libellé contradictoire ou liste incomplète.
