@@ -40,7 +40,7 @@ defineProps<{
     <p class="section-hint">
       Ce que l'adhérent a réclamé (qty/unité demandées) vs ce qui est arbitré pour la réclamation fournisseur.
     </p>
-    <div class="table-container">
+    <div class="table-container" tabindex="0" role="region" aria-label="Détail de la demande client">
       <table class="arbitrage-table">
         <thead>
           <tr>

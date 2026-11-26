@@ -19,7 +19,7 @@ import { computed, ref, watch, onMounted, onUnmounted } from 'vue'
 import { z } from 'zod'
 import { useRoute } from 'vue-router'
 import { useSupplierClaimUpload } from '../composables/useSupplierClaimUpload'
-import { useSupplierClaimArbitration, formatImporte } from '../composables/useSupplierClaimArbitration'
+import { useSupplierClaimArbitration, formatImporte, type ArbitrageClaimLine } from '../composables/useSupplierClaimArbitration'
 import ClientDemandTable from '../components/ClientDemandTable.vue'
 
 const route = useRoute()
@@ -278,6 +278,15 @@ function getComment(lineId: string | number): string {
 
 function isExcluded(lineId: string | number): boolean {
   return exclusions.value.get(lineId) === true
+}
+
+function blockingLineReason(line: ArbitrageClaimLine): string {
+  if (line.conversionFlag === 'Unité non reconnue') return line.conversionFlag
+  if (line.conversionFlag === 'ATTENTION A CONVERTIR' && line.unidad === 'Kilos' && line.qteFact) {
+    return 'Conversion en kilos impossible'
+  }
+  if (!line.qteFact) return 'Quantité facturée manquante'
+  return 'Prix manquant'
 }
 
 function getLineImporte(lineId: string | number): number | null {
@@ -693,23 +702,24 @@ const oneDriveStatusText = computed(() => {
       class="arbitrage-section card"
       data-testid="arbitrage-grid"
     >
-      <h2>Arbitrage de la réclamation</h2>
+      <h2>Arbitrer les lignes</h2>
 
       <!-- Table des lignes appariées -->
       <div class="table-container">
         <table class="arbitrage-table">
+          <caption>Lignes rapprochées</caption>
           <thead>
             <tr>
-              <th>CODIGO</th>
-              <th>PRODUCTO</th>
-              <th>ORIGEN</th>
-              <th>PESO / Qty</th>
-              <th>ENVASE</th>
-              <th>CAUSA</th>
-              <th>PRECIO</th>
-              <th>COMENTARIOS</th>
-              <th>IMPORTE</th>
-              <th>Action</th>
+              <th scope="col">Code</th>
+              <th scope="col">Produit</th>
+              <th scope="col">Origine</th>
+              <th scope="col">Quantité</th>
+              <th scope="col">Unité</th>
+              <th scope="col">Cause</th>
+              <th scope="col">Prix</th>
+              <th scope="col">Commentaire</th>
+              <th scope="col">Montant</th>
+              <th scope="col">Action</th>
             </tr>
           </thead>
           <tbody>
@@ -723,21 +733,23 @@ const oneDriveStatusText = computed(() => {
               }"
             >
               <!-- CODIGO (read-only) -->
-              <td :data-testid="`arbitrage-row-${line.savLineId}`">
+              <td data-label="Code" :data-testid="`arbitrage-row-${line.savLineId}`">
                 {{ line.codigoEs ?? '—' }}
+                <div class="product-name-snapshot">{{ line.codeFr }}</div>
                 <!-- productNameSnapshot as secondary info (AC #2) -->
                 <div v-if="line.productNameSnapshot" class="product-name-snapshot">
                   {{ line.productNameSnapshot }}
                 </div>
               </td>
               <!-- PRODUCTO (read-only) -->
-              <td>{{ line.productoEs ?? '—' }}</td>
+              <td data-label="Produit">{{ line.productoEs ?? '—' }}</td>
               <!-- ORIGEN (read-only) -->
-              <td>{{ line.origen ?? '—' }}</td>
+              <td data-label="Origine">{{ line.origen ?? '—' }}</td>
               <!-- PESO / Qty (editable AC #3) -->
-              <td>
+              <td data-label="Quantité">
                 <input
                   type="number"
+                  :aria-label="`Quantité · ${line.productoEs ?? line.codeFr}`"
                   :data-testid="`qty-input-${line.savLineId}`"
                   min="0"
                   :max="(line.effectiveCap ?? line.qteFact) !== null ? String(line.effectiveCap ?? line.qteFact) : undefined"
@@ -758,7 +770,7 @@ const oneDriveStatusText = computed(() => {
                 </div>
               </td>
               <!-- ENVASE / unidad (read-only, with conversion badge if needed) -->
-              <td>
+              <td data-label="Unité">
                 {{ line.unidad }}
                 <span
                   v-if="line.conversionFlag !== 'ok'"
@@ -768,16 +780,17 @@ const oneDriveStatusText = computed(() => {
                 </span>
               </td>
               <!-- CAUSA (read-only V1) -->
-              <td>{{ line.causaEs ?? '—' }}</td>
+              <td data-label="Cause">{{ line.causaEs ?? '—' }}</td>
               <!-- PRECIO (read-only V1) -->
-              <td>
+              <td data-label="Prix">
                 <span v-if="line.precio !== null">€ {{ formatImporte(line.precio) }}</span>
                 <span v-else>—</span>
               </td>
               <!-- COMENTARIOS (editable AC #5) -->
-              <td>
+              <td data-label="Commentaire">
                 <input
                   type="text"
+                  :aria-label="`Commentaire · ${line.productoEs ?? line.codeFr}`"
                   :data-testid="`comment-input-${line.savLineId}`"
                   :value="getComment(line.savLineId)"
                   maxlength="500"
@@ -786,15 +799,20 @@ const oneDriveStatusText = computed(() => {
                 />
               </td>
               <!-- IMPORTE (read-only, recalculated live AC #4) -->
-              <td :data-testid="`importe-${line.savLineId}`">
+              <td data-label="Montant" :data-testid="`importe-${line.savLineId}`">
                 <span v-if="getLineImporte(line.savLineId) !== null">
-                  {{ formatImporte(getLineImporte(line.savLineId) as number) }}
+                  {{ formatImporte(getLineImporte(line.savLineId) as number) }} €
                 </span>
                 <span v-else>—</span>
               </td>
               <!-- Action Exclure / Réinclure (AC #7) -->
-              <td>
+              <td data-label="Action">
+                <span v-if="isExcluded(line.savLineId)" class="line-state">Exclue</span>
+                <span v-else-if="line.blockingForGeneration" class="line-state">
+                  {{ blockingLineReason(line) }}
+                </span>
                 <button
+                  :aria-label="`${isExcluded(line.savLineId) ? 'Réinclure' : 'Exclure'} · ${line.productoEs ?? line.codeFr}`"
                   :data-testid="`exclude-btn-${line.savLineId}`"
                   class="exclude-btn"
                   @click="toggleLineExclusion(line.savLineId)"
@@ -804,21 +822,12 @@ const oneDriveStatusText = computed(() => {
               </td>
             </tr>
           </tbody>
-          <!-- Pied de table : total IMPORTE (AC #4) -->
-          <tfoot>
-            <tr>
-              <td colspan="8" class="total-label">TOTAL IMPORTE</td>
-              <td
-                class="total-value"
-                data-testid="arbitrage-total"
-              >
-                {{ formatImporte(totalImporte) }}
-              </td>
-              <td></td>
-            </tr>
-          </tfoot>
         </table>
       </div>
+      <p class="supplier-total" aria-live="polite">
+        Total fournisseur
+        <strong data-testid="arbitrage-total">{{ formatImporte(totalImporte) }} €</strong>
+      </p>
 
       <!-- 8.7 (AC #1/#6) — Table « Demande client » (contrôle visuel read-only)
            Rendue APRÈS la table arbitrage, AVANT la section unmatched.
@@ -850,6 +859,7 @@ const oneDriveStatusText = computed(() => {
             <span class="name">{{ uLine.productNameSnapshot ?? '—' }}</span>
             <span v-if="uLine.tokenExtracted" class="token">(token: {{ uLine.tokenExtracted }})</span>
             <button
+              :aria-label="`${isExcluded(uLine.savLineId) ? 'Réinclure' : 'Exclure'} · ${uLine.productNameSnapshot ?? uLine.productCodeSnapshot ?? uLine.savLineId}`"
               :data-testid="`exclude-unmatched-btn-${uLine.savLineId}`"
               class="exclude-btn"
               @click="toggleLineExclusion(uLine.savLineId)"
@@ -884,6 +894,7 @@ const oneDriveStatusText = computed(() => {
         <div
           v-if="!canGenerateComputed"
           role="status"
+          id="generation-blocked-reason"
           class="generation-blocked-msg"
           data-testid="generation-blocked-msg"
         >
@@ -923,6 +934,7 @@ const oneDriveStatusText = computed(() => {
           v-if="generateState !== 'generated'"
           class="generate-btn"
           data-testid="generate-btn"
+          :aria-describedby="!canGenerateComputed ? 'generation-blocked-reason' : undefined"
           :disabled="!canGenerateComputed || generateState === 'generating'"
           :aria-disabled="(!canGenerateComputed || generateState === 'generating') ? 'true' : 'false'"
           @click="onGenerate()"
@@ -1209,6 +1221,8 @@ const oneDriveStatusText = computed(() => {
 .arbitrage-table input[type="number"],
 .arbitrage-table input[type="text"] {
   width: 100%;
+  box-sizing: border-box;
+  min-width: 4rem;
   padding: 0.25rem 0.375rem;
   border: 1px solid #d1d5db;
   border-radius: 3px;
@@ -1222,7 +1236,7 @@ const oneDriveStatusText = computed(() => {
 }
 
 .row-excluded {
-  opacity: 0.5;
+  background: #faf7f2;
 }
 
 .row-blocking {
@@ -1231,7 +1245,7 @@ const oneDriveStatusText = computed(() => {
 
 .product-name-snapshot {
   font-size: 0.7rem;
-  color: #9ca3af;
+  color: #58606b;
   font-style: italic;
 }
 
@@ -1252,16 +1266,21 @@ const oneDriveStatusText = computed(() => {
   margin-top: 0.15rem;
 }
 
-.total-label {
-  text-align: right;
-  font-weight: 600;
-  padding-right: 1rem;
-}
-
-.total-value {
+.arbitrage-table caption {
+  text-align: left;
   font-weight: 700;
-  font-size: 1rem;
+  font-size: 1.1rem;
+  margin-bottom: .75rem;
 }
+.arbitrage-section h2, .arbitrage-section h3 { color: #392711; }
+.line-state { display: block; font-weight: 600; margin-bottom: .25rem; }
+.supplier-total {
+  padding: 1rem;
+  background: #faf7f2;
+  border-left: 4px solid var(--main-orange, #e88a23);
+  font-weight: 600;
+}
+.supplier-total strong { display: block; margin-top: .25rem; font-size: 1.5rem; }
 
 /* Sections unmatched / unused */
 .unmatched-section {
@@ -1303,7 +1322,7 @@ const oneDriveStatusText = computed(() => {
 }
 
 .line-excluded {
-  opacity: 0.5;
+  background: #faf7f2;
   text-decoration: line-through;
 }
 
@@ -1352,8 +1371,8 @@ const oneDriveStatusText = computed(() => {
 }
 
 .generate-btn {
-  background: #2563eb;
-  color: white;
+  background: var(--main-orange, #e88a23);
+  color: #30200e;
   border: none;
   border-radius: 6px;
   padding: 0.625rem 1.25rem;
@@ -1368,7 +1387,7 @@ const oneDriveStatusText = computed(() => {
 }
 
 .generate-btn:not(:disabled):hover {
-  background: #1d4ed8;
+  background: #ed983a;
 }
 
 /* Story 8.5 — existing-claim state */
@@ -1623,7 +1642,17 @@ const oneDriveStatusText = computed(() => {
 .file-info { color: #58606b; }
 @media (max-width: 600px) {
   .supplier-claim-view { padding: .75rem; overflow-wrap: anywhere; }
-  .upload-section, .preview-section { padding: 1rem; }
+  .upload-section, .preview-section, .arbitrage-section { padding: 1rem; }
+  .arbitrage-table, .arbitrage-table tbody { display: block; }
+  .arbitrage-table thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  .arbitrage-table tbody tr { display: block; border: 1px solid #ded8cf; border-radius: .5rem; margin-bottom: .75rem; }
+  .arbitrage-table td { display: flow-root; min-height: 1.4rem; border: 0; border-bottom: 1px solid #eee9e2; padding: .45rem .6rem; }
+  .arbitrage-table td:last-child { border-bottom: 0; }
+  .arbitrage-table td::before { content: attr(data-label); float: left; width: 38%; font-weight: 600; }
+  .arbitrage-table td input { width: 60%; }
+  .arbitrage-table .product-name-snapshot { margin-left: 38%; }
+  .unmatched-line { flex-wrap: wrap; }
+  .exclude-btn { min-height: 2.25rem; }
   .counts-row { flex-wrap: wrap; gap: 1rem; }
 }
 </style>

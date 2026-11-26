@@ -254,13 +254,13 @@ export function buildBlockingReasons(state: ArbitrageState): string[] {
     (l) => l.blockingForGeneration && state.exclusions.get(l.savLineId) !== true
   ).length
   if (blockingNonExcludedCount > 0) {
-    reasons.push(`${blockingNonExcludedCount} ligne${blockingNonExcludedCount > 1 ? 's' : ''} sans prix fournisseur à exclure`)
+    reasons.push(`${blockingNonExcludedCount} ligne${blockingNonExcludedCount > 1 ? 's bloquantes' : ' bloquante'} à exclure`)
   }
 
   const hasValidLine = state.claimLines.some(
     (l) => !l.blockingForGeneration && state.exclusions.get(l.savLineId) !== true
   )
-  if (!hasValidLine && state.claimLines.length > 0 && blockingNonExcludedCount === 0) {
+  if (!hasValidLine && reasons.length === 0) {
     reasons.push('aucune ligne valide à générer')
   }
 

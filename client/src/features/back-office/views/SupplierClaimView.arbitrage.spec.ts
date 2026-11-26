@@ -563,6 +563,27 @@ describe('ARB-UI-07: clamp qty < 0 → clamped to 0 (AC #11g, AC #3)', () => {
 // ===========================================================================
 
 describe('ARB-UI-08: exclusion toggle (AC #11h, AC #7)', () => {
+  it('recalcule le total et la disponibilité à chaque exclusion et réinclusion', async () => {
+    const { wrapper } = await mountAndUploadAndReconcile({
+      status: 200,
+      body: buildReconcileSuccessResponse(),
+    })
+    const first = wrapper.get('[data-testid="exclude-btn-uuid-line-1"]')
+    const second = wrapper.get('[data-testid="exclude-btn-uuid-line-2"]')
+    const total = wrapper.get('[data-testid="arbitrage-total"]')
+    const generate = wrapper.get<HTMLButtonElement>('[data-testid="generate-btn"]')
+
+    // 7 × 4,89 € = 34,23 € ; 18 × 3,20 € = 57,60 €.
+    expect([total.text(), generate.element.disabled]).toEqual(['91,83 €', false])
+    await first.trigger('click')
+    expect([total.text(), generate.element.disabled]).toEqual(['57,60 €', false])
+    await second.trigger('click')
+    expect([total.text(), generate.element.disabled]).toEqual(['0,00 €', true])
+    expect(wrapper.get('[data-testid="generation-blocked-msg"]').text()).toContain('aucune ligne valide')
+    await first.trigger('click')
+    expect([total.text(), generate.element.disabled]).toEqual(['34,23 €', false])
+  })
+
   it('ARB-UI-08a: click "Exclure" on line 1 → row gets aria-disabled or visual marker, qty input disabled', async () => {
     const { wrapper } = await mountAndUploadAndReconcile({
       status: 200,
@@ -798,6 +819,16 @@ describe('ARB-UI-12: generation gate — blocking claimLine (AC #11l, AC #8)', (
     const generateBtn = wrapper.find('[data-testid="generate-btn"]')
     expect(generateBtn.exists()).toBe(true)
     expect((generateBtn.element as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('affiche en priorité l’unité inconnue même lorsque le prix est absent', async () => {
+    const response = buildReconcileSuccessResponse()
+    response.claimLines = [{
+      ...response.claimLines[0],
+      blockingForGeneration: true, conversionFlag: 'Unité non reconnue', precio: null, importe: null,
+    }]
+    const { wrapper } = await mountAndUploadAndReconcile({ status: 200, body: response })
+    expect(wrapper.get('[data-testid="row-blocking"] .line-state').text()).toBe('Unité non reconnue')
   })
 
   it('ARB-UI-12b: blockingForGeneration=true row has data-testid="row-blocking" marker (AC #2)', async () => {

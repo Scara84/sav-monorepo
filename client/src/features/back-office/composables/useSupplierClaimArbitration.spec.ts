@@ -40,6 +40,7 @@ import {
   canGenerate,
   toggleExclude,
   buildClampMessage,
+  buildBlockingReasons,
   useSupplierClaimArbitration,
 } from './useSupplierClaimArbitration'
 import type { ArbitrageState, ArbitrageClaimLine, ArbitrageUnmatchedLine } from './useSupplierClaimArbitration'
@@ -342,6 +343,16 @@ describe('ARB-C-08: computeTotals — blockingForGeneration line excluded from t
 // ===========================================================================
 
 describe('ARB-C-09: canGenerate — condition (b) no valid line (AC #8)', () => {
+  it('explique le blocage après exclusion de la seule ligne non appariée', () => {
+    const state = makeState({
+      claimLines: [],
+      unmatchedSavLines: [makeUnmatchedLine()],
+      exclusions: new Map([['uuid-unmatched-1', true]]),
+    })
+    expect(canGenerate(state)).toBe(false)
+    expect(buildBlockingReasons(state)).toEqual(['aucune ligne valide à générer'])
+  })
+
   it('ARB-C-09a: all claimLines have blockingForGeneration=true AND none excluded → condition (c) fires (no valid line implicitly)', () => {
     const state = makeState({
       claimLines: [makeClaimLine({ savLineId: 'l1', blockingForGeneration: true })],

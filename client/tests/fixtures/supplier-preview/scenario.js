@@ -6,6 +6,7 @@ import SupplierClaim from '../../../src/features/back-office/views/SupplierClaim
 
 import * as XLSX from 'xlsx'
 import { parseFactureGroupe, parseBdd, extractMetadata } from '../../../api/_lib/sav/supplier-file-parser'
+import { reconcile } from '../../../api/_lib/sav/reconcile-supplier-claim'
 import '../../../src/styles/fruitstock-theme.css'
 
 if (!['localhost', '127.0.0.1', '[::1]'].includes(location.hostname)) throw new Error('Recette locale uniquement')
@@ -23,6 +24,27 @@ function detailFor(id) { return {
     comments: [], auditTrail: [], settingsSnapshot: {},
     supplierClaim: scenario === 'history' ? { exists: true, latestGeneratedAt: claim.generatedAt, count: 1, latestTotalImporteCents: 1200 } : null },
 }
+}
+
+// Quantités du SAV fictif. Les prix, désignations ES et origines viennent du classeur.
+function reconcileFixture(savId, parsed) {
+  const savLines = [
+    { id: 1, productCodeSnapshot: '1001', productNameSnapshot: 'Citrons', qtyArbitrated: 1.25,
+      qtyInvoiced: 5, unitArbitrated: 'kg', cause: 'abime' },
+    { id: 2, productCodeSnapshot: '1002', productNameSnapshot: 'Oranges', qtyArbitrated: 1.5,
+      qtyInvoiced: 3, unitArbitrated: scenario === 'blocking' ? 'cagette' : 'kg', cause: 'manquant' },
+  ]
+  if (scenario === 'unmatched') {
+    savLines.push({ id: 3, productCodeSnapshot: '9999', productNameSnapshot: 'Pommes', qtyArbitrated: 1,
+      qtyInvoiced: 1, unitArbitrated: 'kg', cause: 'manquant' })
+  }
+  const motifMap = new Map([['abime', 'Dañado'], ['manquant', 'Faltante']])
+  const result = reconcile({ savId, savLines, parsed, motifMap })
+  return { ...result, metadata: parsed.metadata, savLines: savLines.map(line => ({
+    savLineId: line.id, codeFr: line.productCodeSnapshot, designationFr: line.productNameSnapshot,
+    qtyRequested: line.qtyArbitrated, unitRequested: line.unitArbitrated,
+    qtyArbitrated: line.qtyArbitrated, unitArbitrated: line.unitArbitrated, requestReason: line.cause,
+  })) }
 }
 
 function previewResponse(bytes, filename) {
@@ -101,7 +123,7 @@ window.fetch = async (input, init) => {
       return previewResponse(bytes, filename)
     }
     case 'reconcile-supplier-claim':
-      return Response.json({ claimLines: [], unmatchedSavLines: [], unusedSupplierLines: [], savLines: [] })
+      return Response.json(reconcileFixture(id, JSON.parse(init.body).parsed))
     default: return Response.json({}, { status: 404 })
   }
 }
