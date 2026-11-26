@@ -1,0 +1,56 @@
+[[epic]]
+id = 1
+slug = "epic-declaration-client"
+title = "Déposer une demande depuis sa facture"
+description = "L’adhérent identifie sa commande, signale les articles concernés et obtient une confirmation après l’envoi."
+covers = ["R1", "R2", "R3"]
+after = []
+
+[[epic]]
+id = 2
+slug = "epic-espace-adherent"
+title = "Suivre les demandes depuis son espace adhérent"
+description = "L’adhérent consulte ses propres demandes et le responsable accède aux vues de groupe autorisées."
+covers = ["R4", "R5", "R6"]
+after = [{ epic = 1, needs = "le thème carotte de 1.1 et le parcours de déclaration vérifiable de 1.3" }]
+
+[[epic]]
+id = 3
+slug = "epic-file-sav"
+title = "Trouver un SAV et identifier sa prochaine action"
+description = "L’opérateur retrouve une demande par les filtres existants et sait quelles actions son état autorise."
+covers = ["R7", "R8"]
+after = [{ epic = 1, needs = "le thème carotte et les contrôles accessibles livrés par 1.1" }]
+
+[[epic]]
+id = 4
+slug = "epic-traitement-sav"
+title = "Arbitrer un SAV avec ses justificatifs"
+description = "L’opérateur modifie les lignes et consulte les pièces et les échanges en gardant le contexte de décision."
+covers = ["R9", "R10"]
+after = [{ epic = 3, needs = "la structure de fiche et les règles d’affichage par statut" }]
+
+[[epic]]
+id = 5
+slug = "epic-fournisseur"
+title = "Préparer et retrouver la réclamation fournisseur"
+description = "Du détail du dossier à la dernière version, l’opérateur peut contrôler les lignes puis obtenir le document du bon fournisseur."
+covers = ["R11", "R12", "R13"]
+after = [{ epic = 3, needs = "la structure de fiche et les règles d’affichage par statut" }]
+
+[[epic]]
+id = 6
+slug = "epic-pilotage"
+title = "Piloter les dossiers et les intégrations"
+description = "L’équipe lit ses mesures, retrouve les exports et identifie l’état du service et de la synchronisation."
+covers = ["R14", "R15", "R16"]
+after = [{ epic = 1, needs = "le thème carotte et les contrôles accessibles livrés par 1.1" }, { epic = 3, needs = "la navigation authentifiée du back-office livrée par 3.1" }]
+
+[[epic]]
+id = 7
+slug = "epic-administration"
+title = "Administrer les paramètres et les référentiels"
+description = "L’administrateur retrouve les réglages, distingue les droits et vérifie les changements avec les outils existants."
+covers = ["R17", "R18", "R19"]
+after = [{ epic = 3, needs = "la navigation authentifiée du back-office livrée par 3.1" }]
+

@@ -1,0 +1,24 @@
+[[entry]]
+id = 1
+type = "story"
+title = "Entrer dans le back-office et rechercher un dossier"
+description = "L’opérateur authentifié ouvre la liste et peut retrouver un dossier ou lever un filtre sans résultat."
+verify = "Combiner un statut et une facture, ouvrir le dossier trouvé puis supprimer un filtre sans résultat. Vérifier aussi la redirection hors session."
+covers = ["R1"]
+after = ["1.1"]
+hitl = false
+risk = "high"
+references = ["/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#login", "/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#liste", "/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#vide"]
+
+[[entry]]
+id = 2
+type = "story"
+title = "Lire la fiche selon le cycle de vie"
+description = "Chaque statut affiche les actions applicables, le contexte du dossier et les montants avec leur base fiscale."
+verify = "Comparer sur jeux de test les six statuts et les actions permises. Vérifier un total HT différent du TTC et l’accès fournisseur depuis un dossier éligible."
+covers = ["R2"]
+after = [1]
+hitl = false
+risk = "high"
+references = ["/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#brouillon", "/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#recu", "/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#traitement", "/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#valide", "/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#clos", "/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#annule"]
+

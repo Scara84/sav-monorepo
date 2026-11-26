@@ -1,0 +1,36 @@
+[[entry]]
+id = 1
+type = "story"
+title = "Retrouver sa liste après une connexion par lien"
+description = "Un lien expiré explique la reprise et une session valide donne accès aux dossiers autorisés du compte et du groupe."
+verify = "Ouvrir une session adhérent et une session responsable avec données simulées distinctes, puis rejouer un lien expiré et une liste vide."
+covers = ["R1"]
+after = ["1.1", "1.3"]
+hitl = false
+risk = "high"
+references = ["/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#lien", "/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#membre", "/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#groupe"]
+
+[[entry]]
+id = 2
+type = "story"
+title = "Lire les étapes et échanger sur un dossier"
+description = "Le détail présente l’état, les articles, les pièces et les échanges accessibles à l’adhérent."
+verify = "Vérifier une fiche avec échanges et avoir, une fiche sans avoir et un identifiant indisponible avec les fixtures de l’espace adhérent."
+covers = ["R2"]
+after = [1]
+hitl = false
+risk = "high"
+references = ["/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#membre-detail"]
+
+[[entry]]
+id = 3
+type = "story"
+title = "Choisir ses notifications"
+description = "Les préférences disponibles pour le profil reflètent les réglages persistés après rechargement."
+verify = "Modifier une préférence dans une session fictive, recharger, puis simuler le refus d’enregistrement."
+covers = ["R3"]
+after = [1]
+hitl = false
+risk = "medium"
+references = ["/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#preferences"]
+

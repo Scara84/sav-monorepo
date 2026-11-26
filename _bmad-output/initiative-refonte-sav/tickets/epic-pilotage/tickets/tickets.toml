@@ -1,0 +1,36 @@
+[[entry]]
+id = 1
+type = "story"
+title = "Lire les indicateurs du tableau de bord"
+description = "Chaque indicateur indique sa période et son état de disponibilité."
+verify = "Comparer deux périodes sur des données connues, puis lire un résultat vide et un échec simulé à 390 pixels."
+covers = ["R1"]
+after = ["1.1", "3.1"]
+hitl = false
+risk = "medium"
+references = ["/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#dashboard"]
+
+[[entry]]
+id = 2
+type = "story"
+title = "Retrouver un export ou diagnostiquer une file ERP"
+description = "L’équipe distingue historique des exports, file non provisionnée et échec réel d’une synchronisation."
+verify = "Filtrer un export témoin, vérifier un fournisseur sans export puis inspecter en simulation les états ERP non provisionné et en échec."
+covers = ["R2"]
+after = ["3.1"]
+hitl = false
+risk = "medium"
+references = ["/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#exports", "/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#erp"]
+
+[[entry]]
+id = 3
+type = "story"
+title = "Présenter l’interruption de service"
+description = "Le visiteur comprend l’indisponibilité du service lorsque le mode maintenance s’applique."
+verify = "Vérifier l’écran de maintenance avec configuration locale activée puis retrouver le parcours ordinaire après désactivation."
+covers = ["R3"]
+after = ["1.1"]
+hitl = false
+risk = "low"
+references = ["/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#maintenance"]
+

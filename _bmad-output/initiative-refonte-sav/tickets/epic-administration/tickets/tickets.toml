@@ -1,0 +1,36 @@
+[[entry]]
+id = 1
+type = "story"
+title = "Régler les seuils et consulter les événements"
+description = "L’administrateur comprend les seuils existants et peut relire les événements du journal filtré."
+verify = "Sauvegarder un seuil valide en simulation, refuser un seuil invalide, puis rechercher un événement dans le journal."
+covers = ["R1"]
+after = ["3.1"]
+hitl = false
+risk = "high"
+references = ["/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#settings", "/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#audit"]
+
+[[entry]]
+id = 2
+type = "story"
+title = "Identifier les opérateurs et leurs rôles"
+description = "L’administrateur retrouve un compte, son rôle et son état avant toute action autorisée."
+verify = "Vérifier une liste fictive d’opérateurs de deux rôles puis une création autorisée et une erreur de validation sur le service de test."
+covers = ["R2"]
+after = ["3.1"]
+hitl = false
+risk = "high"
+references = ["/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#operators"]
+
+[[entry]]
+id = 3
+type = "story"
+title = "Maintenir les produits et les valeurs bilingues"
+description = "L’administrateur retrouve les produits, leurs unités et les valeurs FR/ES utilisées pendant le traitement."
+verify = "Sur des données synthétiques, éditer un article et une valeur bilingue, puis tester une valeur en double ou refusée."
+covers = ["R3"]
+after = ["3.1"]
+hitl = false
+risk = "medium"
+references = ["/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#catalog", "/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#validation"]
+

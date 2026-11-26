@@ -1,0 +1,36 @@
+[[entry]]
+id = 1
+type = "story"
+title = "Retrouver la facture avec le thème carotte"
+description = "Une recherche valide ouvre la facture et une saisie invalide permet une correction sur place."
+verify = "Dans le navigateur intégré, comparer une recherche valide, un format invalide et une réponse introuvable à 390 pixels et sur ordinateur."
+covers = ["R1"]
+after = []
+hitl = false
+risk = "medium"
+references = ["/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#accueil"]
+
+[[entry]]
+id = 2
+type = "story"
+title = "Identifier les articles et constituer sa demande"
+description = "Une ligne facturée peut être signalée, relue puis corrigée avant l’envoi du dossier."
+verify = "Rejouer le parcours sur une facture de test à deux produits avec un motif nécessitant une photo et un motif facultatif, puis comparer le récapitulatif à la saisie."
+covers = ["R2"]
+after = [1]
+hitl = false
+risk = "high"
+references = ["/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#facture", "/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#declaration", "/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#panier"]
+
+[[entry]]
+id = 3
+type = "story"
+title = "Distinguer un envoi interrompu d’une demande reçue"
+description = "Un échec conserve la saisie et seule la réussite du service ouvre la confirmation."
+verify = "Simuler un échec puis un succès, contrôler le nombre de soumissions et constater que la confirmation suit la réponse réussie."
+covers = ["R3"]
+after = [2]
+hitl = false
+risk = "high"
+references = ["/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#erreur", "/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#confirmation"]
+

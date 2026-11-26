@@ -1,0 +1,24 @@
+[[entry]]
+id = 1
+type = "story"
+title = "Ajuster une ligne et relire le montant de l’avoir"
+description = "L’opérateur autorisé distingue quantités demandées et arbitrées avant de sauvegarder une ligne."
+verify = "Éditer une ligne autorisée puis la relire après rechargement, annuler une seconde édition et vérifier une ligne verrouillée sur fixture."
+covers = ["R1"]
+after = ["3.2"]
+hitl = false
+risk = "high"
+references = ["/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#edition"]
+
+[[entry]]
+id = 2
+type = "story"
+title = "Consulter les pièces et maîtriser la visibilité des échanges"
+description = "Les fichiers, les commentaires et le journal restent lisibles avec leur provenance et leur audience."
+verify = "Sur un dossier de test, comparer une pièce et les commentaires de deux audiences dans les vues autorisées, puis simuler une erreur de publication."
+covers = ["R2"]
+after = [1]
+hitl = false
+risk = "high"
+references = ["/Users/antho/Dev/brain/projects/sav-mono-repo/app-improvements/output/atlas-sav/index.html#pieces"]
+
