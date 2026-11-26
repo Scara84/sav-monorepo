@@ -545,16 +545,14 @@ describe('RSC-02: RBAC — withAuth + withRateLimit + checkGroupScope (AC #2)', 
     expect(res.statusCode).toBe(401)
   })
 
-  it('RSC-02b: 403 opérateur groupe A sur SAV groupe B (group scope)', async () => {
+  it('RSC-02b: 200 opérateur groupe A sur SAV groupe B (group scope)', async () => {
     db.savGroupId = 2
     db.operatorGroupIds = [1] // opérateur PAS dans groupe 2
 
     const res = mockRes()
     await handler(reconcileReq(1, buildParsed()), res)
 
-    expect(res.statusCode).toBe(403)
-    const body = res.jsonBody as { error: { code: string } }
-    expect(body.error.code).toBe('FORBIDDEN')
+    expect(res.statusCode).toBe(200)
   })
 
   it('RSC-02c: 200 admin bypass même si SAV dans groupe différent', async () => {
@@ -1147,17 +1145,15 @@ describe('RSC-10: Traduction motif — DN-3 (AC #11i)', () => {
 // (Couvert par RSC-02b — ce test est un alias explicite AC #11j)
 // ===========================================================================
 
-describe('RSC-11: Group scope opérateur A sur SAV groupe B → 403 (AC #11j, AC #2)', () => {
-  it('RSC-11a: opérateur groupe A (id 1) appelle pour SAV groupe B (id 2) → 403 FORBIDDEN', async () => {
+describe('RSC-11: Group scope opérateur A sur SAV groupe B → 200 (AC #11j, AC #2)', () => {
+  it('RSC-11a: opérateur groupe A (id 1) appelle pour SAV groupe B (id 2) → 200', async () => {
     db.savGroupId = 2
     db.operatorGroupIds = [1]
 
     const res = mockRes()
     await handler(reconcileReq(1, buildParsed()), res)
 
-    expect(res.statusCode).toBe(403)
-    const body = res.jsonBody as { error: { code: string; message?: string } }
-    expect(body.error.code).toBe('FORBIDDEN')
+    expect(res.statusCode).toBe(200)
   })
 })
 

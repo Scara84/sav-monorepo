@@ -69,6 +69,7 @@ server/uploads/*
 # BMAD-METHOD
 _bmad
 _bmad-output/*
+!_bmad-output/initiative-import-kdrive/
 !_bmad-output/planning-artifacts/
 _bmad-output/planning-artifacts/*
 !_bmad-output/planning-artifacts/*.md

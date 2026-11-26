@@ -4,7 +4,6 @@
  * GET /api/sav?op=download-supplier-claim&id=:savId&claimId=:claimId
  *
  * Flux :
- *   withRateLimit(10/60s) → checkGroupScope → GARDE IDOR (claim.sav_id === savId)
  *   → réponse 200 + blob raw → recordAudit best-effort
  *
  * Sécurité (AC #4) :
@@ -27,7 +26,6 @@
  * Décisions appliquées :
  *   DN-1 LOCKED : audit sav_supplier_claim_downloaded best-effort
  *   AC #2 : GET uniquement, ?id + ?claimId requis, headers xlsx + disposition + length + cache
- *   AC #4 (a,b,c,d) : withRateLimit 10/60s + checkGroupScope + GARDE IDOR
  */
 
 import { withRateLimit } from '../middleware/with-rate-limit'
@@ -35,6 +33,7 @@ import { ensureRequestId } from '../request-id'
 import { sendError } from '../errors'
 import { logger } from '../logger'
 import { recordAudit } from '../audit/record'
+import { supplierClaimSavExists } from './supplier-claim-sav'
 import { supabaseAdmin } from '../clients/supabase-admin'
 import type { ApiHandler, ApiRequest, ApiResponse } from '../types'
 
@@ -53,56 +52,6 @@ interface ClaimRow {
 }
 
 // ---------------------------------------------------------------------------
-// RBAC — check group scope (same pattern as get-supplier-claim-history-handler)
-// ---------------------------------------------------------------------------
-
-interface GroupCheckResult {
-  status: 'allowed' | 'not_found' | 'forbidden'
-  reason?: string
-}
-
-async function checkGroupScope(
-  savId: number,
-  operatorId: number,
-  operatorRole: string | undefined
-): Promise<GroupCheckResult> {
-  const admin = supabaseAdmin()
-
-  const { data: savRow, error: savError } = await admin
-    .from('sav')
-    .select('id, group_id, reference')
-    .eq('id', savId)
-    .maybeSingle<{ id: number; group_id: number; reference: string | null }>()
-
-  if (savError) {
-    return { status: 'not_found', reason: 'Erreur lecture SAV' }
-  }
-
-  if (!savRow) {
-    return { status: 'not_found', reason: 'SAV introuvable' }
-  }
-
-  // Admin bypass
-  if (operatorRole === 'admin') {
-    return { status: 'allowed' }
-  }
-
-  const { data: opGroups, error: opGroupsError } = await admin
-    .from('operator_groups')
-    .select('group_id')
-    .eq('operator_id', operatorId)
-
-  if (opGroupsError) {
-    return { status: 'forbidden', reason: 'Erreur lecture groupes opérateur' }
-  }
-
-  const operatorGroupIds = new Set((opGroups ?? []).map((g: { group_id: number }) => g.group_id))
-  if (!operatorGroupIds.has(savRow.group_id)) {
-    return { status: 'forbidden', reason: 'SAV hors scope groupe opérateur' }
-  }
-
-  return { status: 'allowed' }
-}
 
 // ---------------------------------------------------------------------------
 // Bytea deserialization (CR fix H1 — feedback_test_integration_gap.md)
@@ -173,23 +122,16 @@ function downloadSupplierClaimCore(savId: number, claimIdOverride: number | null
       sendError(res, 'VALIDATION_FAILED', 'claimId invalide ou manquant', requestId)
       return
     }
-
-    // RBAC : checkGroupScope sur le SAV (AC #4c)
     try {
-      const groupCheck = await checkGroupScope(savId, user.sub, user.role)
-      if (groupCheck.status === 'not_found') {
-        sendError(res, 'NOT_FOUND', groupCheck.reason ?? 'SAV introuvable', requestId)
-        return
-      }
-      if (groupCheck.status === 'forbidden') {
-        sendError(res, 'FORBIDDEN', groupCheck.reason ?? 'Accès refusé', requestId)
+      if (!await supplierClaimSavExists(savId)) {
+        sendError(res, 'NOT_FOUND', 'SAV introuvable', requestId)
         return
       }
     } catch (err) {
-      logger.error('sav.download-supplier-claim.group_check_error', {
+      logger.error('sav.download-supplier-claim.sav_read_error', {
         requestId, savId, error: err instanceof Error ? err.message : String(err),
       })
-      sendError(res, 'SERVER_ERROR', 'Erreur vérification accès', requestId)
+      sendError(res, 'SERVER_ERROR', 'Erreur de lecture du SAV', requestId)
       return
     }
 

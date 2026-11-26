@@ -5,7 +5,6 @@
  * body JSON { parsed: SupplierFileParseResult, options?: {...} }
  *
  * Flux :
- *   withAuth(['operator','admin']) → withRateLimit → checkGroupScope
  *   → charger sav_lines depuis DB
  *   → lookup bulk validation_lists (traduction motif, 1 SELECT)
  *   → reconcile() pur (helper injecté avec motifMap)
@@ -24,6 +23,7 @@
 import { withAuth } from '../middleware/with-auth'
 import { withRateLimit } from '../middleware/with-rate-limit'
 import { ensureRequestId } from '../request-id'
+import { supplierClaimSavExists } from './supplier-claim-sav'
 import { supabaseAdmin } from '../clients/supabase-admin'
 import { logger } from '../logger'
 import { reconcile } from './reconcile-supplier-claim'
@@ -48,62 +48,6 @@ import type { ApiHandler, ApiRequest, ApiResponse } from '../types'
 import { normalizeCauseKey } from '../../../src/shared/validation/normalize-cause-key'
 
 // ---------------------------------------------------------------------------
-// RBAC — check group scope (réutilise pattern parse-supplier-file-handler.ts)
-// savId inexistant → 404 NOT_FOUND (defense in depth)
-// ---------------------------------------------------------------------------
-
-interface GroupCheckResult {
-  status: 'allowed' | 'not_found' | 'forbidden'
-  reason?: string
-}
-
-async function checkGroupScope(
-  savId: number,
-  operatorId: number,
-  operatorRole: string | undefined
-): Promise<GroupCheckResult> {
-  // Admin bypass (AC #2 — admin voit tous les SAV)
-  if (operatorRole === 'admin') {
-    return { status: 'allowed' }
-  }
-
-  const admin = supabaseAdmin()
-
-  // Récupérer le group_id du SAV
-  const { data: savRow, error: savError } = await admin
-    .from('sav')
-    .select('group_id')
-    .eq('id', savId)
-    .maybeSingle<{ group_id: number }>()
-
-  if (savError) {
-    return { status: 'not_found', reason: 'Erreur lecture SAV' }
-  }
-
-  if (!savRow) {
-    // savId inexistant → 404 NOT_FOUND (defense in depth, pas de signal scope)
-    return { status: 'not_found', reason: 'SAV introuvable' }
-  }
-
-  const savGroupId = savRow.group_id
-
-  // Récupérer les groupes de l'opérateur
-  const { data: opGroups, error: opGroupsError } = await admin
-    .from('operator_groups')
-    .select('group_id')
-    .eq('operator_id', operatorId)
-
-  if (opGroupsError) {
-    return { status: 'forbidden', reason: 'Erreur lecture groupes opérateur' }
-  }
-
-  const operatorGroupIds = new Set((opGroups ?? []).map((g: { group_id: number }) => g.group_id))
-  if (!operatorGroupIds.has(savGroupId)) {
-    return { status: 'forbidden', reason: 'SAV hors scope groupe opérateur' }
-  }
-
-  return { status: 'allowed' }
-}
 
 // ---------------------------------------------------------------------------
 // Bulk lookup validation_lists — OQ-2 (PATTERN-BULK-VALIDATION-LOOKUP)
@@ -175,31 +119,18 @@ function reconcileSupplierClaimCore(savId: number): ApiHandler {
       res.status(400).json({ error: { code: 'VALIDATION_FAILED', message: 'Champ parsed manquant ou invalide', requestId } })
       return
     }
-
-    // --- RBAC : check group scope (AC #2) ---
-    // L-5 ACCEPTED: checkGroupScope runs inside core rather than between withRateLimit and core.
-    // This is safe because: (1) rate-limit bucket is keyed per operator (op:<sub>), not per
-    // operation result; (2) the 403/404 early-exit after scope check still prevents any data
-    // processing for unauthorized callers. Moving it to middleware would require extracting
-    // savId from the query before withRateLimit wraps core — adding complexity for no security
-    // gain given the per-operator rate-limit key. Current ordering is accepted.
     try {
-      const groupCheck = await checkGroupScope(savId, user.sub, user.role)
-      if (groupCheck.status === 'not_found') {
-        res.status(404).json({ error: { code: 'NOT_FOUND', message: groupCheck.reason ?? 'SAV introuvable', requestId } })
-        return
-      }
-      if (groupCheck.status === 'forbidden') {
-        res.status(403).json({ error: { code: 'FORBIDDEN', message: groupCheck.reason ?? 'Accès refusé', requestId } })
+      if (!await supplierClaimSavExists(savId)) {
+        res.status(404).json({ error: { code: 'NOT_FOUND', message: 'SAV introuvable', requestId } })
         return
       }
     } catch (err) {
-      logger.error('sav.reconcile-supplier-claim.group_check_error', {
+      logger.error('sav.reconcile-supplier-claim.sav_read_error', {
         requestId,
         savId,
         error: err instanceof Error ? err.message : String(err),
       })
-      res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Erreur vérification accès', requestId } })
+      res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Erreur de lecture du SAV', requestId } })
       return
     }
 

@@ -136,6 +136,7 @@ const ALLOWED_OPS = new Set([
   'import-supplier-prices',
   'apply-supplier-prices',
   'parse-supplier-file',
+  'prepare-supplier-file',
   'reconcile-supplier-claim',
   'generate-supplier-claim',
   'get-supplier-claim-history',
@@ -368,13 +369,13 @@ const dispatch: ApiHandler = async (req, res) => {
   }
 
   // Story 8.1 — POST /api/sav/:id/demande-fournisseur (parse fichier SOL Y FRUTA)
-  if (op === 'parse-supplier-file') {
+  if (op === 'parse-supplier-file' || op === 'prepare-supplier-file') {
     if (method !== 'POST') {
       res.setHeader('Allow', 'POST')
       sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
       return
     }
-    return parseSupplierFileHandler(savId)(req, res)
+    return parseSupplierFileHandler(savId, op === 'prepare-supplier-file')(req, res)
   }
 
   // Story 8.2 — POST /api/sav/:id/demande-fournisseur/reconcile (réconciliation SOL Y FRUTA)

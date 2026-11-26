@@ -5,7 +5,7 @@
  *
  * Flux : body JSON { fileBuffer: base64, mimeType, filename }
  *        → validation taille/MIME/magic-bytes/extension
- *        → check group scope (RBAC)
+ *        → lecture du SAV
  *        → parse XLSX SheetJS 0.20.3 CDN (PATTERN-XLSX-CDN-PINNED)
  *        → réponse 200 JSON preview (0 persistance — PATTERN-PARSE-PREVIEW-NO-PERSIST)
  *
@@ -17,11 +17,12 @@
  *   Q1   : body JSON base64 (cohérence Story 4.8 import-supplier-prices)
  *   Q2   : savId inexistant → 404 NOT_FOUND
  *
- * Ordre middleware : withAuth → withRateLimit → checkGroupScope → handler
  * (AC #3 — R-8 : withAuth AVANT withRateLimit pour éviter consommation bucket non-auth)
  */
 
-import * as XLSX from 'xlsx'
+import { kdriveDiagnostic, readKdriveOrderWorkbook } from '../clients/kdrive'
+import type * as XLSX from 'xlsx'
+import { MAX_FILE_SIZE, hasXlsxMagicBytes, readSupplierWorkbook } from './supplier-workbook'
 import { withAuth } from '../middleware/with-auth'
 import { withRateLimit } from '../middleware/with-rate-limit'
 import { ensureRequestId } from '../request-id'
@@ -34,13 +35,6 @@ import type { ApiHandler, ApiRequest, ApiResponse } from '../types'
 // Constantes (AC #5)
 // ---------------------------------------------------------------------------
 
-/**
- * 4 MB cap (M-2 fix: Vercel coupe ~4,5 Mo avant le handler ; base64 inflation ~1,33x)
- * Les fichiers SOL Y FRUTA réels font ~400 Ko — le cap 4 MB est largement suffisant.
- * DN-2 actualisé : 4 MB (ex 10 MB était du code mort).
- */
-const MAX_FILE_SIZE = 4 * 1024 * 1024
-
 /** MIME whitelist (AC #5b) */
 const ALLOWED_MIMES = new Set([
   'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
@@ -48,76 +42,6 @@ const ALLOWED_MIMES = new Set([
   'application/octet-stream',
 ])
 
-/** Magic bytes ZIP PK (OOXML = ZIP container) */
-const PK_MAGIC = Buffer.from([0x50, 0x4b, 0x03, 0x04])
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-/** Vérifie que le buffer commence par les magic bytes ZIP (PK) */
-function hasXlsxMagicBytes(buf: Buffer): boolean {
-  if (buf.length < 4) return false
-  return buf[0] === PK_MAGIC[0] && buf[1] === PK_MAGIC[1] && buf[2] === PK_MAGIC[2] && buf[3] === PK_MAGIC[3]
-}
-
-// ---------------------------------------------------------------------------
-// RBAC — check group scope (pattern Story 4.8 apply-supplier-prices-handler)
-// Q2 : savId inexistant → 404 NOT_FOUND (déviation du pattern 4.8 qui retourne 403)
-// ---------------------------------------------------------------------------
-
-interface GroupCheckResult {
-  status: 'allowed' | 'not_found' | 'forbidden'
-  reason?: string
-}
-
-async function checkGroupScope(
-  savId: number,
-  operatorId: number,
-  operatorRole: string | undefined
-): Promise<GroupCheckResult> {
-  // Admin bypass (AC #3c — admin voit tous les groupes)
-  if (operatorRole === 'admin') {
-    return { status: 'allowed' }
-  }
-
-  const admin = supabaseAdmin()
-
-  // Récupérer le group_id du SAV
-  const { data: savRow, error: savError } = await admin
-    .from('sav')
-    .select('group_id')
-    .eq('id', savId)
-    .maybeSingle<{ group_id: number }>()
-
-  if (savError) {
-    return { status: 'not_found', reason: 'Erreur lecture SAV' }
-  }
-
-  if (!savRow) {
-    // Q2 : SAV inexistant → 404
-    return { status: 'not_found', reason: 'SAV introuvable' }
-  }
-
-  const savGroupId = savRow.group_id
-
-  // Récupérer les groupes de l'opérateur
-  const { data: opGroups, error: opGroupsError } = await admin
-    .from('operator_groups')
-    .select('group_id')
-    .eq('operator_id', operatorId)
-
-  if (opGroupsError) {
-    return { status: 'forbidden', reason: 'Erreur lecture groupes opérateur' }
-  }
-
-  const operatorGroupIds = new Set((opGroups ?? []).map((g: { group_id: number }) => g.group_id))
-  if (!operatorGroupIds.has(savGroupId)) {
-    return { status: 'forbidden', reason: 'SAV hors scope groupe opérateur' }
-  }
-
-  return { status: 'allowed' }
-}
 
 // ---------------------------------------------------------------------------
 // Core handler
@@ -222,125 +146,123 @@ function parseSupplierFileCore(savId: number): ApiHandler {
       })
       return
     }
-
-    // --- RBAC : check group scope (AC #3) ---
     try {
-      const groupCheck = await checkGroupScope(savId, user.sub, user.role)
-      if (groupCheck.status === 'not_found') {
-        res.status(404).json({ error: { code: 'NOT_FOUND', message: groupCheck.reason ?? 'SAV introuvable', requestId } })
+      const { data: sav, error } = await readSupplierOrder(savId)
+      if (error) throw error
+      if (!sav) {
+        res.status(404).json({ error: { code: 'NOT_FOUND', message: 'SAV introuvable', requestId } })
         return
       }
-      if (groupCheck.status === 'forbidden') {
-        res.status(403).json({ error: { code: 'FORBIDDEN', message: groupCheck.reason ?? 'Accès refusé', requestId } })
+      if (typeof body.expectedOrder === 'string' && body.expectedOrder.trim()
+          && body.expectedOrder !== sav.metadata?.invoice_special_mention) {
+        orderChanged(res, requestId)
         return
       }
     } catch (err) {
-      logger.error('sav.parse_supplier_file.group_check_error', {
+      logger.error('sav.parse_supplier_file.sav_read_error', {
         requestId,
         savId,
         error: err instanceof Error ? err.message : String(err),
       })
-      res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Erreur vérification accès', requestId } })
+      res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Erreur de lecture du SAV', requestId } })
       return
     }
 
-    // --- AC #5d : Parse XLSX via SheetJS 0.20.3 (PATTERN-XLSX-CDN-PINNED) ---
-    // H-3-bis : lire avec cellFormula:true pour que scrubFormulaCells() (appelé par
-    // parseFactureGroupe/parseBdd) puisse détecter les cellules .f et supprimer leur
-    // valeur cached .v avant sheet_to_json. cellFormula:false seul est insuffisant :
-    // SheetJS retire .f mais conserve .v, laissant la valeur forgée accessible.
-    let wb: XLSX.WorkBook
-    try {
-      wb = XLSX.read(fileBuffer, {
-        type: 'buffer',
-        cellFormula: true,  // nécessaire pour que le scrubber détecte les .f (H-3-bis)
-        cellHTML: false,    // anti-XSS
-        cellNF: false,
-        cellText: false,
-        raw: true,
-      })
-    } catch (parseErr) {
-      res.status(422).json({
-        error: {
-          code: 'UNPROCESSABLE_ENTITY',
-          message: 'Fichier non lisible — fournir un .xlsx valide',
-          requestId,
-        },
-      })
-      return
-    }
+    sendWorkbookPreview(fileBuffer, filename, savId, requestId, res)
+  }
+}
 
-    // --- AC #5d : Vérifier présence onglets FACTURE_GROUPE + BDD ---
-    const sheetNames = wb.SheetNames ?? []
-    const hasFactureGroupe = sheetNames.some((s: string) => s.trim().toUpperCase() === 'FACTURE_GROUPE')
-    const hasBdd = sheetNames.some((s: string) => s.trim().toUpperCase() === 'BDD')
-
-    if (!hasFactureGroupe || !hasBdd) {
-      const missing = [
-        ...(!hasFactureGroupe ? ['FACTURE_GROUPE'] : []),
-        ...(!hasBdd ? ['BDD'] : []),
-      ]
-      res.status(400).json({
-        error: {
-          code: 'INVALID_FORMAT',
-          message: `Onglets requis manquants : ${missing.join(', ')}. Le fichier doit contenir FACTURE_GROUPE et BDD`,
-          requestId,
-        },
-      })
-      return
-    }
-
-    // --- AC #6, #7, #8 : Extraction données ---
-    let factureGroupeResult: ReturnType<typeof parseFactureGroupe>
-    let bddResult: ReturnType<typeof parseBdd>
-    let metadata: ReturnType<typeof extractMetadata>
-
-    try {
-      factureGroupeResult = parseFactureGroupe(wb)
-      bddResult = parseBdd(wb)
-      metadata = extractMetadata(wb)
-    } catch (err) {
-      logger.error('sav.parse_supplier_file.parse_error', {
+function sendWorkbookPreview(fileBuffer: Buffer, filename: string, savId: number, requestId: string, res: ApiResponse) {
+  // --- AC #5d : Parse XLSX via SheetJS 0.20.3 (PATTERN-XLSX-CDN-PINNED) ---
+  // H-3-bis : lire avec cellFormula:true pour que scrubFormulaCells() (appelé par
+  // parseFactureGroupe/parseBdd) puisse détecter les cellules .f et supprimer leur
+  // valeur cached .v avant sheet_to_json. cellFormula:false seul est insuffisant :
+  // SheetJS retire .f mais conserve .v, laissant la valeur forgée accessible.
+  let wb: XLSX.WorkBook
+  try {
+    wb = readSupplierWorkbook(fileBuffer)
+  } catch (parseErr) {
+    res.status(422).json({
+      error: {
+        code: 'UNPROCESSABLE_ENTITY',
+        message: 'Fichier non lisible — fournir un .xlsx valide',
         requestId,
-        savId,
-        error: err instanceof Error ? err.message : String(err),
-      })
-      res.status(422).json({
-        error: {
-          code: 'UNPROCESSABLE_ENTITY',
-          message: 'Fichier non lisible — fournir un .xlsx valide',
-          requestId,
-        },
-      })
-      return
-    }
-
-    // --- AC #9 : Réponse 200 JSON structuré ---
-    res.status(200).json({
-      metadata: {
-        reference: metadata.reference,
-        albaran: metadata.albaran,
-        fechaAlbaran: metadata.fechaAlbaran,
-        warnings: metadata.warnings,
-      },
-      factureGroupe: {
-        rows: factureGroupeResult.rows,
-        skippedRows: factureGroupeResult.skippedRows,
-        warnings: factureGroupeResult.warnings,
-      },
-      bdd: {
-        rows: bddResult.rows,
-        skippedRows: bddResult.skippedRows,
-        warnings: bddResult.warnings,
-      },
-      fileMeta: {
-        filename,
-        sizeBytes: fileBuffer.length,
-        sheetsDetected: sheetNames,
-        parser: 'xlsx-cdn-0.20.3',
       },
     })
+    return
   }
+
+  // --- AC #5d : Vérifier présence onglets FACTURE_GROUPE + BDD ---
+  const sheetNames = wb.SheetNames ?? []
+  const hasFactureGroupe = sheetNames.some((s: string) => s.trim().toUpperCase() === 'FACTURE_GROUPE')
+  const hasBdd = sheetNames.some((s: string) => s.trim().toUpperCase() === 'BDD')
+
+  if (!hasFactureGroupe || !hasBdd) {
+    const missing = [
+      ...(!hasFactureGroupe ? ['FACTURE_GROUPE'] : []),
+      ...(!hasBdd ? ['BDD'] : []),
+    ]
+    res.status(400).json({
+      error: {
+        code: 'INVALID_FORMAT',
+        reason: 'MISSING_SHEETS',
+        message: `Onglets requis manquants : ${missing.join(', ')}. Le fichier doit contenir FACTURE_GROUPE et BDD`,
+        requestId,
+      },
+    })
+    return
+  }
+
+  // --- AC #6, #7, #8 : Extraction données ---
+  let factureGroupeResult: ReturnType<typeof parseFactureGroupe>
+  let bddResult: ReturnType<typeof parseBdd>
+  let metadata: ReturnType<typeof extractMetadata>
+
+  try {
+    factureGroupeResult = parseFactureGroupe(wb)
+    bddResult = parseBdd(wb)
+    metadata = extractMetadata(wb)
+  } catch (err) {
+    logger.error('sav.parse_supplier_file.parse_error', {
+      requestId,
+      savId,
+      error: err instanceof Error ? err.message : String(err),
+    })
+    res.status(422).json({
+      error: {
+        code: 'UNPROCESSABLE_ENTITY',
+        message: 'Fichier non lisible — fournir un .xlsx valide',
+        requestId,
+      },
+    })
+    return
+  }
+
+  // --- AC #9 : Réponse 200 JSON structuré ---
+  res.status(200).json({
+    metadata: {
+      reference: metadata.reference,
+      albaran: metadata.albaran,
+      fechaAlbaran: metadata.fechaAlbaran,
+      warnings: metadata.warnings,
+    },
+    factureGroupe: {
+      rows: factureGroupeResult.rows,
+      skippedRows: factureGroupeResult.skippedRows,
+      warnings: factureGroupeResult.warnings,
+    },
+    bdd: {
+      rows: bddResult.rows,
+      skippedRows: bddResult.skippedRows,
+      warnings: bddResult.warnings,
+    },
+    fileMeta: {
+      filename,
+      sizeBytes: fileBuffer.length,
+      sheetsDetected: sheetNames,
+      parser: 'xlsx-cdn-0.20.3',
+    },
+  })
 }
 
 // ---------------------------------------------------------------------------
@@ -348,8 +270,80 @@ function parseSupplierFileCore(savId: number): ApiHandler {
 // withAuth → withRateLimit → core
 // ---------------------------------------------------------------------------
 
-export function parseSupplierFileHandler(savId: number): ApiHandler {
-  const core = parseSupplierFileCore(savId)
+function orderChanged(res: ApiResponse, requestId: string) {
+  res.status(409).json({ error: { code: 'ORDER_CHANGED', message: 'La commande a changé. Rouvrez le détail du SAV.', requestId } })
+}
+
+function readSupplierOrder(savId: number) {
+  return supabaseAdmin().from('sav').select('metadata').eq('id', savId).maybeSingle()
+}
+
+async function readOrderContext(savId: number, requestId: string, res: ApiResponse) {
+  const { data, error } = await readSupplierOrder(savId)
+  if (error) {
+    res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Lecture du SAV impossible.', requestId } })
+    return
+  }
+  if (!data) {
+    res.status(404).json({ error: { code: 'NOT_FOUND', message: 'SAV introuvable', requestId } })
+    return
+  }
+  const mention = data?.metadata?.invoice_special_mention
+  if (typeof mention !== 'string' || !mention.trim()) {
+    res.status(409).json({ error: { code: 'ORDER_UNAVAILABLE', message: 'Commande du SAV indisponible.', requestId } })
+    return
+  }
+  return { mention }
+}
+
+// Coordination entre requêtes servies par la même instance, uniquement pendant la lecture.
+const preparingOrders = new Set<string>()
+
+function prepareSupplierFileCore(savId: number): ApiHandler {
+  return async (req, res) => {
+    const requestId = ensureRequestId(req)
+    if (req.user?.type !== 'operator') {
+      res.status(401).json({ error: { code: 'UNAUTHORIZED', message: 'Session opérateur requise', requestId } })
+      return
+    }
+    let ownedKey: string | undefined
+    try {
+      const context = await readOrderContext(savId, requestId, res)
+      if (!context) return
+      const body = req.body as { expectedOrder?: unknown } | undefined
+      if (body && 'expectedOrder' in body && body.expectedOrder !== context.mention) {
+        orderChanged(res, requestId)
+        return
+      }
+      const key = JSON.stringify([savId, context.mention])
+      if (preparingOrders.has(key)) {
+        res.status(409).json({ error: { code: 'PREPARATION_BUSY', message: 'Préparation déjà en cours pour cette commande.', requestId } })
+        return
+      }
+      preparingOrders.add(key)
+      ownedKey = key
+      const buffer = await readKdriveOrderWorkbook(context.mention, process.env)
+      const current = await readOrderContext(savId, requestId, res)
+      if (!current) return
+      if (current.mention !== context.mention) {
+        orderChanged(res, requestId)
+        return
+      }
+      sendWorkbookPreview(buffer, 'data.xlsx', savId, requestId, res)
+    } catch (error) {
+      const diagnostic = kdriveDiagnostic(error)
+      logger.warn('sav.prepare_supplier_file.failed', { requestId, savId, diagnostic: diagnostic ?? 'Erreur interne' })
+      res.status(422).json({ error: {
+        code: 'PREPARATION_FAILED', diagnostic, message: 'Lecture du classeur fournisseur impossible.', requestId,
+      } })
+    } finally {
+      if (ownedKey !== undefined) preparingOrders.delete(ownedKey)
+    }
+  }
+}
+
+export function parseSupplierFileHandler(savId: number, automatic = false): ApiHandler {
+  const core = automatic ? prepareSupplierFileCore(savId) : parseSupplierFileCore(savId)
   // withAuth accepts types 'operator' | 'member' — admins have type 'operator' with role 'admin'
   return withAuth({ types: ['operator'] })(
     withRateLimit({

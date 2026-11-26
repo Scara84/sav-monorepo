@@ -17,7 +17,7 @@
  *   AC #11(d) — Archive ZIP valide mais hors-OOXML (.zip renommé .xlsx) → 422 UNPROCESSABLE_ENTITY
  *   AC #11(e) — Classeur XLSX sans onglet FACTURE_GROUPE → 400 INVALID_FORMAT
  *   AC #11(f) — Tolérance #N/A (fixture réelle avec #N/A dans precio, lignes vides) → 200, warnings > 0, skippedRows > 0
- *   AC #11(g) — Cross-SAV / group scope : opérateur groupe A → SAV groupe B → 403 FORBIDDEN
+ *   AC #11(g) — Cross-SAV / group scope : opérateur groupe A → SAV groupe B → 200
  *   AC #11(h) — Formula injection guard : designationFr avec =cmd... → jamais évalué (cellFormula:false)
  *   AC #3    — 401 rôle non op/admin (self_service user) ; 404 savId inexistant
  *   AC #4    — GET → 405 METHOD_NOT_ALLOWED
@@ -64,6 +64,8 @@ const FIXTURE_ZIP_RENAMED = resolve(FIXTURES_DIR, 'supplier-claim-zip-renamed.xl
 const db = vi.hoisted(() => ({
   /** group_id du SAV requis */
   savGroupId: 1 as number,
+  mention: '278_26S21_11',
+  mentionReads: 0,
   /** groupes de l'opérateur */
   operatorGroupIds: [1] as number[],
   /** rate limit: true = allowed */
@@ -74,6 +76,8 @@ const db = vi.hoisted(() => ({
 
 function resetDb(): void {
   db.savGroupId = 1
+  db.mention = '278_26S21_11'
+  db.mentionReads = 0
   db.operatorGroupIds = [1]
   db.rateLimitAllowed = true
   db.savNotFound = false
@@ -88,11 +92,22 @@ vi.mock('../../../../api/_lib/clients/supabase-admin', () => {
     from: (table: string) => {
       if (table === 'sav') {
         return {
-          select: () => ({
+          select: (columns: string) => ({
             eq: () => ({
+              eq: (_column: string, group: number) => ({
+                maybeSingle: () => {
+                  db.mentionReads++
+                  return { data: columns === 'metadata' && group === db.savGroupId
+                    ? { metadata: { invoice_special_mention: db.mention } } : null, error: null }
+                },
+              }),
               maybeSingle: () => {
                 if (db.savNotFound) {
                   return Promise.resolve({ data: null, error: null })
+                }
+                if (columns === 'metadata') {
+                  db.mentionReads++
+                  return { data: { metadata: { invoice_special_mention: db.mention } }, error: null }
                 }
                 return Promise.resolve({ data: { group_id: db.savGroupId }, error: null })
               },
@@ -138,6 +153,11 @@ vi.mock('../../../../api/_lib/clients/supabase-admin', () => {
 
 // NOTE: This import will fail RED until parse-supplier-file-handler is implemented.
 // The router is imported via api/sav which dispatches to the handler.
+const readWorkbook = vi.hoisted(() => vi.fn())
+vi.mock('../../../../api/_lib/clients/kdrive', async (importOriginal) => ({
+  ...await importOriginal<typeof import('../../../../api/_lib/clients/kdrive')>(),
+  readKdriveOrderWorkbook: readWorkbook,
+}))
 import handler from '../../../../api/sav'
 
 // ---------------------------------------------------------------------------
@@ -183,6 +203,7 @@ function parseReq(
   opts: {
     mimeType?: string
     filename?: string
+    expectedOrder?: string
     cookie?: string
     method?: string
   } = {}
@@ -202,6 +223,7 @@ function parseReq(
     },
     query: { op: 'parse-supplier-file', id: String(savId) },
     body: {
+      expectedOrder: opts.expectedOrder,
       fileBuffer: fileBuffer.toString('base64'),
       mimeType,
       filename,
@@ -218,6 +240,7 @@ beforeEach(() => {
   vi.stubEnv('SUPABASE_URL', 'http://localhost')
   vi.stubEnv('SUPABASE_SERVICE_ROLE_KEY', 'test')
   resetDb()
+  readWorkbook.mockReset()
 })
 
 afterEach(() => {
@@ -592,11 +615,11 @@ describe('PSF-06: Tolérance #N/A et lignes vides (AC #8)', () => {
 })
 
 // ===========================================================================
-// AC #11(g) — Cross-SAV / group scope → 403 FORBIDDEN
+// AC #11(g) — Cross-SAV / group scope → 200
 // ===========================================================================
 
 describe('PSF-07: RBAC group scope (AC #3)', () => {
-  it('PSF-07a: opérateur groupe A, SAV dans groupe B → 403 FORBIDDEN', async () => {
+  it('PSF-07a: opérateur groupe A, SAV dans groupe B → 200', async () => {
     db.savGroupId = 2
     db.operatorGroupIds = [1] // opérateur PAS dans groupe 2
 
@@ -604,10 +627,7 @@ describe('PSF-07: RBAC group scope (AC #3)', () => {
     const res = mockRes()
     await handler(parseReq(1, fileBuffer), res)
 
-    expect(res.statusCode).toBe(403)
-    const body = res.jsonBody as { error: { code: string; message: string } }
-    expect(body.error.code).toBe('FORBIDDEN')
-    expect(body.error.message).toMatch(/scope|groupe/i)
+    expect(res.statusCode).toBe(200)
   })
 
   it('PSF-07b: admin bypass → 200 même si SAV dans groupe différent', async () => {
@@ -887,5 +907,106 @@ describe('PSF-12: Forme réponse JSON (AC #9)', () => {
     expect(Array.isArray(body.metadata.warnings)).toBe(true)
     // Fixture a des valeurs valides → warnings vide
     expect(body.metadata.warnings).toHaveLength(0)
+  })
+})
+
+describe('Préparation kDrive sur la commande du SAV', () => {
+  async function prepare(cookie = opCookie(), body: Record<string, unknown> = {}) {
+    const res = mockRes()
+    await handler(mockReq({ method: 'POST', query: { op: 'prepare-supplier-file', id: '1' }, headers: { cookie }, body }), res)
+    return res
+  }
+
+  it('protège le dépôt manuel lié à une commande tout en conservant le parcours manuel sans mention', async () => {
+    const buffer = readFileSync(FIXTURE_VALID)
+    async function manual(expectedOrder?: string, role: SessionUser['role'] = 'sav-operator') {
+      const res = mockRes()
+      await handler(parseReq(1, buffer, { ...(expectedOrder !== undefined ? { expectedOrder } : {}), cookie: opCookie({ role }) }), res)
+      return res.statusCode
+    }
+    expect(await manual(db.mention)).toBe(200)
+    expect(await manual('périmée')).toBe(409)
+    db.operatorGroupIds = []
+    db.mentionReads = 0
+    expect(await manual(db.mention)).toBe(200)
+    expect(db.mentionReads).toBe(1)
+    expect(await manual(db.mention, 'admin')).toBe(200)
+    db.mention = ''
+    db.operatorGroupIds = [1]
+    expect(await manual()).toBe(200)
+  })
+
+  it('bloque deux préparations simultanées sur la même instance puis permet une reprise', async () => {
+    let fail!: () => void
+    readWorkbook.mockImplementationOnce(() => new Promise((_resolve, reject) => { fail = () => reject(new Error()) }))
+    const first = prepare()
+    await vi.waitFor(() => expect(readWorkbook).toHaveBeenCalledTimes(1))
+    const busy = await prepare()
+    expect(busy.statusCode).toBe(409)
+    expect(busy.jsonBody).toMatchObject({ error: { code: 'PREPARATION_BUSY' } })
+    expect(readWorkbook).toHaveBeenCalledTimes(1)
+    fail()
+    expect((await first).statusCode).toBe(422)
+    readWorkbook.mockResolvedValueOnce(readFileSync(FIXTURE_VALID))
+    expect((await prepare()).statusCode).toBe(200)
+  })
+
+  it('retourne le même aperçu que le fichier manuel, en utilisant la commande du SAV', async () => {
+    const buffer = readFileSync(FIXTURE_VALID)
+    readWorkbook.mockResolvedValue(buffer)
+    const auto = await prepare(opCookie(), { reference: 'autre commande' })
+    expect(db.mentionReads).toBe(2)
+    const manual = mockRes()
+    await handler(parseReq(1, buffer), manual)
+    expect(manual.statusCode).toBe(200)
+    expect(auto.statusCode).toBe(200)
+    expect(manual.jsonBody).toMatchObject({
+      metadata: { reference: db.mention, albaran: 3127, fechaAlbaran: '2026-05-20', warnings: [] },
+      factureGroupe: { rows: expect.objectContaining({ length: 3 }), warnings: expect.objectContaining({ length: 1 }), skippedRows: 5 },
+      bdd: { rows: expect.objectContaining({ length: 3 }), warnings: [], skippedRows: 1 },
+    })
+    expect(auto.jsonBody).toEqual(manual.jsonBody)
+    expect(readWorkbook).toHaveBeenCalledWith(db.mention, process.env)
+  })
+
+  it.each(['admin', 'sav-operator'] as const)('prépare le classeur pour %s sans groupe affecté', async role => {
+    db.operatorGroupIds = []
+    readWorkbook.mockResolvedValueOnce(readFileSync(FIXTURE_VALID))
+    expect(await prepare(opCookie({ role }))).toHaveProperty('statusCode', 200)
+    expect(db.mentionReads).toBe(2)
+    expect(readWorkbook).toHaveBeenCalledTimes(1)
+  })
+
+  it('refuse une session absente et une commande périmée avant kDrive', async () => {
+    expect((await prepare('')).statusCode).toBe(401)
+    expect((await prepare(opCookie(), { expectedOrder: 'ancienne' })).statusCode).toBe(409)
+    expect(readWorkbook).not.toHaveBeenCalled()
+  })
+
+  it.each(['commande', 'existence du SAV'])('revérifie %s après la lecture', async kind => {
+    readWorkbook.mockImplementation(async () => {
+      if (kind === 'commande') db.mention += ' modifiée'
+      else db.savNotFound = true
+      return readFileSync(FIXTURE_VALID)
+    })
+    expect((await prepare()).statusCode).toBe(kind === 'commande' ? 409 : 404)
+  })
+
+  it('transmet un diagnostic kDrive contrôlé pour une référence invalide', async () => {
+    const client = await vi.importActual<typeof import('../../../../api/_lib/clients/kdrive')>('../../../../api/_lib/clients/kdrive')
+    db.mention = 'invalide'
+    readWorkbook.mockImplementationOnce(client.readKdriveOrderWorkbook)
+    const res = await prepare()
+    expect(res.statusCode).toBe(422)
+    expect(res.jsonBody).toMatchObject({ error: { diagnostic: 'Référence de commande invalide.' } })
+  })
+
+  it('masque les détails internes et bloque le classeur illisible', async () => {
+    readWorkbook.mockRejectedValueOnce(new Error('secret-interne'))
+    const failed = await prepare()
+    expect(failed.statusCode).toBe(422)
+    expect(JSON.stringify(failed.jsonBody)).not.toContain('secret-interne')
+    readWorkbook.mockResolvedValueOnce(readFileSync(FIXTURE_MISSING_FG))
+    expect((await prepare()).statusCode).toBe(400)
   })
 })

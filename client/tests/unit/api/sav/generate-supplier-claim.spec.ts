@@ -27,7 +27,7 @@
  *   GEN-05 (AC #11e) : Ligne excluded:true exclue du doc ET de la persistance
  *   GEN-06 (AC #11f) : Rejet si toutes lignes exclues → 400 no_valid_lines
  *   GEN-07 (AC #11g) : Sanitization formula-injection comentarios
- *   GEN-08 (AC #11h) : Group scope — opérateur groupe A pour SAV groupe B → 403
+ *   GEN-08 (AC #11h) : Group scope — opérateur groupe A pour SAV groupe B → 200
  *   GEN-09 (AC #11i) : Avoir absent autorisé (DN-2=B LOCKED) → 200 + credit_note_id IS NULL
  *   GEN-10 (AC #11i) : creditNoteId invalide (inexistant) → 400 invalid_credit_note_id
  *   GEN-11 (AC #11j) : Régénération chainée — 2 appels → regeneration_of chaîné
@@ -872,11 +872,11 @@ describe("GEN-07: sanitization formula-injection comentarios (AC #11g, AC #6)", 
 })
 
 // ===========================================================================
-// GEN-08 — Group scope : opérateur groupe A pour SAV groupe B → 403 (AC #11h)
+// GEN-08 — Group scope : opérateur groupe A pour SAV groupe B → 200 (AC #11h)
 // ===========================================================================
 
-describe('GEN-08: group scope — opérateur groupe A pour SAV groupe B → 403 (AC #11h)', () => {
-  it('GEN-08a: opérateur groupe [2] pour SAV groupe_id=1 → 403 FORBIDDEN', async () => {
+describe('GEN-08: group scope — opérateur groupe A pour SAV groupe B → 200 (AC #11h)', () => {
+  it('GEN-08a: opérateur groupe [2] pour SAV groupe_id=1 → 200', async () => {
     db.operatorGroupIds = [2] // Opérateur dans le groupe 2
     db.savGroupId = 1 // SAV dans le groupe 1 → mismatch
 
@@ -891,7 +891,7 @@ describe('GEN-08: group scope — opérateur groupe A pour SAV groupe B → 403 
 
     await generateSupplierClaimHandler(1)(req, res)
 
-    expect(res.statusCode).toBe(403)
+    expect(res.statusCode).toBe(200)
   })
 
   it('GEN-08b: admin bypass — admin avec groupe incorrect → 200 (admin voit tous les SAV)', async () => {

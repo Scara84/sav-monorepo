@@ -38,6 +38,18 @@ tests/              # Tests
 - Node.js 16+
 - npm 8+
 
+## Diagnostic local kDrive
+
+Dans `client/.env.local` (ignoré par Git), renseignez `KDRIVE_TOKEN` avec un jeton autorisé pour le scope `drive` et `KDRIVE_ID` avec l’identifiant numérique du drive. Les variables déjà exportées dans le terminal ont priorité. Utilisez Node.js 22 et lancez depuis `client/` :
+
+```bash
+npm run check:kdrive
+```
+
+La commande vérifie le drive, sa racine logique et chaque dossier du chemin `04_SUIVI_COMMANDE/03_FACTURE/FRANCAIS`. Elle affiche l’identifiant de FRANCAIS dès que son accès est confirmé, y compris si le contrôle du témoin échoue ensuite. Elle affiche la première étape en échec et retourne le code 1. Pour retrouver FRANCAIS sous « Dossiers de l’organisation » sans connaître son ID, lancez `KDRIVE_ORGANIZATION=1 npm run check:kdrive` depuis `client/`, en laissant `KDRIVE_FRANCAIS_ID` vide. La commande identifie l’espace commun parmi les enfants de la racine avant de vérifier les trois noms et leurs parents. Si vous connaissez déjà l’ID exact de FRANCAIS, renseignez plutôt `KDRIVE_FRANCAIS_ID` avec le numéro final de son URL. Le diagnostic remonte alors les trois dossiers par leurs identifiants et vérifie que leur espace parent est celui de l’organisation.
+
+Pour vérifier aussi le téléchargement, ajoutez `KDRIVE_WITNESS_ID` et `KDRIVE_WITNESS_SHA256`. Choisissez un petit fichier autorisé sous FRANCAIS et calculez son empreinte sur une copie de confiance avec `shasum -a 256 chemin/du/fichier`. Le diagnostic vérifie les parents du témoin (jusqu’à 32 dossiers intermédiaires), puis calcule l’empreinte en mémoire, sans enregistrer le fichier. Il refuse les redirections et limite le témoin à 1 Mio, chaque réponse de métadonnées à 256 Kio et le diagnostic entier à 30 secondes.
+
 ## Installation
 
 ```bash

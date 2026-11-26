@@ -4,7 +4,6 @@
  * GET /api/sav?op=get-supplier-claim-history&id=:savId
  *
  * Flux :
- *   withRateLimit(30/60s) → checkGroupScope (RBAC inline) → SELECT claims
  *   → calcul version ordinal en mémoire (DN-3 LOCKED = no-migration)
  *   → réponse 200 JSON { savId, claims: SupplierClaimHistoryItem[] }
  *
@@ -13,13 +12,13 @@
  * Décisions appliquées :
  *   DN-3 LOCKED : tri + calcul version en mémoire (≤ 10 claims/SAV V1)
  *   AC #1 : GET uniquement (405 sinon)
- *   AC #4 (a,b,c) : withRateLimit 30/60s + checkGroupScope + admin bypass
  */
 
 import { withRateLimit } from '../middleware/with-rate-limit'
 import { ensureRequestId } from '../request-id'
 import { sendError } from '../errors'
 import { logger } from '../logger'
+import { supplierClaimSavExists } from './supplier-claim-sav'
 import { supabaseAdmin } from '../clients/supabase-admin'
 import type { ApiHandler, ApiRequest, ApiResponse } from '../types'
 
@@ -55,56 +54,6 @@ export interface SupplierClaimHistoryItem {
 }
 
 // ---------------------------------------------------------------------------
-// RBAC — check group scope (same pattern as generate-supplier-claim-handler)
-// ---------------------------------------------------------------------------
-
-interface GroupCheckResult {
-  status: 'allowed' | 'not_found' | 'forbidden'
-  reason?: string
-}
-
-async function checkGroupScope(
-  savId: number,
-  operatorId: number,
-  operatorRole: string | undefined
-): Promise<GroupCheckResult> {
-  const admin = supabaseAdmin()
-
-  const { data: savRow, error: savError } = await admin
-    .from('sav')
-    .select('id, group_id, reference')
-    .eq('id', savId)
-    .maybeSingle<{ id: number; group_id: number; reference: string | null }>()
-
-  if (savError) {
-    return { status: 'not_found', reason: 'Erreur lecture SAV' }
-  }
-
-  if (!savRow) {
-    return { status: 'not_found', reason: 'SAV introuvable' }
-  }
-
-  // Admin bypass
-  if (operatorRole === 'admin') {
-    return { status: 'allowed' }
-  }
-
-  const { data: opGroups, error: opGroupsError } = await admin
-    .from('operator_groups')
-    .select('group_id')
-    .eq('operator_id', operatorId)
-
-  if (opGroupsError) {
-    return { status: 'forbidden', reason: 'Erreur lecture groupes opérateur' }
-  }
-
-  const operatorGroupIds = new Set((opGroups ?? []).map((g: { group_id: number }) => g.group_id))
-  if (!operatorGroupIds.has(savRow.group_id)) {
-    return { status: 'forbidden', reason: 'SAV hors scope groupe opérateur' }
-  }
-
-  return { status: 'allowed' }
-}
 
 // ---------------------------------------------------------------------------
 // Core handler
@@ -126,23 +75,16 @@ function getSupplierClaimHistoryCore(savId: number): ApiHandler {
       sendError(res, 'METHOD_NOT_ALLOWED', 'Méthode non supportée', requestId)
       return
     }
-
-    // RBAC : checkGroupScope (AC #4c)
     try {
-      const groupCheck = await checkGroupScope(savId, user.sub, user.role)
-      if (groupCheck.status === 'not_found') {
-        sendError(res, 'NOT_FOUND', groupCheck.reason ?? 'SAV introuvable', requestId)
-        return
-      }
-      if (groupCheck.status === 'forbidden') {
-        sendError(res, 'FORBIDDEN', groupCheck.reason ?? 'Accès refusé', requestId)
+      if (!await supplierClaimSavExists(savId)) {
+        sendError(res, 'NOT_FOUND', 'SAV introuvable', requestId)
         return
       }
     } catch (err) {
-      logger.error('sav.get-supplier-claim-history.group_check_error', {
+      logger.error('sav.get-supplier-claim-history.sav_read_error', {
         requestId, savId, error: err instanceof Error ? err.message : String(err),
       })
-      sendError(res, 'SERVER_ERROR', 'Erreur vérification accès', requestId)
+      sendError(res, 'SERVER_ERROR', 'Erreur de lecture du SAV', requestId)
       return
     }
 

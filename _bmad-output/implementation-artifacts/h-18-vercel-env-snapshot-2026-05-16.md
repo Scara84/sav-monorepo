@@ -49,6 +49,18 @@
 | VITE_SUPABASE_PUBLISHABLE_KEY | ✅ Sensitive | ✅ Sensitive | ❌ | New-gen clé publique Supabase |
 | VITE_SUPABASE_URL | ✅ | ✅ | ✅ | CRITICAL_VARS |
 
+### Ajout kDrive après le relevé de mai
+
+| Variable | Usage côté serveur |
+|---|---|
+| KDRIVE_TOKEN | Jeton de lecture du drive |
+| KDRIVE_ID | Identifiant du drive |
+| KDRIVE_FRANCAIS_ID | Identifiant facultatif du dossier de départ |
+| KDRIVE_ORGANIZATION | Recherche du dossier depuis l’espace organisation |
+| KDRIVE_WITNESS_ID | Identifiant facultatif du témoin de diagnostic |
+| KDRIVE_WITNESS_SHA256 | Empreinte de référence du témoin |
+
+
 ### Vars présentes Vercel mais absentes `.env.example` (= ORPHANs, 7)
 
 | Variable | Origine probable | Utilisée par main (Production actuelle) ? | Décision |

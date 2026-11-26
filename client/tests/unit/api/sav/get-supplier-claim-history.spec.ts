@@ -21,7 +21,7 @@
  *   HIST-01 (AC #6a) : SAV sans claim → 200 + { claims: [] }
  *   HIST-02 (AC #6b) : 1 claim → version=1, isLatest=true, regenerationOf=null
  *   HIST-03 (AC #6c) : 3 claims régénérées → tri DESC, version ordinal, isLatest exclusif
- *   HIST-04 (AC #6f) : group scope — opérateur autre groupe → 403
+ *   HIST-04 (AC #6f) : group scope — opérateur autre groupe → 200
  *   HIST-05 (AC #4b) : méthode POST → 405 METHOD_NOT_ALLOWED
  *   HIST-06 (AC #4b) : rate limit → 429
  *   HIST-07 (AC #6j) : cap Vercel 12/12 — ls client/api/*.ts | wc -l == 5
@@ -394,11 +394,11 @@ describe('HIST-03: 3 claims régénérées → ordinal version + isLatest exclus
 })
 
 // ===========================================================================
-// HIST-04 — Group scope : opérateur autre groupe → 403 (AC #6f)
+// HIST-04 — Group scope : opérateur autre groupe → 200 (AC #6f)
 // ===========================================================================
 
-describe('HIST-04: group scope — opérateur autre groupe → 403 (AC #6f)', () => {
-  it('HIST-04a: opérateur groupe [2] pour SAV groupe_id=1 → 403 FORBIDDEN', async () => {
+describe('HIST-04: group scope — opérateur autre groupe → 200 (AC #6f)', () => {
+  it('HIST-04a: opérateur groupe [2] pour SAV groupe_id=1 → 200', async () => {
     db.operatorGroupIds = [2]
     db.savGroupId = 1
 
@@ -412,7 +412,7 @@ describe('HIST-04: group scope — opérateur autre groupe → 403 (AC #6f)', ()
 
     await getSupplierClaimHistoryHandler(1)(req, res)
 
-    expect(res.statusCode).toBe(403)
+    expect(res.statusCode).toBe(200)
   })
 
   it('HIST-04b: admin bypass — admin peut accéder même si groupe mismatch → 200', async () => {

@@ -1,0 +1,7 @@
+[[epic]]
+id = 1
+slug = "epic-import-fournisseur"
+title = "Importer le data.xlsx de la commande dans la demande fournisseur"
+description = "L’opérateur ouvre une demande autorisée et obtient le même aperçu qu’avec l’import manuel, à partir du classeur de sa commande."
+covers = ["R1", "R2", "R3", "R4", "R5", "R6", "R7", "R8", "R9", "R10", "R11", "R12", "R13", "R14", "R15", "R16", "R17", "R18", "R19", "R20", "R21", "R22"]
+after = []

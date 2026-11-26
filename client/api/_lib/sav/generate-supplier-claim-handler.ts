@@ -5,7 +5,6 @@
  * body JSON ArbitratedClaimPayload (PATTERN-ARBITRATED-CLAIM-PAYLOAD)
  *
  * Flux (withAuth appliqué par le router sav.ts — HIGH-5) :
- *   withRateLimit(5/60s) → checkGroupScope (RBAC inline)
  *   → validation payload (AC #2)
  *   → vérification creditNoteId si présent (DN-2=B)
  *   → lookup claims existantes pour régénération (DN-4=A)
@@ -75,64 +74,6 @@ type OneDriveAppendResult = { status: OneDriveAppendStatus; webUrl?: string; mes
 const ONEDRIVE_APPEND_TIMEOUT_MS = 8_000
 
 // ---------------------------------------------------------------------------
-// RBAC — check group scope (réutilise pattern reconcile-supplier-claim-handler.ts)
-// ---------------------------------------------------------------------------
-
-interface GroupCheckResult {
-  status: 'allowed' | 'not_found' | 'forbidden'
-  reason?: string
-  /** Référence SAV (ex. 'SAV-2026-00012') — MEDIUM-1 : lue depuis DB, pas interpolée */
-  savReference?: string
-  receivedAt?: string | null
-  photoFolderUrl?: string | null
-}
-
-async function checkGroupScope(
-  savId: number,
-  operatorId: number,
-  operatorRole: string | undefined
-): Promise<GroupCheckResult> {
-  const admin = supabaseAdmin()
-
-  // SELECT id + group_id + reference + metadata en une seule query (MEDIUM-1 : vraie référence SAV)
-  const { data: savRow, error: savError } = await admin
-    .from('sav')
-    .select('id, group_id, reference, metadata, received_at')
-    .eq('id', savId)
-    .maybeSingle<{ id: number; group_id: number; received_at: string | null; reference: string | null; metadata: Record<string, unknown> | null }>()
-
-  if (savError) {
-    return { status: 'not_found', reason: 'Erreur lecture SAV' }
-  }
-
-  if (!savRow) {
-    return { status: 'not_found', reason: 'SAV introuvable' }
-  }
-
-  const savReference = savRow.reference ?? `SAV-${savId}`
-  const photoFolderUrl = safeHttpUrlFromMetadata(savRow.metadata, 'dossierSavUrl')
-
-  if (operatorRole === 'admin') {
-    return { status: 'allowed', savReference, photoFolderUrl, receivedAt: savRow.received_at }
-  }
-
-  const { data: opGroups, error: opGroupsError } = await admin
-    .from('operator_groups')
-    .select('group_id')
-    .eq('operator_id', operatorId)
-
-  if (opGroupsError) {
-    return { status: 'forbidden', reason: 'Erreur lecture groupes opérateur' }
-  }
-
-  const operatorGroupIds = new Set((opGroups ?? []).map((g: { group_id: number }) => g.group_id))
-  const savGroupId = savRow.group_id
-  if (!operatorGroupIds.has(savGroupId)) {
-    return { status: 'forbidden', reason: 'SAV hors scope groupe opérateur' }
-  }
-
-  return { status: 'allowed', savReference, photoFolderUrl, receivedAt: savRow.received_at }
-}
 
 function safeHttpUrlFromMetadata(metadata: Record<string, unknown> | null, key: string): string | null {
   const value = metadata?.[key]
@@ -293,32 +234,25 @@ function generateSupplierClaimCore(savId: number): ApiHandler {
       res.status(400).json({ error: { code: 'no_valid_lines', message: 'Aucune ligne valide à générer (toutes exclues)', requestId } })
       return
     }
-
-    // --- RBAC : check group scope + lecture référence SAV (AC #3, MEDIUM-1) ---
-    let savReference = `SAV-${savId}` // fallback si groupCheck échoue inopinément
+    let savReference = `SAV-${savId}`
     let receivedAt: string | null = null
     let photoFolderUrl: string | null = null
     try {
-      const groupCheck = await checkGroupScope(savId, user.sub, user.role)
-      if (groupCheck.status === 'not_found') {
-        res.status(404).json({ error: { code: 'NOT_FOUND', message: groupCheck.reason ?? 'SAV introuvable', requestId } })
+      const { data: sav, error } = await supabaseAdmin().from('sav')
+        .select('reference, metadata, received_at').eq('id', savId).maybeSingle()
+      if (error) throw error
+      if (!sav) {
+        res.status(404).json({ error: { code: 'NOT_FOUND', message: 'SAV introuvable', requestId } })
         return
       }
-      if (groupCheck.status === 'forbidden') {
-        res.status(403).json({ error: { code: 'FORBIDDEN', message: groupCheck.reason ?? 'Accès refusé', requestId } })
-        return
-      }
-      // MEDIUM-1 : utiliser la vraie référence SAV depuis DB (ex. 'SAV-2026-00012')
-      if (groupCheck.savReference) {
-        savReference = groupCheck.savReference
-      }
-      receivedAt = groupCheck.receivedAt ?? null
-      photoFolderUrl = groupCheck.photoFolderUrl ?? null
+      savReference = sav.reference ?? savReference
+      receivedAt = sav.received_at
+      photoFolderUrl = safeHttpUrlFromMetadata(sav.metadata, 'dossierSavUrl')
     } catch (err) {
-      logger.error('sav.generate-supplier-claim.group_check_error', {
+      logger.error('sav.generate-supplier-claim.sav_read_error', {
         requestId, savId, error: err instanceof Error ? err.message : String(err),
       })
-      res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Erreur vérification accès', requestId } })
+      res.status(500).json({ error: { code: 'SERVER_ERROR', message: 'Erreur de lecture du SAV', requestId } })
       return
     }
 
@@ -438,8 +372,6 @@ function generateSupplierClaimCore(savId: number): ApiHandler {
     }
 
     const totalImporteCents = processedLines.reduce((sum, l) => sum + l.importeCents, 0)
-
-    // savReference est déjà défini depuis checkGroupScope (MEDIUM-1 — vraie référence SAV depuis DB)
 
     // --- Générer le document xlsx (DN-3=B writer dédié) ---
     const generatedAt = new Date()
@@ -584,7 +516,6 @@ function generateSupplierClaimCore(savId: number): ApiHandler {
 // ---------------------------------------------------------------------------
 // Handler exporté (sans withAuth — le router sav.ts applique déjà withAuth)
 // HIGH-5 : retrait du double-withAuth (Option A, code-review 2026-06-05)
-// Ordre : withRateLimit(5/60s) → core (RBAC checkGroupScope dans core)
 // ---------------------------------------------------------------------------
 
 export function generateSupplierClaimHandler(savId: number): ApiHandler {
