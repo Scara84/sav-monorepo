@@ -10,7 +10,20 @@ export default defineConfig(({ mode }) => {
   const _env = loadEnv(mode, process.cwd(), '')
 
   return {
-    plugins: [vue()],
+    plugins: [
+      vue(),
+      {
+        name: 'isolate-dev-server-cache',
+        apply: 'serve',
+        config(config) {
+          // Vercel Dev et les serveurs de recette tournent sur des ports distincts.
+          if (!config.cacheDir) {
+            return { cacheDir: `node_modules/.vite/server-${config.server?.port ?? 5173}` }
+          }
+        },
+      },
+    ],
+    optimizeDeps: { include: ['chart.js', 'vue-chartjs'] },
     // Configuration pour le build de production
     // base: '/' (absolu) requis pour SPA Vue Router — sinon /admin/sav charge
     // les assets en /admin/assets/* (404). Voir Vercel rewrites SPA fallback.
