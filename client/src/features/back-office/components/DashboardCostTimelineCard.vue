@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import {
   Chart as ChartJS,
   Title,
@@ -131,12 +131,18 @@ const chartOptions: ChartOptions<'line'> = {
     },
   },
 }
+const heading = ref<HTMLHeadingElement | null>(null)
+
+function retry(): void {
+  heading.value?.focus()
+  emit('refresh')
+}
 </script>
 
 <template>
   <section class="card" aria-labelledby="cost-timeline-heading">
     <header class="card-header">
-      <h2 id="cost-timeline-heading">Coût SAV mensuel</h2>
+      <h2 ref="heading" tabindex="-1" id="cost-timeline-heading">Coût SAV mensuel</h2>
       <div class="window-selector" role="group" aria-label="Fenêtre de temps">
         <button
           v-for="m in [6, 12, 24]"
@@ -149,18 +155,13 @@ const chartOptions: ChartOptions<'line'> = {
           {{ m }} mois
         </button>
       </div>
-      <button
-        type="button"
-        class="card-refresh"
-        aria-label="Actualiser — Coût SAV mensuel"
-        @click="emit('refresh')"
-      >
-        Actualiser
-      </button>
     </header>
 
     <div v-if="loading" class="skeleton" role="status">Chargement…</div>
-    <div v-else-if="error" class="error" role="alert">{{ error }}</div>
+    <div v-else-if="error" class="error">
+      <span role="alert">{{ error }}</span>
+      <button type="button" class="card-refresh" @click="retry">Réessayer</button>
+    </div>
     <div v-else-if="!data || data.periods.length === 0" class="placeholder">
       Pas de données sur la période.
     </div>

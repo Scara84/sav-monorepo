@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed } from 'vue'
+import { computed, ref } from 'vue'
 import type { DelayDistributionData, DelayBasis } from '../composables/useDashboard'
 
 /**
@@ -60,12 +60,18 @@ const showLowSample = computed(() => props.data?.warning === 'LOW_SAMPLE_SIZE')
 const showNoData = computed(
   () => !props.data || props.data.warning === 'NO_DATA' || props.data.n_samples === 0
 )
+const heading = ref<HTMLHeadingElement | null>(null)
+
+function retry(): void {
+  heading.value?.focus()
+  emit('refresh')
+}
 </script>
 
 <template>
   <section class="card" aria-labelledby="delay-distribution-heading">
     <header class="card-header">
-      <h2 id="delay-distribution-heading">Délais de traitement</h2>
+      <h2 ref="heading" tabindex="-1" id="delay-distribution-heading">Délais de traitement</h2>
       <div class="header-controls">
         <div class="basis-toggle" role="group" aria-label="Base de calcul">
           <button
@@ -92,18 +98,13 @@ const showNoData = computed(
         >
         <span v-else class="window">90 derniers jours</span>
       </div>
-      <button
-        type="button"
-        class="card-refresh"
-        aria-label="Actualiser — Délais de traitement"
-        @click="emit('refresh')"
-      >
-        Actualiser
-      </button>
     </header>
 
     <div v-if="loading" class="skeleton" role="status">Chargement…</div>
-    <div v-else-if="error" class="error" role="alert">{{ error }}</div>
+    <div v-else-if="error" class="error">
+      <span role="alert">{{ error }}</span>
+      <button type="button" class="card-refresh" @click="retry">Réessayer</button>
+    </div>
     <div v-else-if="showNoData" class="placeholder">Pas de données sur la période.</div>
     <div v-else>
       <div v-if="showLowSample" class="warning" role="status">
@@ -189,6 +190,10 @@ const showNoData = computed(
   font-size: 0.8rem;
   cursor: pointer;
   color: #555;
+}
+.basis-toggle button:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: -3px;
 }
 .basis-toggle button + button {
   border-left: 1px solid #d8d8d8;

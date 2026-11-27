@@ -14,7 +14,7 @@
           <span aria-hidden="true">📋</span> Liste SAV
         </router-link>
         <router-link :to="{ name: 'admin-dashboard' }" class="nav-link">
-          <span aria-hidden="true">📊</span> Dashboard
+          Tableau de bord
         </router-link>
         <router-link :to="{ name: 'admin-export-history' }" class="nav-link">
           <span aria-hidden="true">📦</span> Exports

@@ -47,6 +47,7 @@ function jsonResponse(status: number, body: unknown): Response {
 }
 
 import DashboardView from './DashboardView.vue'
+import BackOfficeLayout from './BackOfficeLayout.vue'
 
 describe('DashboardView (UI)', () => {
   beforeEach(() => {
@@ -56,6 +57,11 @@ describe('DashboardView (UI)', () => {
   afterEach(() => {
     vi.useRealTimers()
     globalThis.fetch = originalFetch
+  })
+
+  it('nomme le lien du menu Tableau de bord', () => {
+    const layout = mount(BackOfficeLayout)
+    expect(layout.findAll('nav .nav-link').map((link) => link.text())).toContain('Tableau de bord')
   })
 
   it('initial render — affiche les 4 cards (avant data)', async () => {
@@ -137,6 +143,11 @@ describe('DashboardView (UI)', () => {
 
     const wrapper = mount(DashboardView)
     await flushPromises()
+    expect(wrapper.get('h1').text()).toBe('Tableau de bord')
+    expect(
+      wrapper.findAll('button').filter((button) => button.text() === 'Actualiser')
+    ).toHaveLength(1)
+    expect(wrapper.find('.card-refresh').exists()).toBe(false)
     // Chart.js datasets transmis
     const chart = wrapper.find('[data-testid="line-chart"]')
     expect(chart.exists()).toBe(true)
@@ -155,6 +166,7 @@ describe('DashboardView (UI)', () => {
 
   it('conserve la base Clos et affiche les dates, le zéro réel et le comparatif de la fenêtre', async () => {
     localStorage.setItem('dashboard.delay.basis', 'closed')
+    let failSixMonths = true
     const urls: string[] = []
     vi.useFakeTimers({ toFake: ['Date'] })
     vi.setSystemTime(new Date('2026-09-30T12:00:00Z'))
@@ -168,6 +180,7 @@ describe('DashboardView (UI)', () => {
     globalThis.fetch = vi.fn(async (input) => {
       const url = String(input)
       urls.push(url)
+      if (url === sixMonths && failSixMonths) return jsonResponse(500, {})
       if (url === twelveMonths || url === sixMonths) {
         const row =
           url === twelveMonths
@@ -193,7 +206,7 @@ describe('DashboardView (UI)', () => {
       return jsonResponse(200, { data: { window_days: 90, reasons: [], suppliers: [] } })
     })
 
-    const wrapper = mount(DashboardView)
+    const wrapper = mount(DashboardView, { attachTo: document.body })
     await flushPromises()
     const cost = wrapper.get('section[aria-labelledby="cost-timeline-heading"]')
     expect(cost.text()).toMatch(/0,00\s€ TTC/)
@@ -203,6 +216,16 @@ describe('DashboardView (UI)', () => {
     await cost.get('.window-selector button').trigger('click')
     await flushPromises()
     expect(urls.slice(initial)).toEqual([sixMonths])
+    expect(cost.get('[role="alert"]').text()).toBeTruthy()
+    expect(wrapper.findAll('.card-refresh')).toHaveLength(1)
+    const retry = cost.get('button.card-refresh')
+    expect(retry.text()).toBe('Réessayer')
+    failSixMonths = false
+    await retry.trigger('click')
+    await flushPromises()
+    expect(document.activeElement).toBe(cost.get('h2').element)
+    expect(cost.get('[aria-pressed="true"]').text()).toBe('6 mois')
+    expect(urls.slice(initial)).toEqual([sixMonths, sixMonths])
     expect(cost.text()).toContain('Pas de données sur la période')
     expect(cost.text()).toContain('2026-09')
     expect(cost.text()).toMatch(/17,42\s€ TTC/)
@@ -212,6 +235,7 @@ describe('DashboardView (UI)', () => {
     await wrapper.get('.refresh-btn').trigger('click')
     await flushPromises()
     expect(urls.slice(beforeRefresh).sort()).toEqual([sixMonths, ...fixedReports].sort())
+    wrapper.unmount()
   })
 
   it('error state 1 card — affiche message erreur, autres cards OK', async () => {

@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ref } from 'vue'
 import type { TopReasonsSuppliersData } from '../composables/useDashboard'
 
 /**
@@ -16,25 +17,28 @@ const emit = defineEmits<{ refresh: [] }>()
 function formatEuros(cents: number): string {
   return (cents / 100).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })
 }
+const heading = ref<HTMLHeadingElement | null>(null)
+
+function retry(): void {
+  heading.value?.focus()
+  emit('refresh')
+}
 </script>
 
 <template>
   <section class="card" aria-labelledby="reasons-suppliers-heading">
     <header class="card-header">
-      <h2 id="reasons-suppliers-heading">Top motifs &amp; fournisseurs</h2>
+      <h2 ref="heading" tabindex="-1" id="reasons-suppliers-heading">
+        Top motifs &amp; fournisseurs
+      </h2>
       <span class="window">{{ data?.window_days ?? 90 }} derniers jours</span>
-      <button
-        type="button"
-        class="card-refresh"
-        aria-label="Actualiser — Top motifs &amp; fournisseurs"
-        @click="emit('refresh')"
-      >
-        Actualiser
-      </button>
     </header>
 
     <div v-if="loading" class="skeleton" role="status">Chargement…</div>
-    <div v-else-if="error" class="error" role="alert">{{ error }}</div>
+    <div v-else-if="error" class="error">
+      <span role="alert">{{ error }}</span>
+      <button type="button" class="card-refresh" @click="retry">Réessayer</button>
+    </div>
     <div v-else-if="!data" class="placeholder">Pas de données sur la période.</div>
     <div v-else class="two-col">
       <div>

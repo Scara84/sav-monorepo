@@ -75,15 +75,9 @@ function onChangeDelayBasis(next: DelayBasis): void {
 <template>
   <div class="dashboard">
     <header class="dashboard-header">
-      <h1>Tableau de bord — Pilotage</h1>
-      <button
-        type="button"
-        class="refresh-btn"
-        :disabled="dash.loading.value"
-        @click="refreshAll"
-        aria-label="Actualiser toutes les cartes"
-      >
-        ↻ {{ dash.loading.value ? 'Chargement…' : 'Actualiser' }}
+      <h1>Tableau de bord</h1>
+      <button type="button" class="refresh-btn" :disabled="dash.loading.value" @click="refreshAll">
+        {{ dash.loading.value ? 'Chargement…' : 'Actualiser' }}
       </button>
     </header>
 
@@ -136,6 +130,9 @@ function onChangeDelayBasis(next: DelayBasis): void {
   flex-wrap: wrap;
   gap: 0.5rem;
 }
+.dashboard :deep(:is(h1, h2, h3)) {
+  color: #30271f;
+}
 .dashboard-header h1 {
   margin: 0;
   font-size: clamp(1.5rem, 3vw, 2.3rem);
@@ -151,8 +148,22 @@ function onChangeDelayBasis(next: DelayBasis): void {
   cursor: pointer;
   font-size: 0.9rem;
 }
+.refresh-btn {
+  background: var(--main-orange, #e88a23);
+  border-color: transparent;
+  color: #251a0e;
+  font-weight: 600;
+}
 .refresh-btn:hover:not(:disabled) {
-  background: #f5f5f5;
+  background: #db8120;
+}
+.dashboard :deep(.card-refresh) {
+  display: block;
+  margin-top: 0.5rem;
+}
+.dashboard :deep(:focus-visible) {
+  outline: 2px solid #714312;
+  outline-offset: 2px;
 }
 .refresh-btn:disabled {
   cursor: not-allowed;
