@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref } from 'vue'
 import { useAdminCrud } from '../../composables/useAdminCrud'
 import { useCurrentUser } from '../../../../shared/composables/useCurrentUser'
 
@@ -37,7 +37,15 @@ interface OperatorUpdate {
 }
 
 const crud = useAdminCrud<Operator, OperatorCreate, OperatorUpdate>('operators')
-const { user: currentUser } = useCurrentUser()
+const { user: currentUser, retryable: identityFailed, retry: retryIdentity } = useCurrentUser()
+
+const canManage = computed(
+  () => currentUser.value?.type === 'operator' && currentUser.value.role === 'admin'
+)
+const roleLabels = { admin: 'Administrateur', 'sav-operator': 'Opérateur SAV' }
+const listError = ref<string | null>(null)
+const createError = ref<string | null>(null)
+const emailInput = ref<HTMLInputElement | null>(null)
 
 const form = ref<OperatorCreate>({
   email: '',
@@ -70,20 +78,22 @@ function showToast(kind: 'success' | 'error', message: string): void {
 }
 
 async function refresh(): Promise<void> {
+  listError.value = null
   const params: Record<string, unknown> = { limit: 50 }
   if (search.value.trim().length > 0) params['q'] = search.value.trim()
   if (roleFilter.value !== '') params['role'] = roleFilter.value
   try {
     await crud.list(params)
   } catch (e) {
-    showToast('error', crud.error.value ?? (e instanceof Error ? e.message : 'Erreur'))
+    listError.value = crud.error.value ?? (e instanceof Error ? e.message : 'Lecture impossible.')
   }
 }
 
-async function onCreateSubmit(e?: Event): Promise<void> {
-  if (e !== undefined) e.preventDefault()
+async function onCreateSubmit(): Promise<void> {
+  if (!canManage.value || crud.loading.value) return
+  createError.value = null
   if (form.value.email.trim() === '' || form.value.display_name.trim() === '') {
-    showToast('error', 'Email et nom requis.')
+    createError.value = 'Email et nom requis.'
     return
   }
   try {
@@ -106,7 +116,7 @@ async function onCreateSubmit(e?: Event): Promise<void> {
     form.value = { email: '', display_name: '', role: 'sav-operator', azure_oid: null }
     await refresh()
   } catch (e) {
-    showToast('error', crud.error.value ?? (e instanceof Error ? e.message : 'Erreur création'))
+    createError.value = crud.error.value ?? (e instanceof Error ? e.message : 'Erreur création')
   }
 }
 
@@ -295,64 +305,15 @@ onBeforeUnmount(() => {
   <main class="operators-admin-view">
     <header class="header">
       <h1>Opérateurs</h1>
-      <p class="subtitle">Gestion des comptes opérateurs (admin et sav-operator).</p>
+      <button v-if="canManage" type="button" class="btn" @click="emailInput?.focus()">
+        Nouvel opérateur
+      </button>
     </header>
 
-    <section class="create-panel" aria-labelledby="create-title">
-      <h2 id="create-title">Nouvel opérateur</h2>
-      <form class="create-form" @submit="onCreateSubmit">
-        <div class="field">
-          <label for="op-create-email">Email</label>
-          <input
-            id="op-create-email"
-            v-model="form.email"
-            data-test="operator-create-email"
-            type="email"
-            required
-            maxlength="254"
-          />
-        </div>
-        <div class="field">
-          <label for="op-create-name">Nom affiché</label>
-          <input
-            id="op-create-name"
-            v-model="form.display_name"
-            data-test="operator-create-display-name"
-            type="text"
-            required
-            maxlength="100"
-          />
-        </div>
-        <div class="field">
-          <label for="op-create-role">Rôle</label>
-          <select id="op-create-role" v-model="form.role" data-test="operator-create-role">
-            <option value="sav-operator">sav-operator</option>
-            <option value="admin">admin</option>
-          </select>
-        </div>
-        <div class="field">
-          <label for="op-create-oid">azure_oid (optionnel)</label>
-          <input
-            id="op-create-oid"
-            v-model="form.azure_oid"
-            type="text"
-            placeholder="UUID v4 ou laisser vide"
-          />
-        </div>
-        <div class="actions">
-          <button
-            type="submit"
-            data-test="operator-create-submit"
-            class="btn primary"
-            :disabled="crud.loading.value"
-            @click="onCreateSubmit"
-          >
-            Créer l'opérateur
-          </button>
-        </div>
-      </form>
-    </section>
-
+    <p v-if="identityFailed" role="alert">
+      Impossible de vérifier vos droits.
+      <button type="button" class="btn" @click="retryIdentity">Réessayer</button>
+    </p>
     <section class="filters">
       <div class="field">
         <label for="op-search">Recherche</label>
@@ -368,42 +329,45 @@ onBeforeUnmount(() => {
         <label for="op-role-filter">Rôle</label>
         <select id="op-role-filter" v-model="roleFilter" @change="refresh">
           <option value="">Tous</option>
-          <option value="admin">admin</option>
-          <option value="sav-operator">sav-operator</option>
+          <option value="admin">{{ roleLabels.admin }}</option>
+          <option value="sav-operator">{{ roleLabels['sav-operator'] }}</option>
         </select>
       </div>
     </section>
 
     <section class="list-panel">
       <p v-if="crud.loading.value" class="status">Chargement…</p>
+      <p v-else-if="listError" class="form-error" role="alert">{{ listError }}</p>
       <p v-else-if="crud.items.value.length === 0" class="status muted">Aucun opérateur.</p>
       <table v-else class="operators-table" aria-label="Liste des opérateurs">
         <thead>
           <tr>
-            <th scope="col">Email</th>
-            <th scope="col">Nom</th>
+            <th scope="col">Compte</th>
             <th scope="col">Rôle</th>
-            <th scope="col">Actif</th>
-            <th scope="col">azure_oid</th>
+            <th scope="col">État</th>
+            <th scope="col">Identifiant Azure</th>
             <th scope="col">Créé le</th>
-            <th scope="col">Actions</th>
+            <th v-if="canManage" scope="col">Actions</th>
           </tr>
         </thead>
         <tbody>
           <tr v-for="op in crud.items.value" :key="op.id" :class="{ inactive: !op.is_active }">
-            <td>{{ op.email }}</td>
-            <td>{{ op.display_name }}</td>
+            <th scope="row" class="identity">
+              {{ op.display_name }}<span>{{ op.email }}</span>
+            </th>
             <td>
-              <span class="badge" :class="`role-${op.role}`">{{ op.role }}</span>
+              <span class="badge" :class="`role-${op.role}`">{{ roleLabels[op.role] }}</span>
             </td>
             <td>
               <span class="badge" :class="op.is_active ? 'active' : 'inactive'">
-                {{ op.is_active ? 'Actif' : 'Désactivé' }}
+                {{ op.is_active ? 'Actif' : 'Inactif' }}
               </span>
             </td>
-            <td class="muted">{{ shortOid(op.azure_oid) }}</td>
-            <td>{{ formatDate(op.created_at) }}</td>
-            <td class="actions-cell">
+            <td class="muted">
+              <span class="mobile-label">Identifiant Azure</span>{{ shortOid(op.azure_oid) }}
+            </td>
+            <td><span class="mobile-label">Créé le</span>{{ formatDate(op.created_at) }}</td>
+            <td v-if="canManage" class="actions-cell">
               <button
                 v-if="currentUser && op.id !== currentUser.sub"
                 type="button"
@@ -441,6 +405,62 @@ onBeforeUnmount(() => {
           </tr>
         </tbody>
       </table>
+    </section>
+
+    <section v-if="canManage" class="create-panel" aria-labelledby="create-title">
+      <h2 id="create-title">Nouvel opérateur</h2>
+      <form class="create-form" @submit.prevent="onCreateSubmit" @input="createError = null">
+        <div class="field">
+          <label for="op-create-email">Email</label>
+          <input
+            id="op-create-email"
+            ref="emailInput"
+            v-model="form.email"
+            data-test="operator-create-email"
+            type="email"
+            required
+            maxlength="254"
+          />
+        </div>
+        <div class="field">
+          <label for="op-create-name">Nom affiché</label>
+          <input
+            id="op-create-name"
+            v-model="form.display_name"
+            data-test="operator-create-display-name"
+            type="text"
+            required
+            maxlength="100"
+          />
+        </div>
+        <div class="field">
+          <label for="op-create-role">Rôle</label>
+          <select id="op-create-role" v-model="form.role" data-test="operator-create-role">
+            <option value="sav-operator">{{ roleLabels['sav-operator'] }}</option>
+            <option value="admin">{{ roleLabels.admin }}</option>
+          </select>
+        </div>
+        <div class="field">
+          <label for="op-create-oid">Identifiant Azure (facultatif)</label>
+          <input
+            id="op-create-oid"
+            v-model="form.azure_oid"
+            type="text"
+            placeholder="UUID v4 ou laisser vide"
+          />
+        </div>
+        <p v-if="createError" class="form-error" role="alert">{{ createError }}</p>
+        <div class="actions">
+          <button
+            type="submit"
+            data-test="operator-create-submit"
+            class="btn primary"
+            :disabled="crud.loading.value"
+          >
+            Créer l'opérateur
+          </button>
+        </div>
+      </form>
     </section>
 
     <div
@@ -561,14 +581,17 @@ onBeforeUnmount(() => {
   max-width: 1200px;
   margin: 0 auto;
 }
+.header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 1rem;
+  margin-bottom: 1.5rem;
+}
 .header h1 {
+  color: #38291c;
   margin: 0 0 0.25rem 0;
   font-size: 1.5rem;
-}
-.subtitle {
-  margin: 0 0 1.5rem 0;
-  color: #666;
-  font-size: 0.95rem;
 }
 .create-panel,
 .list-panel {
@@ -579,14 +602,18 @@ onBeforeUnmount(() => {
   margin-bottom: 1.25rem;
 }
 .create-panel h2 {
+  color: #57391d;
   margin: 0 0 1rem 0;
   font-size: 1.1rem;
 }
 .create-form {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 12rem), 1fr));
   gap: 1rem;
   align-items: end;
+}
+.create-form .form-error {
+  grid-column: 1 / -1;
 }
 .create-form .actions {
   grid-column: 1 / -1;
@@ -631,13 +658,13 @@ onBeforeUnmount(() => {
   font-size: 0.85rem;
 }
 .btn.primary {
-  background: #f57c00;
-  color: white;
-  border-color: #f57c00;
+  background: var(--main-orange, #e88a23);
+  color: #30200e;
+  border-color: #c6711d;
   font-weight: 600;
 }
 .btn.primary:hover:not(:disabled) {
-  background: #e65100;
+  background: #ed983a;
 }
 .btn:disabled {
   opacity: 0.6;
@@ -654,18 +681,30 @@ onBeforeUnmount(() => {
   padding: 0.6rem 0.75rem;
   border-bottom: 1px solid #f0f0f0;
 }
-.operators-table th {
+.operators-table thead th {
   background: #fafafa;
   font-weight: 600;
 }
-.operators-table tr.inactive td {
-  opacity: 0.6;
+.identity {
+  overflow-wrap: anywhere;
+}
+.identity span {
+  display: block;
+  font-weight: 400;
+  color: #51493f;
+}
+.mobile-label {
+  display: none;
+}
+.operators-admin-view :focus-visible {
+  outline: 3px solid #80400b;
+  outline-offset: 3px;
 }
 .actions-cell {
-  white-space: nowrap;
+  vertical-align: middle;
 }
 .actions-cell .btn + .btn {
-  margin-left: 0.4rem;
+  margin: 0.25rem 0;
 }
 .badge {
   display: inline-block;
@@ -676,12 +715,12 @@ onBeforeUnmount(() => {
   color: #333;
 }
 .badge.role-admin {
-  background: #e3f2fd;
-  color: #1565c0;
+  background: #fff0dc;
+  color: #753d0e;
 }
 .badge.role-sav-operator {
-  background: #f3e5f5;
-  color: #6a1b9a;
+  background: #f1ede6;
+  color: #4c4031;
 }
 .badge.active {
   background: #e8f5e9;
@@ -692,7 +731,7 @@ onBeforeUnmount(() => {
   color: #c2185b;
 }
 .muted {
-  color: #999;
+  color: #65594e;
 }
 .status {
   color: #666;
@@ -760,7 +799,59 @@ onBeforeUnmount(() => {
 .toast-leave-to {
   opacity: 0;
 }
-@media (max-width: 720px) {
+@media (max-width: 850px) {
+  .operators-admin-view {
+    padding: 1rem;
+  }
+  .list-panel {
+    padding: 0 0.9rem;
+  }
+  .filters .field {
+    flex: 1 1 12rem;
+    min-width: 0;
+  }
+  .operators-table,
+  .operators-table tbody {
+    display: block;
+  }
+  .operators-table thead {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .operators-table tr {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.35rem;
+    padding: 1rem 0;
+  }
+  .operators-table tr + tr {
+    border-top: 1px solid #dad2c9;
+  }
+  .operators-table tbody :is(td, th) {
+    border: 0;
+    padding: 0.1rem;
+  }
+  .identity,
+  .operators-table td:nth-child(n + 4) {
+    grid-column: 1 / -1;
+  }
+  .mobile-label {
+    display: inline;
+    margin-right: 0.5rem;
+    font-weight: 600;
+  }
+  .actions-cell {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+  }
+  .actions-cell .btn + .btn {
+    margin: 0;
+  }
+
   .create-form {
     grid-template-columns: 1fr;
   }

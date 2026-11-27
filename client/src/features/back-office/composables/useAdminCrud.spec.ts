@@ -88,6 +88,31 @@ describe('useAdminCrud<T> (composable générique D-11)', () => {
     expect(crud.error.value).toBeNull()
   })
 
+  it('seule la recherche la plus récente modifie les résultats, l’erreur et le chargement', async () => {
+    const pending: Array<{ resolve: (r: Response) => void; reject: (e: Error) => void }> = []
+    globalThis.fetch = vi.fn(
+      () => new Promise<Response>((resolve, reject) => pending.push({ resolve, reject }))
+    )
+    const crud = useAdminCrud('operators')
+    const first = crud.list({ q: 'a' })
+    const second = crud.list({ q: 'al' })
+    const third = crud.list({ q: 'ali' })
+    const latest = crud.list({ q: 'alice' })
+
+    pending[1]!.reject(new Error('Ancienne recherche déconnectée'))
+    await second
+    expect(crud.loading.value).toBe(true)
+    pending[3]!.resolve(jsonResponse(200, { data: { items: ['Alice'], total: 1 } }))
+    await latest
+    pending[0]!.resolve(jsonResponse(200, { data: { items: ['Ancien'], total: 2 } }))
+    pending[2]!.resolve(jsonResponse(500, {}))
+    await Promise.all([first, third])
+    expect(crud.items.value).toEqual(['Alice'])
+    expect(crud.total.value).toBe(1)
+    expect(crud.error.value).toBeNull()
+    expect(crud.loading.value).toBe(false)
+  })
+
   it('create() → POST avec body JSON et retourne TItem', async () => {
     const created: OperatorItem = {
       id: 100,

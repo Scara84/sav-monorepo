@@ -48,6 +48,12 @@ const state = vi.hoisted(
 vi.mock('../../../../../api/_lib/clients/supabase-admin', () => {
   function buildOperatorsQuery(): unknown {
     const out = {
+      insert: (payload: Partial<OperatorRow>) => {
+        const row = operatorRow({ ...payload, id: 100 + state.selectCount })
+        state.selectRows.push(row)
+        state.selectCount++
+        return { select: () => ({ single: async () => ({ data: row, error: null }) }) }
+      },
       select: () => out,
       or: (expr: string) => {
         state.ilikeFilters.push(expr)
@@ -82,7 +88,9 @@ vi.mock('../../../../../api/_lib/clients/supabase-admin', () => {
   }
 })
 
-// RED — module n'existe pas encore. L'import doit ÉCHOUER en Step 3 GREEN-phase.
+vi.mock('../../../../../api/_lib/audit/record', () => ({ recordAudit: vi.fn() }))
+import { adminOperatorCreateHandler } from '../../../../../api/_lib/admin/operator-create-handler'
+import { adminOperatorUpdateHandler } from '../../../../../api/_lib/admin/operator-update-handler'
 import { adminOperatorsListHandler } from '../../../../../api/_lib/admin/operators-list-handler'
 
 beforeEach(() => {
@@ -96,6 +104,68 @@ beforeEach(() => {
 })
 
 describe('GET /api/admin/operators (admin-operators-list)', () => {
+  it('relit la création autorisée et confirme que les demandes invalides ou hors rôle ne changent aucun compte', async () => {
+    const alice = operatorRow({
+      id: 9,
+      display_name: 'Alice',
+      email: 'alice@example.test',
+      role: 'admin',
+    })
+    const bruno = operatorRow({
+      id: 12,
+      display_name: 'Bruno',
+      email: 'bruno@example.test',
+      is_active: false,
+    })
+    state.selectRows = [alice, bruno]
+    state.selectCount = 2
+
+    async function readAccounts() {
+      const req = mockReq({ method: 'GET' })
+      req.user = adminSession()
+      const res = mockRes()
+      await adminOperatorsListHandler(req, res)
+      expect(res.statusCode).toBe(200)
+      return (res.jsonBody as { data: { items: OperatorRow[] } }).data.items
+    }
+
+    expect(await readAccounts()).toEqual([alice, bruno])
+    const payload = { email: 'claire@example.test', display_name: 'Claire', role: 'sav-operator' }
+    const req = mockReq({ method: 'POST', body: payload })
+    req.user = adminSession()
+    const created = mockRes()
+    await adminOperatorCreateHandler(req, created)
+    expect(created.statusCode).toBe(201)
+    const accounts = structuredClone(await readAccounts())
+    expect(accounts).toEqual([
+      alice,
+      bruno,
+      expect.objectContaining({ ...payload, is_active: true }),
+    ])
+
+    req.body = { ...payload, email: 'invalide' }
+    const invalid = mockRes()
+    await adminOperatorCreateHandler(req, invalid)
+    expect(invalid.statusCode).toBe(400)
+    expect(invalid.jsonBody).toMatchObject({ error: { details: { code: 'INVALID_BODY' } } })
+    expect(await readAccounts()).toEqual(accounts)
+
+    req.user = savOperatorSession()
+    req.body = { ...payload, email: 'diane@example.test' }
+    const refused = mockRes()
+    await adminOperatorCreateHandler(req, refused)
+    expect(refused.statusCode).toBe(403)
+    expect(await readAccounts()).toEqual(accounts)
+
+    const promotion = mockReq({ method: 'PATCH', query: { id: '12' }, body: { role: 'admin' } })
+    promotion.user = savOperatorSession()
+    const denied = mockRes()
+    await adminOperatorUpdateHandler(promotion, denied)
+    expect(denied.statusCode).toBe(403)
+    expect(denied.jsonBody).toMatchObject({ error: { details: { code: 'ROLE_NOT_ALLOWED' } } })
+    expect(await readAccounts()).toEqual(accounts)
+  })
+
   it('200 happy path : retourne items + total + hasMore', async () => {
     state.selectRows = [
       operatorRow({ id: 9, email: 'admin@fruitstock.fr', role: 'admin' }),

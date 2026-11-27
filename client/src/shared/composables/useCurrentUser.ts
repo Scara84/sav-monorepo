@@ -17,7 +17,7 @@
  *   - 401 → user=null, pas d'exception.
  */
 
-import { ref, type Ref } from 'vue'
+import { ref } from 'vue'
 
 export interface CurrentUser {
   sub: number
@@ -28,52 +28,40 @@ export interface CurrentUser {
 // ---------------------------------------------------------------------------
 // Cache module-level (partagé entre toutes les instances du composable)
 // ---------------------------------------------------------------------------
-let _cachedUser: CurrentUser | null = null
-let _loading = false
-let _promise: Promise<void> | null = null
+let sessionVersion = 0
+let request: Promise<void> | null = null
+const user = ref<CurrentUser | null>(null)
+const loading = ref(true)
+const retryable = ref(false)
 
-// Refs réactifs — partagés entre toutes les instances
-const _userRef = ref<CurrentUser | null>(null)
-const _loadingRef = ref<boolean>(true)
-
-async function _fetchCurrentUser(): Promise<void> {
-  _loading = true
-  _loadingRef.value = true
+async function fetchIdentity(version: number): Promise<void> {
   try {
-    const res = await fetch('/api/auth/me', {
-      credentials: 'include',
-    })
-    if (res.ok) {
-      // Story 6.2 me-handler returns `{ user: ... }` (cf. me-handler.ts:107).
-      // Earlier draft used `{ data: ... }` envelope ; this composable now
-      // tracks the actual contract.
-      const body = (await res.json()) as { user: CurrentUser }
-      _cachedUser = body.user
-      _userRef.value = _cachedUser
-    } else {
-      _cachedUser = null
-      _userRef.value = null
-    }
+    const res = await fetch('/api/auth/me', { credentials: 'include' })
+    const identity = res.ok ? ((await res.json()) as { user: CurrentUser }).user : null
+    if (version !== sessionVersion) return
+    user.value = identity
+    retryable.value = res.status === 429 || res.status === 408 || res.status >= 500
   } catch {
-    _cachedUser = null
-    _userRef.value = null
+    if (version !== sessionVersion) return
+    user.value = null
+    retryable.value = true
   } finally {
-    _loading = false
-    _loadingRef.value = false
+    if (version === sessionVersion) loading.value = false
   }
 }
 
-/**
- * Retourne les refs réactives user + loading.
- * Le fetch est déclenché une seule fois (module-level cache).
- */
-export function useCurrentUser(): { user: Ref<CurrentUser | null>; loading: Ref<boolean> } {
-  // Si déjà en cours ou terminé, ne pas re-fetcher
-  if (!_promise) {
-    _promise = _fetchCurrentUser()
+function loadIdentity(): Promise<void> {
+  if (!request || retryable.value) {
+    retryable.value = false
+    loading.value = true
+    request = fetchIdentity(sessionVersion)
   }
+  return request
+}
 
-  return { user: _userRef, loading: _loadingRef }
+export function useCurrentUser() {
+  void loadIdentity()
+  return { user, loading, retryable, retry: loadIdentity }
 }
 
 /**
@@ -81,8 +69,9 @@ export function useCurrentUser(): { user: Ref<CurrentUser | null>; loading: Ref<
  * OOS-6 V1 : appelé manuellement si nécessaire.
  */
 export function invalidateCurrentUser(): void {
-  _cachedUser = null
-  _userRef.value = null
-  _loadingRef.value = true
-  _promise = null
+  sessionVersion++
+  user.value = null
+  loading.value = true
+  retryable.value = false
+  request = null
 }

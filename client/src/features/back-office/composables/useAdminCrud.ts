@@ -117,9 +117,11 @@ export function useAdminCrud<TItem, TCreate, TUpdate>(
   const loading = ref(false)
   const error = ref<string | null>(null)
 
+  let latestRead = 0
   const baseUrl = `/api/admin/${resource}`
 
   async function list(params: Record<string, unknown> = {}): Promise<void> {
+    const read = ++latestRead
     loading.value = true
     error.value = null
     try {
@@ -132,6 +134,7 @@ export function useAdminCrud<TItem, TCreate, TUpdate>(
       const body = (await res.json().catch(() => ({}))) as ApiErrorShape & {
         data?: { items?: TItem[]; total?: number; hasMore?: boolean }
       }
+      if (read !== latestRead) return
       if (!res.ok) {
         const msg = translate(classifyHttpError(res.status, body))
         error.value = msg
@@ -139,8 +142,10 @@ export function useAdminCrud<TItem, TCreate, TUpdate>(
       }
       items.value = body.data?.items ?? []
       total.value = body.data?.total ?? 0
+    } catch (cause) {
+      if (read === latestRead) throw cause
     } finally {
-      loading.value = false
+      if (read === latestRead) loading.value = false
     }
   }
 

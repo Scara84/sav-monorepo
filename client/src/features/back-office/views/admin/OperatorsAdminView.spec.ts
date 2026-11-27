@@ -55,88 +55,122 @@ describe('OperatorsAdminView (UI smoke)', () => {
     globalThis.fetch = originalFetch
   })
 
-  it('charge la liste au mount + colonnes affichées (email, role, is_active)', async () => {
-    globalThis.fetch = vi.fn(async () =>
-      jsonResponse(200, {
-        data: {
-          items: [
-            {
-              id: 9,
-              email: 'admin@fruitstock.fr',
-              display_name: 'Admin',
-              role: 'admin',
-              is_active: true,
-              azure_oid: '11111111-1111-4111-8111-111111111111',
-              created_at: '2026-04-20T10:00:00Z',
-            },
-          ],
-          total: 1,
-          hasMore: false,
-        },
-      })
-    ) as unknown as typeof fetch
+  it('affiche les comptes avant le formulaire, avec le rôle et l’état, en lecture seule', async () => {
+    const items = [
+      { id: 9, email: 'alice@example.test', display_name: 'Alice', role: 'admin', is_active: true },
+      {
+        id: 12,
+        email: 'bruno@example.test',
+        display_name: 'Bruno',
+        role: 'sav-operator',
+        is_active: false,
+      },
+    ].map((op) => ({ ...op, azure_oid: null, created_at: '2026-04-20' }))
+    const methods: string[] = []
+    globalThis.fetch = vi.fn(async (input, init) => {
+      methods.push(init?.method ?? 'GET')
+      if (String(input) === '/api/auth/me') {
+        return jsonResponse(200, { user: { sub: 9, type: 'operator', role: 'admin' } })
+      }
+      return jsonResponse(200, { data: { items, total: 2, hasMore: false } })
+    })
 
-    const router = buildRouter()
-    await router.push('/admin/operators')
-    const wrapper = mount(OperatorsAdminView, { global: { plugins: [router] } })
-    await flushPromises()
-
-    expect(wrapper.text()).toContain('admin@fruitstock.fr')
-    expect(wrapper.text()).toMatch(/admin/i)
-    // i18n FR-only V1 (D-12)
-    expect(wrapper.text()).toMatch(/Opérateur|Email|Rôle|Actif/i)
+    for (let read = 0; read < 2; read++) {
+      const wrapper = mount(OperatorsAdminView)
+      await flushPromises()
+      const table = wrapper.get('table')
+      expect(
+        table.element.compareDocumentPosition(wrapper.get('.create-form').element) &
+          Node.DOCUMENT_POSITION_FOLLOWING
+      ).toBeTruthy()
+      const rows = table.findAll('tbody tr')
+      expect(rows[0]!.text()).toMatch(/Alice.*Administrateur.*Actif/)
+      expect(rows[1]!.text()).toMatch(/Bruno.*Opérateur SAV.*Inactif/)
+      wrapper.unmount()
+    }
+    expect(methods).toEqual(['GET', 'GET', 'GET'])
   })
 
-  it('formulaire création visible et soumission POST avec body correct', async () => {
-    let postBody: unknown = null
-    globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
-      const url = String(input)
-      if (init?.method === 'POST' && url.includes('/api/admin/operators')) {
-        postBody = init.body ? JSON.parse(String(init.body)) : null
-        return jsonResponse(201, {
-          data: {
-            operator: {
-              id: 200,
-              email: 'created@x',
-              display_name: 'Created',
-              role: 'sav-operator',
-              is_active: true,
-              azure_oid: null,
-              created_at: '2026-04-30T10:00:00Z',
-            },
-          },
-        })
+  it('masque la création et les actions au profil opérateur', async () => {
+    globalThis.fetch = vi.fn(async (input) =>
+      String(input) === '/api/auth/me'
+        ? jsonResponse(200, { user: { sub: 12, type: 'operator', role: 'sav-operator' } })
+        : jsonResponse(403, { error: { details: { code: 'ROLE_NOT_ALLOWED' } } })
+    )
+    const wrapper = mount(OperatorsAdminView)
+    await flushPromises()
+    expect(wrapper.find('.create-form').exists()).toBe(false)
+    expect(wrapper.find('.header button').exists()).toBe(false)
+    expect(wrapper.text()).toContain('Réservé aux administrateurs.')
+  })
+
+  it.each([
+    ['admin', true],
+    ['sav-operator', false],
+  ] as const)(
+    'réessaie la lecture des droits et respecte le rôle %s confirmé',
+    async (role, authorized) => {
+      const identity = vi
+        .fn()
+        .mockResolvedValueOnce(jsonResponse(503, {}))
+        .mockResolvedValueOnce(jsonResponse(200, { user: { sub: 12, type: 'operator', role } }))
+      globalThis.fetch = vi.fn(async (input) =>
+        String(input) === '/api/auth/me'
+          ? identity()
+          : jsonResponse(200, { data: { items: [], total: 0 } })
+      )
+      const wrapper = mount(OperatorsAdminView)
+      await flushPromises()
+      expect(wrapper.find('.create-form').exists()).toBe(false)
+      await wrapper.get('[role="alert"] button').trigger('click')
+      await flushPromises()
+      expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+      expect(wrapper.find('.create-form').exists()).toBe(authorized)
+      expect(identity).toHaveBeenCalledTimes(2)
+    }
+  )
+
+  it('conserve la saisie après validation refusée et relit le compte après création', async () => {
+    const payload = { email: 'claire@example.test', display_name: 'Claire', role: 'sav-operator' }
+    const account = {
+      id: 200,
+      ...payload,
+      is_active: true,
+      azure_oid: null,
+      created_at: '2026-11-27',
+    }
+    const items: (typeof account)[] = []
+    const posts: unknown[] = []
+    globalThis.fetch = vi.fn(async (input, init) => {
+      if (String(input) === '/api/auth/me') {
+        return jsonResponse(200, { user: { sub: 9, type: 'operator', role: 'admin' } })
       }
-      return jsonResponse(200, { data: { items: [], total: 0, hasMore: false } })
-    }) as unknown as typeof fetch
-
-    const router = buildRouter()
-    await router.push('/admin/operators')
-    const wrapper = mount(OperatorsAdminView, { global: { plugins: [router] } })
-    await flushPromises()
-
-    // Trigger create — form must expose data-test or specific input ids.
-    const emailInput = wrapper.find<HTMLInputElement>('[data-test="operator-create-email"]')
-    const nameInput = wrapper.find<HTMLInputElement>('[data-test="operator-create-display-name"]')
-    const roleSelect = wrapper.find<HTMLSelectElement>('[data-test="operator-create-role"]')
-    const submitBtn = wrapper.find('[data-test="operator-create-submit"]')
-
-    expect(emailInput.exists()).toBe(true)
-    expect(nameInput.exists()).toBe(true)
-    expect(roleSelect.exists()).toBe(true)
-    expect(submitBtn.exists()).toBe(true)
-
-    await emailInput.setValue('created@x')
-    await nameInput.setValue('Created')
-    await roleSelect.setValue('sav-operator')
-    await submitBtn.trigger('click')
-    await flushPromises()
-
-    expect(postBody).toMatchObject({
-      email: 'created@x',
-      display_name: 'Created',
-      role: 'sav-operator',
+      if (init?.method === 'POST') {
+        const body = JSON.parse(String(init.body))
+        posts.push(body)
+        if (body.azure_oid)
+          return jsonResponse(400, { error: { details: { code: 'INVALID_BODY' } } })
+        items.push(account)
+        return jsonResponse(201, { data: { operator: account } })
+      }
+      return jsonResponse(200, { data: { items: [...items], total: items.length } })
     })
+
+    const wrapper = mount(OperatorsAdminView)
+    await flushPromises()
+    await wrapper.get('#op-create-email').setValue(payload.email)
+    await wrapper.get('#op-create-name').setValue(payload.display_name)
+    await wrapper.get('#op-create-oid').setValue('invalide')
+    await wrapper.get('.create-form').trigger('submit')
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toBe('Données invalides.')
+    expect(wrapper.get<HTMLInputElement>('#op-create-name').element.value).toBe('Claire')
+    expect(items).toHaveLength(0)
+    await wrapper.get('#op-create-oid').setValue('')
+    await wrapper.get('.create-form').trigger('submit')
+    await flushPromises()
+    expect(posts).toEqual([{ ...payload, azure_oid: 'invalide' }, payload])
+    expect(wrapper.get('tbody').text()).toMatch(/Claire.*Opérateur SAV.*Actif/)
   })
 
   // Hardening W-7-3a-3 (CR E6) — formatDate doit guarder NaN pour created_at
@@ -189,6 +223,8 @@ describe('OperatorsAdminView (UI smoke)', () => {
     let resolvePatch: ((value: Response) => void) | null = null
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
+      if (url === '/api/auth/me')
+        return jsonResponse(200, { user: { sub: 9, type: 'operator', role: 'admin' } })
       if (init?.method === 'PATCH' && url.includes('/api/admin/operators/')) {
         patchCallCount += 1
         // Promise non résolue immédiatement → simule requête en cours
@@ -242,6 +278,8 @@ describe('OperatorsAdminView (UI smoke)', () => {
     let patchBody: unknown = null
     globalThis.fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
       const url = String(input)
+      if (url === '/api/auth/me')
+        return jsonResponse(200, { user: { sub: 9, type: 'operator', role: 'admin' } })
       if (init?.method === 'PATCH' && url.includes('/api/admin/operators/')) {
         patchBody = init.body ? JSON.parse(String(init.body)) : null
         return jsonResponse(200, {
