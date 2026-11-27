@@ -21,7 +21,7 @@
               autocomplete="email"
               class="w-full px-4 py-3 border-2 border-[color:var(--main-orange)] rounded-3xl"
             />
-            <button type="submit" class="sav-primary" :disabled="accessLinkSubmitting">
+            <button type="submit" class="sav-field font-semibold" :disabled="accessLinkSubmitting">
               {{ accessLinkSubmitting ? 'Envoi en cours…' : 'Recevoir mon lien de connexion' }}
             </button>
           </form>
@@ -29,7 +29,7 @@
             {{ accessLinkMessage }}
           </p>
         </section>
-        <h1>Retrouver ma facture</h1>
+        <h1>Déclarer un problème sur un article</h1>
         <!-- H-10 W95 — Toast inline non-bloquant (remplace les alert() de Story 5.7). -->
         <!-- role="alert" + aria-live="assertive" : annonce immédiate pour screen readers. -->
         <div v-if="toast" role="alert" aria-live="assertive" :class="`toast toast-${toast.kind}`">
@@ -47,7 +47,7 @@
               Numéro de facture
             </label>
             <p id="invoice-hint" class="lookup-hint">
-              En haut à droite du PDF Pennylane. Exemple : F-2025-37039 (année puis 1 à 8 chiffres).
+              En haut à droite de votre facture, par exemple F-2026-00001.
             </p>
             <input
               type="text"
@@ -56,7 +56,6 @@
               v-model="invoiceNumber"
               required
               maxlength="32"
-              placeholder="Ex : F-2025-37039"
               class="sav-field"
             />
           </div>
@@ -78,20 +77,15 @@
               autocomplete="email"
               v-model="email"
               required
-              placeholder="Ex : monadresse@email.com"
               class="sav-field"
             />
           </div>
 
           <button type="submit" class="sav-primary">
-            Retrouver ma commande
+            Rechercher ma facture
           </button>
         </form>
       </div>
-      <aside class="lookup-card lookup-context">
-        <h2>Service après-vente</h2>
-        <p>Déclarez un article manquant ou abîmé dans votre commande Fruitstock.</p>
-      </aside>
     </div>
   </main>
 </template>
@@ -225,30 +219,21 @@ export default {
   background: #faf8f5;
 }
 .lookup-layout {
-  max-width: 60rem;
+  max-width: 38rem;
   margin: auto;
-  display: grid;
-  grid-template-columns: minmax(0, 1.8fr) minmax(0, 1fr);
-  gap: 1.5rem;
-  align-items: start;
 }
 .lookup-card {
   background: white;
   padding: clamp(1.25rem, 3vw, 2.5rem);
-  border: 1px solid #ded8cf;
-  border-radius: 1rem;
+  border: 1px solid #eaeaea;
+  border-radius: .75rem;
 }
 .lookup-card h1, .lookup-card h2 {
   color: var(--text-dark);
   line-height: 1.2;
 }
 .lookup-card h1 { font-size: clamp(1.6rem, 3vw, 2.25rem); margin-bottom: 1.5rem; }
-.lookup-context { border-top: 3px solid var(--main-orange); }
-.lookup-context h2 { font-size: 1.25rem; }
 .lookup-hint { color: #534e48; margin-bottom: .5rem; font-size: .9375rem; }
-@media (max-width: 700px) {
-  .lookup-layout { grid-template-columns: minmax(0, 1fr); gap: 1rem; }
-}
 /* H-10 W95 — Toast inline non-bloquant. Pattern dupliqué (conforme AC #2.6 / DN-3). */
 .toast {
   display: flex;

@@ -30,6 +30,31 @@ describe('useSavForms', () => {
     })
   })
 
+  describe('unité proposée depuis la facture', () => {
+    it.each([
+      ['kg', 'kg'], ['pièce', 'piece'], ['gramme', 'g'], ['palette', ''], ['litre', ''], [null, ''],
+    ])('propose %s uniquement si le formulaire accepte cette unité', (unit, expected) => {
+      const forms = useSavForms(() => [{ id: 1, unit }])
+      forms.toggleSavForm(0)
+      expect(forms.getSavForm(0).unit).toBe(expected)
+      expect(forms.hasDirtyForms.value).toBe(false)
+    })
+
+    it('garde une unité effacée ou corrigée lors de la relecture', async () => {
+      const forms = useSavForms(() => [{ id: 1, unit: 'kg' }])
+      forms.toggleSavForm(0)
+      const form = forms.getSavForm(0)
+      Object.assign(form, { quantity: 1, reason: 'manquant', unit: '' })
+      expect(forms.validateForm(form)).toBe(false)
+      expect(forms.getSavForm(0).unit).toBe('')
+      form.unit = 'g'
+      await forms.validateItemForm(0, () => {})
+      expect(forms.getFilledForms()[0].form.unit).toBe('g')
+      forms.editItemForm(0, () => {})
+      expect(form.unit).toBe('g')
+    })
+  })
+
   describe('validateForm', () => {
     it('should validate a complete form', () => {
       const form = forms.getSavForm(0)

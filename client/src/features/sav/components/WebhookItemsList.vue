@@ -155,9 +155,9 @@
                   required
                 >
                   <option value="">Choisir une unité</option>
-                  <option value="piece">Pièce</option>
-                  <option value="kg">kg</option>
-                  <option value="g">g</option>
+                  <option v-for="unit in claimUnits" :key="unit.value" :value="unit.value">
+                    {{ unit.label }}
+                  </option>
                 </select>
                 <p
                   :id="`error-unit-${index}`"
@@ -343,13 +343,12 @@
     <p v-if="items.length === 0" class="text-gray-500 text-center py-4">Aucun élément à afficher</p>
 
     <section
-      v-if="hasFilledForms"
+      v-if="hasFilledForms || hasUnfinishedForms"
       class="mt-8"
-      :inert="globalLoading"
       aria-labelledby="summary-title"
     >
       <h2 id="summary-title" class="section-title">Relire ma demande</h2>
-      <ul class="space-y-3">
+      <ul v-if="hasFilledForms" class="space-y-3" :inert="globalLoading">
         <li v-for="{ item, form, index } in getFilledForms()" :key="keyAt(index)" class="line-card">
           <h3 class="text-lg text-gray-900">{{ item.label || item.product_name }}</h3>
           <p>
@@ -368,84 +367,83 @@
           </div>
         </li>
       </ul>
-    </section>
-    <!-- Action d'envoi finale, persistante pendant le défilement -->
-    <div
-      v-if="hasFilledForms || hasUnfinishedForms"
-      class="sticky bottom-0 z-30 mt-6 rounded-xl border border-orange-200 bg-white p-4 shadow-xl"
-      data-test="sav-submit-bar"
-    >
-      <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
-        <div>
-          <div
-            v-if="globalLoading"
-            role="status"
-            class="border-l-4 border-[var(--main-orange)] pl-3"
-          >
-            <strong>Envoi en cours…</strong>
-            <p>
-              <template v-if="totalFiles > uploadedFiles">Téléversement des photos…</template>
-              <template v-else-if="uploadStatus === 'capturing'"
-                >En attente de la réception du dossier…</template
-              >
-              <template v-else>Préparation de la demande…</template>
+      <!-- Action finale du récapitulatif -->
+      <div
+        class="mt-4 rounded-xl border border-orange-200 bg-white p-4"
+        data-test="sav-submit-bar"
+      >
+        <div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div>
+            <div
+              v-if="globalLoading"
+              role="status"
+              class="border-l-4 border-[var(--main-orange)] pl-3"
+            >
+              <strong>Envoi en cours…</strong>
+              <p>
+                <template v-if="totalFiles > uploadedFiles">Téléversement des photos…</template>
+                <template v-else-if="uploadStatus === 'capturing'"
+                  >En attente de la réception du dossier…</template
+                >
+                <template v-else>Préparation de la demande…</template>
+              </p>
+              <progress
+                v-if="totalFiles > uploadedFiles"
+                aria-label="Photos téléversées"
+                :value="uploadedFiles"
+                :max="totalFiles"
+              />
+            </div>
+            <div
+              v-else-if="uploadStatus === 'error'"
+              role="alert"
+              class="rounded-lg bg-red-50 p-3 text-red-900"
+            >
+              <strong>Envoi interrompu</strong>
+              <p v-if="uploadErrorMessage">{{ uploadErrorMessage }}</p>
+              <p>
+                La réception de votre demande n’a pas été confirmée. Vos articles sont conservés. Vous
+                pouvez les modifier ou réessayer.
+              </p>
+            </div>
+            <p v-else-if="filledFormsCount > 0" class="font-semibold text-gray-900">
+              {{ filledFormsCount }}
+              {{ filledFormsCount === 1 ? 'réclamation ajoutée' : 'réclamations ajoutées' }}
             </p>
-            <progress
-              v-if="totalFiles > uploadedFiles"
-              aria-label="Photos téléversées"
-              :value="uploadedFiles"
-              :max="totalFiles"
-            />
-          </div>
-          <div
-            v-else-if="uploadStatus === 'error'"
-            role="alert"
-            class="rounded-lg bg-red-50 p-3 text-red-900"
-          >
-            <strong>Envoi interrompu</strong>
-            <p v-if="uploadErrorMessage">{{ uploadErrorMessage }}</p>
-            <p>
-              La réception de votre demande n’a pas été confirmée. Vos articles sont conservés. Vous
-              pouvez les modifier ou réessayer.
+            <p v-else class="font-semibold text-gray-900">Réclamation en cours de saisie</p>
+            <p v-if="hasUnfinishedForms" class="text-sm text-amber-700" role="alert">
+              Finalisez ou annulez la ligne en cours avant l’envoi.
+            </p>
+            <p
+              v-else-if="!globalLoading && uploadStatus !== 'error' && !submissionSucceeded"
+              class="text-sm text-gray-600"
+            >
+              Votre demande n’est pas encore envoyée.
             </p>
           </div>
-          <p v-else-if="filledFormsCount > 0" class="font-semibold text-gray-900">
-            {{ filledFormsCount }}
-            {{ filledFormsCount === 1 ? 'réclamation ajoutée' : 'réclamations ajoutées' }}
-          </p>
-          <p v-else class="font-semibold text-gray-900">Réclamation en cours de saisie</p>
-          <p v-if="hasUnfinishedForms" class="text-sm text-amber-700" role="alert">
-            Finalisez ou annulez la ligne en cours avant l’envoi.
-          </p>
-          <p
-            v-else-if="!globalLoading && uploadStatus !== 'error' && !submissionSucceeded"
-            class="text-sm text-gray-600"
+          <button
+            type="button"
+            ref="submitButton"
+            @click="submitAllForms"
+            class="sav-primary line-action disabled:opacity-60"
+            :disabled="submissionSucceeded || globalLoading || hasUnfinishedForms || !hasFilledForms"
           >
-            Votre demande n’est pas encore envoyée.
-          </p>
+            <span v-if="globalLoading">Envoi...</span>
+            <span v-else-if="uploadStatus === 'error'">Réessayer l’envoi</span>
+            <span v-else>
+              Envoyer ma demande SAV ({{ filledFormsCount }}
+              {{ filledFormsCount === 1 ? 'réclamation' : 'réclamations' }})
+            </span>
+          </button>
         </div>
-        <button
-          type="button"
-          ref="submitButton"
-          @click="submitAllForms"
-          class="sav-primary line-action disabled:opacity-60"
-          :disabled="submissionSucceeded || globalLoading || hasUnfinishedForms || !hasFilledForms"
-        >
-          <span v-if="globalLoading">Envoi...</span>
-          <span v-else-if="uploadStatus === 'error'">Réessayer l’envoi</span>
-          <span v-else>
-            Envoyer ma demande SAV ({{ filledFormsCount }}
-            {{ filledFormsCount === 1 ? 'réclamation' : 'réclamations' }})
-          </span>
-        </button>
       </div>
-    </div>
+    </section>
   </div>
 </template>
 
 <script>
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { useSavForms } from '../composables/useSavForms.js'
+import { claimUnits, useSavForms } from '../composables/useSavForms.js'
 import { useImageUpload } from '../composables/useImageUpload.js'
 import { useApiClient } from '../composables/useApiClient.js'
 import { buildSavHtmlTable } from '../lib/buildSavHtmlTable.js'
@@ -861,6 +859,7 @@ export default {
     }
 
     return {
+      claimUnits,
       hasFilledForms,
       filledFormsCount,
       hasUnfinishedForms,

@@ -1,4 +1,11 @@
 import { ref, computed } from 'vue'
+import { mapPennylaneUnit } from '../lib/buildCaptureItemPrices.js'
+
+export const claimUnits = [
+  { value: 'piece', label: 'Pièce' },
+  { value: 'kg', label: 'kg' },
+  { value: 'g', label: 'g' },
+]
 
 /**
  * Composable pour gérer les formulaires SAV
@@ -30,6 +37,7 @@ export function useSavForms(getItems) {
         filled: false,
         quantity: '',
         unit: '',
+        initialUnit: '',
         reason: '',
         comment: '',
         images: [],
@@ -72,7 +80,7 @@ export function useSavForms(getItems) {
       ({ form }) =>
         !form.filled &&
         (form.quantity !== '' ||
-          form.unit !== '' ||
+          form.unit !== form.initialUnit ||
           form.reason !== '' ||
           form.comment.trim() !== '' ||
           form.images.length > 0)
@@ -142,7 +150,9 @@ export function useSavForms(getItems) {
         // Si on ferme le formulaire, on le réinitialise
         deleteItemForm(index)
       } else {
-        // Si on ouvre le formulaire
+        const invoiceUnit = mapPennylaneUnit(getItems?.()[index]?.unit)
+        savForm.initialUnit = claimUnits.some(({ value }) => value === invoiceUnit) ? invoiceUnit : ''
+        savForm.unit = savForm.initialUnit
         savForm.showForm = true
       }
     }
@@ -193,6 +203,7 @@ export function useSavForms(getItems) {
     savForm.filled = false
     savForm.quantity = ''
     savForm.unit = ''
+    savForm.initialUnit = ''
     savForm.reason = ''
     savForm.comment = ''
     savForm.images = []

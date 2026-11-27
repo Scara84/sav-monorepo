@@ -1,31 +1,18 @@
 <template>
   <div class="min-h-screen bg-stone-50 py-6 sm:py-12">
     <div class="mx-auto bg-white p-4 sm:p-8 rounded-xl border w-full max-w-4xl">
-      <h1 class="text-3xl text-gray-900 mb-6">Détail de la facture</h1>
-      <div class="mb-4 p-4 bg-gray-50 rounded-2xl">
-        <h2 class="text-xl text-gray-900 font-extrabold mb-2">Informations Facture</h2>
-        <p class="text-[color:var(--text-dark)] mb-1">
-          <span class="font-semibold">Client:</span> {{ customerName }}
-        </p>
-        <p class="text-[color:var(--text-dark)] mb-1">
-          <span class="font-semibold">N° Facture:</span> {{ invoiceNumber }}
-        </p>
-        <p class="text-[color:var(--text-dark)] mb-1">
-          <span class="font-semibold">ID Client:</span> {{ customerId }}
-        </p>
-        <p class="text-[color:var(--text-dark)] mb-1">
-          <span class="font-semibold">Adresse e-mail:</span> {{ email }}
-        </p>
-        <p class="text-[color:var(--text-dark)] mb-1">
-          <span class="font-semibold">Statut:</span>
-          <span :class="paidStatus ? 'text-[#4E944F] font-bold' : 'text-[#e23a3a] font-bold'">
-            {{ paidStatus ? 'Payée' : 'Non Payée' }}
-          </span>
-        </p>
-        <p v-if="specialMention" class="text-[color:var(--text-dark)] mt-2">
-          <span class="font-semibold">Mention Spéciale:</span> {{ specialMention }}
-        </p>
-      </div>
+      <h1 class="text-3xl text-gray-900 mb-2">Choisir un article à déclarer</h1>
+      <p v-if="invoiceNumber" class="font-mono font-semibold mb-3">Facture {{ invoiceNumber }}</p>
+      <details v-if="invoiceNumber" class="mb-5 border-b border-stone-200">
+        <summary class="cursor-pointer py-3 font-semibold">Détails de la facture</summary>
+        <dl class="grid gap-2 pb-4 sm:grid-cols-2">
+          <div><dt>Client</dt><dd>{{ customerName }}</dd></div>
+          <div><dt>Identifiant client</dt><dd>{{ customerId }}</dd></div>
+          <div><dt>Adresse e-mail</dt><dd class="break-words">{{ email }}</dd></div>
+          <div><dt>Statut</dt><dd>{{ paidStatus ? 'Payée' : 'Non payée' }}</dd></div>
+          <div v-if="specialMention"><dt>Mention spéciale</dt><dd>{{ specialMention }}</dd></div>
+        </dl>
+      </details>
 
       <!-- Display Parsing Error -->
       <div
@@ -36,7 +23,7 @@
         {{ parsingError }}
       </div>
 
-      <div class="mb-4">
+      <div v-if="!parsingError" class="mb-4">
         <WebhookItemsList
           ref="savItemsList"
           :items="invoiceItems"
@@ -44,7 +31,7 @@
           @sav-submitted="handleSavSubmission"
         />
       </div>
-      <router-link to="/" class="sav-field text-center mt-8">Retour</router-link>
+      <router-link to="/" class="sav-field text-center mt-8">Retour à la recherche</router-link>
     </div>
   </div>
 </template>
@@ -96,11 +83,16 @@ export default {
       try {
         const invoiceData = JSON.parse(webhookResponseString)
 
+        if (typeof invoiceData?.invoice_number !== 'string' || !invoiceData.invoice_number.trim()) {
+          this.parsingError = 'La facture reçue ne contient pas de numéro. Relancez la recherche.'
+          return
+        }
+
         // Pass the full invoice object to the child component
         this.facture = invoiceData
 
         // Assign details for display in this component's template
-        this.invoiceNumber = invoiceData.invoice_number || 'N/A'
+        this.invoiceNumber = invoiceData.invoice_number
         // `external_reference` porte l'ID client métier Fruitstock.
         // `id` reste l'identifiant interne Pennylane et n'est qu'un fallback technique.
         this.customerId =

@@ -52,6 +52,14 @@ function makeWrapper() {
 }
 
 describe('Home.vue — input numéro facture cutover Story 5.7', () => {
+  it('présente la déclaration et un seul exemple de facture', () => {
+    const w = makeWrapper()
+    expect(w.get('h1').text()).toBe('Déclarer un problème sur un article')
+    expect(w.get('button[type="submit"]').text()).toBe('Rechercher ma facture')
+    expect(w.get('#invoice-hint').text()).toContain('F-2026-00001')
+    expect(w.get('#invoiceNumber').attributes('placeholder')).toBeUndefined()
+  })
+
   it('saisie F-2025-12345 valide → submit fire + router.push InvoiceDetails', async () => {
     const w = makeWrapper()
     await w.find('#invoiceNumber').setValue('F-2025-12345')
@@ -134,6 +142,9 @@ describe('Home.vue — accès au suivi SAV', () => {
     $route.query = { reason: 'session_expired', redirect: '/monespace/sav/42' }
     const fetchSpy = vi.spyOn(window, 'fetch').mockResolvedValue({ ok: true })
     const w = makeWrapper()
+    expect(w.findAll('button.sav-primary').map((button) => button.text())).toEqual([
+      'Rechercher ma facture',
+    ])
     await w.find('#accessEmail').setValue('member@example.com')
     await w.find('[data-test="member-access-form"] form').trigger('submit.prevent')
     await flushPromises()

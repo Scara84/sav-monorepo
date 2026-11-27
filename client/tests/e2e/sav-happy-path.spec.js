@@ -93,7 +93,7 @@ test('SAV happy path (flow 2 étapes OneDrive upload session)', async ({ page })
 
   await page.goto(`/invoice-details?webhookResponse=${webhookResponse}&email=test@example.com`)
 
-  await expect(page.getByText('Détail de la facture')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Choisir un article à déclarer' })).toBeVisible()
 
   const firstItem = page.locator('ul.space-y-6 > li').first()
   await firstItem.getByRole('button', { name: 'Signaler un problème' }).click()
@@ -174,7 +174,7 @@ test('V1.1 AC#1 — quantity input accepts 12.5 and preserves value (no coercion
   const webhookResponse = encodeURIComponent(JSON.stringify(invoice))
   await page.goto(`/invoice-details?webhookResponse=${webhookResponse}&email=test@example.com`)
 
-  await expect(page.getByText('Détail de la facture')).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Choisir un article à déclarer' })).toBeVisible()
 
   const firstItem = page.locator('ul.space-y-6 > li').first()
   await firstItem.getByRole('button', { name: 'Signaler un problème' }).click()
@@ -187,6 +187,6 @@ test('V1.1 AC#1 — quantity input accepts 12.5 and preserves value (no coercion
 
 test('une visite directe sans reçu retourne à l’accueil', async ({ page }) => {
   await page.goto('/sav-confirmation')
-  await expect(page.getByRole('heading', { name: 'Retrouver ma facture' })).toBeVisible()
+  await expect(page.getByRole('heading', { name: 'Déclarer un problème sur un article' })).toBeVisible()
   await expect(page.getByText('Votre demande SAV a été reçue')).toHaveCount(0)
 })
