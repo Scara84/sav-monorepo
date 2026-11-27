@@ -83,3 +83,4 @@ Le chantier porte sur la présentation et l’ergonomie des parcours existants. 
 5. [Préparer et retrouver la réclamation fournisseur](tickets/epic-fournisseur/epic-fournisseur.md) — Du détail du dossier à la dernière version, l’opérateur peut contrôler les lignes puis obtenir le document du bon fournisseur.
 6. [Piloter les dossiers et les intégrations](tickets/epic-pilotage/epic-pilotage.md) — L’équipe lit ses mesures, retrouve les exports et identifie l’état du service et de la synchronisation.
 7. [Administrer les paramètres et les référentiels](tickets/epic-administration/epic-administration.md) — L’administrateur retrouve les réglages, distingue les droits et vérifie les changements avec les outils existants.
+8. [Clarifier les décisions dans les parcours SAV](tickets/epic-clarte-des-parcours/epic-clarte-des-parcours.md) — Suites de la revue UX du 27 novembre, en commençant par la fiche opérateur.

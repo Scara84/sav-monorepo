@@ -1,0 +1,72 @@
+[[entry]]
+id = 1
+type = "story"
+title = "Identifier la prochaine action et sa conséquence comptable"
+description = "Préparer le dossier témoin repris en 8.2 et aligner la consigne, le libellé principal et la confirmation du flux existant selon l’état et les droits du dossier."
+verify = "Sur le même SAV fictif, vérifier le prérequis avant émission, annuler la confirmation, puis confirmer et relire la nouvelle action. Vérifier aussi le cas d’une ligne en erreur et celui d’un rôle sans droit."
+covers = ["R1"]
+after = []
+hitl = false
+risk = "high"
+references = ["client/src/features/back-office/views/SavDetailView.vue", "client/src/features/back-office/views/SavDetailView.validate-gate.spec.ts"]
+
+[[entry]]
+id = 2
+type = "story"
+title = "Comparer les quantités demandée, facturée et retenue"
+description = "Présenter chaque quantité avec son unité en lecture et en édition, près de l’avoir TTC. Reprendre le dossier de la première démonstration."
+verify = "Retrouver 4 pièces demandées, 6 kg facturés et 2 kg retenus. Modifier la quantité retenue, enregistrer et rouvrir la ligne. Vérifier les libellés, le montant recalculé et la prochaine action."
+covers = ["R2"]
+after = [1]
+hitl = false
+risk = "medium"
+references = ["client/src/features/back-office/views/SavDetailView.vue", "client/src/features/back-office/composables/useSavLineEdit.ts"]
+
+[[entry]]
+id = 3
+type = "story"
+title = "Déclarer un article depuis sa facture"
+description = "Guider la recherche depuis l’accueil, puis le choix d’un article et de son unité. Conserver la relecture avant envoi."
+verify = "Rechercher la facture fictive. Vérifier la référence et les détails repliables. Tester une unité admise préremplie et modifiable puis une unité inconnue. Ajouter « Manquant · 1 kg », corriger et envoyer depuis le récapitulatif."
+covers = ["R3"]
+after = []
+hitl = false
+risk = "medium"
+references = ["client/src/features/sav/views/Home.vue", "client/src/features/sav/views/InvoiceDetails.vue", "client/src/features/sav/components/WebhookItemsList.vue"]
+
+[[entry]]
+id = 4
+type = "story"
+title = "Retrouver la suite donnée à une demande reçue"
+description = "Rendre la référence copiable et orienter le client selon son accès existant. Vérifier le canal effectivement assuré avant de rédiger le texte de repli."
+verify = "Après réception, copier la référence et la comparer au dossier. Avec accès, suivre le lien vers le bon dossier. Sans accès, lire la suite garantie. Simuler un échec de soumission et vérifier que la confirmation reste inaccessible depuis cet envoi."
+unknown = "Quel accès au dossier est disponible depuis la confirmation et quelle suite peut-on garantir aux personnes sans cet accès ? Vérifier le parcours existant avant de fixer le texte."
+covers = ["R4"]
+after = []
+hitl = false
+risk = "high"
+references = ["client/src/features/sav/views/SavConfirmation.vue", "client/src/features/self-service/views/MemberSavDetailView.vue"]
+
+[[entry]]
+id = 5
+type = "story"
+title = "Actualiser le tableau de bord et reprendre une carte en erreur"
+description = "Unifier le nom du tableau de bord et simplifier ses commandes en gardant une reprise locale après erreur."
+verify = "En état normal, retrouver le même nom dans le menu et la vue et une seule commande Actualiser. Provoquer un échec sur une carte et réessayer sur celle-ci. Vérifier que la période et les autres résultats restent affichés."
+covers = ["R5"]
+after = []
+hitl = false
+risk = "medium"
+references = ["client/src/features/back-office/views/BackOfficeLayout.vue", "client/src/features/back-office/views/DashboardView.vue"]
+
+[[entry]]
+id = 6
+type = "story"
+title = "Refactor sweep — clore les corrections relevées en revue"
+description = "Examiner les points techniques différés dans les cinq stories et corriger uniquement ceux nécessaires à cette livraison. Si la liste est vide, consigner ce constat."
+verify = "Pour chaque correction retenue, rejouer le scénario affecté et ses tests ciblés. Relire les preuves ordinateur, clavier et 390 px pour les cinq scénarios, y compris focus visible, libellés et contrastes selon les contraintes d’accès de l’initiative."
+covers = []
+after = [1, 2, 3, 4, 5]
+hitl = false
+risk = "medium"
+references = []

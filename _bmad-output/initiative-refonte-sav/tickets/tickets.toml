@@ -53,3 +53,10 @@ title = "Administrer les paramètres et les référentiels"
 description = "L’administrateur retrouve les réglages, distingue les droits et vérifie les changements avec les outils existants."
 covers = ["R17", "R18", "R19"]
 after = [{ epic = 3, needs = "la navigation authentifiée du back-office livrée par 3.1" }]
+
+[[epic]]
+id = 8
+slug = "epic-clarte-des-parcours"
+title = "Clarifier les décisions dans les parcours SAV"
+description = "Les opérateurs identifient la prochaine action et les quantités, les clients déclarent puis retrouvent la suite de leur demande."
+covers = ["R1", "R2", "R3", "R4", "R8", "R9", "R14"]
