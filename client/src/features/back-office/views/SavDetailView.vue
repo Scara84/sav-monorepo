@@ -420,7 +420,12 @@ const canValidate = computed<boolean>(() => {
 function allowsTransition(to: SavStatus): boolean {
   return !!sav.value && isTransitionAllowed(sav.value.status as SavStatus, to)
 }
-const showValidateButton = computed(() => allowsTransition('validated'))
+const {
+  user: currentUser, loading: currentUserLoading,
+  retryable: identityRetryable, retry: retryIdentity,
+} = useCurrentUser()
+const isOperator = computed(() => currentUser.value?.type === 'operator')
+const showValidateButton = computed(() => isOperator.value && allowsTransition('validated'))
 const validating = ref(false)
 
 // Story V1.13 AC#8 (D-1=a, D-5) — gate « Valider » :
@@ -443,7 +448,7 @@ const validateTitle = computed<string>(() => {
 })
 
 async function validateSav(): Promise<void> {
-  if (!canValidate.value || !validateGateAllowsPdf.value || !sav.value) return
+  if (!showValidateButton.value || validateDisabled.value) return
   await transitionStatus('validated', { onLinesBlocked: () => scrollToFirstBlockingAfterRefresh() })
 }
 
@@ -598,39 +603,72 @@ async function cancelSav(): Promise<void> {
 // --- Workflow back-office : émission avoir ---------------------------------
 const showEmitCreditButton = computed<boolean>(
   () =>
+    isOperator.value &&
     (sav.value?.status === 'validated' || sav.value?.status === 'in_progress') &&
     !creditNote.value &&
     !creditNoteDegraded.value
 )
-const emitDialogOpen = ref(false)
+const emitDialogSavId = ref<number | null>(null)
 const emitting = ref(false)
 const emitError = ref<string | null>(null)
 const emitBonType = ref<'AVOIR' | 'VIREMENT BANCAIRE' | 'PAYPAL'>('AVOIR')
 
-function openEmitDialog(): void {
+const emitTrigger = ref<HTMLButtonElement | null>(null)
+const emitDialog = ref<HTMLElement | null>(null)
+const workflowHeading = ref<HTMLElement | null>(null)
+
+watch(savId, () => {
+  emitDialogSavId.value = null
+  emitError.value = null
+}, { flush: 'sync' })
+
+async function openEmitDialog(): Promise<void> {
+  if (!showEmitCreditButton.value || !canValidate.value || emitting.value || sav.value?.id !== savId.value) return
   emitError.value = null
   emitBonType.value = 'AVOIR'
-  emitDialogOpen.value = true
+  emitDialogSavId.value = savId.value
+  await nextTick()
+  emitDialog.value?.querySelector<HTMLElement>('input:checked')?.focus()
+}
+
+function trapEmitFocus(event: KeyboardEvent): void {
+  const first = emitDialog.value?.querySelector<HTMLElement>('input:checked')
+  const last = emitDialog.value?.querySelector<HTMLElement>('[data-testid="sav-emit-confirm"]')
+  if (emitting.value) {
+    event.preventDefault()
+  } else if (event.shiftKey && document.activeElement === first) {
+    event.preventDefault()
+    last?.focus()
+  } else if (!event.shiftKey && document.activeElement === last) {
+    event.preventDefault()
+    first?.focus()
+  }
 }
 
 // CR F-7 : helper pour ESC / backdrop / bouton Annuler. Bloque pendant
 // l'émission pour éviter une fermeture accidentelle pendant le POST.
-function closeEmitDialog(): void {
+async function closeEmitDialog(): Promise<void> {
   if (emitting.value) return
-  emitDialogOpen.value = false
+  emitDialogSavId.value = null
+  await nextTick()
+  emitTrigger.value?.focus()
 }
 
 async function submitEmit(): Promise<void> {
-  if (!sav.value || emitting.value) return
+  const dossierId = emitDialogSavId.value
+  if (dossierId === null || dossierId !== savId.value || dossierId !== sav.value?.id ||
+      !showEmitCreditButton.value || !canValidate.value || emitting.value) return
+  emitDialog.value?.focus()
   emitting.value = true
   emitError.value = null
   try {
-    const res = await fetch(`/api/sav/${sav.value.id}/credit-notes`, {
+    const res = await fetch(`/api/sav/${dossierId}/credit-notes`, {
       method: 'POST',
       credentials: 'include',
       headers: { 'content-type': 'application/json' },
       body: JSON.stringify({ bon_type: emitBonType.value }),
     })
+    if (emitDialogSavId.value !== dossierId) return
     if (!res.ok) {
       const body = (await res.json().catch(() => null)) as {
         error?: {
@@ -639,13 +677,16 @@ async function submitEmit(): Promise<void> {
           details?: { code?: string; number_formatted?: string }
         }
       } | null
+      if (emitDialogSavId.value !== dossierId) return
       const detailsCode = body?.error?.details?.code
       if (detailsCode === 'CREDIT_NOTE_ALREADY_ISSUED') {
         // CR F-4 : refresh d'abord (pour exposer l'avoir existant côté UI),
         // puis fermer la modale et afficher le toast — l'opérateur voit la
         // section « Avoir émis » immédiatement, plus de cycle de re-clic.
         await refresh()
-        emitDialogOpen.value = false
+        if (emitDialogSavId.value !== dossierId) return
+        maybeStartPdfPoll()
+        emitDialogSavId.value = null
         toastMessage.value = `Un avoir a déjà été émis (n°${body?.error?.details?.number_formatted ?? '?'}).`
         return
       }
@@ -660,15 +701,22 @@ async function submitEmit(): Promise<void> {
       emitError.value = body?.error?.message ?? `Échec émission (HTTP ${res.status}).`
       return
     }
-    emitDialogOpen.value = false
+    emitDialogSavId.value = null
     await refresh()
     // spec credit-note-pdf-regenerate-feedback : la génération PDF est async
     // (waitUntil) ; on poll l'état pour éviter le « en cours » figé à l'infini.
-    maybeStartPdfPoll()
+    if (savId.value === dossierId) maybeStartPdfPoll()
   } catch (e) {
+    if (emitDialogSavId.value !== dossierId) return
     emitError.value = e instanceof Error ? e.message : 'Erreur réseau'
   } finally {
     emitting.value = false
+    await nextTick()
+    if (emitDialogSavId.value === dossierId) {
+      emitDialog.value?.querySelector<HTMLElement>('[data-testid="sav-emit-confirm"]')?.focus()
+    } else if (savId.value === dossierId) {
+      workflowHeading.value?.focus()
+    }
   }
 }
 
@@ -702,6 +750,28 @@ let pdfPollToken = 0
 const creditNotePdfPhase = computed<'ready' | 'pending' | 'failed'>(() =>
   creditNote.value?.pdfWebUrl ? 'ready' : pdfPolling.value ? 'pending' : 'failed'
 )
+
+const accountingInstruction = computed(() => {
+  if (!isOperator.value || !(showValidateButton.value || sav.value?.status === 'validated')) return ''
+  if (creditNoteDegraded.value) return 'Rechargez la fiche pour vérifier si un avoir a déjà été émis.'
+  if (creditNote.value && !hasCreditNotePdf.value) {
+    const number = creditNote.value.numberFormatted
+    return creditNotePdfPhase.value === 'pending'
+      ? `Avoir ${number} émis. Le PDF est en préparation.`
+      : `Avoir ${number} émis. Relancez la génération de son PDF.`
+  }
+  if (!showValidateButton.value && !showEmitCreditButton.value) return ''
+  if (!sav.value?.lines.length) return 'Ajoutez une ligne au dossier.'
+  if (!canValidate.value) return 'Corrigez les lignes en erreur.'
+  if (showEmitCreditButton.value) return 'Émettre l’avoir attribue un numéro comptable et lance la préparation du PDF.'
+  if (showValidateButton.value) return 'Le PDF de l’avoir est disponible. Vous pouvez valider le SAV.'
+  return ''
+})
+
+async function reloadAccounting(): Promise<void> {
+  await refresh()
+  maybeStartPdfPoll()
+}
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms))
@@ -739,7 +809,7 @@ function maybeStartPdfPoll(): void {
 //     message « lignes ont changé, rechargez » + refresh.
 async function regeneratePdf(opts: { force?: boolean } = {}): Promise<void> {
   const cn = creditNote.value
-  if (!cn || regenerating.value) return
+  if (!isOperator.value || creditNoteDegraded.value || !cn || regenerating.value) return
   const force = opts.force === true
   regenerating.value = true
   regenerateError.value = null
@@ -1031,7 +1101,7 @@ function backToList(): void {
 }
 
 // --- Story 3.7b — PATTERN-A: useCurrentUser --------------------------------
-const { user: currentUser, loading: currentUserLoading } = useCurrentUser()
+
 
 // --- Story 3.7b — M'assigner -----------------------------------------------
 const assignMeError = ref<string | null>(null)
@@ -1239,11 +1309,17 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
             {{ STATUS_LABEL[sav.status] ?? sav.status }}
           </span>
         </div>
-        <h2 class="action-title">Suite du dossier</h2>
+        <h2 ref="workflowHeading" tabindex="-1" class="action-title">Suite du dossier</h2>
         <p v-if="sav.status === 'closed' || sav.status === 'cancelled'">Ce statut est définitif.</p>
         <template v-else>
-          <p v-if="showValidateButton && validateDisabled" id="validation-help">{{ validateTitle }}</p>
-          <div class="workflow-actions" role="group" aria-label="Actions workflow SAV">
+          <div v-if="identityRetryable" role="status">
+            Les droits de l’opérateur sont momentanément indisponibles.
+            <button type="button" class="workflow-btn" data-testid="retry-identity" @click="retryIdentity">
+              Vérifier à nouveau mes droits
+            </button>
+          </div>
+          <p v-if="accountingInstruction" id="validation-help" role="status">{{ accountingInstruction }}</p>
+          <div v-if="isOperator" class="workflow-actions" role="group" aria-label="Actions workflow SAV">
             <button
               v-if="showReceiveButton"
               type="button"
@@ -1265,6 +1341,23 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
               {{ isTransitioning('in_progress') ? 'Démarrage…' : 'Démarrer le traitement' }}
             </button>
             <button
+              v-if="creditNoteDegraded"
+              data-testid="accounting-reload"
+              type="button"
+              class="workflow-btn workflow-btn--primary"
+              :disabled="loading"
+              @click="reloadAccounting"
+            >
+              Recharger la fiche
+            </button>
+            <a
+              v-else-if="creditNote && !hasCreditNotePdf"
+              class="workflow-btn workflow-btn--primary"
+              href="#credit-note-title"
+            >
+              {{ creditNotePdfPhase === 'pending' ? 'Suivre la génération du PDF' : 'Voir la reprise du PDF' }}
+            </a>
+            <button
               v-if="showValidateButton"
               type="button"
               class="workflow-btn workflow-btn--primary validate-btn"
@@ -1278,6 +1371,7 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
             </button>
             <button
               v-if="showEmitCreditButton"
+              ref="emitTrigger"
               type="button"
               class="workflow-btn workflow-btn--primary"
               :disabled="emitting || !canValidate"
@@ -1877,6 +1971,7 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
                PDF). Confirmation obligatoire (`confirmFn`). -->
           <button
             type="button"
+            v-if="isOperator && !creditNoteDegraded"
             class="credit-note-force-regenerate-btn"
             :disabled="regenerating"
             data-testid="credit-note-force-regenerate-btn"
@@ -1906,6 +2001,7 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
           </p>
           <button
             type="button"
+            v-if="isOperator && !creditNoteDegraded"
             class="credit-note-regenerate-btn"
             :disabled="regenerating"
             data-testid="credit-note-regenerate-btn"
@@ -1920,11 +2016,14 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
            fermer (cohérent contract `aria-modal=true`). Le clic sur la modale
            elle-même ne propage pas (`@click.stop`). -->
       <div
-        v-if="emitDialogOpen"
+        v-if="emitDialogSavId === savId && isOperator"
+        ref="emitDialog"
         class="modal-backdrop"
         role="dialog"
         aria-modal="true"
         aria-labelledby="emit-dialog-title"
+        aria-describedby="emit-consequence"
+        @keydown.tab="trapEmitFocus"
         data-testid="sav-emit-dialog"
         tabindex="-1"
         @click.self="closeEmitDialog"
@@ -1932,14 +2031,15 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
       >
         <div class="modal" @click.stop>
           <h2 id="emit-dialog-title">Émettre l’avoir</h2>
-          <p class="modal-info">
-            Numéro d’avoir attribué automatiquement. Le PDF sera généré en arrière-plan.
+          <p id="emit-consequence" class="modal-info">
+            La confirmation émet un avoir numéroté pour ce dossier. Son PDF sera généré en arrière-plan.
           </p>
           <fieldset class="emit-bon-type" :disabled="emitting">
             <legend>Type de bon</legend>
             <label
               ><input
                 v-model="emitBonType"
+                name="emit-bon-type"
                 type="radio"
                 value="AVOIR"
                 data-testid="emit-bon-type-AVOIR"
@@ -1949,6 +2049,7 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
             <label
               ><input
                 v-model="emitBonType"
+                name="emit-bon-type"
                 type="radio"
                 value="VIREMENT BANCAIRE"
                 data-testid="emit-bon-type-VIREMENT"
@@ -1958,6 +2059,7 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
             <label
               ><input
                 v-model="emitBonType"
+                name="emit-bon-type"
                 type="radio"
                 value="PAYPAL"
                 data-testid="emit-bon-type-PAYPAL"
@@ -1974,12 +2076,12 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
             </button>
             <button
               type="button"
-              class="btn-primary"
+              class="workflow-btn workflow-btn--primary"
               :disabled="emitting"
               data-testid="sav-emit-confirm"
               @click="submitEmit"
             >
-              {{ emitting ? 'Émission…' : 'Émettre' }}
+              {{ emitting ? 'Émission…' : 'Confirmer l’émission' }}
             </button>
           </div>
         </div>
@@ -2807,7 +2909,10 @@ a:focus-visible {
   background: white;
   border-radius: 8px;
   padding: 1.5rem;
+  box-sizing: border-box;
   width: min(420px, 95vw);
+  max-height: 95dvh;
+  overflow-y: auto;
   box-shadow: 0 10px 25px rgba(0, 0, 0, 0.2);
 }
 .modal h2 {

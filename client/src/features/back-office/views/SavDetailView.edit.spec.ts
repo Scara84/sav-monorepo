@@ -52,6 +52,9 @@ function makeFetchController(detailPayload: unknown) {
         json: () => Promise.resolve(match.response.body),
       } as unknown as Response)
     }
+    if (url === '/api/auth/me') {
+      return Promise.resolve(new Response(JSON.stringify({ user: { sub: 42, type: 'operator' } })))
+    }
     // default : GET detail
     if (method === 'GET') {
       return Promise.resolve({
