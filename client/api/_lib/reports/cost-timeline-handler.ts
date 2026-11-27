@@ -10,7 +10,9 @@ import type { ApiHandler } from '../types'
  *
  * Coût SAV agrégé mensuel + comparatif N-1 (FR52). Utilise la RPC
  * `report_cost_timeline_with_presence` (migration 20261126120000) qui fait le gap-fill
- * via generate_series + LEFT JOIN current/previous CTE — 1 round-trip.
+ * via generate_series + LEFT JOIN current/previous CTE en un appel.
+ * Si elle manque, la RPC historique fournit les totaux et les mois à zéro
+ * sont vérifiés sur l’index de date des avoirs.
  *
  * Query params :
  *   - granularity : 'month' (V1, seul supporté). Validé côté Zod enum
@@ -20,7 +22,7 @@ import type { ApiHandler } from '../types'
  *     max (mémoire générée par cost-timeline + N-1 = 72 mois total).
  *
  * Réponse :
- *   { granularity, periods: [ { period, total_cents, n1_total_cents } ] }
+ *   { granularity, periods: [ { period, total_cents, n1_total_cents, has_data, n1_has_data } ] }
  *
  * Erreurs :
  *   - 400 INVALID_PARAMS (Zod) | PERIOD_INVALID (from > to) | PERIOD_TOO_LARGE (>36m)
@@ -29,6 +31,7 @@ import type { ApiHandler } from '../types'
 
 const YYYY_MM_RE = /^\d{4}-\d{2}$/
 const MAX_RANGE_MONTHS = 36
+const PRESENCE_BATCH_SIZE = 4
 
 // P9 : V1 ne livre que 'month'. On accepte uniquement 'month' au niveau
 // Zod (un client qui passe 'year' reçoit INVALID_PARAMS, cohérent avec
@@ -42,12 +45,15 @@ const querySchema = z.object({
 
 type Query = z.infer<typeof querySchema>
 
-interface RpcRow {
+interface HistoricalRow {
   period: string
-  has_data: boolean
-  n1_has_data: boolean
   total_cents: number | string
   n1_total_cents: number | string
+}
+
+interface RpcRow extends HistoricalRow {
+  has_data: boolean
+  n1_has_data: boolean
 }
 
 export interface CostTimelinePeriod {
@@ -83,6 +89,63 @@ function toBigintNumber(v: number | string): number {
   // Sur des montants TTC en cents, on reste largement sous 2^53 (estimation
   // 10^15 cents = 10 milliards d'euros) — coercion safe en V1.
   return typeof v === 'number' ? v : Number(v)
+}
+
+function monthStart(period: string, offset: number): Date {
+  const start = new Date(`${period}-01T00:00:00.000Z`)
+  start.setUTCMonth(start.getUTCMonth() + offset)
+  return start
+}
+
+async function historicalTimeline(
+  admin: ReturnType<typeof supabaseAdmin>,
+  args: { p_from: string; p_to: string }
+): Promise<RpcRow[]> {
+  async function readTotals(): Promise<HistoricalRow[]> {
+    const { data, error } = await admin.rpc('report_cost_timeline', args)
+    if (error) throw new Error(error.message)
+    return data as HistoricalRow[]
+  }
+
+  let rows = await readTotals()
+  const presence = new Map<string, boolean>()
+  for (const row of rows) {
+    const previous = monthStart(row.period, -12).toISOString().slice(0, 7)
+    // Un montant non nul prouve la présence, même si ce mois apparaît aussi en N-1.
+    for (const [month, cents] of [
+      [row.period, row.total_cents],
+      [previous, row.n1_total_cents],
+    ] as const) {
+      presence.set(month, presence.get(month) === true || toBigintNumber(cents) !== 0)
+    }
+  }
+
+  const ambiguous = [...presence].filter(([, present]) => !present).map(([month]) => month)
+  const countedMonths = new Set<string>()
+  for (let i = 0; i < ambiguous.length; i += PRESENCE_BATCH_SIZE) {
+    await Promise.all(
+      ambiguous.slice(i, i + PRESENCE_BATCH_SIZE).map(async (month) => {
+        const { count, error } = await admin
+          .from('credit_notes')
+          .select('issued_at', { head: true, count: 'exact' })
+          .gte('issued_at', monthStart(month, 0).toISOString())
+          .lt('issued_at', monthStart(month, 1).toISOString())
+          .limit(1)
+        if (error || count === null) throw new Error(error?.message ?? 'Décompte des avoirs absent')
+        if (count > 0) countedMonths.add(month)
+      })
+    )
+  }
+
+  // Un premier avoir peut être émis entre l’agrégat et le décompte positif.
+  if (countedMonths.size > 0) rows = await readTotals()
+  return rows.map((row) => ({
+    ...row,
+    has_data: toBigintNumber(row.total_cents) !== 0 || countedMonths.has(row.period),
+    n1_has_data:
+      toBigintNumber(row.n1_total_cents) !== 0 ||
+      countedMonths.has(monthStart(row.period, -12).toISOString().slice(0, 7)),
+  }))
 }
 
 export const costTimelineHandler: ApiHandler = async (req, res) => {
@@ -134,24 +197,10 @@ export const costTimelineHandler: ApiHandler = async (req, res) => {
 
   try {
     const admin = supabaseAdmin()
-    const { data, error } = await admin.rpc('report_cost_timeline_with_presence', {
-      p_from: fromDate,
-      p_to: toDate,
-    })
-    if (error) {
-      logger.error('report.cost_timeline.failed', {
-        requestId,
-        message: error.message,
-        params: { from: q.from, to: q.to },
-        durationMs: Date.now() - startedAt,
-      })
-      sendError(res, 'SERVER_ERROR', 'Lecture timeline coût échouée', requestId, {
-        code: 'QUERY_FAILED',
-      })
-      return
-    }
-
-    const rows = (data ?? []) as RpcRow[]
+    const args = { p_from: fromDate, p_to: toDate }
+    const { data, error } = await admin.rpc('report_cost_timeline_with_presence', args)
+    if (error && error.code !== 'PGRST202') throw new Error(error.message)
+    const rows = error ? await historicalTimeline(admin, args) : ((data ?? []) as RpcRow[])
     const periods: CostTimelinePeriod[] = rows.map((r) => ({
       period: r.period,
       has_data: r.has_data,
@@ -175,11 +224,15 @@ export const costTimelineHandler: ApiHandler = async (req, res) => {
 
     res.status(200).json({ data: payload })
   } catch (err) {
-    logger.error('report.cost_timeline.exception', {
+    logger.error('report.cost_timeline.failed', {
+      params: { from: q.from, to: q.to },
+      durationMs: Date.now() - startedAt,
       requestId,
       error: err instanceof Error ? err.message : String(err),
     })
-    sendError(res, 'SERVER_ERROR', 'Erreur interne', requestId, { code: 'QUERY_FAILED' })
+    sendError(res, 'SERVER_ERROR', 'Lecture timeline coût échouée', requestId, {
+      code: 'QUERY_FAILED',
+    })
   }
 }
 
