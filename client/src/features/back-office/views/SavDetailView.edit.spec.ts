@@ -288,14 +288,27 @@ describe('SavDetailView — édition inline lignes (Story 3.6b)', () => {
     expect(patchCall).toBeFalsy()
   })
 
+  it('signale une unité facturée absente même si la demande précise une unité', async () => {
+    makeFetchController(buildPayload({ lines: [line({ qtyInvoiced: 6, unitInvoiced: null, unitRequested: 'piece' })] }))
+    const w = await mountDetail()
+    await flushPromises()
+    expect(w.get('.sav-line-invoiced').text()).toMatch(/Facturé\s*6 · unité à préciser/)
+  })
+
   it('relit les quantités et l’avoir TTC après correction sur deux taux de TVA', async () => {
-    const first = line({ qtyRequested: 4, unitRequested: 'piece', qtyArbitrated: 2, unitArbitrated: null, creditAmountCents: 474 })
+    const first = line({
+      productNameSnapshot: 'Carottes', qtyRequested: 4, unitRequested: 'piece', qtyInvoiced: 6,
+      qtyArbitrated: 2, unitArbitrated: null, unitPriceTtcCents: 1055, creditAmountCents: 2000,
+    })
     const second = line({ id: 101, qtyArbitrated: 1, unitArbitrated: 'kg', unitPriceTtcCents: 1200, vatRateBpSnapshot: 2000, creditAmountCents: 1000 })
     const ctrl = makeFetchController(buildPayload({ lines: [first, second] }))
     const w = await mountDetail()
     await flushPromises()
     expect(w.get('[data-testid="sav-line-100-arbitration-row"]').text()).toContain('2 kg')
-    expect(w.get('[data-testid="preview-ttc"]').text()).toMatch(/17,00\s*€/)
+    expect(w.get('.sav-line-request').text()).toMatch(/Demandé\s*4 pièces/)
+    expect(w.get('.sav-line-invoiced').text()).toMatch(/Facturé\s*6 kg/)
+    expect(w.get('.line-credit').text()).toMatch(/21,10\s*€/)
+    expect(w.get('[data-testid="preview-ttc"]').text()).toMatch(/33,10\s*€/)
 
     await w.get('#edit-line-100').trigger('click')
     expect(w.get<HTMLInputElement>('#edit-qty-requested-100').element.value).toBe('4')
@@ -307,24 +320,28 @@ describe('SavDetailView — édition inline lignes (Story 3.6b)', () => {
       status: 200, body: { data: { version: 2 } },
     })
     ctrl.onceFor((url, m) => m === 'GET' && url === '/api/sav/1', {
-      status: 200, body: buildPayload({ version: 2, lines: [{ ...first, qtyArbitrated: 3, creditAmountCents: 711 }, second] }),
+      status: 200, body: buildPayload({ version: 2, lines: [{ ...first, qtyArbitrated: 3, creditAmountCents: 3000 }, second] }),
     })
     await w.get('#edit-qty-arbitrated-100').setValue('3')
+    expect(w.get('.line-credit').text()).toMatch(/Avoir TTC enregistré\s*21,10\s*€/)
     await w.get('[data-testid="save-line-100"]').trigger('click')
     await flushPromises()
     expect(ctrl.calls.find(c => c.method === 'PATCH')?.body).toEqual({ qtyArbitrated: 3, unitArbitrated: 'kg', version: 1 })
-    expect(w.get('[data-testid="sav-line-100-request-row"]').text()).toContain('4 piece')
+    expect(w.get('[data-testid="sav-line-100-request-row"]').text()).toContain('4 pièces')
     expect(w.get('[data-testid="sav-line-100-arbitration-row"]').text()).toContain('3 kg')
-    expect(w.get('[data-testid="sav-line-100-arbitration-row"]').text()).toMatch(/7,50\s*€/)
-    expect(w.get('[data-testid="preview-ht"]').text()).toMatch(/17,11\s*€/)
-    expect(w.get('[data-testid="preview-vat"]').text()).toMatch(/2,39\s*€/)
-    expect(w.get('[data-testid="preview-ttc"]').text()).toMatch(/19,50\s*€/)
+    expect(w.get('[data-testid="sav-line-100-arbitration-row"]').text()).toMatch(/31,65\s*€/)
+    expect(w.get('[data-testid="preview-ht"]').text()).toMatch(/40,00\s*€/)
+    expect(w.get('[data-testid="preview-vat"]').text()).toMatch(/3,65\s*€/)
+    expect(w.get('[data-testid="preview-ttc"]').text()).toMatch(/43,65\s*€/)
 
     await w.get('#edit-line-100').trigger('click')
+    expect(w.get<HTMLInputElement>('#edit-qty-requested-100').element.value).toBe('4')
+    expect(w.get<HTMLInputElement>('#edit-qty-arbitrated-100').element.value).toBe('3')
+    expect(w.get('.sav-line-invoiced').text()).toMatch(/Facturé\s*6 kg/)
     await w.get('#edit-qty-arbitrated-100').setValue('9')
     await w.get('#edit-qty-arbitrated-100').trigger('keydown', { key: 'Escape' })
     expect(w.get('[data-testid="sav-line-100-arbitration-row"]').text()).toContain('3 kg')
-    expect(w.get('[data-testid="preview-ttc"]').text()).toMatch(/19,50\s*€/)
+    expect(w.get('[data-testid="preview-ttc"]').text()).toMatch(/43,65\s*€/)
     expect(ctrl.calls.filter(c => c.method === 'PATCH')).toHaveLength(1)
   })
 

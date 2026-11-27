@@ -281,7 +281,7 @@ async function saveEditLine(l: SavDetailLine, event: Event): Promise<void> {
       field: invalid.id,
       message: requested
         ? 'Saisissez une quantité demandée de 0,001 à 99 999, avec trois décimales maximum.'
-        : 'Saisissez une quantité arbitrée de 0 à 99 999, avec trois décimales maximum, ou laissez le champ vide.',
+        : 'Saisissez une quantité retenue de 0 à 99 999, avec trois décimales maximum, ou laissez le champ vide.',
     }
     invalid.focus()
     return
@@ -296,7 +296,7 @@ async function saveEditLine(l: SavDetailLine, event: Event): Promise<void> {
   const unit = draft.unitArbitrated || (quantity !== null ? l.unitInvoiced : null)
   if (quantity !== null && !unit) {
     const field = `edit-unit-arbitrated-${l.id}`
-    lineError.value = { id: l.id, field, message: 'Choisissez une unité pour la quantité arbitrée.' }
+    lineError.value = { id: l.id, field, message: 'Choisissez une unité pour la quantité retenue.' }
     focusLineControl(l.id, 'edit-unit-arbitrated')
     return
   }
@@ -970,6 +970,14 @@ function imgSrc(file: { id: number; webUrl: string }): string {
   return `${proxyUrl}?_r=${key}`
 }
 
+function formatLineQuantity(quantity: number | null, unit: string | null): string {
+  if (quantity == null) return '—'
+  const plural = quantity >= 2 ? 's' : ''
+  const labels: Record<string, string> = { piece: `pièce${plural}`, liter: `litre${plural}` }
+  const label = unit ? (labels[unit] ?? unit) : '· unité à préciser'
+  return `${quantity.toLocaleString('fr-FR')} ${label}`
+}
+
 function formatEur(cents: number | null | undefined): string {
   if (cents === null || cents === undefined) return '—'
   return (cents / 100).toLocaleString('fr-FR', { style: 'currency', currency: 'EUR' })
@@ -1520,17 +1528,13 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
               <th scope="col">#</th>
               <th scope="col">Code</th>
               <th scope="col">Produit</th>
-              <th scope="col">Qté demandée</th>
-              <th scope="col">Qté facturée</th>
+              <th scope="col">Quantité</th>
+              <th scope="col">Avoir TTC</th>
               <th scope="col">PU TTC</th>
               <!-- Story 4.8 — colonnes prix fournisseur + marge -->
               <th scope="col">PU achat HT</th>
               <th scope="col">Marge unit. HT</th>
               <th scope="col">Coef.</th>
-              <!-- V1.11 AC#5 — Avoir affiché en TTC (cohérent PDF avoir).
-                   Helper `creditTtcCentsLine` (mirror du helper PDF, dette
-                   tracée CR 8.7 : factorisation V2 si réutilisé ailleurs). -->
-              <th scope="col">Avoir TTC</th>
               <th scope="col">Validation</th>
               <th scope="col">Actions</th>
             </tr>
@@ -1562,7 +1566,7 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
                   v-if="lineEdit.editingLineId.value === l.id && editDraft[l.id]"
                   class="cell-pair"
                 >
-                  <label :for="`edit-qty-requested-${l.id}`" class="quantity-label">Quantité demandée</label>
+                  <label :for="`edit-qty-requested-${l.id}`" class="quantity-label">Demandé</label>
                   <input
                     :id="`edit-qty-requested-${l.id}`"
                     data-quantity="requested"
@@ -1574,7 +1578,7 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
                     min="0.001"
                     max="99999"
                     step="0.001"
-                    :aria-label="`Quantité demandée, ligne ${l.lineNumber ?? l.position}`"
+                    :aria-label="`Demandé, quantité, ligne ${l.lineNumber ?? l.position}`"
                     class="cell-input"
                     :data-testid="`edit-qty-requested-${l.id}`"
                     @keydown.enter.prevent="saveEditLine(l, $event)"
@@ -1591,12 +1595,12 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
                     <option value="liter">litre</option>
                   </select>
                 </span>
-                <span v-else><span class="mobile-line-label">Quantité demandée</span>{{ l.qtyRequested }} {{ l.unitRequested }}</span>
+                <span v-else><span class="quantity-label">Demandé</span> {{ formatLineQuantity(l.qtyRequested, l.unitRequested) }}</span>
               </td>
-              <!-- V1.9-B — colspan=8 : colonnes 5-12 — motif demande adhérent (requestReason) + commentaire.
+              <!-- V1.9-B — colspan=7 : colonnes 5-11 — motif demande adhérent (requestReason) + commentaire.
                    reason-pill (badge ambre) si requestReason set, sinon fallback stub italic gris.
                    requestComment affiché si set. (AC#3.2, AC#3.3) -->
-              <td colspan="8" class="line-request-context">
+              <td colspan="7" class="line-request-context">
                 <template v-if="l.requestReason || l.requestComment">
                   <span v-if="l.requestReason" class="reason-pill">{{ l.requestReason }}</span>
                   <span v-if="l.requestComment" class="comment-text">{{ l.requestComment }}</span>
@@ -1607,24 +1611,19 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
             <!-- Row 2 — Facturé read-only (voix Pennylane, fond subtle gris italique) V1.9-B NEW
                  V1.9-B.2 : PU TTC facture exposé colonne 6 (séparé de Row 3 arbitrage) -->
             <tr class="sav-line-invoiced" :data-testid="`sav-line-${l.id}-invoiced-row`">
-              <!-- Colonnes 1-4 vides (alignement avec Row 1) -->
               <td></td>
               <td></td>
               <td></td>
-              <td></td>
-              <!-- Qté facturée (colonne 5) — 100% read-only D-3 (jamais d'input, même en édition) -->
-              <td data-label="Quantité facturée">
-                <span>
-                  {{ l.qtyInvoiced ?? '—' }}
-                  {{ l.qtyInvoiced !== null ? (l.unitInvoiced ?? l.unitRequested) : '' }}
-                </span>
+              <td>
+                <span class="quantity-label">Facturé</span>
+                {{ formatLineQuantity(l.qtyInvoiced, l.unitInvoiced) }}
               </td>
+              <td></td>
               <!-- PU TTC facture (colonne 6) — V1.9-B.2 read-only Pennylane -->
               <td data-label="PU TTC facturé">
                 <span>{{ formatEur(l.unitPriceTtcCents) }}</span>
               </td>
-              <!-- Colonnes 7-12 vides (alignement) -->
-              <td></td>
+              <!-- Colonnes restantes -->
               <td></td>
               <td></td>
               <td></td>
@@ -1633,18 +1632,15 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
             </tr>
             <!-- Row 3 — Arbitrage opérateur (fond blanc, font-weight 500) — RENOMMÉ from sav-line-validation -->
             <tr class="sav-line-arbitration" :data-testid="`sav-line-${l.id}-arbitration-row`">
-              <!-- Colonnes 1-4 vides (alignement avec Row 1 et Row 2) -->
               <td></td>
               <td></td>
               <td></td>
-              <td></td>
-              <!-- Qté arbitrée (colonne 5) — éditable en mode édition (AC#4.3) -->
               <td>
                 <span
                   v-if="lineEdit.editingLineId.value === l.id && editDraft[l.id]"
                   class="cell-pair"
                 >
-                  <label :for="`edit-qty-arbitrated-${l.id}`" class="quantity-label">Quantité arbitrée</label>
+                  <label :for="`edit-qty-arbitrated-${l.id}`" class="quantity-label">Retenu</label>
                   <input
                     :id="`edit-qty-arbitrated-${l.id}`"
                     data-quantity="arbitrated"
@@ -1656,7 +1652,7 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
                     max="99999"
                     step="0.001"
                     placeholder="—"
-                    :aria-label="`Quantité arbitrée, ligne ${l.lineNumber ?? l.position}`"
+                    :aria-label="`Retenu, quantité, ligne ${l.lineNumber ?? l.position}`"
                     class="cell-input"
                     :data-testid="`edit-qty-arbitrated-${l.id}`"
                     @keydown.enter.prevent="saveEditLine(l, $event)"
@@ -1668,7 +1664,7 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
                     :aria-describedby="lineError?.field === `edit-unit-arbitrated-${l.id}` ? `line-error-${l.id}` : undefined"
                     v-model="editDraft[l.id]!.unitArbitrated"
                     class="cell-select"
-                    :aria-label="`Unité arbitrée, ligne ${l.lineNumber ?? l.position}`"
+                    :aria-label="`Unité retenue, ligne ${l.lineNumber ?? l.position}`"
                     :data-testid="`edit-unit-arbitrated-${l.id}`"
                   >
                     <option v-if="!l.unitInvoiced" value="">—</option>
@@ -1678,12 +1674,13 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
                   </select>
                 </span>
                 <span v-else>
-                  <span class="mobile-line-label">Quantité arbitrée</span>
-                  <span v-if="l.qtyArbitrated !== null" style="font-weight: 500">
-                    {{ l.qtyArbitrated }} {{ l.unitArbitrated ?? l.unitInvoiced ?? '· unité à préciser' }}
-                  </span>
-                  <span v-else style="font-style: italic; color: #6b7280">—</span>
+                  <span class="quantity-label">Retenu</span>
+                  {{ formatLineQuantity(l.qtyArbitrated, l.unitArbitrated ?? l.unitInvoiced) }}
                 </span>
+              </td>
+              <td class="line-credit">
+                <span class="quantity-label">Avoir TTC<span v-if="lineEdit.editingLineId.value === l.id"> enregistré</span></span>
+                {{ formatEur(creditTtcCentsLine(l)) }}
               </td>
               <!-- PU TTC arbitré (colonne 6) — V1.9-B.2 override opérateur
                    Affichage non-édition : override si set, sinon vide (la facture est Row 2) -->
@@ -1758,12 +1755,7 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
                   }}
                 </span>
               </td>
-              <!-- Avoir TTC (colonne 10) V1.11 AC#5
-                   Affiche TTC = round(HT × (1 + bp/10000)) half-up.
-                   `—` si creditAmountCents ou vatRateBpSnapshot null
-                   (pattern ghost line aligné avec PDF AC#2). -->
-              <td data-label="Avoir TTC">{{ formatEur(creditTtcCentsLine(l)) }}</td>
-              <!-- Validation (colonne 11) -->
+              <!-- Validation -->
               <td>
                 <span
                   :class="[
@@ -1775,7 +1767,7 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
                   {{ l.validationStatus }}
                 </span>
               </td>
-              <!-- Actions (colonne 12) -->
+              <!-- Actions -->
               <td class="actions-cell">
                 <span v-if="lineEdit.editingLineId.value === l.id" class="actions-pair">
                   <button
@@ -1820,7 +1812,7 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
               </td>
             </tr>
             <tr v-if="lineError?.id === l.id">
-              <td colspan="12">
+              <td colspan="11">
                 <p :id="`line-error-${l.id}`" class="line-edit-error" role="alert">{{ lineError.message }}</p>
               </td>
             </tr>
@@ -1834,7 +1826,7 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
               "
               class="edit-extra-row"
             >
-              <td colspan="12">
+              <td colspan="11">
                 <label class="extra-label">
                   Poids unité (g)
                   <input
@@ -1856,7 +1848,7 @@ function onTagsUpdated(newTags: string[], newVersion: number): void {
           <!-- Empty state — wrap dans <tbody> séparé pour cohérence HTML5 multi-tbody -->
           <tbody v-if="sav.lines.length === 0" class="sav-line-empty">
             <tr>
-              <td colspan="12" class="empty">Aucune ligne sur ce SAV.</td>
+              <td colspan="11" class="empty">Aucune ligne sur ce SAV.</td>
             </tr>
           </tbody>
         </table>
@@ -2448,7 +2440,7 @@ a:focus-visible {
 }
 .lines-table th:nth-child(5),
 .lines-table td:nth-child(5) {
-  min-width: 145px; /* Qté facturée + select unité */
+  min-width: 95px; /* Avoir TTC */
 }
 .lines-table th:nth-child(6),
 .lines-table td:nth-child(6) {
@@ -2958,7 +2950,7 @@ a:focus-visible {
   justify-content: flex-end;
   gap: 0.5rem;
 }
-.mobile-line-label { display: none; }
+.line-credit { font-variant-numeric: tabular-nums; }
 @media (max-width: 600px) {
   .lines-table, .lines-table tbody { display: block; }
   .lines-table thead { position: absolute; clip-path: inset(50%); width: 1px; height: 1px; overflow: hidden; }
@@ -2966,8 +2958,8 @@ a:focus-visible {
   .lines-table tr td { min-width: 0; overflow-wrap: anywhere; }
   .lines-table td:empty { display: none; }
   .lines-table td[colspan], .lines-table .actions-cell, .sav-line-request td:nth-child(3),
-  .sav-line-request td:nth-child(4), .sav-line-arbitration td:nth-child(5) { grid-column: 1 / -1; }
-  .mobile-line-label, .lines-table [data-label]::before {
+  .sav-line-request td:nth-child(4), .sav-line-arbitration td:nth-child(4) { grid-column: 1 / -1; }
+  .lines-table [data-label]::before {
     display: block;
     font-size: .75rem;
     font-style: normal;
@@ -3002,6 +2994,7 @@ a:focus-visible {
   flex-wrap: wrap;
 }
 .quantity-label {
+  display: block;
   grid-column: 1 / -1;
   font-style: normal;
   white-space: normal;
@@ -3089,7 +3082,7 @@ tbody.sav-line-group:nth-of-type(even) tr.sav-line-arbitration td {
 tbody.sav-line-group[data-blocking='true'] > tr > td:first-child {
   box-shadow: inset 4px 0 0 var(--c-error, #dc2626);
 }
-/* Libellé contextuel Row 1 colspan=8 : italic muted */
+/* Libellé contextuel Row 1 colspan=7 : italic muted */
 .line-request-context {
   font-style: italic;
   color: #9ca3af;
