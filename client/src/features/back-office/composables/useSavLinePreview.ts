@@ -3,8 +3,8 @@ import {
   computeSavLineCredit,
   type SavLineComputed,
   type SavLineInput,
-} from '../../../../api/_lib/business/creditCalculation'
-import { computeCreditNoteTotals } from '../../../../api/_lib/business/vatRemise'
+} from '../../../shared/business/creditCalculation'
+import { computeCreditNoteTotals } from '../../../shared/business/vatRemise'
 
 /**
  * Story 4.3 — Preview live d'un avoir SAV dans la vue détail.

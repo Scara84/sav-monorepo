@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, reactive, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { isTransitionAllowed, type SavStatus } from '../../../../api/_lib/business/sav-status-machine'
+import { isTransitionAllowed, type SavStatus } from '../../../shared/business/sav-status-machine'
 import { useSavDetail, type SavDetailLine, type SavDetailComment } from '../composables/useSavDetail'
 import { useSavLinePreview } from '../composables/useSavLinePreview'
 import { useSavLineEdit } from '../composables/useSavLineEdit'
@@ -10,7 +10,7 @@ import ImportSupplierPricesDialog from '../components/ImportSupplierPricesDialog
 import SavTagsBar from '../components/SavTagsBar.vue'
 import DuplicateButton from '../components/DuplicateButton.vue'
 import OperatorFileUploader from '../components/OperatorFileUploader.vue'
-import type { SavLineInput, Unit } from '../../../../api/_lib/business/creditCalculation'
+import type { SavLineInput, Unit } from '../../../shared/business/creditCalculation'
 import { formatDiff } from '../utils/format-audit-diff'
 import { isOneDriveWebUrlTrusted } from '../../../shared/utils/onedrive-whitelist'
 import { useCurrentUser } from '../../../shared/composables/useCurrentUser'

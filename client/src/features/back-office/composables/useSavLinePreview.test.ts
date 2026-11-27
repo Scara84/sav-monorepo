@@ -2,7 +2,7 @@ import { describe, it, expect, vi, afterEach } from 'vitest'
 import { ref } from 'vue'
 import fixtureJson from '../../../../tests/fixtures/excel-calculations.json'
 import { useSavLinePreview } from './useSavLinePreview'
-import type { SavLineInput } from '../../../../api/_lib/business/creditCalculation'
+import type { SavLineInput } from '../../../shared/business/creditCalculation'
 
 /**
  * Story 4.3 — tests unitaires composable `useSavLinePreview`.
