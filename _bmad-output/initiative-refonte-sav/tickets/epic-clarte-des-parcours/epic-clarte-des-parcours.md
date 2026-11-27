@@ -37,7 +37,7 @@ Présentation et commandes existantes. Les permissions, calculs, transitions mé
 
 Revue UX de la branche du 27 novembre 2026, dans le navigateur intégré, sur données fictives. Vérifications directes de l’accueil, de la facture à la confirmation, de la fiche opérateur en édition et du tableau de bord. Pour le lot 1, partir de `client/src/features/back-office/views/SavDetailView.vue` et de sa suite `SavDetailView.validate-gate.spec.ts`.
 
-Point à vérifier au développement du critère 4 : déterminer depuis la confirmation si un accès membre valide au dossier existe et quel canal de réponse est garanti avant de rédiger le texte de repli.
+Le service confirme l’enregistrement pour traitement. Le courriel est envoyé au mieux. Le suivi direct nécessite la lecture autorisée du dossier par le service membre. [Preuves et décision du critère 4](tickets/story-retrouver-la-suite-donnee-a-une-demande-recue-plan.md).
 
 Decision: 2026-11-27 — Fiche opérateur en premier, ordre validé. La story 8.1 démontre le passage de la consigne à la confirmation comptable sur un dossier fictif. La story 8.2 complète la recette sur cette même fiche. Les entrées suivantes suivent la priorité produit.
 

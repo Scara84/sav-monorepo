@@ -60,10 +60,10 @@ export default {
     }
   },
   methods: {
-    handleSavSubmission(reference) {
+    handleSavSubmission({ savId, reference }) {
       this.$router.push({
         name: 'SavConfirmation',
-        state: { savReceived: true, savReference: reference || null },
+        state: { savReceived: true, savId, savReference: reference || null },
       })
     },
     confirmSavLeave() {

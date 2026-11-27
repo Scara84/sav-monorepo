@@ -17,6 +17,17 @@ describe('InvoiceDetails navigation guards', () => {
     }
   )
 
+  it('transmet l’identifiant et la référence reçus à la confirmation', () => {
+    const push = vi.fn()
+    InvoiceDetails.methods.handleSavSubmission.call({ $router: { push } }, {
+      savId: 84, reference: 'SAV-TEST-84',
+    })
+    expect(push).toHaveBeenCalledWith({
+      name: 'SavConfirmation',
+      state: { savReceived: true, savId: 84, savReference: 'SAV-TEST-84' },
+    })
+  })
+
   it('autorise la navigation si le composant SAV n’est pas monté', () => {
     expect(InvoiceDetails.methods.confirmSavLeave.call({ $refs: {} })).toBe(true)
   })

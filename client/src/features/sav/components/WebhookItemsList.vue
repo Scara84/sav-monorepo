@@ -844,7 +844,7 @@ export default {
         // Succès
         submissionSucceeded.value = true
         uploadStatus.value = 'success'
-        emit('sav-submitted', receipt?.data?.reference)
+        emit('sav-submitted', receipt.data)
       } catch (error) {
         uploadStatus.value = 'error'
         uploadErrorMessage.value = error.response?.status

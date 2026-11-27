@@ -284,7 +284,7 @@ describe('WebhookItemsList.vue — H-05 Upload OneDrive flow (AC#1 / AC#2 / AC#3
     expect(wrapper.emitted('sav-submitted')).toBeUndefined()
     succeed({ data: { savId: 13, reference: 'SAV-TEST' } })
     await flushPromises()
-    expect(wrapper.emitted('sav-submitted')).toEqual([['SAV-TEST']])
+    expect(wrapper.emitted('sav-submitted')).toEqual([[{ savId: 13, reference: 'SAV-TEST' }]])
   })
 
   it('isole le dossier partagé si une photo téléversée est retirée après échec', async () => {
