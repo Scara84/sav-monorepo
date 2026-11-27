@@ -2,7 +2,7 @@
  * Story V1.1 — AC #2 ATDD RED-PHASE
  *
  * Tests covering the spinbutton fix on CatalogAdminView.vue Tier 1 input:
- *   - AC #2(a) : input has max="99999999" step="1" inputmode="numeric"
+ *   - AC #2(a) : input has max="10000000" step="1" inputmode="numeric"
  *                data-test="product-create-tier1" placeholder="ex: 350"
  *   - AC #2(b) : value 1500 is preserved; payload tier_prices[0].price_ht_cents === 1500
  *
@@ -65,9 +65,9 @@ describe('CatalogAdminView.vue — V1.1 AC #2 Tier 1 spinbutton fix (RED before 
       expect(input.exists()).toBe(true)
     })
 
-    it('tier1 input has max="99999999"', () => {
+    it('tier1 input has max="10000000"', () => {
       const input = wrapper.find('[data-test="product-create-tier1"]')
-      expect(input.attributes('max')).toBe('99999999')
+      expect(input.attributes('max')).toBe('10000000')
     })
 
     it('tier1 input has step="1"', () => {
@@ -100,7 +100,7 @@ describe('CatalogAdminView.vue — V1.1 AC #2 Tier 1 spinbutton fix (RED before 
       await tier1Input.setValue('1500')
 
       // Submit the form
-      await wrapper.find('[data-test="product-create-submit"]').trigger('click')
+      await wrapper.get('form.create-form').trigger('submit')
       await wrapper.vm.$nextTick()
 
       expect(mockCreate).toHaveBeenCalledOnce()

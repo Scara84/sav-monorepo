@@ -100,17 +100,37 @@ describe('useAdminCrud<T> (composable générique D-11)', () => {
     const latest = crud.list({ q: 'alice' })
 
     pending[1]!.reject(new Error('Ancienne recherche déconnectée'))
-    await second
+    expect(await second).toBe(false)
     expect(crud.loading.value).toBe(true)
     pending[3]!.resolve(jsonResponse(200, { data: { items: ['Alice'], total: 1 } }))
-    await latest
+    expect(await latest).toBe(true)
     pending[0]!.resolve(jsonResponse(200, { data: { items: ['Ancien'], total: 2 } }))
     pending[2]!.resolve(jsonResponse(500, {}))
-    await Promise.all([first, third])
+    expect(await Promise.all([first, third])).toEqual([false, false])
     expect(crud.items.value).toEqual(['Alice'])
     expect(crud.total.value).toBe(1)
     expect(crud.error.value).toBeNull()
     expect(crud.loading.value).toBe(false)
+  })
+
+  it.each([
+    ['JSON illisible', new Response('<html>')],
+    ['tableau absent', jsonResponse(200, { data: { total: 0 } })],
+    ['collection incorrecte', jsonResponse(200, { data: { items: {}, total: 0 } })],
+    ['total absent', jsonResponse(200, { data: { items: [] } })],
+  ])('conserve les lignes après une réponse invalide (%s)', async (_, malformed) => {
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(jsonResponse(200, { data: { items: ['CAR-55'], total: 1 } }))
+      .mockResolvedValueOnce(malformed)
+      .mockResolvedValueOnce(jsonResponse(200, { data: { items: [], total: 0 } }))
+    const crud = useAdminCrud('products')
+    await crud.list()
+    await expect(crud.list()).rejects.toThrow('Réponse de liste invalide')
+    expect(crud.items.value).toEqual(['CAR-55'])
+    expect(crud.total.value).toBe(1)
+    await expect(crud.list()).resolves.toBe(true)
+    expect(crud.items.value).toEqual([])
   })
 
   it('create() → POST avec body JSON et retourne TItem', async () => {

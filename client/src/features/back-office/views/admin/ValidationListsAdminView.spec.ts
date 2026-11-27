@@ -354,4 +354,99 @@ describe('ValidationListsAdminView (UI smoke)', () => {
       sort_order: 50,
     })
   })
+
+  it('relit séparément français et espagnol, puis conserve la paire après un doublon', async () => {
+    let saved = {
+      id: 40,
+      list_code: 'unit',
+      value: 'Caisse',
+      value_es: 'Caja',
+      sort_order: 20,
+      is_active: true,
+    }
+    const methods: string[] = []
+    globalThis.fetch = vi.fn(async (_input, init?: RequestInit) => {
+      methods.push(init?.method ?? 'GET')
+      if (init?.method === 'PATCH') {
+        const patch = JSON.parse(String(init.body))
+        expect(Object.keys(patch).sort()).toEqual(['sort_order', 'value_es'])
+        saved = { ...saved, ...patch }
+        return jsonResponse(200, { data: { entry: saved } })
+      }
+      if (init?.method === 'POST')
+        return jsonResponse(409, { error: { details: { code: 'VALUE_ALREADY_EXISTS' } } })
+      return jsonResponse(200, { data: { lists: { sav_cause: [], bon_type: [], unit: [saved] } } })
+    })
+    const wrapper = mount(ValidationListsAdminView)
+    await flushPromises()
+    await wrapper.get('[data-test="validation-list-edit-40"]').trigger('click')
+    await wrapper.get('#validation-edit-es').setValue('Cajón')
+    await wrapper.get('[data-test="validation-list-edit-save-40"]').trigger('click')
+    await flushPromises()
+    expect(methods).toEqual(['GET', 'PATCH', 'GET'])
+    const pair = () =>
+      wrapper
+        .get('tbody tr')
+        .findAll('td')
+        .slice(0, 2)
+        .map((cell) => cell.text())
+    expect(pair()).toEqual(['Caisse', 'Cajón'])
+    expect(wrapper.find('.toast.success').exists()).toBe(true)
+    expect(wrapper.get<HTMLFormElement>('form').element.checkValidity()).toBe(false)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.toast.success').exists()).toBe(false)
+    await wrapper.get('#vl-create-list-code').setValue('unit')
+    await wrapper.get('#vl-create-value').setValue('Caisse')
+    await wrapper.get('#vl-create-value-es').setValue('Otro')
+    await wrapper.get('form').trigger('submit')
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toContain('Valeur française déjà utilisée')
+    expect(wrapper.find('.toast.success').exists()).toBe(false)
+    expect(pair()).toEqual(['Caisse', 'Cajón'])
+  })
+
+  it.each([
+    ['JSON invalide', new Response('<html>')],
+    ['liste absente', jsonResponse(200, { data: { lists: { unit: [], bon_type: [] } } })],
+    [
+      'collection incorrecte',
+      jsonResponse(200, { data: { lists: { sav_cause: [], bon_type: [], unit: {} } } }),
+    ],
+  ])(
+    'affiche la dernière paire et une erreur après relecture refusée (%s)',
+    async (_, malformed) => {
+      const entry = {
+        id: 40,
+        list_code: 'unit',
+        value: 'Caisse',
+        value_es: 'Caja',
+        sort_order: 1,
+        is_active: true,
+      }
+      globalThis.fetch = vi
+        .fn()
+        .mockResolvedValueOnce(
+          jsonResponse(200, { data: { lists: { sav_cause: [], bon_type: [], unit: [entry] } } })
+        )
+        .mockResolvedValueOnce(jsonResponse(200, { data: { entry } }))
+        .mockResolvedValueOnce(malformed)
+        .mockResolvedValueOnce(
+          jsonResponse(200, { data: { lists: { sav_cause: [], bon_type: [], unit: [] } } })
+        )
+      const wrapper = mount(ValidationListsAdminView)
+      await flushPromises()
+      await wrapper.get('#validation-edit-40').trigger('click')
+      await wrapper.get('#validation-edit-es').setValue('Cajón')
+      await wrapper.get('[data-test="validation-list-edit-save-40"]').trigger('click')
+      await flushPromises()
+      expect(wrapper.get('[role="alert"]').text()).toContain('Réponse de liste invalide')
+      expect(wrapper.get('tbody').text()).toContain('Caja')
+      expect(wrapper.find('.toast.success').exists()).toBe(false)
+      await wrapper.get('[role="alert"] button').trigger('click')
+      await flushPromises()
+      expect(wrapper.find('[role="alert"]').exists()).toBe(false)
+      expect(wrapper.find('tbody').exists()).toBe(false)
+      expect(wrapper.findAll('.list-panel .status')).toHaveLength(3)
+    }
+  )
 })

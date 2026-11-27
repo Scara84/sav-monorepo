@@ -197,6 +197,14 @@ describe('POST /api/admin/products (admin-product-create)', () => {
     const res = mockRes()
     await adminProductCreateHandler(req, res)
     expect(res.statusCode).toBe(400)
+    expect(res.jsonBody).toMatchObject({
+      error: {
+        details: {
+          code: 'INVALID_BODY',
+          issues: [{ field: 'piece_weight_grams' }],
+        },
+      },
+    })
   })
 
   it('D-5 : 201 OK avec origin valide ISO alpha-2 (FR)', async () => {

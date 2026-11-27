@@ -34,7 +34,7 @@ export interface UseAdminCrudApi<TItem, TCreate, TUpdate> {
   total: Ref<number>
   loading: Ref<boolean>
   error: Ref<string | null>
-  list: (params?: Record<string, unknown>) => Promise<void>
+  list: (params?: Record<string, unknown>) => Promise<boolean>
   create: (payload: TCreate) => Promise<TItem>
   update: (id: number, patch: TUpdate) => Promise<TItem>
   remove: (id: number) => Promise<void>
@@ -49,6 +49,10 @@ interface ApiErrorShape {
 }
 
 const errorMessages: Record<string, string> = {
+  CODE_ALREADY_EXISTS: 'Code produit déjà utilisé.',
+  VALUE_ALREADY_EXISTS: 'Valeur française déjà utilisée dans cette liste.',
+  PRODUCT_NOT_FOUND: 'Produit introuvable.',
+  ENTRY_NOT_FOUND: 'Valeur introuvable.',
   INVALID_BODY: 'Données invalides.',
   INVALID_PARAMS: 'Paramètres invalides.',
   ROLE_NOT_ALLOWED: 'Réservé aux administrateurs.',
@@ -83,6 +87,34 @@ function classifyHttpError(status: number, body: ApiErrorShape): string {
 
 function translate(code: string): string {
   return errorMessages[code] ?? errorMessages['UNKNOWN']!
+}
+
+const fieldLabels: Record<string, string> = {
+  q: 'Recherche',
+  code: 'Code produit',
+  name_fr: 'Nom français',
+  default_unit: 'Unité',
+  origin: 'Origine',
+  supplier_code: 'Fournisseur',
+  tier_prices: 'Prix du palier',
+  piece_weight_grams: 'Poids par pièce',
+  vat_rate_bp: 'TVA',
+  value: 'Valeur française',
+  value_es: 'Valeur espagnole',
+  sort_order: 'Ordre',
+}
+
+function responseError(status: number, body: ApiErrorShape): string {
+  const code = classifyHttpError(status, body)
+  const issues = body.error?.details?.issues
+  if ((code === 'INVALID_BODY' || code === 'INVALID_PARAMS') && Array.isArray(issues)) {
+    const labels = issues.flatMap((issue) => {
+      const field = typeof issue?.field === 'string' ? issue.field.split('.')[0] : ''
+      return fieldLabels[field] ? [fieldLabels[field]] : []
+    })
+    if (labels.length) return `Champ à corriger : ${[...new Set(labels)].join(', ')}.`
+  }
+  return translate(code)
 }
 
 function extractItem<T>(payload: unknown): T | null {
@@ -120,7 +152,7 @@ export function useAdminCrud<TItem, TCreate, TUpdate>(
   let latestRead = 0
   const baseUrl = `/api/admin/${resource}`
 
-  async function list(params: Record<string, unknown> = {}): Promise<void> {
+  async function list(params: Record<string, unknown> = {}): Promise<boolean> {
     const read = ++latestRead
     loading.value = true
     error.value = null
@@ -134,16 +166,28 @@ export function useAdminCrud<TItem, TCreate, TUpdate>(
       const body = (await res.json().catch(() => ({}))) as ApiErrorShape & {
         data?: { items?: TItem[]; total?: number; hasMore?: boolean }
       }
-      if (read !== latestRead) return
+      if (read !== latestRead) return false
       if (!res.ok) {
-        const msg = translate(classifyHttpError(res.status, body))
+        const msg = responseError(res.status, body ?? {})
         error.value = msg
         throw new Error(msg)
       }
-      items.value = body.data?.items ?? []
-      total.value = body.data?.total ?? 0
+      const data = body?.data
+      if (
+        !Array.isArray(data?.items) ||
+        typeof data.total !== 'number' ||
+        !Number.isSafeInteger(data.total) ||
+        data.total < 0
+      ) {
+        throw new Error('Réponse de liste invalide. Réessayez la lecture.')
+      }
+      items.value = data.items
+      total.value = data.total
+      return true
     } catch (cause) {
-      if (read === latestRead) throw cause
+      if (read !== latestRead) return false
+      error.value = cause instanceof Error ? cause.message : 'Lecture impossible.'
+      throw cause
     } finally {
       if (read === latestRead) loading.value = false
     }
@@ -164,7 +208,7 @@ export function useAdminCrud<TItem, TCreate, TUpdate>(
       })
       const body = (await res.json().catch(() => ({}))) as ApiErrorShape
       if (!res.ok) {
-        const msg = translate(classifyHttpError(res.status, body))
+        const msg = responseError(res.status, body)
         error.value = msg
         throw new Error(msg)
       }
@@ -195,7 +239,7 @@ export function useAdminCrud<TItem, TCreate, TUpdate>(
       })
       const body = (await res.json().catch(() => ({}))) as ApiErrorShape
       if (!res.ok) {
-        const msg = translate(classifyHttpError(res.status, body))
+        const msg = responseError(res.status, body)
         error.value = msg
         throw new Error(msg)
       }
@@ -222,7 +266,7 @@ export function useAdminCrud<TItem, TCreate, TUpdate>(
       })
       if (!res.ok) {
         const body = (await res.json().catch(() => ({}))) as ApiErrorShape
-        const msg = translate(classifyHttpError(res.status, body))
+        const msg = responseError(res.status, body)
         error.value = msg
         throw new Error(msg)
       }

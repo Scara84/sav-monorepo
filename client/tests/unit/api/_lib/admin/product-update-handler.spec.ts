@@ -99,11 +99,16 @@ beforeEach(() => {
 
 describe('PATCH /api/admin/products/:id (admin-product-update)', () => {
   it('200 happy path : partial UPDATE name_fr → audit action=updated avec diff name_fr', async () => {
-    state.targetRow = productRow({ id: 500, name_fr: 'Tomate Raphael' })
-    state.updateRows = [{ ...state.targetRow, name_fr: 'Tomate Raphael Premium' }]
+    state.targetRow = productRow({
+      id: 500,
+      code: 'CAR-55',
+      default_unit: 'kg',
+      name_fr: 'Carotte témoin',
+    })
+    state.updateRows = [{ ...state.targetRow, name_fr: 'Carotte témoin modifiée' }]
     const req = mockReq({
       method: 'PATCH',
-      body: { name_fr: 'Tomate Raphael Premium' },
+      body: { name_fr: 'Carotte témoin modifiée' },
       query: { id: '500' },
     })
     req.user = adminSession()
@@ -117,8 +122,12 @@ describe('PATCH /api/admin/products/:id (admin-product-update)', () => {
       actorOperatorId: ADMIN_ID,
     })
     const audit = state.recordAuditCalls[0] as { diff: { before: unknown; after: unknown } }
-    expect(audit.diff.before).toMatchObject({ name_fr: 'Tomate Raphael' })
-    expect(audit.diff.after).toMatchObject({ name_fr: 'Tomate Raphael Premium' })
+    expect(audit.diff.before).toMatchObject({ name_fr: 'Carotte témoin' })
+    expect(audit.diff.after).toMatchObject({ name_fr: 'Carotte témoin modifiée' })
+    expect(state.updatePayloads[0]).toMatchObject({ name_fr: 'Carotte témoin modifiée' })
+    expect(res.jsonBody).toMatchObject({
+      data: { product: { code: 'CAR-55', default_unit: 'kg', name_fr: 'Carotte témoin modifiée' } },
+    })
   })
 
   it('422 CODE_IMMUTABLE si body contient code', async () => {

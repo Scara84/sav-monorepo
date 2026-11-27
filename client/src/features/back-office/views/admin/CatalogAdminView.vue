@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { nextTick, onMounted, ref } from 'vue'
 import { useAdminCrud } from '../../composables/useAdminCrud'
 
 /**
@@ -69,6 +69,7 @@ const form = ref({
   vat_rate_bp: 550,
   supplier_code: '',
   first_tier_price_cents: 0,
+  piece_weight_grams: null as number | null,
 })
 
 const search = ref('')
@@ -80,28 +81,35 @@ const pendingDeleteId = ref<number | null>(null)
 
 function showToast(kind: 'success' | 'error', message: string): void {
   toast.value = { kind, message }
-  window.setTimeout(() => {
-    toast.value = null
-  }, 4000)
 }
 
-async function refresh(): Promise<void> {
+const readError = ref('')
+
+async function refresh(): Promise<boolean> {
+  readError.value = ''
   const params: Record<string, unknown> = { limit: 50 }
   if (search.value.trim().length > 0) params['q'] = search.value.trim()
   if (supplierFilter.value.trim().length > 0) params['supplier_code'] = supplierFilter.value.trim()
   if (unitFilter.value !== '') params['default_unit'] = unitFilter.value
   if (showDeleted.value) params['is_deleted'] = 'true'
   try {
-    await crud.list(params)
+    return await crud.list(params)
   } catch (e) {
-    showToast('error', crud.error.value ?? (e instanceof Error ? e.message : 'Erreur'))
+    readError.value = crud.error.value ?? (e instanceof Error ? e.message : 'Erreur de lecture.')
+    toast.value = null
+    return false
   }
 }
 
 async function onCreateSubmit(e?: Event): Promise<void> {
   if (e !== undefined) e.preventDefault()
-  if (form.value.code.trim() === '' || form.value.name_fr.trim() === '') {
-    showToast('error', 'Code et nom requis.')
+  toast.value = null
+  if (!/^[A-Z0-9_-]{1,64}$/.test(form.value.code.trim().toUpperCase())) {
+    showToast('error', 'Code produit requis. Utilisez des lettres, chiffres, tirets ou tirets bas.')
+    return
+  }
+  if (!form.value.name_fr.trim()) {
+    showToast('error', 'Nom français requis.')
     return
   }
   try {
@@ -110,14 +118,15 @@ async function onCreateSubmit(e?: Event): Promise<void> {
       name_fr: form.value.name_fr.trim(),
       default_unit: form.value.default_unit,
       vat_rate_bp: form.value.vat_rate_bp,
-      tier_prices: [{ tier: 1, price_ht_cents: Math.max(0, form.value.first_tier_price_cents) }],
+      tier_prices: [{ tier: 1, price_ht_cents: form.value.first_tier_price_cents }],
     }
+    if (form.value.default_unit === 'piece')
+      payload.piece_weight_grams = form.value.piece_weight_grams
     const origin = form.value.origin.trim().toUpperCase()
     if (origin.length > 0) payload.origin = origin
     const supplier = form.value.supplier_code.trim()
     if (supplier.length > 0) payload.supplier_code = supplier
     await crud.create(payload)
-    showToast('success', 'Produit créé.')
     form.value = {
       code: '',
       name_fr: '',
@@ -126,14 +135,53 @@ async function onCreateSubmit(e?: Event): Promise<void> {
       vat_rate_bp: 550,
       supplier_code: '',
       first_tier_price_cents: 0,
+      piece_weight_grams: null,
     }
-    await refresh()
+    if (await refresh()) showToast('success', 'Produit créé.')
   } catch (e) {
     showToast('error', crud.error.value ?? (e instanceof Error ? e.message : 'Erreur création'))
   }
 }
 
+const editingId = ref<number | null>(null)
+const editedName = ref('')
+
+async function startEdit(product: Product): Promise<void> {
+  toast.value = null
+  editingId.value = product.id
+  editedName.value = product.name_fr
+  await nextTick()
+  document.getElementById('product-edit-name')?.focus()
+}
+
+async function closeEdit(id: number): Promise<void> {
+  editingId.value = null
+  await nextTick()
+  document.getElementById(`product-edit-${id}`)?.focus()
+}
+
+async function saveEdit(id: number): Promise<void> {
+  const name = editedName.value.trim()
+  if (!name || name.length > 200) {
+    showToast('error', 'Nom français requis (200 caractères maximum).')
+    document.getElementById('product-edit-name')?.focus()
+    return
+  }
+  toast.value = null
+  try {
+    await crud.update(id, { name_fr: name })
+    if (await refresh()) showToast('success', 'Produit mis à jour.')
+    await closeEdit(id)
+  } catch (e) {
+    showToast(
+      'error',
+      crud.error.value ?? (e instanceof Error ? e.message : 'Modification refusée.')
+    )
+  }
+}
+
 function askDelete(id: number): void {
+  toast.value = null
   pendingDeleteId.value = id
 }
 function cancelDelete(): void {
@@ -145,8 +193,7 @@ async function confirmDelete(): Promise<void> {
   pendingDeleteId.value = null
   try {
     await crud.remove(id)
-    showToast('success', 'Produit archivé.')
-    await refresh()
+    if (await refresh()) showToast('success', 'Produit archivé.')
   } catch (e) {
     showToast('error', crud.error.value ?? (e instanceof Error ? e.message : 'Erreur suppression'))
   }
@@ -189,12 +236,149 @@ onMounted(() => {
   <main class="catalog-admin-view">
     <header class="header">
       <h1>Catalogue produits</h1>
-      <p class="subtitle">Gestion des produits SAV (CRUD avec validation Zod stricte).</p>
+      <p class="subtitle">Rechercher un produit par code ou par nom français.</p>
     </header>
+
+    <section class="filters">
+      <div class="field">
+        <label for="prod-search">Recherche</label>
+        <input
+          id="prod-search"
+          v-model="search"
+          type="search"
+          maxlength="100"
+          placeholder="Code, nom"
+          @change="refresh"
+        />
+      </div>
+      <div class="field">
+        <label for="prod-supplier">Fournisseur</label>
+        <input
+          id="prod-supplier"
+          v-model="supplierFilter"
+          maxlength="32"
+          type="text"
+          @change="refresh"
+        />
+      </div>
+      <div class="field">
+        <label for="prod-unit">Unité</label>
+        <select id="prod-unit" v-model="unitFilter" @change="refresh">
+          <option value="">Toutes</option>
+          <option value="kg">kg</option>
+          <option value="piece">piece</option>
+          <option value="liter">liter</option>
+        </select>
+      </div>
+      <div class="field">
+        <label class="checkbox-label">
+          <input v-model="showDeleted" type="checkbox" @change="refresh" />
+          Afficher archivés
+        </label>
+      </div>
+    </section>
+
+    <section class="list-panel">
+      <p v-if="readError" class="status error" role="alert">
+        {{ readError }} <button class="btn" @click="refresh">Réessayer</button>
+      </p>
+      <p v-else-if="crud.loading.value && !crud.items.value.length" class="status">Chargement…</p>
+      <p v-else-if="crud.items.value.length === 0" class="status muted">Aucun produit.</p>
+      <table v-if="crud.items.value.length" class="products-table" aria-label="Liste des produits">
+        <thead>
+          <tr>
+            <th scope="col">Code</th>
+            <th scope="col">Nom</th>
+            <th scope="col">Unité</th>
+            <th scope="col">TVA</th>
+            <th scope="col">Palier</th>
+            <th scope="col">Fournisseur</th>
+            <th scope="col">Origine</th>
+            <th scope="col">Mis à jour</th>
+            <th scope="col">Actions</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr
+            v-for="prod in crud.items.value"
+            :key="prod.id"
+            :class="{ deleted: prod.deleted_at !== null }"
+          >
+            <td data-label="Code">{{ prod.code }}</td>
+            <td data-label="Nom français">
+              <input
+                v-if="editingId === prod.id"
+                id="product-edit-name"
+                v-model="editedName"
+                aria-label="Nom français"
+                maxlength="200"
+                class="edit-input"
+                @keydown.enter.prevent="saveEdit(prod.id)"
+                @keydown.esc="closeEdit(prod.id)"
+                :disabled="crud.loading.value"
+              />
+              <template v-else>{{ prod.name_fr }}</template>
+            </td>
+            <td data-label="Unité">
+              <span class="badge unit">{{ prod.default_unit }}</span>
+            </td>
+            <td data-label="TVA" class="muted">{{ formatVat(prod.vat_rate_bp) }}</td>
+            <td data-label="Palier" class="muted">{{ formatTier(prod.tier_prices) }}</td>
+            <td data-label="Fournisseur" class="muted">{{ prod.supplier_code ?? '—' }}</td>
+            <td data-label="Origine">
+              <span v-if="prod.origin !== null" class="badge origin">{{ prod.origin }}</span>
+              <span v-else class="muted">—</span>
+            </td>
+            <td data-label="Mis à jour">{{ formatDate(prod.updated_at) }}</td>
+            <td data-label="Actions" class="actions-cell">
+              <template v-if="editingId === prod.id">
+                <button
+                  type="button"
+                  class="btn small primary"
+                  :disabled="crud.loading.value"
+                  @click="saveEdit(prod.id)"
+                >
+                  Enregistrer
+                </button>
+                <button
+                  type="button"
+                  class="btn small"
+                  :disabled="crud.loading.value"
+                  @click="closeEdit(prod.id)"
+                >
+                  Annuler
+                </button>
+              </template>
+              <button
+                v-else-if="prod.deleted_at === null"
+                :id="`product-edit-${prod.id}`"
+                type="button"
+                class="btn small"
+                :disabled="crud.loading.value"
+                @click="startEdit(prod)"
+              >
+                Modifier
+              </button>
+              <button
+                v-if="prod.deleted_at === null && editingId !== prod.id"
+                type="button"
+                :data-test="`product-delete-${prod.id}`"
+                class="btn small"
+                :disabled="crud.loading.value"
+                @click="askDelete(prod.id)"
+              >
+                Archiver
+              </button>
+              <span v-if="prod.deleted_at !== null" class="badge deleted">Archivé</span>
+            </td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
 
     <section class="create-panel" aria-labelledby="create-title">
       <h2 id="create-title">Nouveau produit</h2>
-      <form class="create-form" @submit="onCreateSubmit">
+      <form @invalid.capture="toast = null" class="create-form" @submit="onCreateSubmit">
         <div class="field">
           <label for="prod-create-code">Code</label>
           <input
@@ -208,7 +392,7 @@ onMounted(() => {
           />
         </div>
         <div class="field">
-          <label for="prod-create-name">Nom (FR)</label>
+          <label for="prod-create-name">Nom français</label>
           <input
             id="prod-create-name"
             v-model="form.name_fr"
@@ -230,6 +414,17 @@ onMounted(() => {
             <option value="liter">liter</option>
           </select>
         </div>
+        <div v-if="form.default_unit === 'piece'" class="field">
+          <label for="prod-create-weight">Poids par pièce (g)</label>
+          <input
+            id="prod-create-weight"
+            v-model.number="form.piece_weight_grams"
+            type="number"
+            min="1"
+            step="1"
+            required
+          />
+        </div>
         <div class="field">
           <label for="prod-create-origin">Origine (ISO)</label>
           <input
@@ -238,17 +433,20 @@ onMounted(() => {
             data-test="product-create-origin"
             type="text"
             maxlength="2"
+            pattern="[a-zA-Z]{2}"
+            title="Origine : deux lettres du code pays"
             placeholder="ES"
           />
         </div>
         <div class="field">
-          <label for="prod-create-vat">TVA (bp)</label>
+          <label for="prod-create-vat">TVA (points de base)</label>
           <input
             id="prod-create-vat"
             v-model.number="form.vat_rate_bp"
             type="number"
             min="0"
             max="10000"
+            required
             step="1"
           />
         </div>
@@ -263,13 +461,14 @@ onMounted(() => {
           />
         </div>
         <div class="field">
-          <label for="prod-create-tier1">Tier 1 (cents HT)</label>
+          <label for="prod-create-tier1">Palier 1 (centimes HT)</label>
           <input
             id="prod-create-tier1"
             v-model.number="form.first_tier_price_cents"
             type="number"
             min="0"
-            max="99999999"
+            max="10000000"
+            required
             step="1"
             inputmode="numeric"
             data-test="product-create-tier1"
@@ -282,98 +481,11 @@ onMounted(() => {
             data-test="product-create-submit"
             class="btn primary"
             :disabled="crud.loading.value"
-            @click="onCreateSubmit"
           >
             Créer le produit
           </button>
         </div>
       </form>
-    </section>
-
-    <section class="filters">
-      <div class="field">
-        <label for="prod-search">Recherche</label>
-        <input
-          id="prod-search"
-          v-model="search"
-          type="search"
-          placeholder="Code, nom"
-          @change="refresh"
-        />
-      </div>
-      <div class="field">
-        <label for="prod-supplier">Fournisseur</label>
-        <input id="prod-supplier" v-model="supplierFilter" type="text" @change="refresh" />
-      </div>
-      <div class="field">
-        <label for="prod-unit">Unité</label>
-        <select id="prod-unit" v-model="unitFilter" @change="refresh">
-          <option value="">Toutes</option>
-          <option value="kg">kg</option>
-          <option value="piece">piece</option>
-          <option value="liter">liter</option>
-        </select>
-      </div>
-      <div class="field">
-        <label class="checkbox-label">
-          <input v-model="showDeleted" type="checkbox" @change="refresh" />
-          Afficher archivés
-        </label>
-      </div>
-    </section>
-
-    <section class="list-panel">
-      <p v-if="crud.loading.value" class="status">Chargement…</p>
-      <p v-else-if="crud.items.value.length === 0" class="status muted">Aucun produit.</p>
-      <table v-else class="products-table" aria-label="Liste des produits">
-        <thead>
-          <tr>
-            <th scope="col">Code</th>
-            <th scope="col">Nom</th>
-            <th scope="col">Unité</th>
-            <th scope="col">TVA</th>
-            <th scope="col">Tier</th>
-            <th scope="col">Fournisseur</th>
-            <th scope="col">Origine</th>
-            <th scope="col">Maj</th>
-            <th scope="col">Actions</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr
-            v-for="prod in crud.items.value"
-            :key="prod.id"
-            :class="{ deleted: prod.deleted_at !== null }"
-          >
-            <td>{{ prod.code }}</td>
-            <td>{{ prod.name_fr }}</td>
-            <td>
-              <span class="badge unit">{{ prod.default_unit }}</span>
-            </td>
-            <td class="muted">{{ formatVat(prod.vat_rate_bp) }}</td>
-            <td class="muted">{{ formatTier(prod.tier_prices) }}</td>
-            <td class="muted">{{ prod.supplier_code ?? '—' }}</td>
-            <td>
-              <span v-if="prod.origin !== null" class="badge origin">{{ prod.origin }}</span>
-              <span v-else class="muted">—</span>
-            </td>
-            <td>{{ formatDate(prod.updated_at) }}</td>
-            <td class="actions-cell">
-              <button
-                v-if="prod.deleted_at === null"
-                type="button"
-                :data-test="`product-delete-${prod.id}`"
-                class="btn small"
-                :disabled="crud.loading.value"
-                @click="askDelete(prod.id)"
-              >
-                Archiver
-              </button>
-              <span v-else class="badge deleted">Archivé</span>
-            </td>
-          </tr>
-        </tbody>
-      </table>
     </section>
 
     <div
@@ -404,212 +516,16 @@ onMounted(() => {
     </div>
 
     <transition name="toast">
-      <div v-if="toast !== null" :class="['toast', toast.kind]" role="status" aria-live="polite">
+      <div
+        v-if="toast !== null"
+        :class="['toast', toast.kind]"
+        :role="toast.kind === 'error' ? 'alert' : 'status'"
+      >
         {{ toast.message }}
+        <button class="dismiss" aria-label="Fermer le message" @click="toast = null">×</button>
       </div>
     </transition>
   </main>
 </template>
 
-<style scoped>
-.catalog-admin-view {
-  padding: 1.5rem;
-  max-width: 1280px;
-  margin: 0 auto;
-}
-.header h1 {
-  margin: 0 0 0.25rem 0;
-  font-size: 1.5rem;
-}
-.subtitle {
-  margin: 0 0 1.5rem 0;
-  color: #666;
-  font-size: 0.95rem;
-}
-.create-panel,
-.list-panel {
-  background: #fff;
-  border: 1px solid #eee;
-  border-radius: 6px;
-  padding: 1.25rem;
-  margin-bottom: 1.25rem;
-}
-.create-panel h2 {
-  margin: 0 0 1rem 0;
-  font-size: 1.1rem;
-}
-.create-form {
-  display: grid;
-  grid-template-columns: repeat(4, 1fr);
-  gap: 1rem;
-  align-items: end;
-}
-.create-form .actions {
-  grid-column: 1 / -1;
-  display: flex;
-  justify-content: flex-end;
-}
-.field {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-}
-.field label {
-  font-weight: 600;
-  font-size: 0.9rem;
-}
-.checkbox-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.4rem;
-  font-weight: 500;
-}
-.field input,
-.field select {
-  padding: 0.5rem 0.75rem;
-  font-size: 0.95rem;
-  border: 1px solid #ccc;
-  border-radius: 4px;
-}
-.filters {
-  display: flex;
-  gap: 1rem;
-  margin-bottom: 1rem;
-  flex-wrap: wrap;
-  align-items: end;
-}
-.filters .field {
-  min-width: 180px;
-}
-.btn {
-  padding: 0.5rem 1rem;
-  border-radius: 4px;
-  border: 1px solid #ccc;
-  background: #fff;
-  cursor: pointer;
-  font-size: 0.9rem;
-}
-.btn.small {
-  padding: 0.3rem 0.6rem;
-  font-size: 0.85rem;
-}
-.btn.primary {
-  background: #f57c00;
-  color: white;
-  border-color: #f57c00;
-  font-weight: 600;
-}
-.btn.primary:hover:not(:disabled) {
-  background: #e65100;
-}
-.btn:disabled {
-  opacity: 0.6;
-  cursor: not-allowed;
-}
-.products-table {
-  width: 100%;
-  border-collapse: collapse;
-  font-size: 0.9rem;
-}
-.products-table th,
-.products-table td {
-  text-align: left;
-  padding: 0.6rem 0.75rem;
-  border-bottom: 1px solid #f0f0f0;
-}
-.products-table th {
-  background: #fafafa;
-  font-weight: 600;
-}
-.products-table tr.deleted td {
-  opacity: 0.55;
-}
-.actions-cell {
-  white-space: nowrap;
-}
-.badge {
-  display: inline-block;
-  padding: 0.15rem 0.5rem;
-  border-radius: 999px;
-  font-size: 0.8rem;
-  background: #eee;
-  color: #333;
-}
-.badge.unit {
-  background: #e3f2fd;
-  color: #1565c0;
-}
-.badge.origin {
-  background: #f3e5f5;
-  color: #6a1b9a;
-  font-family: monospace;
-}
-.badge.deleted {
-  background: #fce4ec;
-  color: #c2185b;
-}
-.muted {
-  color: #999;
-}
-.status {
-  color: #666;
-  font-style: italic;
-  margin: 0.5rem 0;
-}
-.dialog-overlay {
-  position: fixed;
-  inset: 0;
-  background: rgba(0, 0, 0, 0.4);
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  z-index: 100;
-}
-.dialog {
-  background: white;
-  padding: 1.5rem;
-  border-radius: 6px;
-  max-width: 480px;
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.2);
-}
-.dialog h3 {
-  margin: 0 0 0.75rem 0;
-}
-.dialog-actions {
-  display: flex;
-  justify-content: flex-end;
-  gap: 0.75rem;
-  margin-top: 1rem;
-}
-.toast {
-  position: fixed;
-  bottom: 1.5rem;
-  right: 1.5rem;
-  padding: 0.75rem 1.25rem;
-  border-radius: 4px;
-  color: white;
-  font-size: 0.95rem;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.15);
-  z-index: 999;
-  max-width: 400px;
-}
-.toast.success {
-  background: #2e7d32;
-}
-.toast.error {
-  background: #c62828;
-}
-.toast-enter-active,
-.toast-leave-active {
-  transition: opacity 0.2s;
-}
-.toast-enter-from,
-.toast-leave-to {
-  opacity: 0;
-}
-@media (max-width: 720px) {
-  .create-form {
-    grid-template-columns: 1fr;
-  }
-}
-</style>
+<style scoped src="./reference-admin.css"></style>

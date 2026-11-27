@@ -143,7 +143,7 @@ describe('CatalogAdminView (UI smoke)', () => {
     await nameInput.setValue('Pomme Gala')
     await unitSelect.setValue('kg')
     await originInput.setValue('FR')
-    await submitBtn.trigger('click')
+    await wrapper.get('form.create-form').trigger('submit')
     await flushPromises()
 
     expect(postBody).toMatchObject({
@@ -228,5 +228,100 @@ describe('CatalogAdminView (UI smoke)', () => {
 
     expect(deleteCalled).toBe(true)
     expect(deleteUrl).toContain('/500')
+  })
+
+  it('relit CAR-55 après modification et identifie le nom refusé sans annoncer de réussite', async () => {
+    let savedName = 'Carotte témoin'
+    let reject = false
+    const methods: string[] = []
+    globalThis.fetch = vi.fn(async (_input, init?: RequestInit) => {
+      methods.push(init?.method ?? 'GET')
+      const row = { id: 55, code: 'CAR-55', default_unit: 'kg', deleted_at: null }
+      if (init?.method === 'PATCH') {
+        const patch = JSON.parse(String(init.body))
+        expect(Object.keys(patch)).toEqual(['name_fr'])
+        if (reject)
+          return jsonResponse(400, {
+            error: { details: { code: 'INVALID_BODY', issues: [{ field: 'name_fr' }] } },
+          })
+        savedName = patch.name_fr
+        return jsonResponse(200, { data: { product: { ...row, name_fr: savedName } } })
+      }
+      return jsonResponse(200, { data: { items: [{ ...row, name_fr: savedName }], total: 1 } })
+    })
+    const wrapper = mount(CatalogAdminView)
+    await flushPromises()
+    await wrapper.get('#product-edit-55').trigger('click')
+    await wrapper.get('#product-edit-name').setValue('Carotte témoin modifiée')
+    await wrapper.get('#product-edit-name').trigger('keydown.enter')
+    await flushPromises()
+    expect(methods).toEqual(['GET', 'PATCH', 'GET'])
+    expect(
+      wrapper
+        .get('tbody tr')
+        .findAll('td')
+        .slice(0, 3)
+        .map((cell) => cell.text())
+    ).toEqual(['CAR-55', 'Carotte témoin modifiée', 'kg'])
+
+    expect(wrapper.find('.toast.success').exists()).toBe(true)
+    expect(wrapper.get<HTMLFormElement>('form').element.checkValidity()).toBe(false)
+    await wrapper.vm.$nextTick()
+    expect(wrapper.find('.toast.success').exists()).toBe(false)
+    reject = true
+    await wrapper.get('#product-edit-55').trigger('click')
+    await wrapper.get('#product-edit-name').setValue('Refusée')
+    await wrapper.get('#product-edit-name').trigger('keydown.enter')
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toContain('Nom français')
+    expect(wrapper.find('.toast.success').exists()).toBe(false)
+    await wrapper.get('#product-edit-name').trigger('keydown.esc')
+    expect(wrapper.get('tbody tr').text()).toContain('Carotte témoin modifiée')
+  })
+
+  it('ne confirme pas une relecture remplacée par un filtre et nomme les filtres refusés', async () => {
+    let finishRead!: (value: Response) => void
+    let finishFilter!: (value: Response) => void
+    const row = { id: 55, code: 'CAR-55', default_unit: 'kg', deleted_at: null, name_fr: 'Carotte' }
+    const rows = jsonResponse(200, { data: { items: [row], total: 1 } })
+    globalThis.fetch = vi
+      .fn()
+      .mockResolvedValueOnce(rows)
+      .mockResolvedValueOnce(jsonResponse(200, { data: { product: row } }))
+      .mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            finishRead = resolve
+          })
+      )
+      .mockImplementationOnce(
+        () =>
+          new Promise<Response>((resolve) => {
+            finishFilter = resolve
+          })
+      )
+    const wrapper = mount(CatalogAdminView)
+    await flushPromises()
+    await wrapper.get('#product-edit-55').trigger('click')
+    await wrapper.get('#product-edit-name').setValue('Carotte nouvelle')
+    await wrapper.get('#product-edit-name').trigger('keydown.enter')
+    await flushPromises()
+    expect(wrapper.get('#prod-search').attributes('maxlength')).toBe('100')
+    expect(wrapper.get('#prod-supplier').attributes('maxlength')).toBe('32')
+    await wrapper.get('#prod-search').setValue('filtre')
+    await flushPromises()
+    finishRead(rows)
+    await flushPromises()
+    expect(wrapper.find('.toast.success').exists()).toBe(false)
+    finishFilter(
+      jsonResponse(400, {
+        error: {
+          details: { code: 'INVALID_PARAMS', issues: [{ field: 'q' }, { field: 'supplier_code' }] },
+        },
+      })
+    )
+    await flushPromises()
+    expect(wrapper.get('[role="alert"]').text()).toContain('Recherche, Fournisseur')
+    expect(wrapper.find('.toast.success').exists()).toBe(false)
   })
 })

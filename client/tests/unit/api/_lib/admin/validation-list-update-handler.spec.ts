@@ -222,5 +222,8 @@ describe('PATCH /api/admin/validation-lists/:id (admin-validation-list-update)',
     expect(Object.keys(audit.diff.after)).toEqual(['value_es'])
     expect(audit.diff.before['value_es']).toBe('estropeado')
     expect(audit.diff.after['value_es']).toBe('dañado')
+    expect(res.jsonBody).toMatchObject({
+      data: { entry: { value: state.targetRow.value, value_es: 'dañado' } },
+    })
   })
 })
