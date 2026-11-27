@@ -144,6 +144,6 @@ export default {
 }
 </script>
 
-<style>
-/**** Styles additionnels pour InvoiceDetails ****/
+<style scoped>
+h1 { color: #30200e; }
 </style>

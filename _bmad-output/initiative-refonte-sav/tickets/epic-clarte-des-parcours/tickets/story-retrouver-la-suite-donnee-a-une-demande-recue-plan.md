@@ -3,7 +3,7 @@ title: "Retrouver la suite donnée à une demande reçue"
 type: feature
 ticket: '4'
 created: '2026-11-27'
-status: built
+status: done
 baseline_revision: '1b1395f1cba86acd76bc3643c8acc1e2c329ea09'
 route: full
 route_source: auto

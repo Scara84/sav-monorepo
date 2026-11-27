@@ -257,7 +257,7 @@ describe('V1.9-B S-01 — Layout: 2 <tbody class="sav-line-group"> avec 3 <tr> c
 // ---------------------------------------------------------------------------
 
 describe('V1.9-B S-02 — Contenu Row 1 (request) / Row 2 (invoiced) / Row 3 (arbitration)', () => {
-  it('Row 1 : qtyRequested + colspan=8 context ; Row 2 : qtyInvoiced read-only ; Row 3 : badge + boutons', async () => {
+  it('Row 1 : qtyRequested + colspan=7 context ; Row 2 : qtyInvoiced read-only ; Row 3 : badge + boutons', async () => {
     mockFetch(
       makeSavWithLines([
         makeLine({
@@ -285,10 +285,13 @@ describe('V1.9-B S-02 — Contenu Row 1 (request) / Row 2 (invoiced) / Row 3 (ar
     // AC#3.1 Row 1 — qtyRequested + unitRequested
     expect(requestRow.text()).toContain('10')
     expect(requestRow.text()).toContain('kg')
-    // AC#3.1 Row 1 — colspan=8 context cell
+    // AC#3.1 Row 1 — colspan=7 context cell
     const contextCell = requestRow.find('td.line-request-context')
     expect(contextCell.exists()).toBe(true)
-    expect(contextCell.attributes('colspan')).toBe('8')
+    const otherCells = requestRow.findAll('td').length - 1
+    expect(Number(contextCell.attributes('colspan')) + otherCells).toBe(
+      w.findAll('.lines-table thead th').length
+    )
     // AC#3.3 — fallback stub quand requestReason IS NULL
     expect(contextCell.text()).toContain('Demande adhérent')
 
@@ -393,9 +396,9 @@ describe('V1.9-B S-04 — edit-extra-row dans même <tbody> quand to_calculate (
     const tbodyGroup = w.find('tbody.sav-line-group')
     expect(tbodyGroup.find('tr.edit-extra-row').exists()).toBe(true)
 
-    // Colspan = 12 preserved
+    // La ligne supplémentaire couvre toutes les colonnes de la fiche.
     const td = extraRow.find('td')
-    expect(td.attributes('colspan')).toBe('12')
+    expect(Number(td.attributes('colspan'))).toBe(w.findAll('.lines-table thead th').length)
   })
 })
 
@@ -467,7 +470,7 @@ describe('V1.9-B S-05 — data-blocking sur <tbody> + scrollIntoView cible le <t
 // ---------------------------------------------------------------------------
 
 describe('V1.9-B S-06 — Motif visible: reason-pill quand requestReason set, fallback sinon', () => {
-  it('requestReason="abime" → .reason-pill affiche "abime" dans Row 1 colspan=8 cell', async () => {
+  it('requestReason="abime" → .reason-pill affiche "abime" dans Row 1 colspan=7 cell', async () => {
     mockFetch(
       makeSavWithLines([
         makeLine({

@@ -83,3 +83,7 @@ onMounted(async () => {
 
 onBeforeUnmount(() => check.abort())
 </script>
+
+<style scoped>
+h1 { color: #30200e; }
+</style>

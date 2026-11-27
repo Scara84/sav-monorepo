@@ -3,7 +3,7 @@ title: "Actualiser le tableau de bord et reprendre une carte en erreur"
 type: feature
 ticket: '5'
 created: '2026-11-27'
-status: built
+status: done
 baseline_revision: '3896387fa7740b37bfc609dbdac267e541897c91'
 route: full
 route_source: auto

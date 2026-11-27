@@ -3,7 +3,7 @@ title: "Comparer les quantités demandée, facturée et retenue"
 type: feature
 ticket: '2'
 created: '2026-11-27'
-status: built
+status: done
 baseline_revision: '7ab2eec304465ae57a971943c7eb01eecd81a9ae'
 route: full
 route_source: auto

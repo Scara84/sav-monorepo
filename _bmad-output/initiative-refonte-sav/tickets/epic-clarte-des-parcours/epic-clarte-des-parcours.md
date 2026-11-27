@@ -42,3 +42,7 @@ Le service confirme l’enregistrement pour traitement. Le courriel est envoyé 
 Decision: 2026-11-27 — Fiche opérateur en premier, ordre validé. La story 8.1 démontre le passage de la consigne à la confirmation comptable sur un dossier fictif. La story 8.2 complète la recette sur cette même fiche. Les entrées suivantes suivent la priorité produit.
 
 8.1 porte sur une émission comptable. Exercer sa confirmation et son annulation uniquement en simulation. 8.4 porte sur l’accès à un dossier personnel. Contrôler les droits avec et sans session autorisée avant de proposer le suivi.
+
+## Clôture locale du 27 novembre 2026
+
+Les six stories ont été revues et validées sur la branche de refonte. Le dossier 41 relie les deux scénarios opérateur. La recette client utilise la facture F-2026-00001 et la référence SAV-RECETTE-0084. [Résultats des tests et de la recette](tickets/story-refactor-sweep-clore-les-corrections-relevees-en-revue-plan.md).

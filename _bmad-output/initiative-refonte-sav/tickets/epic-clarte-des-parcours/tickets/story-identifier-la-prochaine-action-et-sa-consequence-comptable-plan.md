@@ -3,7 +3,7 @@ title: "Identifier la prochaine action et sa conséquence comptable"
 type: feature
 ticket: '1'
 created: '2026-11-27'
-status: built
+status: done
 baseline_revision: '08dafbe0bc845b28865e7b433734ed26b2af1a99'
 route: full
 route_source: auto

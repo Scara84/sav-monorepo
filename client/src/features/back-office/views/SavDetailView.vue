@@ -2344,6 +2344,7 @@ a:focus-visible {
 .card h1 {
   margin: 0 0 0.5rem;
 }
+.card h2, .modal h2 { color: #30200e; }
 .card h2 {
   margin: 0 0 0.75rem;
   font-size: 1.125rem;

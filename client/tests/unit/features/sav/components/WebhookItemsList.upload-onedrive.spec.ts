@@ -155,7 +155,7 @@ const mockFacture = {
 
 const createWrapper = (props = {}, attachTo?: HTMLElement) =>
   mount(WebhookItemsList, {
-    attachTo,
+    ...(attachTo ? { attachTo } : {}),
     props: {
       items: [...mockItems],
       facture: { ...mockFacture },
@@ -304,8 +304,8 @@ describe('WebhookItemsList.vue — H-05 Upload OneDrive flow (AC#1 / AC#2 / AC#3
     expect(mockGetFolderShareLink.mock.calls[1]).not.toEqual(mockGetFolderShareLink.mock.calls[0])
     expect(mockUploadToBackend).toHaveBeenCalledTimes(3)
     expect(
-      mockSubmitSavWebhook.mock.calls[1][0].files.map((file) => file.originalFilename)
-    ).toEqual([photo.name])
+      mockSubmitSavWebhook.mock.calls[1][0].files
+    ).toMatchObject([{ originalFilename: photo.name }])
   })
 
   it.each([true, false])(
@@ -352,11 +352,11 @@ describe('WebhookItemsList.vue — H-05 Upload OneDrive flow (AC#1 / AC#2 / AC#3
       await wrapper.setProps({ items: [{ ...lemon }, { ...apple }] })
       const summary = () => wrapper.get('section').findAll('li')
       expect(summary().map((row) => row.get('h3').text())).toEqual(['Citrons', 'Pommes Bio'])
-      await summary()[1].get('button').trigger('click')
+      await wrapper.get('section li:nth-child(2) button').trigger('click')
       await wrapper.get('#quantity-1').setValue('3')
       await wrapper.get('form').trigger('submit')
-      expect(summary()[1].text()).toContain('3 kg')
-      if (removeOther) await summary()[0].findAll('button')[1].trigger('click')
+      expect(wrapper.get('section li:nth-child(2)').text()).toContain('3 kg')
+      if (removeOther) await wrapper.get('section li:first-child button:last-child').trigger('click')
       expect(summary().length).toBe(removeOther ? 1 : 2)
       expect(mockSubmitSavWebhook).not.toHaveBeenCalled()
       const pending = wrapper.vm.submitAllForms()
@@ -366,17 +366,11 @@ describe('WebhookItemsList.vue — H-05 Upload OneDrive flow (AC#1 / AC#2 / AC#3
       await vi.advanceTimersByTimeAsync(2000)
       await pending
       const items = mockSubmitSavWebhook.mock.calls[0][0].items
-      expect(
-        items.map(({ invoiceLineId, productCode, qtyRequested, cause, unitPriceTtcCents }) => [
-          invoiceLineId,
-          productCode,
-          qtyRequested,
-          cause,
-          unitPriceTtcCents,
-        ])
-      ).toEqual([
-        ...(removeOther ? [] : [['L9', '805', 2, 'manquant', 200]]),
-        ['1', '512', 3, 'abime', 2400],
+      expect(items).toMatchObject([
+        ...(removeOther ? [] : [{
+          invoiceLineId: 'L9', productCode: '805', qtyRequested: 2, cause: 'manquant', unitPriceTtcCents: 200,
+        }]),
+        { invoiceLineId: '1', productCode: '512', qtyRequested: 3, cause: 'abime', unitPriceTtcCents: 2400 },
       ])
     }
   )

@@ -3,7 +3,7 @@ title: "Déclarer un article depuis sa facture"
 type: feature
 ticket: '3'
 created: '2026-11-27'
-status: built
+status: done
 baseline_revision: '371333a2a665b5f7fcb61a8fac0213240d7821b0'
 route: full
 route_source: auto
